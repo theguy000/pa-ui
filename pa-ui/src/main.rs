@@ -2,7 +2,10 @@ mod transcript;
 
 slint::include_modules!();
 
-use pa_client::{attach_as, get_messages, list_sessions, send_prompt, Client, SessionRow};
+use pa_client::{
+    abort, attach_as, get_messages, get_queue, list_sessions, send_prompt, session_stats,
+    set_model, steer_prompt, Client, SessionRow,
+};
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -23,6 +26,11 @@ enum Job {
     Attach { session: String },
     Tail { session: String },
     Prompt { session: String, message: String },
+    Steer { session: String, message: String },
+    Abort { session: String },
+    Queue { session: String },
+    Stats { session: String },
+    SetModel { session: String, provider: String, model: String },
 }
 
 enum Msg {
@@ -32,6 +40,10 @@ enum Msg {
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
     PromptResult { error: Option<String> },
+    /// the pipe came back: the old attachment is gone, re-attach
+    Reconnected,
+    Queue { steering: Vec<String>, follow_up: Vec<String> },
+    Stats { session: String, stats: pa_client::SessionStats },
     Activity { label: String },
     Error(String),
 }
@@ -69,6 +81,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let rows_store: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
     let row_model: Rc<VecModel<TRow>> = Rc::new(VecModel::default());
     ui.set_transcript(ModelRc::from(row_model.clone()));
+    if std::env::var("PA_HOVER").is_ok() {
+        ui.set_ctx_hover(true);
+    }
 
     // the text of a prompt we drew optimistically, so the daemon's echo of the
     // same user message does not become a second row
@@ -116,6 +131,64 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let jobs = job_tx.clone();
+        ui.on_model_picked(move |model, provider| {
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            if provider.trim().is_empty() {
+                // no provider known for this entry: say so instead of guessing
+                ui.set_status_line(format!("{model}: provider unknown, not switching").into());
+                return;
+            }
+            ui.set_status_line(format!("switching to {model}").into());
+            let _ = jobs.send(Job::SetModel {
+                session,
+                provider: provider.to_string(),
+                model: model.to_string(),
+            });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        ui.on_abort_requested(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            ui.set_status_line("aborting".into());
+            let _ = jobs.send(Job::Abort { session });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        let pending_user = pending_user.clone();
+        ui.on_steer_requested(move |text| {
+            let message = text.trim().to_string();
+            if message.is_empty() {
+                return;
+            }
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            ui.set_composer_text("".into());
+            *pending_user.borrow_mut() = None;
+            ui.set_status_line("steered".into());
+            let _ = jobs.send(Job::Steer { session, message });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
         ui.on_rename_requested(move |session, name| {
             if let Some(ui) = weak.upgrade() {
                 ui.set_title_text(name.clone());
@@ -155,7 +228,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
     // how many messages of the attached session we have already turned into rows
     let mut tail_len = 0usize;
+    let mut last_seq = 0u64;
+    // the row currently receiving `message_update` frames: (key, model index)
+    let mut live_row: Option<(String, usize)> = None;
     let mut tail_at = SystemTime::now();
+    let mut queue_at = SystemTime::now();
+    let mut stats_at = SystemTime::now();
     let window_rows: usize = std::env::var("PA_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -184,6 +262,27 @@ fn main() -> Result<(), slint::PlatformError> {
     let poll = Timer::default();
     poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
         let Some(ui) = weak.upgrade() else { return };
+
+        // right-panel telemetry
+        if !loaded.as_deref().unwrap_or("").is_empty()
+            && stats_at.elapsed().unwrap_or_default()
+                >= Duration::from_millis(if ui.get_busy() { 3000 } else { 15000 })
+        {
+            stats_at = SystemTime::now();
+            if let Some(session) = loaded.clone() {
+                let _ = jobs.send(Job::Stats { session });
+            }
+        }
+
+        // what is stacked behind the running turn
+        if ui.get_busy() && !loaded.as_deref().unwrap_or("").is_empty()
+            && queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
+        {
+            queue_at = SystemTime::now();
+            if let Some(session) = loaded.clone() {
+                let _ = jobs.send(Job::Queue { session });
+            }
+        }
 
         // while the agent works, keep pulling the tail of the transcript so
         // completed tool calls show up as rows — the snapshot alone never updates
@@ -317,12 +416,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     };
                     ui.set_status_line(note.into());
                     // land on the newest turn, like every chat
-                    let ui_late = ui.as_weak();
-                    slint::Timer::single_shot(Duration::from_millis(40), move || {
-                        if let Some(ui) = ui_late.upgrade() {
-                            ui.invoke_scroll_to_end();
-                        }
-                    });
+                    scroll_to_end_when_ready(&ui.as_weak());
                 }
                 Msg::Tail { session, messages } => {
                     if std::env::var("PA_DEBUG").is_ok() {
@@ -344,12 +438,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     for row in &built {
                         row_model_ui.push(to_slint(row));
                     }
-                    let ui_late = ui.as_weak();
-                    slint::Timer::single_shot(Duration::from_millis(30), move || {
-                        if let Some(ui) = ui_late.upgrade() {
-                            ui.invoke_scroll_to_end();
-                        }
-                    });
+                    scroll_to_end_when_ready(&ui.as_weak());
                 }
                 Msg::Event { session, event } => {
                     if loaded.as_deref() != Some(session.as_str()) {
@@ -359,45 +448,124 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(label) = pa_client::activity_label(&event) {
                         ui.set_busy_label(label.into());
                     }
-                    // a completed message is a finished row: append it now
+                    // gap detection: a skipped sequence means we missed frames
+                    // (daemon restart, a stalled pipe) — backfill from the store
+                    if let Some(sequence) = event
+                        .pointer("/meta/sequence")
+                        .and_then(serde_json::Value::as_u64)
+                    {
+                        if last_seq != 0 && sequence > last_seq + 1 {
+                            let _ = jobs.send(Job::Tail {
+                                session: session.clone(),
+                            });
+                        }
+                        last_seq = sequence.max(last_seq);
+                    }
+
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
-                    if kind == Some("message_end") {
-                        if let Some(message) = event.get("message") {
-                            let role = message.get("role").and_then(serde_json::Value::as_str);
-                            if role == Some("user") {
-                                let text = message
-                                    .get("content")
-                                    .and_then(serde_json::Value::as_array)
-                                    .map(|parts| {
-                                        parts
-                                            .iter()
-                                            .filter_map(|part| part.get("text"))
-                                            .filter_map(serde_json::Value::as_str)
-                                            .collect::<Vec<_>>()
-                                            .join("")
-                                    })
-                                    .unwrap_or_default();
-                                let mut slot = pending_user.borrow_mut();
-                                if slot.as_deref() == Some(text.trim()) {
-                                    *slot = None;
-                                    continue;
-                                }
+                    let Some(message) = event.get("message") else {
+                        continue;
+                    };
+                    if !matches!(kind, Some("message_start" | "message_update" | "message_end")) {
+                        continue;
+                    }
+                    let role = message.get("role").and_then(serde_json::Value::as_str);
+                    if role == Some("user") {
+                        // our own prompt echo: the optimistic row already exists
+                        let text = message_text(message);
+                        let mut slot = pending_user.borrow_mut();
+                        if slot.as_deref() == Some(text.trim()) {
+                            if kind == Some("message_end") {
+                                *slot = None;
                             }
-                            let built = transcript::build(std::slice::from_ref(message), 1).0;
-                            if !built.is_empty() {
-                                rows_store_ui.borrow_mut().extend(built.iter().cloned());
-                                for row in &built {
-                                    row_model_ui.push(to_slint(row));
-                                }
-                                let ui_late = ui.as_weak();
-                                slint::Timer::single_shot(Duration::from_millis(30), move || {
-                                    if let Some(ui) = ui_late.upgrade() {
-                                        ui.invoke_scroll_to_end();
-                                    }
-                                });
-                            }
+                            continue;
                         }
                     }
+                    let stamp = message
+                        .get("timestamp")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
+                    let key = format!("{}:{stamp}", role.unwrap_or_default());
+                    let built = transcript::build(std::slice::from_ref(message), 1).0;
+                    let Some(row) = built.first().cloned() else {
+                        continue;
+                    };
+                    let open = live_row.clone().filter(|(open_key, _)| open_key == &key);
+                    match open {
+                        // the same message, growing: repaint that row in place
+                        Some((_, index)) => {
+                            if let Some(slot) = rows_store_ui.borrow_mut().get_mut(index) {
+                                *slot = row.clone();
+                            }
+                            row_model_ui.set_row_data(index, to_slint(&row));
+                        }
+                        None => {
+                            let mut store = rows_store_ui.borrow_mut();
+                            store.push(row.clone());
+                            let index = store.len() - 1;
+                            drop(store);
+                            row_model_ui.push(to_slint(&row));
+                            live_row = Some((key.clone(), index));
+                            scroll_to_end_when_ready(&ui.as_weak());
+                        }
+                    }
+                    if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
+                        eprintln!(
+                            "[stream] {key} patch row {} ({} chars)",
+                            live_row.as_ref().map_or(usize::MAX, |(_, index)| *index),
+                            message_text(message).chars().count()
+                        );
+                    }
+                    if kind == Some("message_end") {
+                        live_row = None;
+                    }
+                }
+                Msg::Queue { steering, follow_up } => {
+                    let total = steering.len() + follow_up.len();
+                    let first = steering
+                        .first()
+                        .or_else(|| follow_up.first())
+                        .cloned()
+                        .unwrap_or_default();
+                    ui.set_queued_count(total as i32);
+                    ui.set_queued_preview(first.into());
+                }
+                Msg::Stats { session, stats } => {
+                    if loaded.as_deref() != Some(session.as_str()) {
+                        continue;
+                    }
+                    let fill = if stats.context_window > 0 {
+                        (stats.context_tokens as f64 / stats.context_window as f64) as f32
+                    } else {
+                        0.0
+                    };
+                    ui.set_context_fill(fill.clamp(0.0, 1.0));
+                    ui.set_context_text(
+                        format!(
+                            "{} of {} · {:.0}%",
+                            tokens(stats.context_tokens),
+                            tokens(stats.context_window),
+                            stats.percent
+                        )
+                        .into(),
+                    );
+                    ui.set_stats_text(
+                        format!(
+                            "{} messages · {} tools\nin {} · out {} · cache {}",
+                            stats.messages,
+                            stats.tool_calls,
+                            tokens(stats.input_tokens),
+                            tokens(stats.output_tokens),
+                            tokens(stats.cache_read)
+                        )
+                        .into(),
+                    );
+                }
+                Msg::Reconnected => {
+                    loaded = None;
+                    live_row = None;
+                    last_seq = 0;
+                    ui.set_status_line("reconnecting".into());
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
@@ -419,11 +587,18 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
     let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
+    let mut resume: Option<(String, u64)> = None;
 
     loop {
         if client.is_none() {
             match Client::connect() {
-                Ok(connected) => client = Some(connected),
+                Ok(connected) => {
+                    client = Some(connected);
+                    // a new connection has no attachments: the UI re-attaches
+                    // with the resume cursor so the daemon replays the gap
+                    attached = None;
+                    let _ = out.send(Msg::Reconnected);
+                }
                 Err(error) => {
                     let _ = out.send(Msg::Error(error.to_string()));
                     std::thread::sleep(Duration::from_secs(2));
@@ -442,7 +617,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     );
                     last_list = SystemTime::now() - Duration::from_secs(60);
                 }
-                Job::Attach { session } => match attach_as(active, &session, Some(&client_id)) {
+                Job::Attach { session } => match attach_as(active, &session, Some(&client_id), resume.clone()) {
                     Ok(messages) => {
                         attached = Some(session.clone());
                         let _ = out.send(Msg::Transcript { session, messages });
@@ -451,6 +626,40 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let _ = out.send(Msg::Error(error.to_string()));
                     }
                 },
+                Job::SetModel {
+                    session,
+                    provider,
+                    model,
+                } => {
+                    let outcome = set_model(active, &session, &provider, &model);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[model] {provider}/{model} -> {outcome:?}");
+                    }
+                }
+                Job::Stats { session } => {
+                    if let Ok(stats) = session_stats(active, &session) {
+                        let _ = out.send(Msg::Stats { session, stats });
+                    }
+                }
+                Job::Queue { session } => {
+                    if let Ok((steering, follow_up)) = get_queue(active, &session) {
+                        let _ = out.send(Msg::Queue { steering, follow_up });
+                    }
+                }
+                Job::Abort { session } => {
+                    if let Err(error) = abort(active, &session) {
+                        let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                    }
+                }
+                Job::Steer { session, message } => {
+                    let outcome = steer_prompt(active, &session, &message);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[steer] session={session} message={message:?} outcome={outcome:?}");
+                    }
+                    if let Err(error) = outcome {
+                        let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                    }
+                }
                 Job::Prompt { session, message } => {
                     let outcome = send_prompt(active, &session, &message);
                     if std::env::var("PA_DEBUG").is_ok() {
@@ -501,6 +710,19 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 if Some(session.to_string()) != attached {
                     continue;
                 }
+                if let Some(meta) = frame.get("meta") {
+                    let generation = meta
+                        .get("generation")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let sequence = meta
+                        .get("sequence")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    if !generation.is_empty() && sequence > 0 {
+                        resume = Some((generation.to_string(), sequence));
+                    }
+                }
                 if let Some(event) = frame.get("event") {
                     let _ = out.send(Msg::Event {
                         session: session.to_string(),
@@ -523,6 +745,48 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
         }
         std::thread::sleep(Duration::from_millis(150));
     }
+}
+
+/// Scroll the transcript to the newest row, retrying while the layout settles.
+///
+/// A single call can land before `content-height` is known, which leaves the
+/// view at the top — the exact bug that made a chat open on its oldest row.
+fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
+    for delay in [30u64, 120, 320, 700, 1500, 3000] {
+        let ui = ui.clone();
+        slint::Timer::single_shot(Duration::from_millis(delay), move || {
+            if let Some(ui) = ui.upgrade() {
+                ui.invoke_scroll_to_end();
+            }
+        });
+    }
+}
+
+/// 1234 → "1.2k", 47_011_000 → "47.0M".
+fn tokens(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}M", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.0}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
+    }
+}
+
+/// Concatenated text of a wire message's content parts.
+fn message_text(message: &serde_json::Value) -> String {
+    message
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text"))
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
 }
 
 fn to_slint(row: &Row) -> TRow {

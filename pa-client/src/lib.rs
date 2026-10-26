@@ -73,6 +73,18 @@ impl Client {
             "protocol": {"name": PROTOCOL_NAME, "version": PROTOCOL_VERSION},
             "command": command,
         });
+        // every command is checked against the enum the supervisor parses, so a
+        // renamed field fails here instead of silently doing nothing
+        match serde_json::from_value::<pa_types::daemon::DaemonCommand>(command.clone()) {
+            Ok(_) => {}
+            Err(error) => {
+                let report = format!("command {ty} does not match DaemonCommand: {error}");
+                if std::env::var("PA_STRICT").is_ok() {
+                    return Err(std::io::Error::other(report));
+                }
+                eprintln!("[wire] {report}");
+            }
+        }
         let mut line = frame.to_string();
         line.push('\n');
         self.out
@@ -311,7 +323,7 @@ impl SessionRow {
 /// # Errors
 /// Fails on transport errors or a non-success response.
 pub fn attach_messages(client: &Client, session: &str) -> std::io::Result<Vec<Value>> {
-    attach_as(client, session, None)
+    attach_as(client, session, None, None)
 }
 
 /// `attach` under a client identity.
@@ -326,11 +338,24 @@ pub fn attach_as(
     client: &Client,
     session: &str,
     client_id: Option<&str>,
+    resume: Option<(String, u64)>,
 ) -> std::io::Result<Vec<Value>> {
     let mut payload = json!({"activeSessionId": session});
     if let (Some(id), Value::Object(map)) = (client_id, &mut payload) {
         map.insert("clientId".into(), Value::String(id.to_string()));
         map.insert("capabilities".into(), json!(["slim_attach"]));
+    }
+    // resume where this connection left off, so the daemon replays what we missed
+    if let (Some((generation, sequence)), Value::Object(map)) = (resume, &mut payload) {
+        map.insert(
+            "resumeCursor".into(),
+            json!({
+                "activeSessionId": session,
+                "generation": generation,
+                "sequence": sequence,
+                "eventSequence": sequence,
+            }),
+        );
     }
     let response = client.request("attach", payload, Duration::from_secs(20))?;
     if response.get("success").and_then(Value::as_bool) != Some(true) {
@@ -386,6 +411,139 @@ pub fn send_prompt(client: &Client, session: &str, message: &str) -> std::io::Re
     client.send("prompt", json!({"activeSessionId": session, "message": message}))
 }
 
+/// `abort` → stop the running turn.
+///
+/// Fire-and-forget like [`send_prompt`]: the outcome shows up as a `stop`
+/// event on the attached connection, not as a response.
+///
+/// # Errors
+/// Fails only on transport errors (a closed pipe).
+pub fn abort(client: &Client, session: &str) -> std::io::Result<String> {
+    client.send("abort", json!({"activeSessionId": session}))
+}
+
+/// `prompt` with an explicit streaming behaviour: `steer` folds the message into
+/// the running turn instead of queueing behind it.
+///
+/// # Errors
+/// Fails only on transport errors (a closed pipe).
+pub fn steer_prompt(
+    client: &Client,
+    session: &str,
+    message: &str,
+) -> std::io::Result<String> {
+    client.send(
+        "prompt",
+        json!({
+            "activeSessionId": session,
+            "message": message,
+            "streamingBehavior": "steer",
+        }),
+    )
+}
+
+/// `get_queue` → the messages stacked behind the running turn.
+///
+/// # Errors
+/// Fails on transport errors or a non-success response.
+pub fn get_queue(client: &Client, session: &str) -> std::io::Result<(Vec<String>, Vec<String>)> {
+    let response = client.request(
+        "get_queue",
+        json!({"activeSessionId": session}),
+        Duration::from_secs(10),
+    )?;
+    let texts = |key: &str| -> Vec<String> {
+        response
+            .pointer(&format!("/data/{key}"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| match item {
+                        Value::String(text) => text.clone(),
+                        other => other
+                            .get("preview")
+                            .or_else(|| other.get("message"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Ok((texts("steering"), texts("followUp")))
+}
+
+/// A session's live numbers, as the right panel shows them.
+#[derive(Debug, Clone, Default)]
+pub struct SessionStats {
+    pub context_tokens: u64,
+    pub context_window: u64,
+    pub percent: f64,
+    pub messages: u64,
+    pub tool_calls: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read: u64,
+    pub cost: f64,
+}
+
+impl SessionStats {
+    #[must_use]
+    pub fn from_value(value: &Value) -> Self {
+        let number = |pointer: &str| {
+            value
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        Self {
+            context_tokens: number("/contextUsage/tokens"),
+            context_window: number("/contextUsage/contextWindow"),
+            percent: value
+                .pointer("/contextUsage/percent")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            messages: number("/totalMessages"),
+            tool_calls: number("/toolCalls"),
+            input_tokens: number("/tokens/input"),
+            output_tokens: number("/tokens/output"),
+            cache_read: number("/tokens/cacheRead"),
+            cost: value.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
+        }
+    }
+}
+
+/// `get_session_stats` → context usage and token totals.
+///
+/// # Errors
+/// Fails on transport errors or a non-success response.
+pub fn session_stats(client: &Client, session: &str) -> std::io::Result<SessionStats> {
+    let response = client.request(
+        "get_session_stats",
+        json!({"activeSessionId": session}),
+        Duration::from_secs(10),
+    )?;
+    Ok(response.get("data").map(SessionStats::from_value).unwrap_or_default())
+}
+
+/// `set_model` → switch the session's provider/model.
+///
+/// # Errors
+/// Fails only on transport errors (a rejected model shows up in the status).
+pub fn set_model(
+    client: &Client,
+    session: &str,
+    provider: &str,
+    model_id: &str,
+) -> std::io::Result<String> {
+    client.send(
+        "set_model",
+        json!({"activeSessionId": session, "provider": provider, "modelId": model_id}),
+    )
+}
+
 /// One agent stream event → the TUI's loader vocabulary.
 ///
 /// Mirrors `track_stream_activity` in pa-tui: the event *kind*, not the delta,
@@ -424,3 +582,35 @@ pub fn list_sessions(client: &Client) -> std::io::Result<Vec<SessionRow>> {
 }
 
 pub use std::sync::Arc as Shared;
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    fn parses(value: Value) -> bool {
+        serde_json::from_value::<pa_types::daemon::DaemonCommand>(value).is_ok()
+    }
+
+    #[test]
+    fn every_command_we_send_exists_on_the_wire() {
+        assert!(parses(json!({"type": "attach", "activeSessionId": "s", "clientId": "c",
+                              "capabilities": ["slim_attach"]})));
+        assert!(parses(json!({"type": "prompt", "activeSessionId": "s", "message": "m"})));
+        assert!(parses(json!({"type": "prompt", "activeSessionId": "s", "message": "m",
+                              "streamingBehavior": "steer"})));
+        assert!(parses(json!({"type": "abort", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "get_messages", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "get_queue", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "get_session_stats", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "get_rlm_children", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "rename", "activeSessionId": "s", "name": "n"})));
+        assert!(parses(json!({"type": "set_model", "activeSessionId": "s",
+                              "provider": "openrouter", "modelId": "x"})));
+        assert!(parses(json!({"type": "clear_queue", "activeSessionId": "s"})));
+    }
+
+    #[test]
+    fn a_renamed_field_is_caught() {
+        assert!(!parses(json!({"type": "prompt", "session": "s", "message": "m"})));
+    }
+}
