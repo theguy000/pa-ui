@@ -191,6 +191,60 @@ pub fn styled(markup: &str) -> StyledText {
     }
 }
 
+/// Undo the HTML entities that arrive in pasted source (`&#x20;`, `&amp;`).
+///
+/// Terminals and chat surfaces agree on these; leaving them encoded shows
+/// `&#x20;` where a space belongs.
+#[must_use]
+pub fn decode_entities(text: &str) -> String {
+    if !text.contains('&') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'&' {
+            let next = text[index..].chars().next().unwrap_or(' ');
+            out.push(next);
+            index += next.len_utf8();
+            continue;
+        }
+        let Some(semi) = text[index..].find(';').map(|offset| index + offset) else {
+            out.push('&');
+            index += 1;
+            continue;
+        };
+        let body = &text[index + 1..semi];
+        let decoded = if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X")) {
+            u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+        } else if let Some(dec) = body.strip_prefix('#') {
+            dec.parse::<u32>().ok().and_then(char::from_u32)
+        } else {
+            match body {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{a0}'),
+                _ => None,
+            }
+        };
+        match decoded {
+            Some(ch) => {
+                out.push(ch);
+                index = semi + 1;
+            }
+            None => {
+                out.push('&');
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
 fn escape(text: &str, out: &mut String) {
     for ch in text.chars() {
         match ch {
@@ -210,14 +264,17 @@ fn escape(text: &str, out: &mut String) {
 
 /// Plain text rendered verbatim (thinking, output, notices).
 pub fn plain_markup(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 16);
-    escape(text, &mut out);
+    let decoded = decode_entities(text);
+    let mut out = String::with_capacity(decoded.len() + 16);
+    escape(&decoded, &mut out);
     guard_block_markers(&out)
 }
 
 /// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
 /// headings become bold lines, rules become blank lines, quotes lose their `>`.
 pub fn markdown_markup(text: &str) -> String {
+    let decoded = decode_entities(text);
+    let text = decoded.as_str();
     let mut out = String::with_capacity(text.len() + 16);
     for (index, line) in text.split('\n').enumerate() {
         if index > 0 {
@@ -260,6 +317,8 @@ fn wrap(color: &str, text: &str, out: &mut String) {
 /// Small python tokenizer -> coloured markup. Not a parser: keywords, strings,
 /// comments and numbers, which is what makes a cell scannable.
 pub fn highlight_python(code: &str) -> String {
+    let decoded = decode_entities(code);
+    let code = decoded.as_str();
     const KEY: &str = "#c9a86a";
     const STR: &str = "#8fb573";
     const COM: &str = "#5f6159";
@@ -451,6 +510,14 @@ mod tests {
         let rows = cell_and_result("2");
         assert!(!rows[0].failed);
         assert!(rows[0].reason.is_empty());
+    }
+
+    #[test]
+    fn pasted_entities_are_decoded_not_shown() {
+        assert_eq!(decode_entities("&#x20;a &amp; b"), " a & b");
+        assert_eq!(decode_entities("caf&#233;"), "café");
+        assert!(!markdown_markup("&#x20;    x").contains("&#x20;"));
+        assert!(!plain_markup("a&nbsp;b").contains("&nbsp;"));
     }
 
     #[test]

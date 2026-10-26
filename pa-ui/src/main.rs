@@ -2,7 +2,7 @@ mod transcript;
 
 slint::include_modules!();
 
-use pa_client::{attach_messages, get_messages, list_sessions, Client, SessionRow};
+use pa_client::{attach_as, get_messages, list_sessions, Client, SessionRow};
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,6 +28,8 @@ enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
     Transcript { session: String, messages: Vec<serde_json::Value> },
     Tail { session: String, messages: Vec<serde_json::Value> },
+    /// one `session_event` from the attached session, forwarded verbatim
+    Event { session: String, event: serde_json::Value },
     Activity { label: String },
     Error(String),
 }
@@ -45,9 +47,21 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_model_id("opus-4.6".into());
     ui.set_model_label("Opus 4.6".into());
 
+    // one identity for this window: the supervisor addresses session events to
+    // the connections registered under it
+    let client_id = format!(
+        "pa-ui-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+
     let (job_tx, job_rx) = channel::<Job>();
     let (msg_tx, msg_rx) = channel::<Msg>();
-    std::thread::spawn(move || worker(job_rx, msg_tx));
+    let worker_client_id = client_id.clone();
+    std::thread::spawn(move || worker(job_rx, msg_tx, worker_client_id));
 
     // transcript model, kept alive so a toggle can patch one row
     let rows_store: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
@@ -265,6 +279,34 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     });
                 }
+                Msg::Event { session, event } => {
+                    if loaded.as_deref() != Some(session.as_str()) {
+                        continue;
+                    }
+                    // exact TUI vocabulary straight from the stream
+                    if let Some(label) = pa_client::activity_label(&event) {
+                        ui.set_busy_label(label.into());
+                    }
+                    // a completed message is a finished row: append it now
+                    let kind = event.get("type").and_then(serde_json::Value::as_str);
+                    if kind == Some("message_end") {
+                        if let Some(message) = event.get("message") {
+                            let built = transcript::build(std::slice::from_ref(message), 1).0;
+                            if !built.is_empty() {
+                                rows_store_ui.borrow_mut().extend(built.iter().cloned());
+                                for row in &built {
+                                    row_model_ui.push(to_slint(row));
+                                }
+                                let ui_late = ui.as_weak();
+                                slint::Timer::single_shot(Duration::from_millis(30), move || {
+                                    if let Some(ui) = ui_late.upgrade() {
+                                        ui.invoke_scroll_to_end();
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
                 Msg::Error(error) => ui.set_status_line(format!("error: {error}").into()),
             }
         }
@@ -274,7 +316,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.run()
 }
 
-fn worker(jobs: Receiver<Job>, out: Sender<Msg>) {
+fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
     let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
@@ -301,7 +343,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>) {
                     );
                     last_list = SystemTime::now() - Duration::from_secs(60);
                 }
-                Job::Attach { session } => match attach_messages(active, &session) {
+                Job::Attach { session } => match attach_as(active, &session, Some(&client_id)) {
                     Ok(messages) => {
                         attached = Some(session.clone());
                         let _ = out.send(Msg::Transcript { session, messages });
@@ -326,7 +368,23 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>) {
         // coarse "running tool" into the TUI's Thinking / Writing / Writing code
         if attached.is_some() {
             while let Some(frame) = active.recv(Duration::from_millis(0)) {
-                if frame.get("type").and_then(serde_json::Value::as_str) != Some("session_event") {
+                let frame_type = frame
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?");
+                if std::env::var("PA_DEBUG").is_ok() {
+                    let event_type = frame
+                        .get("event")
+                        .and_then(|event| event.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    eprintln!("[frame] {frame_type} {event_type}");
+                    if std::env::var("PA_DUMP").is_ok() {
+                        let text = frame.to_string();
+                        eprintln!("[dump] {}", &text[..text.len().min(700)]);
+                    }
+                }
+                if frame_type != "session_event" {
                     continue;
                 }
                 let session = frame
@@ -337,6 +395,10 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>) {
                     continue;
                 }
                 if let Some(event) = frame.get("event") {
+                    let _ = out.send(Msg::Event {
+                        session: session.to_string(),
+                        event: event.clone(),
+                    });
                     if let Some(label) = pa_client::activity_label(event) {
                         let _ = out.send(Msg::Activity { label: label.to_string() });
                     }

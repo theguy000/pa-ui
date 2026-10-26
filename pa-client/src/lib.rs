@@ -311,11 +311,28 @@ impl SessionRow {
 /// # Errors
 /// Fails on transport errors or a non-success response.
 pub fn attach_messages(client: &Client, session: &str) -> std::io::Result<Vec<Value>> {
-    let response = client.request(
-        "attach",
-        json!({"activeSessionId": session}),
-        Duration::from_secs(20),
-    )?;
+    attach_as(client, session, None)
+}
+
+/// `attach` under a client identity.
+///
+/// The supervisor routes `session_event` frames to the *connections* attached to
+/// a session, and a connection is named by its `clientId`. Attaching anonymously
+/// gets the snapshot and nothing else.
+///
+/// # Errors
+/// Fails on transport errors or a non-success response.
+pub fn attach_as(
+    client: &Client,
+    session: &str,
+    client_id: Option<&str>,
+) -> std::io::Result<Vec<Value>> {
+    let mut payload = json!({"activeSessionId": session});
+    if let (Some(id), Value::Object(map)) = (client_id, &mut payload) {
+        map.insert("clientId".into(), Value::String(id.to_string()));
+        map.insert("capabilities".into(), json!(["slim_attach"]));
+    }
+    let response = client.request("attach", payload, Duration::from_secs(20))?;
     if response.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(std::io::Error::other(format!(
             "attach failed: {}",
