@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>prime-agent · busy indicator previews</title>
+<style>
+  :root {
+    --bg: #12130f;
+    --panel: #161811;
+    --line: #23251f;
+    --text: #c9a86a;
+    --muted: #565a4f;
+    --dim: #34372e;
+    --amber: #a18e41;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 34px 40px 60px;
+    background: var(--bg); color: #d2d1ca;
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 14px; font-weight: 600; color: #e7e5df; margin: 0 0 4px; }
+  p.lede { color: var(--muted); margin: 0 0 26px; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(320px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px 16px;
+  }
+  .name { color: #e7e5df; font-size: 12px; margin-bottom: 2px; }
+  .why { color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+  .row {
+    display: flex; align-items: center; gap: 8px;
+    height: 26px; color: var(--text); font-size: 11px;
+  }
+  .elapsed { color: var(--muted); font-size: 10px; }
+  .mono { font-family: "Cascadia Code", ui-monospace, monospace; }
+
+  /* 1. braille, exactly the TUI cadence (10 frames / 80 ms) */
+  .braille { width: 12px; text-align: center; font-family: "Cascadia Code", monospace; font-size: 12px; }
+
+  /* 2. quarter blocks */
+  .blocks { width: 12px; text-align: center; font-family: "Cascadia Code", monospace; font-size: 12px; }
+
+  /* 3. rotating arc */
+  .arc { width: 14px; height: 14px; transform-origin: 7px 7px; animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 4. shimmer across the label */
+  .shimmer {
+    background: linear-gradient(90deg, var(--muted) 0%, var(--text) 40%, var(--muted) 80%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: sweep 1.6s linear infinite;
+  }
+  @keyframes sweep { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+  /* 5. breathing trio */
+  .trio { display: flex; gap: 3px; }
+  .trio i {
+    width: 4px; height: 4px; border-radius: 50%; background: var(--amber);
+    animation: breathe 1.1s ease-in-out infinite;
+  }
+  .trio i:nth-child(2) { animation-delay: .16s; }
+  .trio i:nth-child(3) { animation-delay: .32s; }
+  @keyframes breathe { 0%, 100% { opacity: .25; } 45% { opacity: 1; } }
+
+  /* 6. equalizer bars */
+  .bars { display: flex; align-items: center; gap: 2px; height: 12px; }
+  .bars i {
+    width: 2px; height: 12px; background: var(--amber); border-radius: 1px;
+    transform-origin: center; animation: eq 1s ease-in-out infinite;
+  }
+  .bars i:nth-child(2) { animation-delay: .18s; }
+  .bars i:nth-child(3) { animation-delay: .36s; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.3); opacity: .6; } 50% { transform: scaleY(1); opacity: 1; } }
+
+  /* 7. orbit */
+  .orbit { position: relative; width: 12px; height: 12px; }
+  .orbit::before {
+    content: ""; position: absolute; inset: 0; border: 1px solid #2c2f26; border-radius: 50%;
+  }
+  .orbit i {
+    position: absolute; top: -1px; left: 4px; width: 4px; height: 4px;
+    border-radius: 50%; background: var(--amber); transform-origin: 2px 7px;
+    animation: orbit .95s linear infinite;
+  }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+
+  /* 8. pulse ring */
+  .pulse { position: relative; width: 10px; height: 10px; }
+  .pulse b { position: absolute; inset: 3px; background: var(--amber); border-radius: 50%; }
+  .pulse::after {
+    content: ""; position: absolute; inset: 0; border: 1px solid var(--amber);
+    border-radius: 50%; animation: ring 1.4s ease-out infinite;
+  }
+  @keyframes ring { 0% { transform: scale(.4); opacity: .9; } 100% { transform: scale(1.5); opacity: 0; } }
+
+  /* 9. caret blink next to label, terminal-ish */
+  .caret { width: 6px; height: 11px; background: var(--text); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+  .note { margin-top: 22px; color: var(--dim); font-size: 11px; }
+</style>
+</head>
+<body>
+  <h1>busy indicator candidates</h1>
+  <p class="lede">Each row is the real thing: 26&nbsp;px tall, 11&nbsp;px label, amber <span class="mono">#a18e41</span>, muted elapsed.</p>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="name">1 · braille spinner</div>
+      <div class="why">Exactly what the TUI runs today: 10 frames at 80&nbsp;ms. Highest fidelity to what you already know.</div>
+      <div class="row"><span class="braille mono" data-braille>⠋</span> Writing code <span class="elapsed">12s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">2 · quarter blocks</div>
+      <div class="why">Same idea, chunkier glyphs — reads better at 11&nbsp;px than braille on Windows fonts.</div>
+      <div class="row"><span class="blocks mono" data-blocks>▘</span> Thinking <span class="elapsed">3s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">3 · rotating arc</div>
+      <div class="why">Vector, so it stays crisp and smooth at any DPI; no font dependency.</div>
+      <div class="row">
+        <svg class="arc" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.2" stroke="#2c2f26" stroke-width="1.6"/>
+          <path d="M 7 1.8 A 5.2 5.2 0 0 1 12.2 7" stroke="#a18e41" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        Waiting <span class="elapsed">1s</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="name">4 · shimmer label</div>
+      <div class="why">No glyph at all: the label itself is the motion. Quietest option, zero layout shift.</div>
+      <div class="row"><span class="shimmer">Writing</span> <span class="elapsed">7s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">5 · breathing trio</div>
+      <div class="why">Three dots breathing in sequence. Common, calm, and cheap to draw.</div>
+      <div class="row"><span class="trio"><i></i><i></i><i></i></span> Thinking <span class="elapsed">5s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">6 · equalizer</div>
+      <div class="why">Bars pulsing like audio levels — feels like work is flowing through the agent.</div>
+      <div class="row"><span class="bars"><i></i><i></i><i></i></span> Writing code <span class="elapsed">22s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">7 · orbit</div>
+      <div class="why">A dot circling a track. Reads as "spinning up", slightly more mechanical than the arc.</div>
+      <div class="row"><span class="orbit"><i></i></span> running tool <span class="elapsed">9s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">8 · pulse ring</div>
+      <div class="why">Ripple out of a solid core — good for "alive but waiting", less for continuous work.</div>
+      <div class="row"><span class="pulse"><b></b></span> Waiting <span class="elapsed">2s</span></div>
+    </div>
+
+    <div class="card">
+      <div class="name">9 · block caret</div>
+      <div class="why">Terminal-native: a blinking cursor after the label, like the prompt itself is busy.</div>
+      <div class="row">Writing<span class="caret"></span> <span class="elapsed">4s</span></div>
+    </div>
+
+  </div>
+
+  <div class="note">Tell me the number and I'll build it in Slint. The arc, orbit and ring are drawn paths; braille/blocks are 10-frame strings; shimmer is a gradient over text.</div>
+
+<script>
+  const braille = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".split("");
+  const blocks = "▘▝▗▖".split("");
+  let f = 0;
+  setInterval(() => {
+    f++;
+    document.querySelectorAll("[data-braille]").forEach(el => el.textContent = braille[f % braille.length]);
+    document.querySelectorAll("[data-blocks]").forEach(el => el.textContent = blocks[f % blocks.length]);
+  }, 80);
+</script>
+</body>
+</html>

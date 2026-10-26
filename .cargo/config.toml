@@ -1,0 +1,8 @@
+# Ryzen 7 5700X: 8 physical cores, 16 threads.
+# rustc at 16 jobs saturates SMT and starves the GUI while you iterate; 8 keeps
+# one job per physical core and leaves the machine usable.
+#
+# No per-target rustflags here on purpose: changing them invalidates every
+# cached dependency and turns a 5s rebuild into a full Slint recompile.
+[build]
+jobs = 8

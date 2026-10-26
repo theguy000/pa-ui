@@ -1,0 +1,12 @@
+[package]
+name = "pa-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pa-client = { path = "../pa-client" }
+serde_json = "1"
+slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }
+
+[build-dependencies]
+slint-build = "1.18"
