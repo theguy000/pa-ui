@@ -519,6 +519,7 @@ export component AppWindow inherits Window {
     in-out property <string> model-label: "model";
     in-out property <string> title-text: "";
     in-out property <string> draft: "";
+    in-out property <string> composer-text: "";
     in-out property <string> editing-id: "";
     in property <string> status-line: "connecting";
     in-out property <string> hover-title: "";
@@ -536,6 +537,7 @@ export component AppWindow inherits Window {
     in property <string> spinner-frame: "\u{280b}";
     in property <float> shimmer: 0.0;
 
+    callback send-requested(string);
     callback rename-requested(string, string);
     callback toggle-row(int);
 
@@ -748,12 +750,27 @@ export component AppWindow inherits Window {
                                 padding-top: 10px;
                                 padding-bottom: 8px;
                                 spacing: 10px;
-                                TextInput {
-                                    text: "";
+                                composer-input := TextInput {
+                                    text <=> root.composer-text;
                                     color: #e7e5df;
                                     font-size: 13px;
                                     single-line: false;
                                     height: 22px;
+                                    edited => { root.composer-text = self.text; }
+                                    // Enter sends; Shift+Enter is the newline, the
+                                    // same binding the TUI uses
+                                    key-pressed(event) => {
+                                        if event.text == Key.Return && !event.modifiers.shift {
+                                            if root.composer-text != "" {
+                                                root.send-requested(root.composer-text);
+                                                root.composer-text = "";
+                                            }
+                                            return EventResult.accept;
+                                        }
+                                        return EventResult.reject;
+                                    }
+                                    // the window opens ready to type
+                                    init => { self.focus(); }
                                 }
                                 HorizontalLayout {
                                     spacing: 8px;
@@ -772,7 +789,12 @@ export component AppWindow inherits Window {
                                             x: (parent.width - self.width) / 2;
                                             y: (parent.height - self.height) / 2;
                                         }
-                                        send-touch := TouchArea { }
+                                        send-touch := TouchArea {
+                                            clicked => {
+                                                root.send-requested(root.composer-text);
+                                                root.composer-text = "";
+                                            }
+                                        }
                                     }
                                 }
                             }

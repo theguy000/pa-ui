@@ -373,6 +373,19 @@ pub fn get_messages(client: &Client, session: &str) -> std::io::Result<Vec<Value
         .unwrap_or_default())
 }
 
+/// `prompt` → hand a message to the session's agent.
+///
+/// Deliberately does **not** wait for the response: when the session already has
+/// a turn in flight the daemon queues the message and answers only once it is
+/// admitted (which can be minutes). The UI must not block on that — the turn's
+/// progress arrives as `session_event` frames anyway.
+///
+/// # Errors
+/// Fails only on transport errors (a closed pipe).
+pub fn send_prompt(client: &Client, session: &str, message: &str) -> std::io::Result<String> {
+    client.send("prompt", json!({"activeSessionId": session, "message": message}))
+}
+
 /// One agent stream event → the TUI's loader vocabulary.
 ///
 /// Mirrors `track_stream_activity` in pa-tui: the event *kind*, not the delta,

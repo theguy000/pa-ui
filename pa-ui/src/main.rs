@@ -2,7 +2,7 @@ mod transcript;
 
 slint::include_modules!();
 
-use pa_client::{attach_as, get_messages, list_sessions, Client, SessionRow};
+use pa_client::{attach_as, get_messages, list_sessions, send_prompt, Client, SessionRow};
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,6 +22,7 @@ enum Job {
     Rename { session: String, name: String },
     Attach { session: String },
     Tail { session: String },
+    Prompt { session: String, message: String },
 }
 
 enum Msg {
@@ -30,6 +31,7 @@ enum Msg {
     Tail { session: String, messages: Vec<serde_json::Value> },
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
+    PromptResult { error: Option<String> },
     Activity { label: String },
     Error(String),
 }
@@ -67,6 +69,49 @@ fn main() -> Result<(), slint::PlatformError> {
     let rows_store: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
     let row_model: Rc<VecModel<TRow>> = Rc::new(VecModel::default());
     ui.set_transcript(ModelRc::from(row_model.clone()));
+
+    // the text of a prompt we drew optimistically, so the daemon's echo of the
+    // same user message does not become a second row
+    let pending_user: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        let rows = rows_store.clone();
+        let model = row_model.clone();
+        let pending_user = pending_user.clone();
+        ui.on_send_requested(move |text| {
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[send] callback fired with {text:?}");
+            }
+            let message = text.trim().to_string();
+            if message.is_empty() {
+                return;
+            }
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                ui.set_status_line("no session selected".into());
+                return;
+            }
+            ui.set_composer_text("".into());
+            // optimistic row: the prompt shows before the daemon echoes it
+            let echo = serde_json::json!({
+                "role": "user",
+                "content": [{"type": "text", "text": message}],
+            });
+            if let Some(row) = transcript::build(std::slice::from_ref(&echo), 1).0.first() {
+                rows.borrow_mut().push(row.clone());
+                model.push(to_slint(row));
+                ui.invoke_scroll_to_end();
+            }
+            *pending_user.borrow_mut() = Some(message.clone());
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_line("sent".into());
+            }
+            let _ = jobs.send(Job::Prompt { session, message });
+        });
+    }
 
     {
         let weak = ui.as_weak();
@@ -167,7 +212,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     ui.set_status_line(format!("{live} live of {} known", rows.len()).into());
                     if ui.get_selected_id().is_empty() {
-                        if let Some(first) = rows.first() {
+                        let preferred = std::env::var("PA_SELECT").ok();
+                        let chosen = preferred
+                            .as_deref()
+                            .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
+                            .or_else(|| rows.first());
+                        if let Some(first) = chosen {
                             ui.set_selected_id(first.id.clone().into());
                         }
                     }
@@ -227,12 +277,34 @@ fn main() -> Result<(), slint::PlatformError> {
                         continue; // a newer selection won
                     }
                     tail_len = messages.len();
-                    if std::env::var("PA_DEBUG").is_ok() {
-                        eprintln!("[attach] {} msgs", messages.len());
-                    }
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!(
+                            "[attach] {} msgs -> {} rows (skipped {skipped})",
+                            messages.len(),
+                            built.len()
+                        );
+                    }
                     if std::env::var("PA_DEMO").as_deref() == Ok("fail") {
                         built.extend(transcript::demo_rows());
+                    }
+                    // a prompt sent while this attach was in flight: the snapshot
+                    // predates it, so the optimistic row has to be re-appended
+                    if let Some(text) = pending_user.borrow().as_deref() {
+                        let echo = serde_json::json!({
+                            "role": "user",
+                            "content": [{"type": "text", "text": text}],
+                        });
+                        let already = built.iter().rev().take(6).any(|row| {
+                            row.kind == transcript::KIND_USER && row.title.contains(text)
+                        });
+                        if !already {
+                            if let Some(row) =
+                                transcript::build(std::slice::from_ref(&echo), 1).0.first()
+                            {
+                                built.push(row.clone());
+                            }
+                        }
                     }
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     let count = slint_rows.len();
@@ -291,6 +363,26 @@ fn main() -> Result<(), slint::PlatformError> {
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
                     if kind == Some("message_end") {
                         if let Some(message) = event.get("message") {
+                            let role = message.get("role").and_then(serde_json::Value::as_str);
+                            if role == Some("user") {
+                                let text = message
+                                    .get("content")
+                                    .and_then(serde_json::Value::as_array)
+                                    .map(|parts| {
+                                        parts
+                                            .iter()
+                                            .filter_map(|part| part.get("text"))
+                                            .filter_map(serde_json::Value::as_str)
+                                            .collect::<Vec<_>>()
+                                            .join("")
+                                    })
+                                    .unwrap_or_default();
+                                let mut slot = pending_user.borrow_mut();
+                                if slot.as_deref() == Some(text.trim()) {
+                                    *slot = None;
+                                    continue;
+                                }
+                            }
                             let built = transcript::build(std::slice::from_ref(message), 1).0;
                             if !built.is_empty() {
                                 rows_store_ui.borrow_mut().extend(built.iter().cloned());
@@ -307,6 +399,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                 }
+                Msg::PromptResult { error } => match error {
+                    Some(error) => {
+                        pending_user.borrow_mut().take();
+                        ui.set_status_line(format!("prompt failed: {error}").into());
+                    }
+                    None => ui.set_status_line("working".into()),
+                },
                 Msg::Error(error) => ui.set_status_line(format!("error: {error}").into()),
             }
         }
@@ -352,6 +451,14 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let _ = out.send(Msg::Error(error.to_string()));
                     }
                 },
+                Job::Prompt { session, message } => {
+                    let outcome = send_prompt(active, &session, &message);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[prompt] session={session} message={message:?} outcome={outcome:?}");
+                    }
+                    let error = outcome.err().map(|e| e.to_string());
+                    let _ = out.send(Msg::PromptResult { error });
+                }
                 Job::Tail { session } => match get_messages(active, &session) {
                     Ok(messages) => {
                         attached = Some(session.clone());
