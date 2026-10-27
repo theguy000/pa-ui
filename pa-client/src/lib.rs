@@ -809,6 +809,32 @@ pub fn list_sessions(client: &Client) -> std::io::Result<Vec<SessionRow>> {
     Ok(rows)
 }
 
+
+/// `create` → a fresh empty session, returning its active id.
+///
+/// This is what the TUI's `/new` does (`create_session` in
+/// `session_ui/sessions_fork.rs`): a new *draft* session alongside the running
+/// one, not a `new_session`, which would swap the engine out from under the
+/// turn that is streaming.
+///
+/// # Errors
+/// Fails on transport errors or a refusal from the daemon.
+pub fn create_session(client: &Client) -> std::io::Result<String> {
+    let response = client.request("create", json!({}), Duration::from_secs(60))?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "create failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    response
+        .pointer("/data/activeSessionId")
+        .or_else(|| response.pointer("/data/id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| std::io::Error::other("create reported no session id"))
+}
+
 pub use std::sync::Arc as Shared;
 
 #[cfg(test)]
@@ -835,6 +861,7 @@ mod wire_tests {
         assert!(parses(json!({"type": "set_model", "activeSessionId": "s",
                               "provider": "openrouter", "modelId": "x"})));
         assert!(parses(json!({"type": "clear_queue", "activeSessionId": "s"})));
+        assert!(parses(json!({"type": "create"})));
     }
 
     #[test]

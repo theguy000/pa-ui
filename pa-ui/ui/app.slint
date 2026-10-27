@@ -856,6 +856,7 @@ export component AppWindow inherits Window {
     callback rename-requested(string, string);
     callback toggle-row(int);
     callback queue-act(string, int, string);
+    callback new-chat();
 
     // true while the reader is parked at the newest row; a new row then pulls
     // the view along, and scrolling up turns it off
@@ -919,10 +920,44 @@ export component AppWindow inherits Window {
                     padding-right: 8px;
                     padding-top: 8px;
                     spacing: 6px;
-                    HorizontalLayout {
-                        height: 18px;
-                        padding-left: 8px;
-                        Text { text: "sessions"; color: #565a4f; font-size: 10px; vertical-alignment: center; }
+                    // the header carries the one action a chat list needs: a
+                    // new one. No border - a fill and a drawn plus are enough
+                    // to read as a button at this size.
+                    Rectangle {
+                        height: 22px;
+                        Text {
+                            x: 8px;
+                            y: (parent.height - self.height) / 2;
+                            text: "sessions";
+                            color: #565a4f;
+                            font-size: 10px;
+                        }
+                        Rectangle {
+                            x: parent.width - self.width;
+                            y: (parent.height - self.height) / 2;
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 5px;
+                            background: new-chat-touch.has-hover ? #23251f : #1a1b16;
+                            Rectangle {
+                                x: 5px;
+                                y: 9px;
+                                width: 10px;
+                                height: 1px;
+                                background: new-chat-touch.has-hover ? #e7e5df : #b0b1a8;
+                            }
+                            Rectangle {
+                                x: 9px;
+                                y: 5px;
+                                width: 1px;
+                                height: 10px;
+                                background: new-chat-touch.has-hover ? #e7e5df : #b0b1a8;
+                            }
+                            new-chat-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.new-chat(); }
+                            }
+                        }
                     }
                     ListView {
                         for item in root.sessions : SessionRow {

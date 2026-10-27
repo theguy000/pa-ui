@@ -3,8 +3,8 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, get_queue, get_tail, list_sessions, model_catalog, mutate_queue, send_prompt, session_stats,
-    set_model, steer_prompt, Client, SessionRow,
+    abort, attach_as, create_session, get_queue, get_tail, list_sessions, model_catalog, mutate_queue,
+    send_prompt, session_stats, set_model, steer_prompt, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -39,6 +39,8 @@ enum Job {
     },
     Stats { session: String },
     SetModel { session: String, provider: String, model: String },
+    /// start a fresh chat beside the running one (the TUI's `/new`)
+    NewChat,
 }
 
 enum Msg {
@@ -60,6 +62,8 @@ enum Msg {
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
     QueueEdit { text: String },
+    /// a `create` came back: the id of the brand new session
+    NewChat(String),
     Stats { session: String, stats: pa_client::SessionStats },
     Activity { label: String },
     Error(String),
@@ -312,6 +316,17 @@ fn main() -> Result<(), slint::PlatformError> {
             *pending_user.borrow_mut() = None;
             ui.set_status_line("steered".into());
             let _ = jobs.send(Job::Steer { session, message });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        ui.on_new_chat(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_line("starting a new chat".into());
+            }
+            let _ = jobs.send(Job::NewChat);
         });
     }
 
@@ -815,6 +830,24 @@ fn main() -> Result<(), slint::PlatformError> {
                         &follow_up,
                     )))));
                 }
+                Msg::NewChat(id) => {
+                    // selection drives everything else: the follow-selection
+                    // block below attaches, and the attach reply replaces the
+                    // rows. Nothing from the old chat may survive the switch -
+                    // a draft is the old chat's, and a queue row belongs to a
+                    // session that is still running its own turn.
+                    ui.set_composer_text("".into());
+                    ui.set_queued_count(0);
+                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
+                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
+                    ui.set_busy(false);
+                    ui.set_title_text("".into());
+                    ui.set_status_line("new chat".into());
+                    ui.set_selected_id(id.clone().into());
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[new] selected {id}");
+                    }
+                }
                 Msg::QueueEdit { text } => {
                     // the row is out of the queue; the text comes back to where
                     // it came from, so the next Enter decides the lane again
@@ -1066,6 +1099,19 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         });
                     }
                 }
+                Job::NewChat => match create_session(active) {
+                    Ok(id) => {
+                        if std::env::var("PA_DEBUG").is_ok() {
+                            eprintln!("[new] created {id}");
+                        }
+                        let _ = out.send(Msg::NewChat(id));
+                    }
+                    Err(error) => {
+                        let _ = out.send(Msg::Activity {
+                            label: format!("new chat: {error}"),
+                        });
+                    }
+                },
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
                         let _ = out.send(Msg::Stats { session, stats });
