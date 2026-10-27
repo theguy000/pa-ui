@@ -634,7 +634,7 @@ component TranscriptRow inherits VerticalLayout {
             VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                padding-top: 14px;
+                padding-top: 10px;
                 padding-bottom: 10px;
                 spacing: 8px;
                 StyledText {
@@ -1365,31 +1365,6 @@ export component AppWindow inherits Window {
     border-color: #23251f;
     border-width: 1px;
     border-radius: 12px;
-
-    // While the status row is out, its bottom has to be straight: this paints
-    // over the box's rounded top corners and its top border, so the only curve
-    // left is the strip's own top - one arc, not a seam with two corners.
-    Rectangle {
-        x: 1px;
-        y: 0;
-        width: parent.width - 2px;
-        height: 12px;
-        visible: root.busy-h > 1px;
-        opacity: root.busy-fade;
-        background: #0f100d;
-    }
-
-    // ...and a straight divider where that border used to be: it meets the box's
-    // side borders squarely instead of curving into them
-    Rectangle {
-        x: 1px;
-        y: 0;
-        width: parent.width - 2px;
-        height: 1px;
-        visible: root.busy-h > 1px;
-        opacity: root.busy-fade;
-        background: #23251f;
-    }
 
     // the handle drawn on the box's top border
     Rectangle {
