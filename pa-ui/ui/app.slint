@@ -814,7 +814,7 @@ export component AppWindow inherits Window {
     in-out property <bool> dragging: false;
     // where the handle actually sits, in window coordinates: the drag surface
     // is the whole window, so the press has to be tested against it
-    out property <length> handle-cy: composer-band.absolute-position.y + 34px;
+    out property <length> handle-cy: composer-band.absolute-position.y + 34px + root.busy-h;
     out property <length> handle-cx: composer-band.absolute-position.x + composer-band.width / 2;
     out property <bool> handle-hover: drag-surface.has-hover
         && abs(drag-surface.mouse-x - root.handle-cx) <= 48px
@@ -1307,19 +1307,25 @@ export component AppWindow inherits Window {
         y: composer-box.y - root.busy-h;
         width: parent.width - 36px;
         height: root.busy-h + 12px;
-        background: #0f100d;
-        // fill only, no border: a Rectangle can round all four corners or none,
-        // so the outline is drawn below as four pieces - round at the top,
-        // straight down the sides, open at the bottom where the box takes over
-        border-radius: 12px;
         opacity: root.busy-fade;
+        // No background on this rectangle at all: its own rounded corner would
+        // draw a second edge a pixel off the stroke. The fill is a child, inset
+        // by exactly the stroke width.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            background: #191a14;
+            border-radius: 12px;
+        }
 
         Rectangle {
             x: 12px;
             y: 0;
             width: parent.width - 24px;
             height: 1px;
-            background: #23251f;
+            background: #2c2f26;
         }
         Rectangle {
             x: 0;
@@ -1335,29 +1341,6 @@ export component AppWindow inherits Window {
             height: parent.height - 12px;
             background: #23251f;
         }
-        // quarter-circle approximations, 12px radius
-        Path {
-            width: 12px;
-            height: 12px;
-            viewbox-width: 12;
-            viewbox-height: 12;
-            commands: "M 0.5 11.5 C 0.5 5.5 5.5 0.5 11.5 0.5";
-            stroke: #23251f;
-            stroke-width: 1px;
-            fill: transparent;
-        }
-        Path {
-            x: parent.width - 12px;
-            width: 12px;
-            height: 12px;
-            viewbox-width: 12;
-            viewbox-height: 12;
-            commands: "M 11.5 11.5 C 11.5 5.5 6.5 0.5 0.5 0.5";
-            stroke: #23251f;
-            stroke-width: 1px;
-            fill: transparent;
-        }
-
         // the visible half of the strip: everything above the box's top edge
         Rectangle {
             x: 0;
