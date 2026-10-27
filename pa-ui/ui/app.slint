@@ -549,6 +549,7 @@ export component AppWindow inherits Window {
     // the band's height at press time: frozen for the gesture so the drag
     // origin (and the clamp on mouse-y) cannot move under the pointer
     in-out property <length> band-freeze: 0px;
+    in-out property <length> last-pointer-y: 0px;
     in-out property <length> drag-start-y: 0px;
     in-out property <length> drag-start-h: 0px;
     in-out property <string> context-text: "";
@@ -1077,10 +1078,7 @@ export component AppWindow inherits Window {
                             if event.kind == PointerEventKind.down {
                                 root.dragging = true;
                                 root.band-freeze = root.composer-total;
-                                root.drag-start-h = root.composer-height;
-                                // distance from the band's bottom edge, which is
-                                // pinned to the window: unaffected by the box growing
-                                root.drag-start-y = drag-zone.height - drag-zone.pressed-y;
+                                root.last-pointer-y = drag-zone.mouse-y;
                             }
                             if event.kind == PointerEventKind.up
                                 || event.kind == PointerEventKind.cancel
@@ -1088,11 +1086,19 @@ export component AppWindow inherits Window {
                                 root.dragging = false;
                             }
                             if event.kind == PointerEventKind.move && root.dragging {
-                                root.composer-height = clamp(
-                                    root.drag-start-h + (root.drag-start-y - drag-zone.mouse-y),
-                                    root.composer-min,
-                                    root.composer-max
-                                );
+                                // incremental deltas: a stale start value (pressed-y
+                                // is only set after the press callback runs) made the
+                                // first delta enormous and snapped the box to its
+                                // limit on the slightest nudge
+                                let step = root.last-pointer-y - drag-zone.mouse-y;
+                                root.last-pointer-y = drag-zone.mouse-y;
+                                if step > -40px && step < 40px {
+                                    root.composer-height = clamp(
+                                        root.composer-height + step,
+                                        root.composer-min,
+                                        root.composer-max
+                                    );
+                                }
                             }
                         }
                     }
