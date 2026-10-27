@@ -40,6 +40,8 @@ enum Msg {
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
     PromptResult { error: Option<String> },
+    /// the daemon refused a prompt: hand the text back to the composer
+    PromptRejected { text: String },
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
     Queue { steering: Vec<String>, follow_up: Vec<String> },
@@ -51,6 +53,18 @@ enum Msg {
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.window().set_size(slint::PhysicalSize::new(1200, 830));
+
+    // design check: seed the queue chip without waiting for a slow turn
+    if let Ok(count) = std::env::var("PA_QUEUE") {
+        if let Ok(count) = count.parse::<i32>() {
+            let items: Vec<slint::SharedString> = (1..=count)
+                .map(|n| slint::SharedString::from(format!("queued message {n}")))
+                .collect();
+            ui.set_queued_count(count);
+            ui.set_queued_preview("queued message 1".into());
+            ui.set_queued_items(ModelRc::from(Rc::new(VecModel::from(items))));
+        }
+    }
 
     let models = vec![
         ModelItem { id: "opus-4.6".into(), label: "Opus 4.6".into(), detail: "anthropic".into() },
@@ -232,6 +246,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
+    // the selected session's uuid: survives the id re-keying a daemon restart causes
+    let mut selected_uuid: Option<String> = None;
     let mut tail_at = SystemTime::now();
     let mut queue_at = SystemTime::now();
     let mut stats_at = SystemTime::now();
@@ -343,8 +359,31 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
 
-                    // live activity chip: what the selected session is doing
+                    // The daemon re-keys session ids across restarts. Follow the
+                    // selection by its uuid so the chat, the busy chip and the
+                    // prompt target keep pointing at the same session.
                     let selected = ui.get_selected_id().to_string();
+                    if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
+                        if let Some(uuid) = selected_uuid.as_deref() {
+                            if let Some(rebound) =
+                                rows.iter().find(|row| row.session_id == uuid).map(|row| row.id.clone())
+                            {
+                                if std::env::var("PA_DEBUG").is_ok() {
+                                    eprintln!("[rebind] {selected} -> {rebound}");
+                                }
+                                ui.set_selected_id(rebound.clone().into());
+                                selected_uuid = Some(uuid.to_string());
+                                loaded = None;
+                                tail_len = 0;
+                                last_seq = 0;
+                                live_row = None;
+                            }
+                        }
+                    }
+                    let selected = ui.get_selected_id().to_string();
+                    if selected_uuid.is_none() {
+                        selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
+                    }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
                         if state != live_state {
@@ -568,6 +607,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         .unwrap_or_default();
                     ui.set_queued_count(total as i32);
                     ui.set_queued_preview(first.into());
+                    // the popup lists what is actually waiting, in order
+                    let items: Vec<slint::SharedString> = steering
+                        .iter()
+                        .chain(follow_up.iter())
+                        .map(|text| {
+                            let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            let cut: String = flat.chars().take(120).collect();
+                            slint::SharedString::from(cut)
+                        })
+                        .collect();
+                    ui.set_queued_items(ModelRc::from(Rc::new(VecModel::from(items))));
                 }
                 Msg::Stats { session, stats } => {
                     if loaded.as_deref() != Some(session.as_str()) {
@@ -606,6 +656,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     last_seq = 0;
                     ui.set_status_line("reconnecting".into());
                 }
+                Msg::PromptRejected { text } => {
+                    // the daemon refused the prompt (usually a stale session id):
+                    // put the text back rather than losing what was typed
+                    if ui.get_composer_text().is_empty() {
+                        ui.set_composer_text(text.as_str().into());
+                    }
+                    pending_user.borrow_mut().take();
+                    ui.set_status_line("prompt not accepted — text restored".into());
+                }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
                         pending_user.borrow_mut().take();
@@ -626,6 +685,9 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
     let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
+    // prompts awaiting a daemon verdict: a fire-and-forget send would otherwise
+    // swallow a rejection and the message would vanish with no trace
+    let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut resume: Option<(String, u64)> = None;
 
     loop {
@@ -711,6 +773,9 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 }
                 Job::Prompt { session, message } => {
                     let outcome = send_prompt(active, &session, &message);
+                    if let Ok(id) = &outcome {
+                        pending_prompts.push((id.clone(), message.clone()));
+                    }
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!("[prompt] session={session} message={message:?} outcome={outcome:?}");
                     }
@@ -748,6 +813,21 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let text = frame.to_string();
                         eprintln!("[dump] {}", &text[..text.len().min(700)]);
                     }
+                }
+                if frame_type == "response" {
+                    let id = frame.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+                    if let Some(position) = pending_prompts.iter().position(|(open, _)| open == id) {
+                        let (_, text) = pending_prompts.remove(position);
+                        if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                            let reason = frame
+                                .get("error")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("rejected by the daemon");
+                            let _ = out.send(Msg::PromptRejected { text });
+                            let _ = out.send(Msg::Error(reason.to_string()));
+                        }
+                    }
+                    continue;
                 }
                 if frame_type != "session_event" {
                     continue;
@@ -870,6 +950,7 @@ fn to_item(row: &SessionRow) -> SessionItem {
     };
     SessionItem {
         id: row.id.clone().into(),
+        uuid: row.session_id.clone().into(),
         name: trim_to(&full, 90).into(),
         age: age_of(if row.last_activity.is_empty() {
             &row.modified
@@ -882,6 +963,14 @@ fn to_item(row: &SessionRow) -> SessionItem {
         status: status.into(),
         scroll: marquee_shift(&trim_to(&display_name(row), 90)),
     }
+}
+
+/// The session the selection follows: ids are re-keyed by a daemon restart,
+/// the session's uuid is not.
+fn uuid_of<'a>(rows: &'a [SessionRow], id: &str) -> Option<&'a str> {
+    rows.iter()
+        .find(|row| row.id == id)
+        .map(|row| row.session_id.as_str())
 }
 
 fn marquee_shift(name: &str) -> f32 {

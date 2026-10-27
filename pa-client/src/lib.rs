@@ -234,6 +234,8 @@ fn read_frame(file: &mut std::fs::File, buffer: &mut Vec<u8>, timeout: Duration)
 #[derive(Debug, Clone, Default)]
 pub struct SessionRow {
     pub id: String,
+    /// Stable across daemon restarts, unlike `id` (which is re-keyed).
+    pub session_id: String,
     pub name: String,
     pub cwd: String,
     pub activity: String,
@@ -306,6 +308,7 @@ impl SessionRow {
         };
         Self {
             id: text("activeSessionId"),
+            session_id: text("sessionId"),
             name,
             cwd: text("cwd"),
             activity: text("activity"),
