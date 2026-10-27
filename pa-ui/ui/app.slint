@@ -1185,15 +1185,23 @@ composer-box := Rectangle {
         padding-top: 10px;
         padding-bottom: 8px;
         spacing: 10px;
+        // a fixed-height window over a text input that is allowed to grow:
+        // pinning its bottom edge keeps the caret (newest line) in view, which
+        // a fixed-height TextInput does not do on its own
+        draft-window := Rectangle {
+            background: transparent;
+            clip: true;
+            height: root.composer-height;
+
         composer-input := TextInput {
             text <=> root.composer-text;
             color: #e7e5df;
             font-size: 13px;
             single-line: false;
             wrap: word-wrap;
-            // fixed height, scrolling inside: binding it to
-            // preferred-height let the box outgrow its slot
-            height: root.composer-height;
+            width: parent.width;
+            height: max(self.preferred-height, parent.height);
+            y: parent.height - self.height;
             edited => { root.composer-text = self.text; }
             // Enter sends; Shift+Enter is the newline, the
             // same binding the TUI uses
@@ -1229,6 +1237,7 @@ composer-box := Rectangle {
             }
             // the window opens ready to type
             init => { self.focus(); }
+        }
         }
         HorizontalLayout {
             spacing: 8px;
