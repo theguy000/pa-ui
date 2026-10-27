@@ -1268,14 +1268,15 @@ export component AppWindow inherits Window {
                     height: root.dragging ? root.band-freeze : root.composer-total;
                     background: transparent;
 
-                    // drag surface first so the box and its buttons stay on top.
-                    // Its top-left is pinned to the band, so pointer travel is
-                    // measured from a fixed origin while the box grows upward.
+                    // Only the handle drags. A full-band surface swallowed the
+                    // pointer anywhere above the box, including the little strip
+                    // between the input and the model menu, so a click meant for
+                    // the menu could resize the composer instead.
                     drag-zone := TouchArea {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
+                        x: (parent.width - self.width) / 2;
+                        y: composer-box.y - 9px;
+                        width: 96px;
+                        height: 18px;
                         mouse-cursor: pointer;
                         pointer-event(event) => {
                             if event.kind == PointerEventKind.down {
