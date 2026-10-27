@@ -692,7 +692,7 @@ component Chip inherits Rectangle {
         }
     }
     ct := TouchArea {
-        mouse-cursor: ct.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        mouse-cursor: MouseCursor.pointer;
         clicked => { root.toggled(); }
     }
 }
