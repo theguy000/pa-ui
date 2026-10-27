@@ -634,7 +634,7 @@ component TranscriptRow inherits VerticalLayout {
             VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                padding-top: 10px;
+                padding-top: 14px;
                 padding-bottom: 10px;
                 spacing: 8px;
                 StyledText {
@@ -805,7 +805,7 @@ export component AppWindow inherits Window {
     in-out property <bool> dragging: false;
     // where the handle actually sits, in window coordinates: the drag surface
     // is the whole window, so the press has to be tested against it
-    out property <length> handle-cy: composer-band.absolute-position.y + 34px - root.busy-h;
+    out property <length> handle-cy: composer-band.absolute-position.y + 34px;
     out property <length> handle-cx: composer-band.absolute-position.x + composer-band.width / 2;
     out property <bool> handle-hover: drag-surface.has-hover
         && abs(drag-surface.mouse-x - root.handle-cx) <= 48px
@@ -1030,7 +1030,7 @@ export component AppWindow inherits Window {
                     // handle, drawn on the box's top border
                     Rectangle {
                         x: (parent.width - self.width) / 2;
-                        y: composer-box.y - root.busy-h - 1.5px;
+                        y: composer-box.y - 1.5px;
                         width: 36px;
                         height: 3px;
                         border-radius: 1.5px;
@@ -1356,6 +1356,19 @@ export component AppWindow inherits Window {
     border-color: #23251f;
     border-width: 1px;
     border-radius: 12px;
+
+    // While the status row is out, its bottom has to be straight: this paints
+    // over the box's rounded top corners and its top border, so the only curve
+    // left is the strip's own top - one arc, not a seam with two corners.
+    Rectangle {
+        x: 1px;
+        y: 0;
+        width: parent.width - 2px;
+        height: 12px;
+        visible: root.busy-h > 1px;
+        opacity: root.busy-fade;
+        background: #0f100d;
+    }
 
     // the handle drawn on the box's top border
     Rectangle {

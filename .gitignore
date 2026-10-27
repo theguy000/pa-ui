@@ -4,3 +4,5 @@
 previews/shot.png
 
 dbg*.log
+
+/target-alt/
