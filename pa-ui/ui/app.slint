@@ -784,14 +784,28 @@ export component AppWindow inherits Window {
     // The band reserves 34px above the box for the chip, and - while a turn is
     // running - the busy row plus another 34px above it, so the gap that keeps
     // the transcript off the input sits above the status line instead of below.
-    out property <length> composer-total: root.box-height + 46px
-        + (root.busy ? 26px : 0px);
+    // The status strip grows open and shuts fast. Everything that has to move
+    // with it reads this one length: the strip's height, the box's height, the
+    // padding above the input, and the band the transcript stops at.
+    in-out property <length> busy-h: root.busy ? 26px : 0px;
+    animate busy-h {
+        duration: root.busy ? 190ms : 110ms;
+        easing: root.busy ? ease-out : ease-in;
+    }
+    // the contents come in a beat after the gap opens, and go before it shuts
+    in-out property <float> busy-fade: root.busy ? 1.0 : 0.0;
+    animate busy-fade {
+        duration: root.busy ? 150ms : 90ms;
+        delay: root.busy ? 60ms : 0ms;
+        easing: ease-out;
+    }
+    out property <length> composer-total: root.box-height + 46px + root.busy-h;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
     // where the handle actually sits, in window coordinates: the drag surface
     // is the whole window, so the press has to be tested against it
-    out property <length> handle-cy: composer-band.absolute-position.y + 34px;
+    out property <length> handle-cy: composer-band.absolute-position.y + 34px - root.busy-h;
     out property <length> handle-cx: composer-band.absolute-position.x + composer-band.width / 2;
     out property <bool> handle-hover: drag-surface.has-hover
         && abs(drag-surface.mouse-x - root.handle-cx) <= 48px
@@ -1016,7 +1030,7 @@ export component AppWindow inherits Window {
                     // handle, drawn on the box's top border
                     Rectangle {
                         x: (parent.width - self.width) / 2;
-                        y: composer-box.y - 1.5px;
+                        y: composer-box.y - root.busy-h - 1.5px;
                         width: 36px;
                         height: 3px;
                         border-radius: 1.5px;
@@ -1276,331 +1290,334 @@ export component AppWindow inherits Window {
                         // the list itself, anchored above the chip
                     }
 
+    // The status row is its own rounded top, tucked 12px behind the box: while
+    // a turn runs you see two rounded tops (a small one above the input's), and
+    // the corner of the strip is the one that grows.
+    busy-row := Rectangle {
+        x: 18px;
+        y: composer-box.y - root.busy-h;
+        width: parent.width - 36px;
+        height: root.busy-h + 12px;
+        background: #0f100d;
+        border-color: #23251f;
+        border-width: 1px;
+        border-radius: 12px;
+        opacity: root.busy-fade;
+
+        // the visible half of the strip: everything above the box's top edge
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: root.busy-h;
+
+                            spin := Text {
+                                x: 14px;
+                                visible: root.busy-h > 1px;
+                                text: root.spinner-frame;
+                                color: #c9a86a;
+                                font-family: "Cascadia Code";
+                                font-size: 19px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                            }
+
+                            lbl := Text {
+                                x: spin.x + spin.width + 4px;
+                                visible: root.busy-h > 1px;
+                                text: root.busy-label;
+                                color: #c9a86a;
+                                font-family: "Cascadia Code";
+                                font-size: 11px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                x: lbl.x + lbl.width + 8px;
+                                visible: root.busy-h > 1px;
+                                text: root.busy-elapsed;
+                                color: #565a4f;
+                                font-family: "Cascadia Code";
+                                font-size: 11px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                            }
+
+                            // how much of the context window the turn is using
+                            ctx := Rectangle {
+                                visible: root.busy-h > 1px;
+                                x: parent.width - self.width - 22px;
+                                y: (parent.height - self.height) / 2;
+                                width: 20px;
+                                height: 20px;
+
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 10.00 4.00 L 10.00 1.30";
+                                        stroke: 0.0000 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 11.55 4.20 L 12.25 1.60";
+                                        stroke: 0.0417 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 13.00 4.80 L 14.35 2.47";
+                                        stroke: 0.0833 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 14.24 5.76 L 16.15 3.85";
+                                        stroke: 0.1250 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 15.20 7.00 L 17.53 5.65";
+                                        stroke: 0.1667 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 15.80 8.45 L 18.40 7.75";
+                                        stroke: 0.2083 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 16.00 10.00 L 18.70 10.00";
+                                        stroke: 0.2500 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 15.80 11.55 L 18.40 12.25";
+                                        stroke: 0.2917 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 15.20 13.00 L 17.53 14.35";
+                                        stroke: 0.3333 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 14.24 14.24 L 16.15 16.15";
+                                        stroke: 0.3750 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 13.00 15.20 L 14.35 17.53";
+                                        stroke: 0.4167 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 11.55 15.80 L 12.25 18.40";
+                                        stroke: 0.4583 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 10.00 16.00 L 10.00 18.70";
+                                        stroke: 0.5000 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 8.45 15.80 L 7.75 18.40";
+                                        stroke: 0.5417 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 7.00 15.20 L 5.65 17.53";
+                                        stroke: 0.5833 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 5.76 14.24 L 3.85 16.15";
+                                        stroke: 0.6250 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 4.80 13.00 L 2.47 14.35";
+                                        stroke: 0.6667 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 4.20 11.55 L 1.60 12.25";
+                                        stroke: 0.7083 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 4.00 10.00 L 1.30 10.00";
+                                        stroke: 0.7500 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 4.20 8.45 L 1.60 7.75";
+                                        stroke: 0.7917 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 4.80 7.00 L 2.47 5.65";
+                                        stroke: 0.8333 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 5.76 5.76 L 3.85 3.85";
+                                        stroke: 0.8750 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 7.00 4.80 L 5.65 2.47";
+                                        stroke: 0.9167 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                                    Path {
+                                        width: 20px;
+                                        height: 20px;
+                                        viewbox-width: 20;
+                                        viewbox-height: 20;
+                                        commands: "M 8.45 4.20 L 7.75 1.60";
+                                        stroke: 0.9583 <= root.context-fill ? #c9a86a : #2c2e26;
+                                        stroke-width: 1.5px;
+                                    }
+                            }
+                            // the whole status row is the hover target: a 20px ring is
+                            // too small a hit area to aim at
+                            ctx-touch := TouchArea {
+                                x: parent.width - 46px;
+                                y: 0;
+                                width: 46px;
+                                height: 100%;
+                                changed has-hover => { root.ctx-hover = self.has-hover; }
+                            }
+
+                            // the numbers behind the ring
+                            if root.ctx-hover : Rectangle {
+                                x: parent.width - self.width - 22px;
+                                y: -self.height - 8px;
+                                width: self.preferred-width;
+                                min-width: 170px;
+                                height: self.preferred-height;
+                                background: #171814;
+                                border-color: #2a2c24;
+                                border-width: 1px;
+                                border-radius: 8px;
+                                VerticalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    padding-top: 9px;
+                                    padding-bottom: 9px;
+                                    spacing: 4px;
+                                    Text { text: "context"; color: #565a4f; font-size: 10px; }
+                                    Text { text: root.context-text; color: #e0dcc8; font-size: 12px; }
+                                    Text {
+                                        text: root.stats-text;
+                                        color: #8b8c85;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+        }
+    }
+
                     composer-box := Rectangle {
                     x: 18px;
                     y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
-                    height: root.box-height + (root.busy ? 26px : 0px);
+                    height: root.box-height;
     background: #0f100d;
     border-color: #23251f;
     border-width: 1px;
     border-radius: 12px;
-
-    // the status strip lives inside the box: one border, one rounded top, so
-    // the row reads as part of the input rather than a separate bar
-    busy-row := Rectangle {
-        x: 0;
-        y: 0;
-        width: 100%;
-        height: root.busy ? 26px : 0px;
-
-                        spin := Text {
-                            x: 14px;
-                            visible: root.busy;
-                            text: root.spinner-frame;
-                            color: #c9a86a;
-                            font-family: "Cascadia Code";
-                            font-size: 19px;
-                            height: parent.height;
-                            vertical-alignment: center;
-                        }
-
-                        lbl := Text {
-                            x: spin.x + spin.width + 4px;
-                            visible: root.busy;
-                            text: root.busy-label;
-                            color: #c9a86a;
-                            font-family: "Cascadia Code";
-                            font-size: 11px;
-                            height: parent.height;
-                            vertical-alignment: center;
-                        }
-
-                        Text {
-                            x: lbl.x + lbl.width + 8px;
-                            visible: root.busy;
-                            text: root.busy-elapsed;
-                            color: #565a4f;
-                            font-family: "Cascadia Code";
-                            font-size: 11px;
-                            height: parent.height;
-                            vertical-alignment: center;
-                        }
-
-                        // how much of the context window the turn is using
-                        ctx := Rectangle {
-                            visible: root.busy;
-                            x: parent.width - self.width - 22px;
-                            y: (parent.height - self.height) / 2;
-                            width: 20px;
-                            height: 20px;
-
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 10.00 4.00 L 10.00 1.30";
-                                    stroke: 0.0000 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 11.55 4.20 L 12.25 1.60";
-                                    stroke: 0.0417 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 13.00 4.80 L 14.35 2.47";
-                                    stroke: 0.0833 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 14.24 5.76 L 16.15 3.85";
-                                    stroke: 0.1250 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 15.20 7.00 L 17.53 5.65";
-                                    stroke: 0.1667 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 15.80 8.45 L 18.40 7.75";
-                                    stroke: 0.2083 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 16.00 10.00 L 18.70 10.00";
-                                    stroke: 0.2500 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 15.80 11.55 L 18.40 12.25";
-                                    stroke: 0.2917 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 15.20 13.00 L 17.53 14.35";
-                                    stroke: 0.3333 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 14.24 14.24 L 16.15 16.15";
-                                    stroke: 0.3750 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 13.00 15.20 L 14.35 17.53";
-                                    stroke: 0.4167 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 11.55 15.80 L 12.25 18.40";
-                                    stroke: 0.4583 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 10.00 16.00 L 10.00 18.70";
-                                    stroke: 0.5000 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 8.45 15.80 L 7.75 18.40";
-                                    stroke: 0.5417 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 7.00 15.20 L 5.65 17.53";
-                                    stroke: 0.5833 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 5.76 14.24 L 3.85 16.15";
-                                    stroke: 0.6250 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 4.80 13.00 L 2.47 14.35";
-                                    stroke: 0.6667 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 4.20 11.55 L 1.60 12.25";
-                                    stroke: 0.7083 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 4.00 10.00 L 1.30 10.00";
-                                    stroke: 0.7500 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 4.20 8.45 L 1.60 7.75";
-                                    stroke: 0.7917 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 4.80 7.00 L 2.47 5.65";
-                                    stroke: 0.8333 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 5.76 5.76 L 3.85 3.85";
-                                    stroke: 0.8750 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 7.00 4.80 L 5.65 2.47";
-                                    stroke: 0.9167 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                                Path {
-                                    width: 20px;
-                                    height: 20px;
-                                    viewbox-width: 20;
-                                    viewbox-height: 20;
-                                    commands: "M 8.45 4.20 L 7.75 1.60";
-                                    stroke: 0.9583 <= root.context-fill ? #c9a86a : #2c2e26;
-                                    stroke-width: 1.5px;
-                                }
-                        }
-                        // the whole status row is the hover target: a 20px ring is
-                        // too small a hit area to aim at
-                        ctx-touch := TouchArea {
-                            x: parent.width - 46px;
-                            y: 0;
-                            width: 46px;
-                            height: 100%;
-                            changed has-hover => { root.ctx-hover = self.has-hover; }
-                        }
-
-                        // the numbers behind the ring
-                        if root.ctx-hover : Rectangle {
-                            x: parent.width - self.width - 22px;
-                            y: -self.height - 8px;
-                            width: self.preferred-width;
-                            min-width: 170px;
-                            height: self.preferred-height;
-                            background: #171814;
-                            border-color: #2a2c24;
-                            border-width: 1px;
-                            border-radius: 8px;
-                            VerticalLayout {
-                                padding-left: 12px;
-                                padding-right: 12px;
-                                padding-top: 9px;
-                                padding-bottom: 9px;
-                                spacing: 4px;
-                                Text { text: "context"; color: #565a4f; font-size: 10px; }
-                                Text { text: root.context-text; color: #e0dcc8; font-size: 12px; }
-                                Text {
-                                    text: root.stats-text;
-                                    color: #8b8c85;
-                                    font-size: 10px;
-                                    wrap: word-wrap;
-                                }
-                            }
-                        }
-                    
-        // hairline: the strip is part of the box, but it is still a different
-        // thing from what you type
-        Rectangle {
-            x: 1px;
-            y: parent.height - 1px;
-            width: parent.width - 2px;
-            height: 1px;
-            visible: root.busy;
-            background: #1a1c17;
-        }
-    }
 
     // the handle drawn on the box's top border
     Rectangle {
@@ -1616,7 +1633,7 @@ export component AppWindow inherits Window {
     VerticalLayout {
         padding-left: 12px;
         padding-right: 12px;
-        padding-top: root.busy ? 34px : 10px;
+        padding-top: 10px;
         padding-bottom: 8px;
         spacing: 10px;
         // a fixed-height window over a text input that is allowed to grow:
