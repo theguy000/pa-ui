@@ -1306,20 +1306,11 @@ export component AppWindow inherits Window {
         x: 18px;
         y: composer-box.y - root.busy-h;
         width: parent.width - 36px;
-        height: root.busy-h + 12px;
+        height: root.busy-h;
         opacity: root.busy-fade;
-        clip: true;
         // No background on this rectangle at all: its own rounded corner would
         // draw a second edge a pixel off the stroke. The fill is a child, inset
         // by exactly the stroke width.
-        Rectangle {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            background: #191a14;
-            border-radius: 12px;
-        }
 
         // The outline: a border-coloured rounded rect with a fill-coloured one
         // inset by a pixel, both clipped at the strip's *visible* height. The
@@ -1330,7 +1321,7 @@ export component AppWindow inherits Window {
             x: 0;
             y: 0;
             width: 100%;
-            height: root.busy-h;
+            height: 100%;
             clip: true;
 
             Rectangle {
