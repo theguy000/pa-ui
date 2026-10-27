@@ -566,15 +566,21 @@ export component AppWindow inherits Window {
     in-out property <bool> follow-bottom: true;
     // derived from the scroll offset, so it tracks wheel scrolling without
     // relying on change notifications from the ListView
-    out property <bool> at-bottom: transcript-list.content-y
-        >= transcript-list.content-height - transcript-list.height - 80px;
+    out property <length> dbg-cy: transcript-list.content-y;
+    out property <length> dbg-ch: transcript-list.content-height;
+    out property <length> dbg-h: transcript-list.height;
+    out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 80px;
+
+    // how far the transcript can travel; content-y is the *offset* of the
+    // content, negative once you scroll down, so this is what it bottoms out at
+    out property <length> scroll-range: max(
+        0px,
+        transcript-list.content-height - transcript-list.height
+    );
 
     public function scroll-to-end() {
         root.follow-bottom = true;
-        transcript-list.content-y = max(
-            0px,
-            transcript-list.content-height - transcript-list.height
-        );
+        transcript-list.content-y = -root.scroll-range;
     }
 
     VerticalLayout {
@@ -657,9 +663,13 @@ export component AppWindow inherits Window {
                     }
 
                     transcript-list := ScrollView {
-                        // rows are already windowed to the newest few hundred, so a
-                        // plain repeater is cheaper than a virtual list and — unlike
-                        // ListView — its offset can be driven from code
+                        // explicit geometry: without it the view sizes itself to its
+                        // content, its viewport height equals the content height, and
+                        // there is no scroll range at all
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
                         VerticalLayout {
                             for item[i] in root.transcript : TranscriptRow {
                                 data: item;
@@ -1048,32 +1058,62 @@ export component AppWindow inherits Window {
                         padding-bottom: 10px;
                         spacing: 6px;
 
-                        // what is stacked behind the running turn
-                        if root.queued-count > 0 : HorizontalLayout {
-                            padding-left: 4px;
-                            spacing: 6px;
-                            Text {
-                                text: "\u{21b3}";
-                                color: #6f7364;
-                                font-size: 11px;
-                                vertical-alignment: center;
+                        // strip above the box: queued messages on the left, the
+                        // scroll-to-newest control on the right. Fixed height, so
+                        // toggling either never reflows the composer.
+                        Rectangle {
+                            height: 24px;
+                            background: transparent;
+
+                            if root.queued-count > 0 : HorizontalLayout {
+                                x: 4px;
+                                y: 0;
+                                width: parent.width - 44px;
+                                height: parent.height;
+                                spacing: 6px;
+                                Text {
+                                    text: "\u{21b3}";
+                                    color: #6f7364;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.queued-count + " queued";
+                                    color: #8b8c85;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.queued-preview;
+                                    color: #565a4f;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
                             }
-                            Text {
-                                text: root.queued-count + " queued";
-                                color: #8b8c85;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                text: root.queued-preview;
-                                color: #565a4f;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
+
+                            if !root.at-bottom : Rectangle {
+                                x: parent.width - self.width;
+                                y: 0;
+                                width: 24px;
+                                height: 24px;
+                                border-radius: 12px;
+                                background: jump-touch.has-hover ? #2a2c24 : #1d1f19;
+                                border-color: #34372e;
+                                border-width: 1px;
+                                IconDown {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                jump-touch := TouchArea {
+                                    clicked => { root.scroll-to-end(); }
+                                }
                             }
                         }
 
+                        // fixed width: the padding is computed so the box stays
+                        // 760px wide (and centred) however long the draft gets
                         Rectangle {
                             background: #0f100d;
                             border-color: #23251f;
@@ -1090,7 +1130,9 @@ export component AppWindow inherits Window {
                                     color: #e7e5df;
                                     font-size: 13px;
                                     single-line: false;
-                                    height: 22px;
+                                    wrap: word-wrap;
+                                    // grows with the draft, then scrolls inside
+                                    height: clamp(self.preferred-height, 22px, 108px);
                                     edited => { root.composer-text = self.text; }
                                     // Enter sends; Shift+Enter is the newline, the
                                     // same binding the TUI uses
@@ -1118,6 +1160,10 @@ export component AppWindow inherits Window {
                                             root.abort-requested();
                                             return EventResult.accept;
                                         }
+                                        if event.text == Key.End && event.modifiers.control {
+                                            root.scroll-to-end();
+                                            return EventResult.accept;
+                                        }
                                         return EventResult.reject;
                                     }
                                     // the window opens ready to type
@@ -1126,42 +1172,6 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     Rectangle { horizontal-stretch: 1; background: transparent; }
-                                    // scrolled up: one click back to the tail.
-                                    // The slot is always laid out, so toggling it cannot
-                                    // change the composer height (that was a binding loop)
-                                    Rectangle {
-                                        width: 84px;
-                                        height: 24px;
-                                        background: transparent;
-                                        if !root.at-bottom : Rectangle {
-                                            x: 0;
-                                            y: 0;
-                                            width: 84px;
-                                            height: 24px;
-                                            border-radius: 6px;
-                                            background: jump-touch.has-hover ? #26281f : #1b1d18;
-                                            border-color: #2f3129;
-                                            border-width: 1px;
-                                            HorizontalLayout {
-                                                alignment: center;
-                                                spacing: 5px;
-                                                Rectangle {
-                                                    width: 10px;
-                                                    height: 24px;
-                                                    IconDown { y: (parent.height - self.height) / 2; }
-                                                }
-                                                Text {
-                                                    text: "latest";
-                                                    color: #b6b2a4;
-                                                    font-size: 10px;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                            jump-touch := TouchArea {
-                                                clicked => { root.scroll-to-end(); }
-                                            }
-                                        }
-                                    }
                                     Chip {
                                         label: root.model-label;
                                         open: root.model-menu;

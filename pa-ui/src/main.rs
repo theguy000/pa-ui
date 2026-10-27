@@ -263,6 +263,19 @@ fn main() -> Result<(), slint::PlatformError> {
     poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
         let Some(ui) = weak.upgrade() else { return };
 
+        if std::env::var("PA_DEBUG").is_ok() {
+            ui.set_status_line(
+                format!(
+                    "cy={} ch={} h={} at-bottom={}",
+                    ui.get_dbg_cy(),
+                    ui.get_dbg_ch(),
+                    ui.get_dbg_h(),
+                    ui.get_at_bottom()
+                )
+                .into(),
+            );
+        }
+
         // right-panel telemetry
         if !loaded.as_deref().unwrap_or("").is_empty()
             && stats_at.elapsed().unwrap_or_default()
