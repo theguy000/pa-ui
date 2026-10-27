@@ -24,7 +24,7 @@ const SPINNER_FRAMES: [&str; 10] = [
 enum Job {
     Rename { session: String, name: String },
     Attach { session: String },
-    Tail { session: String },
+    Tail { session: String, fresh: bool },
     Prompt { session: String, message: String },
     Steer { session: String, message: String },
     Abort { session: String },
@@ -335,7 +335,7 @@ fn main() -> Result<(), slint::PlatformError> {
         {
             tail_at = SystemTime::now();
             if let Some(session) = loaded.clone() {
-                let _ = jobs.send(Job::Tail { session });
+                let _ = jobs.send(Job::Tail { session, fresh: false });
             }
         }
 
@@ -409,7 +409,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             // the run just ended — grab whatever landed after the
                             // last refresh so the final tool calls are not lost
                             if let Some(session) = loaded.clone() {
-                                let _ = jobs.send(Job::Tail { session });
+                                let _ = jobs.send(Job::Tail { session, fresh: false });
                             }
                         }
                         if busy_now && !ui.get_busy() {
@@ -565,6 +565,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if last_seq != 0 && sequence > last_seq + 1 {
                             let _ = jobs.send(Job::Tail {
                                 session: session.clone(),
+                                fresh: false,
                             });
                         }
                         last_seq = sequence.max(last_seq);
@@ -580,6 +581,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
+                            fresh: true,
                         });
                         continue;
                     }
@@ -727,12 +729,13 @@ fn main() -> Result<(), slint::PlatformError> {
 
 fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
+
     // Reads go over a connection that never attaches: once a connection is
     // attached to a session the daemon serves its store view, which lags the
     // live agent by whole turns. A bare connection always answers with the
     // current messages (verified: attached 106 frozen while a fresh one read
     // 108 and kept moving).
-    let mut reader: Option<Client> = None;
+
     let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
     // prompts awaiting a daemon verdict: a fire-and-forget send would otherwise
@@ -745,7 +748,6 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
             match Client::connect() {
                 Ok(connected) => {
                     client = Some(connected);
-                    reader = None;
                     // a new connection has no attachments: the UI re-attaches
                     // with the resume cursor so the daemon replays the gap
                     attached = None;
@@ -833,15 +835,29 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     let error = outcome.err().map(|e| e.to_string());
                     let _ = out.send(Msg::PromptResult { error });
                 }
-                Job::Tail { session } => {
-                    if reader.as_ref().map_or(true, |open| !open.alive()) {
-                        reader = Client::connect().ok();
-                    }
-                    let Some(rd) = reader.as_ref() else {
-                        let _ = out.send(Msg::Error("tail: no reader connection".into()));
-                        continue;
-                    };
-                    match get_messages_within(rd, &session, Duration::from_millis(2500)) {
+                Job::Tail { session, fresh } => {
+                    // Event frames are droppable: the daemon publishes them with
+                    // try_send into a bounded per-connection queue, so a client
+                    // that falls behind simply loses message_update/message_end -
+                    // silently, with no notice. That is why a turn can stop
+                    // half-written. The store is the authority.
+                    //
+                    // Which store view you get depends on the connection: a
+                    // long-lived one keeps answering from the snapshot it fell
+                    // out of step with (measured: store at 18 while it returned
+                    // 17 for 30s), while a freshly opened connection always
+                    // answers with current messages. So a forced sync opens a new
+                    // connection and drops it; ordinary polls reuse one.
+                    // Every read opens its own connection: a connection that has
+                    // been used once keeps answering with the snapshot it saw at
+                    // connect time (measured 102 -> 102 across nine seconds
+                    // while fresh connections advanced 96 -> 108). The cost is a
+                    // local pipe open per poll; the alternative is a window that
+                    // stops one turn short.
+                    let _ = fresh;
+                    let read = Client::connect()
+                        .and_then(|open| get_messages_within(&open, &session, Duration::from_millis(2500)));
+                    match read {
                     Ok(messages) => {
                         let _ = out.send(Msg::Tail { session, messages });
                     }
@@ -849,7 +865,6 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         if std::env::var("PA_DEBUG").is_ok() {
                             eprintln!("[tail] {session} FAILED: {error}");
                         }
-                        reader = None;
                     }
                     }
                 }
