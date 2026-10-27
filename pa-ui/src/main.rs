@@ -3,7 +3,7 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, get_messages, get_queue, list_sessions, send_prompt, session_stats,
+    abort, attach_as, get_messages_within, get_queue, list_sessions, send_prompt, session_stats,
     set_model, steer_prompt, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -249,6 +249,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
+    // when the stream last moved: a live row that has gone quiet is not proof
+    // the turn is still writing, only that we stopped hearing about it
+    let mut stream_at = SystemTime::now();
     // the selected session's uuid: survives the id re-keying a daemon restart causes
     let mut selected_uuid: Option<String> = None;
     let mut tail_at = SystemTime::now();
@@ -520,9 +523,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     // A row is being streamed: the event path owns the view,
                     // and rebuilding now would drop the in-progress row. The
                     // next poll after the turn ends reconciles from the store.
-                    if live_row.is_some() {
+                    if live_row.is_some()
+                        && stream_at.elapsed().unwrap_or_default() < Duration::from_millis(2000)
+                    {
                         continue;
                     }
+                    // a quiet live row is replaced by the store's copy
+                    live_row = None;
                     tail_len = messages.len();
                     tail_sig = Some((messages.len(), newest));
                     let (built, skipped) = transcript::build(&messages, window_rows);
@@ -564,6 +571,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
 
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
+                    // A closed turn is reconciled from the store: the live row
+                    // holds whatever text last arrived, and one dropped
+                    // message_end would otherwise strand the view on a
+                    // half-written row for good.
+                    if matches!(kind, Some("turn_end" | "agent_end")) {
+                        live_row = None;
+                        stream_at = SystemTime::now() - Duration::from_secs(60);
+                        let _ = jobs.send(Job::Tail {
+                            session: session.clone(),
+                        });
+                        continue;
+                    }
                     let Some(message) = event.get("message") else {
                         continue;
                     };
@@ -610,6 +629,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             scroll_to_end_when_ready(&ui.as_weak());
                         }
                     }
+                    stream_at = SystemTime::now();
                     if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
                         eprintln!(
                             "[stream] {key} patch row {} ({} chars)",
@@ -821,13 +841,15 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let _ = out.send(Msg::Error("tail: no reader connection".into()));
                         continue;
                     };
-                    match get_messages(rd, &session) {
+                    match get_messages_within(rd, &session, Duration::from_millis(2500)) {
                     Ok(messages) => {
                         let _ = out.send(Msg::Tail { session, messages });
                     }
                     Err(error) => {
+                        if std::env::var("PA_DEBUG").is_ok() {
+                            eprintln!("[tail] {session} FAILED: {error}");
+                        }
                         reader = None;
-                        let _ = out.send(Msg::Error(error.to_string()));
                     }
                     }
                 }

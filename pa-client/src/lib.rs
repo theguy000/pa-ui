@@ -409,10 +409,27 @@ pub fn attach_as(
 /// # Errors
 /// Fails on transport errors or a non-success response.
 pub fn get_messages(client: &Client, session: &str) -> std::io::Result<Vec<Value>> {
+    get_messages_within(client, session, Duration::from_secs(20))
+}
+
+/// `get_messages`, with an explicit response deadline.
+///
+/// The poll loop is a single thread: a tail that blocks for the default 20 s
+/// also blocks the session list, the activity frames and the queue, and the UI
+/// looks hung. Tails use a short deadline so a lost response costs a heartbeat,
+/// not the whole client.
+///
+/// # Errors
+/// Fails when the response does not arrive in time.
+pub fn get_messages_within(
+    client: &Client,
+    session: &str,
+    timeout: Duration,
+) -> std::io::Result<Vec<Value>> {
     let response = client.request(
         "get_messages",
         json!({"activeSessionId": session}),
-        Duration::from_secs(20),
+        timeout,
     )?;
     if response.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(std::io::Error::other(format!(
