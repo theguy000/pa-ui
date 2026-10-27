@@ -50,6 +50,7 @@ enum Msg {
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    ui.window().set_size(slint::PhysicalSize::new(1200, 830));
 
     let models = vec![
         ModelItem { id: "opus-4.6".into(), label: "Opus 4.6".into(), detail: "anthropic".into() },

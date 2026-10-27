@@ -517,8 +517,12 @@ component Chip inherits Rectangle {
 
 export component AppWindow inherits Window {
     title: "prime-agent";
-    width: 1180px;
-    height: 800px;
+    // no fixed width/height: a fixed size leaves the new area blank when the
+    // user resizes the window, because the root keeps its declared size
+    min-width: 900px;
+    min-height: 560px;
+    preferred-width: 1180px;
+    preferred-height: 820px;
     background: #12130f;
     default-font-family: "Segoe UI";
 
@@ -541,8 +545,9 @@ export component AppWindow inherits Window {
     // 13px text is ~17px per line: 4 lines by default, 10 at most
     out property <length> composer-min: 68px;
     out property <length> composer-max: 170px;
-    // 12px of breathing room under the box
-    out property <length> composer-total: root.box-height + 46px;
+    // the band is exactly the box plus the 12px pad under it; the queue line
+    // and the jump control live elsewhere, so nothing else needs reserving
+    out property <length> composer-total: root.box-height + 12px;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
