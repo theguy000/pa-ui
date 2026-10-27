@@ -1,0 +1,65 @@
+// A draft editor: a scroll view over a text input that grows to its content.
+// Slint's own TextEdit is this same composition, but its colours are baked into
+// the fluent style, so it is reproduced here with the app's palette instead.
+import { ScrollView } from "std-widgets.slint";
+
+export component DraftEditor inherits Rectangle {
+    in property <length> font-size: 13px;
+    in property <brush> foreground: #e7e5df;
+    in property <brush> selection-background: #3b3f2e;
+    in property <brush> selection-foreground: #f2f0e8;
+    in-out property <string> text <=> field.text;
+    out property <bool> has-focus: field.has-focus;
+
+    callback edited(text: string);
+    callback key-pressed(event: KeyEvent) -> EventResult;
+
+    public function grab-focus() { field.focus(); }
+
+    clip: true;
+    forward-focus: field;
+
+    scroll := ScrollView {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        mouse-drag-pan-enabled: false;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, field.preferred-height);
+
+        field := TextInput {
+            width: parent.width;
+            single-line: false;
+            wrap: word-wrap;
+            font-size: root.font-size;
+            color: root.foreground;
+            selection-background-color: root.selection-background;
+            selection-foreground-color: root.selection-foreground;
+            // PageUp/PageDown become sensible inside the box
+            page-height: scroll.visible-height;
+
+            edited => { root.edited(self.text); }
+            key-pressed(e) => { root.key-pressed(e) }
+
+            // the caret drives the scroll offset in both directions; the scroll
+            // view then maps mouse hits back through that offset, which moving
+            // the input around by hand did not
+            cursor-position-changed(cpos) => {
+                if cpos.y + scroll.content-y < 0px {
+                    scroll.content-y = min(
+                        0px,
+                        max(scroll.visible-height - self.height, -cpos.y)
+                    );
+                } else if cpos.y + scroll.content-y > scroll.visible-height - 22px {
+                    scroll.content-y = min(
+                        0px,
+                        max(scroll.visible-height - self.height, scroll.visible-height - cpos.y - 22px)
+                    );
+                }
+            }
+        }
+    }
+}

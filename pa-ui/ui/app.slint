@@ -1,4 +1,5 @@
 import { ListView, ScrollView } from "std-widgets.slint";
+import { DraftEditor } from "draft-editor.slint";
 
 export struct TRow {
     kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 notice
@@ -1188,57 +1189,44 @@ composer-box := Rectangle {
         // a fixed-height window over a text input that is allowed to grow:
         // pinning its bottom edge keeps the caret (newest line) in view, which
         // a fixed-height TextInput does not do on its own
-        draft-window := Rectangle {
-            background: transparent;
-            clip: true;
+        draft-window := DraftEditor {
             height: root.composer-height;
-
-        composer-input := TextInput {
             text <=> root.composer-text;
-            color: #e7e5df;
             font-size: 13px;
-            single-line: false;
-            wrap: word-wrap;
-            width: parent.width;
-            height: max(self.preferred-height, parent.height);
-            y: parent.height - self.height;
-            edited => { root.composer-text = self.text; }
-            // Enter sends; Shift+Enter is the newline, the
-            // same binding the TUI uses
-            key-pressed(event) => {
-                // Enter sends, Alt+Enter steers into the
-                // running turn, Shift+Enter is a newline,
-                // Esc aborts — the TUI's bindings
-                if event.text == Key.Return {
-                    if event.modifiers.alt {
-                        if root.composer-text != "" {
-                            root.steer-requested(root.composer-text);
-                            root.composer-text = "";
+            edited(t) => { root.composer-text = t; }
+                    key-pressed(event) => {
+                            // Enter sends, Alt+Enter steers into the
+                            // running turn, Shift+Enter is a newline,
+                            // Esc aborts — the TUI's bindings
+                            if event.text == Key.Return {
+                                if event.modifiers.alt {
+                                    if root.composer-text != "" {
+                                        root.steer-requested(root.composer-text);
+                                        root.composer-text = "";
+                                    }
+                                    return EventResult.accept;
+                                }
+                                if !event.modifiers.shift {
+                                    if root.composer-text != "" {
+                                        root.send-requested(root.composer-text);
+                                        root.composer-text = "";
+                                    }
+                                    return EventResult.accept;
+                                }
+                            }
+                            if event.text == Key.Escape {
+                                root.abort-requested();
+                                return EventResult.accept;
+                            }
+                            if event.text == Key.End && event.modifiers.control {
+                                root.scroll-to-end();
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
                         }
-                        return EventResult.accept;
-                    }
-                    if !event.modifiers.shift {
-                        if root.composer-text != "" {
-                            root.send-requested(root.composer-text);
-                            root.composer-text = "";
-                        }
-                        return EventResult.accept;
-                    }
-                }
-                if event.text == Key.Escape {
-                    root.abort-requested();
-                    return EventResult.accept;
-                }
-                if event.text == Key.End && event.modifiers.control {
-                    root.scroll-to-end();
-                    return EventResult.accept;
-                }
-                return EventResult.reject;
-            }
-            // the window opens ready to type
-            init => { self.focus(); }
+            init => { self.grab-focus(); }
         }
-        }
+
         HorizontalLayout {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; background: transparent; }
