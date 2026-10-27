@@ -810,13 +810,15 @@ export component AppWindow inherits Window {
     // The status strip grows open and shuts fast. Everything that has to move
     // with it reads this one length: the strip's height, the box's height, the
     // padding above the input, and the band the transcript stops at.
-    in-out property <length> busy-h: root.busy ? 26px : 0px;
+    // the strip is the home of the queue as well, so it opens while anything is
+    // waiting even if the turn that queued it has just ended
+    in-out property <length> busy-h: root.busy || root.queued-count > 0 ? 26px : 0px;
     animate busy-h {
         duration: root.busy ? 190ms : 110ms;
         easing: root.busy ? ease-out : ease-in;
     }
     // the contents come in a beat after the gap opens, and go before it shuts
-    in-out property <float> busy-fade: root.busy ? 1.0 : 0.0;
+    in-out property <float> busy-fade: root.busy || root.queued-count > 0 ? 1.0 : 0.0;
     animate busy-fade {
         duration: root.busy ? 150ms : 90ms;
         delay: root.busy ? 60ms : 0ms;
@@ -1096,136 +1098,7 @@ export component AppWindow inherits Window {
                             : (root.handle-hover ? #4a4d42 : #33362d);
                     }
 
-                    // queued work: a compact chip that opens into a list, so it can never
-                    // push the composer around or wrap into a wall of text
 
-
-                    // queued work, spelled out: both lanes, each row editable.
-                    // Placed in the composer band rather than the window root:
-                    // a floating child anchored by absolute-position painted in
-                    // one place and answered clicks in another.
-                    if root.queue-open && root.queued-count > 0 : Rectangle {
-                        x: 18px;
-                        y: composer-box.y - 32px - self.height - 6px;
-                        width: 300px;
-                        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
-                            + root.queued-steering.length * 24px
-                            + (root.queued-followup.length > 0 ? 16px : 0px)
-                            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
-                            + root.queued-followup.length * 24px
-                            + 24px;
-                        background: #171814;
-                        border-color: #2c2f26;
-                        border-width: 1px;
-                        border-radius: 10px;
-                        drop-shadow-blur: 12px;
-                        drop-shadow-color: #00000080;
-
-                        if root.queued-steering.length > 0 : Text {
-                            x: 10px;
-                            y: 8px;
-                            width: 280px;
-                            height: 16px;
-                            text: "INTO THIS TURN";
-                            color: #a18e41;
-                            font-size: 9px;
-                            letter-spacing: 0.6px;
-                            vertical-alignment: center;
-                        }
-                        for item[i] in root.queued-steering : QueueRow {
-                            x: 10px;
-                            y: 24px + i * 24px;
-                            width: 280px;
-                            text: item.text;
-                            lane: "steering";
-                            slot: item.slot;
-                            act(lane, slot, action) => {
-                                root.queue-act(lane, slot, action);
-                                root.queue-open = false;
-                            }
-                        }
-                        if root.queued-followup.length > 0 : Text {
-                            x: 10px;
-                            y: 24px + root.queued-steering.length * 24px
-                                + (root.queued-steering.length > 0 ? 6px : 0px);
-                            width: 280px;
-                            height: 16px;
-                            vertical-alignment: center;
-                            text: "UP NEXT";
-                            color: #8b8c85;
-                            font-size: 9px;
-                            letter-spacing: 0.6px;
-                        }
-                        for item[i] in root.queued-followup : QueueRowUp {
-                            x: 10px;
-                            y: 40px + root.queued-steering.length * 24px
-                                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
-                            width: 280px;
-                            text: item.text;
-                            lane: "followUp";
-                            slot: item.slot;
-                            act(lane, slot, action) => {
-                                root.queue-act(lane, slot, action);
-                                root.queue-open = false;
-                            }
-                        }
-                        Text {
-                            x: 10px;
-                            y: parent.height - 26px;
-                            width: 280px;
-                            height: 18px;
-                            vertical-alignment: bottom;
-                            text: "↑ sends into this turn · click a line to edit";
-                            color: #565a4f;
-                            font-size: 9px;
-                        }
-                    }
-
-                    if root.queued-count > 0 : queue-chip := Rectangle {
-                        x: 18px;
-                        y: composer-box.y - 32px;
-                        width: chip-row.preferred-width + 26px;
-                        height: 24px;
-                        border-radius: 12px;
-                        background: queue-touch.has-hover ? #22241d : #1a1b16;
-                        border-color: #2c2f26;
-                        border-width: 1px;
-
-                        chip-row := HorizontalLayout {
-                            x: 10px;
-                            y: 0;
-                            height: parent.height;
-                            spacing: 5px;
-                            // a drawn dot: the arrow glyph has no coverage in
-                            // the UI font and rendered as a tofu box
-                            Rectangle {
-                                width: 5px;
-                                height: 5px;
-                                border-radius: 2.5px;
-                                background: #8a7d4c;
-                                y: (parent.height - self.height) / 2;
-                            }
-                            Text {
-                                text: root.queued-count + " queued";
-                                color: #b0b1a8;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                            }
-                            IconCaret {
-                                y: (parent.height - self.height) / 2;
-                                up: true;
-                            }
-                        }
-
-                        queue-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.queue-open = !root.queue-open; }
-                            // click to open: a hover-only card would close the
-                            // moment the pointer travelled up into it
-                        }
-
-                        // the list itself, anchored above the chip
-                    }
 
     // The status row is its own rounded top, tucked 12px behind the box: while
     // a turn runs you see two rounded tops (a small one above the input's), and
@@ -1311,6 +1184,52 @@ export component AppWindow inherits Window {
                                 font-size: 11px;
                                 height: parent.height;
                                 vertical-alignment: center;
+                            }
+
+                            // The queue lives on the strip itself: the lanes
+                            // named the way the panel names them, right-aligned
+                            // against the strip's padding so it balances the
+                            // spinner on the left. The pill only appears under
+                            // the pointer - at rest it is part of the strip.
+                            if root.queued-count > 0 : Rectangle {
+                                x: parent.width - self.width - 14px;
+                                y: (parent.height - self.height) / 2;
+                                width: lane-row.preferred-width + 16px;
+                                height: 18px;
+                                border-radius: 6px;
+                                background: lane-touch.has-hover || root.queue-open ? #23251f : transparent;
+
+                                lane-row := HorizontalLayout {
+                                    x: 8px;
+                                    y: 0;
+                                    height: parent.height;
+                                    spacing: 7px;
+                                    alignment: center;
+                                    if root.queued-steering.length > 0 : Text {
+                                        text: root.queued-steering.length + " INTO TURN";
+                                        color: #a18e41;
+                                        font-size: 9px;
+                                        letter-spacing: 0.5px;
+                                        vertical-alignment: center;
+                                    }
+                                    if root.queued-steering.length > 0 && root.queued-followup.length > 0 : Rectangle {
+                                        width: 1px;
+                                        height: 9px;
+                                        background: #2c2f26;
+                                    }
+                                    if root.queued-followup.length > 0 : Text {
+                                        text: root.queued-followup.length + " NEXT";
+                                        color: #8b8c85;
+                                        font-size: 9px;
+                                        letter-spacing: 0.5px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                lane-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.queue-open = !root.queue-open; }
+                                }
                             }
 
                             }
@@ -1914,6 +1833,86 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // The queue panel hangs off the strip, at the window root like the model
+    // menu: inside the band it sat at a negative y, where it painted outside
+    // the area that answers clicks.
+    if root.queue-open && root.queued-count > 0 : Rectangle {
+        x: composer-box.absolute-position.x + composer-box.width - self.width;
+        y: composer-box.absolute-position.y - root.busy-h - self.height - 6px;
+        width: 300px;
+        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
+            + root.queued-steering.length * 24px
+            + (root.queued-followup.length > 0 ? 16px : 0px)
+            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
+            + root.queued-followup.length * 24px
+            + 24px;
+        background: #171814;
+        border-color: #2c2f26;
+        border-width: 1px;
+        border-radius: 10px;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
+
+        if root.queued-steering.length > 0 : Text {
+            x: 10px;
+            y: 8px;
+            width: 280px;
+            height: 16px;
+            text: "INTO THIS TURN";
+            color: #a18e41;
+            font-size: 9px;
+            letter-spacing: 0.6px;
+            vertical-alignment: center;
+        }
+        for item[i] in root.queued-steering : QueueRow {
+            x: 10px;
+            y: 24px + i * 24px;
+            width: 280px;
+            text: item.text;
+            lane: "steering";
+            slot: item.slot;
+            act(lane, slot, action) => {
+                root.queue-act(lane, slot, action);
+                root.queue-open = false;
+            }
+        }
+        if root.queued-followup.length > 0 : Text {
+            x: 10px;
+            y: 24px + root.queued-steering.length * 24px
+                + (root.queued-steering.length > 0 ? 6px : 0px);
+            width: 280px;
+            height: 16px;
+            vertical-alignment: center;
+            text: "UP NEXT";
+            color: #8b8c85;
+            font-size: 9px;
+            letter-spacing: 0.6px;
+        }
+        for item[i] in root.queued-followup : QueueRowUp {
+            x: 10px;
+            y: 40px + root.queued-steering.length * 24px
+                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
+            width: 280px;
+            text: item.text;
+            lane: "followUp";
+            slot: item.slot;
+            act(lane, slot, action) => {
+                root.queue-act(lane, slot, action);
+                root.queue-open = false;
+            }
+        }
+        Text {
+            x: 10px;
+            y: parent.height - 26px;
+            width: 280px;
+            height: 18px;
+            vertical-alignment: bottom;
+            text: "↑ sends into this turn · click a line to edit";
+            color: #565a4f;
+            font-size: 9px;
         }
     }
 }
