@@ -1321,64 +1321,36 @@ export component AppWindow inherits Window {
             border-radius: 12px;
         }
 
-        // The corner rings are built from discs: a stroke-coloured 24px disc
-        // whose centre sits on the corner, with a fill-coloured 22px disc one
-        // pixel inside it. Only the top quarter of each survives the clip, which
-        // leaves exactly a 1px arc - no stroked path, nothing to misalign.
-        Rectangle {
-            x: -12px;
-            y: -12px;
-            width: 24px;
-            height: 24px;
-            border-radius: 12px;
-            background: #2c2f26;
-        }
-        Rectangle {
-            x: -11px;
-            y: -11px;
-            width: 22px;
-            height: 22px;
-            border-radius: 11px;
-            background: #191a14;
-        }
-        Rectangle {
-            x: parent.width - 12px;
-            y: -12px;
-            width: 24px;
-            height: 24px;
-            border-radius: 12px;
-            background: #2c2f26;
-        }
-        Rectangle {
-            x: parent.width - 11px;
-            y: -11px;
-            width: 22px;
-            height: 22px;
-            border-radius: 11px;
-            background: #191a14;
-        }
-
-        Rectangle {
-            x: 12px;
-            y: 0;
-            width: parent.width - 24px;
-            height: 1px;
-            background: #2c2f26;
-        }
+        // The outline: a border-coloured rounded rect with a fill-coloured one
+        // inset by a pixel, both clipped at the strip's *visible* height. The
+        // clip cuts away the bottom edge, so what is left is a rounded top and
+        // two straight sides - the curvature is the rectangle's own, which is
+        // the only way to get it the right way round without stroked paths.
         Rectangle {
             x: 0;
-            y: 12px;
-            width: 1px;
-            height: parent.height - 12px;
-            background: #23251f;
+            y: 0;
+            width: 100%;
+            height: root.busy-h;
+            clip: true;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height + 24px;
+                background: #2c2f26;
+                border-radius: 12px;
+            }
+            Rectangle {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height + 24px;
+                background: #191a14;
+                border-radius: 11px;
+            }
         }
-        Rectangle {
-            x: parent.width - 1px;
-            y: 12px;
-            width: 1px;
-            height: parent.height - 12px;
-            background: #23251f;
-        }
+
         // the visible half of the strip: everything above the box's top edge
         Rectangle {
             x: 0;
