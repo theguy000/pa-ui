@@ -1306,7 +1306,7 @@ export component AppWindow inherits Window {
         x: 18px;
         y: composer-box.y - root.busy-h;
         width: parent.width - 36px;
-        height: root.busy-h;
+        height: root.busy-h + 12px;
         opacity: root.busy-fade;
         // No background on this rectangle at all: its own rounded corner would
         // draw a second edge a pixel off the stroke. The fill is a child, inset
@@ -1317,6 +1317,9 @@ export component AppWindow inherits Window {
         // clip cuts away the bottom edge, so what is left is a rounded top and
         // two straight sides - the curvature is the rectangle's own, which is
         // the only way to get it the right way round without stroked paths.
+        // The fill reaches 12px past the junction and is square by then, so it
+        // wraps the box's rounded corner instead of leaving bare background in
+        // the wedge between the two outlines. The box paints over the rest.
         Rectangle {
             x: 0;
             y: 0;
@@ -1340,25 +1343,6 @@ export component AppWindow inherits Window {
                 background: #191a14;
                 border-radius: 11px;
             }
-        }
-
-        // The sides do not stop at the junction: the box's outline curves
-        // inward there, so the strip's line continues 12px past its own bottom
-        // to meet the box's side border where the corner arc lets go of it.
-        // (Drawn outside the clipped ring block, which cuts at the strip.)
-        Rectangle {
-            x: 0;
-            y: 12px;
-            width: 1px;
-            height: root.busy-h;
-            background: #2c2f26;
-        }
-        Rectangle {
-            x: parent.width - 1px;
-            y: 12px;
-            width: 1px;
-            height: root.busy-h;
-            background: #2c2f26;
         }
 
         // the visible half of the strip: everything above the box's top edge
