@@ -1212,10 +1212,20 @@ export component AppWindow inherits Window {
                                         letter-spacing: 0.5px;
                                         vertical-alignment: center;
                                     }
+                                    // the rule is a layout child, so it takes the
+                                    // row's height and centres the 9px hairline
+                                    // itself - a fixed-height child sat at the top
                                     if root.queued-steering.length > 0 && root.queued-followup.length > 0 : Rectangle {
                                         width: 1px;
-                                        height: 9px;
-                                        background: #2c2f26;
+                                        height: 100%;
+
+                                        Rectangle {
+                                            x: 0;
+                                            y: (parent.height - self.height) / 2;
+                                            width: 1px;
+                                            height: 9px;
+                                            background: #2c2f26;
+                                        }
                                     }
                                     if root.queued-followup.length > 0 : Text {
                                         text: root.queued-followup.length + " NEXT";
