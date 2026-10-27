@@ -1409,7 +1409,7 @@ composer-box := Rectangle {
 
     // nothing keeps a hover alive forever: this is the safety net
     tooltip-timer := Timer {
-        interval: 2200ms;
+        interval: 6000ms;
         running: root.tooltip-on;
         triggered => {
             root.hover-title = "";

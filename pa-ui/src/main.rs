@@ -948,6 +948,7 @@ fn to_item(row: &SessionRow) -> SessionItem {
         "idle"
     };
     let full = display_name(row);
+    // only when the row actually elides: a card repeating "hi" is pure noise
     let tip = if full.chars().count() > 22 {
         full.clone()
     } else {
