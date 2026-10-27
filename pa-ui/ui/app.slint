@@ -125,7 +125,8 @@ component SessionRow inherits Rectangle {
     in property <bool> editing;
     in-out property <string> draft;
     callback picked(string);
-    callback hovered(string);
+    // the row's own window position rides along, so the card can sit beside it
+    callback hovered(string, length);
     callback edit(string);
     callback commit(string, string);
 
@@ -141,7 +142,7 @@ component SessionRow inherits Rectangle {
         clicked => { root.picked(root.item.id); }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
-                root.hovered(root.item.tip);
+                root.hovered(root.item.tip, self.absolute-position.y);
             }
         }
     }
@@ -569,6 +570,8 @@ export component AppWindow inherits Window {
     in-out property <string> editing-id: "";
     in property <string> status-line: "connecting";
     in-out property <string> hover-title: "";
+    in-out property <length> hover-y: 0px;
+    in-out property <bool> tooltip-on: false;
     in-out property <bool> rail-open: true;
     in-out property <bool> model-menu: false;
     in-out property <string> selected-id;
@@ -669,7 +672,18 @@ export component AppWindow inherits Window {
                                 // only way to clear it made it look stuck
                                 root.hover-title = "";
                             }
-                            hovered(full) => { root.hover-title = full; }
+                            hovered(full, row-y) => {
+                                if full != "" {
+                                    root.hover-y = row-y;
+                                }
+                                root.hover-title = full;
+                                // hover rots: hide the card if it stops being fed,
+                                // which is what made a stale title look stuck.
+                                // Toggling restarts the timer: `running` is bound,
+                                // so calling restart() on it would be overridden.
+                                root.tooltip-on = false;
+                                root.tooltip-on = true;
+                            }
                             edit(id) => { root.editing-id = id; root.draft = item.full; }
                             commit(id, name) => {
                                 root.editing-id = "";
@@ -1365,29 +1379,41 @@ composer-box := Rectangle {
         }
     }
 
-    // hover title card: lives in the rail column, so it can never sit on a
-    // message; it used to float over the transcript and stick there
+    // title card: anchored to the row it describes and shown just to the right
+    // of the rail, the way a tooltip is expected to behave
     if root.hover-title != "" : Rectangle {
-        x: 10px;
-        y: 52px;
-        width: min(self.preferred-width, 196px);
+        x: 244px;
+        y: clamp(root.hover-y - 4px, 46px, root.height - self.height - 12px);
+        width: min(self.preferred-width, 260px);
         height: self.preferred-height;
         background: #171814;
         border-color: #2a2c24;
         border-width: 1px;
         border-radius: 8px;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
         HorizontalLayout {
-            padding-left: 9px;
-            padding-right: 9px;
+            padding-left: 10px;
+            padding-right: 10px;
             padding-top: 6px;
             padding-bottom: 6px;
             Text {
                 text: root.hover-title;
-                color: #d9d8d1;
+                color: #e2e0d8;
                 font-size: 11px;
                 wrap: word-wrap;
-                max-width: 178px;
+                max-width: 240px;
             }
+        }
+    }
+
+    // nothing keeps a hover alive forever: this is the safety net
+    tooltip-timer := Timer {
+        interval: 2200ms;
+        running: root.tooltip-on;
+        triggered => {
+            root.hover-title = "";
+            root.tooltip-on = false;
         }
     }
 }
