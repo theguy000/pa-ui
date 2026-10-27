@@ -535,10 +535,18 @@ export component AppWindow inherits Window {
     in-out property <string> queued-preview: "";
     in-out property <float> context-fill: 0.0;
     // composer input height; the pill on its top border toggles it
-    in-out property <length> composer-height: 44px;
+    in-out property <length> composer-height: 68px;
     // input + box chrome (10+8 padding, 10 spacing, 24 button row, 2 borders)
     // + strip (24) + band padding (8+10)
-    out property <length> composer-total: root.composer-height + 106px;
+    // 13px text is ~17px per line: 4 lines by default, 10 at most
+    out property <length> composer-min: 68px;
+    out property <length> composer-max: 170px;
+    out property <length> composer-total: root.box-height + 34px;
+    // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
+    out property <length> box-height: root.composer-height + 54px;
+    in-out property <bool> dragging: false;
+    in-out property <length> drag-start-y: 0px;
+    in-out property <length> drag-start-h: 0px;
     in-out property <string> context-text: "";
     in-out property <string> stats-text: "";
     in-out property <bool> ctx-hover: false;
@@ -1030,177 +1038,205 @@ export component AppWindow inherits Window {
                     width: parent.width;
                     height: root.composer-total;
                     background: transparent;
-                            VerticalLayout {
-                                padding-left: 18px;
-                                padding-right: 18px;
-                                padding-top: 8px;
-                                padding-bottom: 10px;
-                                spacing: 6px;
 
-                                // strip above the box: queued messages on the left, the
-                                // scroll-to-newest control on the right. Fixed height, so
-                                // toggling either never reflows the composer.
-                                Rectangle {
-                                    height: 24px;
-                                    background: transparent;
-
-                                    if root.queued-count > 0 : HorizontalLayout {
-                                        x: 4px;
-                                        y: 0;
-                                        width: parent.width - 44px;
-                                        height: parent.height;
-                                        spacing: 6px;
-                                        Text {
-                                            text: "\u{21b3}";
-                                            color: #6f7364;
-                                            font-size: 11px;
-                                            vertical-alignment: center;
-                                        }
-                                        Text {
-                                            text: root.queued-count + " queued";
-                                            color: #8b8c85;
-                                            font-size: 11px;
-                                            vertical-alignment: center;
-                                        }
-                                        Text {
-                                            text: root.queued-preview;
-                                            color: #565a4f;
-                                            font-size: 11px;
-                                            vertical-alignment: center;
-                                            overflow: elide;
-                                            horizontal-stretch: 1;
-                                        }
-                                    }
-
-                                    if !root.at-bottom : Rectangle {
-                                        x: parent.width - self.width;
-                                        y: 0;
-                                        width: 24px;
-                                        height: 24px;
-                                        border-radius: 12px;
-                                        background: jump-touch.has-hover ? #33362c : #1b1d18;
-                                        border-color: #34372e;
-                                        border-width: 1px;
-                                        IconDown {
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
-                                        }
-                                        jump-touch := TouchArea {
-                                            clicked => { root.scroll-to-end(); }
-                                            mouse-cursor: pointer;
-                                        }
-                                    }
-                                }
-
-                                // fixed width: the padding is computed so the box stays
-                                // 760px wide (and centred) however long the draft gets
-                                composer-box := Rectangle {
-                                    background: #0f100d;
-                                    border-color: #23251f;
-                                    border-width: 1px;
-                                    border-radius: 12px;
-
-                                    // pill on the top border: click to grow/shrink the input
-                                    Rectangle {
-                                        x: (parent.width - self.width) / 2;
-                                        y: -self.height / 2;
-                                        width: 36px;
-                                        height: 3px;
-                                        border-radius: 1.5px;
-                                        background: pill-touch.has-hover ? #5d6152 : #33362d;
-                                    }
-                                    pill-touch := TouchArea {
-                                        x: (parent.width - self.width) / 2;
-                                        y: -7px;
-                                        width: 44px;
-                                        height: 14px;
-                                        mouse-cursor: pointer;
-                                        clicked => {
-                                            root.composer-height = root.composer-height > 60px
-                                                ? 44px
-                                                : 104px;
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        padding-left: 12px;
-                                        padding-right: 12px;
-                                        padding-top: 10px;
-                                        padding-bottom: 8px;
-                                        spacing: 10px;
-                                        composer-input := TextInput {
-                                            text <=> root.composer-text;
-                                            color: #e7e5df;
-                                            font-size: 13px;
-                                            single-line: false;
-                                            wrap: word-wrap;
-                                            // fixed height, scrolling inside: binding it to
-                                            // preferred-height let the box outgrow its slot
-                                            height: root.composer-height;
-                                            edited => { root.composer-text = self.text; }
-                                            // Enter sends; Shift+Enter is the newline, the
-                                            // same binding the TUI uses
-                                            key-pressed(event) => {
-                                                // Enter sends, Alt+Enter steers into the
-                                                // running turn, Shift+Enter is a newline,
-                                                // Esc aborts — the TUI's bindings
-                                                if event.text == Key.Return {
-                                                    if event.modifiers.alt {
-                                                        if root.composer-text != "" {
-                                                            root.steer-requested(root.composer-text);
-                                                            root.composer-text = "";
-                                                        }
-                                                        return EventResult.accept;
-                                                    }
-                                                    if !event.modifiers.shift {
-                                                        if root.composer-text != "" {
-                                                            root.send-requested(root.composer-text);
-                                                            root.composer-text = "";
-                                                        }
-                                                        return EventResult.accept;
-                                                    }
-                                                }
-                                                if event.text == Key.Escape {
-                                                    root.abort-requested();
-                                                    return EventResult.accept;
-                                                }
-                                                if event.text == Key.End && event.modifiers.control {
-                                                    root.scroll-to-end();
-                                                    return EventResult.accept;
-                                                }
-                                                return EventResult.reject;
-                                            }
-                                            // the window opens ready to type
-                                            init => { self.focus(); }
-                                        }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            Rectangle { horizontal-stretch: 1; background: transparent; }
-                                            Chip {
-                                                label: root.model-label;
-                                                open: root.model-menu;
-                                                toggled => { root.model-menu = !root.model-menu; }
-                                            }
-                                            Rectangle {
-                                                width: 25px;
-                                                height: 25px;
-                                                border-radius: 12.5px;
-                                                background: send-touch.has-hover ? #b39e4c : #a18e41;
-                                                IconSend {
-                                                    x: (parent.width - self.width) / 2;
-                                                    y: (parent.height - self.height) / 2;
-                                                }
-                                                send-touch := TouchArea {
-                                                    clicked => {
-                                                        root.send-requested(root.composer-text);
-                                                        root.composer-text = "";
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    // drag surface first so the box and its buttons stay on top.
+                    // Its top-left is pinned to the band, so pointer travel is
+                    // measured from a fixed origin while the box grows upward.
+                    drag-zone := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down {
+                                root.dragging = true;
+                                root.drag-start-h = root.composer-height;
+                                // distance from the band's bottom edge, which is
+                                // pinned to the window: unaffected by the box growing
+                                root.drag-start-y = drag-zone.height - drag-zone.pressed-y;
                             }
+                            if event.kind == PointerEventKind.up
+                                || event.kind == PointerEventKind.cancel
+                            {
+                                root.dragging = false;
+                            }
+                            if event.kind == PointerEventKind.move && root.dragging {
+                                root.composer-height = clamp(
+                                    root.drag-start-h + (root.drag-start-y - drag-zone.mouse-y),
+                                    root.composer-min,
+                                    root.composer-max
+                                );
+                            }
+                        }
+                    }
+
+                    // handle, drawn on the box's top border
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: composer-box.y - 1.5px;
+                        width: 36px;
+                        height: 3px;
+                        border-radius: 1.5px;
+                        background: root.dragging ? #6b7059
+                            : (drag-zone.has-hover ? #4a4d42 : #33362d);
+                    }
+
+                    // strip above the box: queued messages left, jump control right
+                    Rectangle {
+                        x: 18px;
+                        y: composer-box.y - 30px;
+                        width: parent.width - 36px;
+                        height: 24px;
+                        background: transparent;
+
+                        if root.queued-count > 0 : HorizontalLayout {
+                            x: 4px;
+                            y: 0;
+                            width: parent.width - 44px;
+                            height: parent.height;
+                            spacing: 6px;
+                            Text {
+                                text: "\u{21b3}";
+                                color: #6f7364;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: root.queued-count + " queued";
+                                color: #8b8c85;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: root.queued-preview;
+                                color: #565a4f;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        if !root.at-bottom : Rectangle {
+                            x: parent.width - self.width;
+                            y: 0;
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: jump-touch.has-hover ? #33362c : #1b1d18;
+                            border-color: #34372e;
+                            border-width: 1px;
+                            IconDown {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            jump-touch := TouchArea {
+                                clicked => { root.scroll-to-end(); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+
+composer-box := Rectangle {
+                    x: 18px;
+                    y: parent.height - self.height;
+                    width: parent.width - 36px;
+                    height: root.box-height;
+    background: #0f100d;
+    border-color: #23251f;
+    border-width: 1px;
+    border-radius: 12px;
+
+    // the handle drawn on the box's top border
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: -self.height / 2;
+        width: 36px;
+        height: 3px;
+        border-radius: 1.5px;
+        background: root.dragging ? #6b7059
+            : (drag-zone.has-hover ? #4a4d42 : #33362d);
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 8px;
+        spacing: 10px;
+        composer-input := TextInput {
+            text <=> root.composer-text;
+            color: #e7e5df;
+            font-size: 13px;
+            single-line: false;
+            wrap: word-wrap;
+            // fixed height, scrolling inside: binding it to
+            // preferred-height let the box outgrow its slot
+            height: root.composer-height;
+            edited => { root.composer-text = self.text; }
+            // Enter sends; Shift+Enter is the newline, the
+            // same binding the TUI uses
+            key-pressed(event) => {
+                // Enter sends, Alt+Enter steers into the
+                // running turn, Shift+Enter is a newline,
+                // Esc aborts — the TUI's bindings
+                if event.text == Key.Return {
+                    if event.modifiers.alt {
+                        if root.composer-text != "" {
+                            root.steer-requested(root.composer-text);
+                            root.composer-text = "";
+                        }
+                        return EventResult.accept;
+                    }
+                    if !event.modifiers.shift {
+                        if root.composer-text != "" {
+                            root.send-requested(root.composer-text);
+                            root.composer-text = "";
+                        }
+                        return EventResult.accept;
+                    }
+                }
+                if event.text == Key.Escape {
+                    root.abort-requested();
+                    return EventResult.accept;
+                }
+                if event.text == Key.End && event.modifiers.control {
+                    root.scroll-to-end();
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+            // the window opens ready to type
+            init => { self.focus(); }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Chip {
+                label: root.model-label;
+                open: root.model-menu;
+                toggled => { root.model-menu = !root.model-menu; }
+            }
+            Rectangle {
+                width: 25px;
+                height: 25px;
+                border-radius: 12.5px;
+                background: send-touch.has-hover ? #b39e4c : #a18e41;
+                IconSend {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                send-touch := TouchArea {
+                    clicked => {
+                        root.send-requested(root.composer-text);
+                        root.composer-text = "";
+                    }
+                }
+            }
+        }
+    }
+}
                 }
             }
 
