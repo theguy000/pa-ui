@@ -541,10 +541,14 @@ export component AppWindow inherits Window {
     // 13px text is ~17px per line: 4 lines by default, 10 at most
     out property <length> composer-min: 68px;
     out property <length> composer-max: 170px;
-    out property <length> composer-total: root.box-height + 34px;
+    // 12px of breathing room under the box
+    out property <length> composer-total: root.box-height + 46px;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
+    // the band's height at press time: frozen for the gesture so the drag
+    // origin (and the clamp on mouse-y) cannot move under the pointer
+    in-out property <length> band-freeze: 0px;
     in-out property <length> drag-start-y: 0px;
     in-out property <length> drag-start-h: 0px;
     in-out property <string> context-text: "";
@@ -699,7 +703,28 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if root.hover-title != "" : Rectangle {
+                        // floating just above the status row, aligned with the
+                    // context ring: detached from the composer
+                    if !root.at-bottom : Rectangle {
+                        x: transcript-area.width - self.width - 22px;
+                        y: transcript-area.height - self.height - 10px;
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: jump-touch.has-hover ? #2e3026 : #1b1d18;
+                        border-color: #34372e;
+                        border-width: 1px;
+                        IconDown {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        jump-touch := TouchArea {
+                            clicked => { root.scroll-to-end(); }
+                            mouse-cursor: pointer;
+                        }
+                    }
+
+                    if root.hover-title != "" : Rectangle {
                             x: 20px;
                             y: 10px;
                             width: self.preferred-width;
@@ -1036,7 +1061,7 @@ export component AppWindow inherits Window {
                     x: 0;
                     y: parent.height - self.height;
                     width: parent.width;
-                    height: root.composer-total;
+                    height: root.dragging ? root.band-freeze : root.composer-total;
                     background: transparent;
 
                     // drag surface first so the box and its buttons stay on top.
@@ -1051,6 +1076,7 @@ export component AppWindow inherits Window {
                         pointer-event(event) => {
                             if event.kind == PointerEventKind.down {
                                 root.dragging = true;
+                                root.band-freeze = root.composer-total;
                                 root.drag-start-h = root.composer-height;
                                 // distance from the band's bottom edge, which is
                                 // pinned to the window: unaffected by the box growing
@@ -1118,29 +1144,12 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if !root.at-bottom : Rectangle {
-                            x: parent.width - self.width;
-                            y: 0;
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 12px;
-                            background: jump-touch.has-hover ? #33362c : #1b1d18;
-                            border-color: #34372e;
-                            border-width: 1px;
-                            IconDown {
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                            }
-                            jump-touch := TouchArea {
-                                clicked => { root.scroll-to-end(); }
-                                mouse-cursor: pointer;
-                            }
-                        }
+
                     }
 
 composer-box := Rectangle {
                     x: 18px;
-                    y: parent.height - self.height;
+                    y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
                     height: root.box-height;
     background: #0f100d;
