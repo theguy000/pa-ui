@@ -272,6 +272,67 @@ pub fn plain_markup(text: &str) -> String {
 
 /// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
 /// headings become bold lines, rules become blank lines, quotes lose their `>`.
+/// How many `**` markers a line carries, ignoring escapes and code spans.
+///
+/// Each marker toggles bold, so an odd count means the line leaves bold open.
+fn strong_markers(line: &str) -> usize {
+    let bytes: Vec<char> = line.chars().collect();
+    let mut count = 0;
+    let mut in_code = false;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let ch = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        match ch {
+            '\\' => {
+                escaped = true;
+                index += 1;
+            }
+            '`' => {
+                in_code = !in_code;
+                index += 1;
+            }
+            '*' if !in_code && index + 1 < bytes.len() && bytes[index + 1] == '*' => {
+                count += 1;
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+    count
+}
+
+/// A `**span**` that runs over a line break is not something the Slint text
+/// parser accepts, so it printed the asterisks instead of the weight. Each line
+/// is rebalanced here: a span still open at the end of a line is closed there
+/// and reopened at the start of the next one.
+fn balance_strong(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut open = false;
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        if open {
+            out.push_str("**");
+        }
+        out.push_str(line);
+        // the markers we just added do not count: parity of the line decides
+        if strong_markers(line) % 2 == 1 {
+            open = !open;
+        }
+        if open {
+            out.push_str("**");
+        }
+    }
+    out
+}
+
 pub fn markdown_markup(text: &str) -> String {
     let decoded = decode_entities(text);
     let text = decoded.as_str();
@@ -296,7 +357,7 @@ pub fn markdown_markup(text: &str) -> String {
             out.push_str(line);
         }
     }
-    out
+    balance_strong(&out)
 }
 
 const KEYWORDS: &[&str] = &[
@@ -524,5 +585,42 @@ mod tests {
     fn code_markup_survives_the_parser() {
         let markup = highlight_python("def f():\n    # four space indent\n    return 'x'");
         assert!(StyledText::from_markdown(&markup).is_ok(), "parser rejected: {markup}");
+    }
+}
+
+#[cfg(test)]
+mod strong_tests {
+    use super::*;
+
+    #[test]
+    fn a_span_across_a_line_break_is_closed_and_reopened() {
+        assert_eq!(
+            balance_strong("one **two\nthree** four"),
+            "one **two**\n**three** four"
+        );
+    }
+
+    #[test]
+    fn balanced_lines_are_left_alone() {
+        assert_eq!(balance_strong("**a** and **b**"), "**a** and **b**");
+        assert_eq!(balance_strong("plain"), "plain");
+    }
+
+    #[test]
+    fn an_odd_line_closes_where_it_ends() {
+        assert_eq!(balance_strong("a **b\nc"), "a **b**\n**c**");
+    }
+
+    #[test]
+    fn code_spans_and_escapes_do_not_count() {
+        assert_eq!(balance_strong("`a**b` c"), "`a**b` c");
+        assert_eq!(balance_strong(r"a \*\* b"), r"a \*\* b");
+    }
+
+    #[test]
+    fn a_span_opened_by_a_heading_stays_closed() {
+        // headings are rewritten into bold by markdown_markup, so the pass sees
+        // balanced markers and must not add any
+        assert_eq!(markdown_markup("# Title"), "**Title**");
     }
 }
