@@ -1,18 +1,19 @@
-//! Daemon wire client.
+//! Daemon wire client, on top of `pa-tui`'s transport.
 //!
-//! Two things the wire forces:
-//! 1. The supervisor accepts only `type: "command"` envelopes.
-//! 2. A synchronous Windows pipe handle cannot serve a blocking reader thread
-//!    and a writer at once (they deadlock), so one thread owns the pipe and
-//!    polls with `PeekNamedPipe` before reading.
+//! This crate used to own a hand-rolled pipe reader: one thread, `PeekNamedPipe`,
+//! 8ms naps. It could not keep up with the daemon's event queue (which drops
+//! frames for a slow client), so turns arrived truncated. The connection now
+//! comes from `pa_tui::daemon_client` - the client the terminal UI ships with -
+//! and this crate keeps only the typed helpers the UI calls.
+
+mod wire;
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const DAEMON_PIPE: &str = r"\\.\pipe\prime-agent-daemon";
 pub const PROTOCOL_NAME: &str = "prime-agent.daemon";
@@ -21,86 +22,134 @@ pub const PROTOCOL_VERSION: u64 = 7;
 pub type Frame = Value;
 
 /// Handle to the daemon: commands go in, frames come out.
+///
+/// The transport is `pa-tui`'s own client — the same one the terminal UI ships
+/// with — rather than a second implementation. That matters beyond tidiness:
+/// the daemon hands each connection its events through a bounded queue and
+/// drops frames for a client that falls behind, so the reader has to be a real
+/// async task that is always draining. Reimplementing that by hand is how the
+/// window ended up stopping mid-turn.
 pub struct Client {
-    out: Sender<String>,
+    rt: tokio::runtime::Runtime,
+    inner: std::sync::Arc<wire::daemon_client::DaemonClient>,
     frames: Mutex<Receiver<Frame>>,
+    frames_tx: Sender<Frame>,
     backlog: Mutex<VecDeque<Frame>>,
     next_id: AtomicU64,
-    dead: AtomicBool,
+    dead: std::sync::Arc<AtomicBool>,
+    /// The daemon's greeting, exactly as received.
     pub hello: Frame,
 }
 
 impl Client {
-    /// Connect, read the hello frame, and start the poller thread.
+    /// Connect and start the event pump.
     ///
     /// # Errors
-    /// Fails when the pipe cannot be opened or the hello never arrives.
+    /// Fails when the daemon cannot be reached or refuses the handshake.
     pub fn connect() -> std::io::Result<Self> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(DAEMON_PIPE)?;
-        let mut buffer = Vec::new();
-        let hello = read_frame(&mut file, &mut buffer, Duration::from_secs(5))
-            .ok_or_else(|| std::io::Error::other("no daemon hello"))?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        let (client, mut events) = rt
+            .block_on(wire::daemon_client::DaemonClient::connect(
+                std::path::Path::new(DAEMON_PIPE),
+            ))
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let hello = client.hello().clone();
+        let client = std::sync::Arc::new(client);
 
-        let (out_tx, out_rx) = channel::<String>();
         let (frame_tx, frame_rx) = channel::<Frame>();
-        std::thread::spawn(move || poll_loop(file, buffer, out_rx, frame_tx));
+        let frame_tx_clone = frame_tx.clone();
+        let dead = std::sync::Arc::new(AtomicBool::new(false));
+        let pump_dead = std::sync::Arc::clone(&dead);
+        rt.spawn(async move {
+            // Drain continuously: the daemon drops events for a connection that
+            // stops reading, so this loop never sleeps on the consumer's behalf.
+            while let Some(event) = events.recv().await {
+                let Some(frame) = event_frame(event) else {
+                    continue;
+                };
+                if frame_tx.send(frame).is_err() {
+                    break;
+                }
+            }
+            pump_dead.store(true, Ordering::Relaxed);
+        });
 
         Ok(Self {
-            out: out_tx,
+            rt,
+            inner: client,
             frames: Mutex::new(frame_rx),
+            frames_tx: frame_tx_clone,
             backlog: Mutex::new(VecDeque::new()),
             next_id: AtomicU64::new(1),
-            dead: AtomicBool::new(false),
+            dead,
             hello,
         })
     }
 
     /// Whether the daemon connection is still usable.
-    ///
-    /// The poller thread ends when the pipe breaks (daemon restart, shutdown),
-    /// and nothing else surfaces that: frames just stop arriving.
     pub fn alive(&self) -> bool {
         !self.dead.load(Ordering::Relaxed)
     }
 
-    /// Send one command; returns its id.
+    /// Fire a command and return a local id; the daemon's verdict arrives later
+    /// as a `response` frame carrying that id.
     ///
     /// # Errors
-    /// Fails when the poller thread is gone.
+    /// Fails when the command does not match the typed wire enum.
     pub fn send(&self, ty: &str, payload: Value) -> std::io::Result<String> {
         let id = format!("ui-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
-        let mut command = payload;
-        if let Value::Object(map) = &mut command {
-            map.insert("id".into(), Value::String(id.clone()));
-            map.insert("type".into(), Value::String(ty.to_string()));
-        }
-        let frame = json!({
-            "type": "command",
-            "id": id,
-            "protocol": {"name": PROTOCOL_NAME, "version": PROTOCOL_VERSION},
-            "command": command,
-        });
-        // every command is checked against the enum the supervisor parses, so a
-        // renamed field fails here instead of silently doing nothing
-        match serde_json::from_value::<pa_types::daemon::DaemonCommand>(command.clone()) {
-            Ok(_) => {}
-            Err(error) => {
-                let report = format!("command {ty} does not match DaemonCommand: {error}");
-                if std::env::var("PA_STRICT").is_ok() {
-                    return Err(std::io::Error::other(report));
+        let command = typed_command(ty, payload)?;
+        let client = std::sync::Arc::clone(&self.inner);
+        let tx = self.frame_sender();
+        let reply_id = id.clone();
+        let reply_ty = ty.to_string();
+        self.rt.spawn(async move {
+            let frame = match client
+                .request_with_timeout(command, LONG_REQUEST_TIMEOUT_MS)
+                .await
+            {
+                Ok(response) => {
+                    let mut value = serde_json::to_value(response).unwrap_or(Value::Null);
+                    if let Value::Object(map) = &mut value {
+                        map.insert("id".into(), Value::String(reply_id.clone()));
+                        map.insert("type".into(), Value::String("response".into()));
+                        map.insert("command".into(), Value::String(reply_ty));
+                    }
+                    value
                 }
-                eprintln!("[wire] {report}");
-            }
-        }
-        let mut line = frame.to_string();
-        line.push('\n');
-        self.out
-            .send(line)
-            .map_err(|_| std::io::Error::other("daemon poller stopped"))?;
+                Err(error) => json!({
+                    "type": "response",
+                    "id": reply_id,
+                    "command": reply_ty,
+                    "success": false,
+                    "error": error.to_string(),
+                }),
+            };
+            let _ = tx.send(frame);
+        });
         Ok(id)
+    }
+
+    /// Send a command and wait for its response.
+    ///
+    /// # Errors
+    /// Fails on a transport error or when the deadline passes.
+    pub fn request(
+        &self,
+        ty: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> std::io::Result<Frame> {
+        let command = typed_command(ty, payload)?;
+        let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        let response = self
+            .rt
+            .block_on(self.inner.request_with_timeout(command, millis))
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        Ok(serde_json::to_value(response).unwrap_or(Value::Null))
     }
 
     /// Next frame, backlog first. `None` on timeout.
@@ -113,120 +162,64 @@ impl Client {
             Ok(frame) => Some(frame),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => {
-                // the poller stopped: the pipe died with it
                 self.dead.store(true, Ordering::Relaxed);
                 None
             }
         }
     }
 
-    /// Send a command and wait for the response with its id.
-    ///
-    /// # Errors
-    /// Fails when the response does not arrive within `timeout`.
-    pub fn request(&self, ty: &str, payload: Value, timeout: Duration) -> std::io::Result<Frame> {
-        let id = self.send(ty, payload)?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let Some(frame) = self.recv(left) else {
-                return Err(std::io::Error::other("timed out waiting for response"));
-            };
-            let is_response = frame.get("type").and_then(Value::as_str) == Some("response");
-            let matches = frame.get("id").and_then(Value::as_str) == Some(id.as_str());
-            if is_response && matches {
-                return Ok(frame);
+    fn frame_sender(&self) -> Sender<Frame> {
+        // a synthetic reply is delivered through the same channel the pump uses
+        self.frames_tx.clone()
+    }
+}
+
+/// The daemon's per-command deadline for anything the UI fires and forgets.
+const LONG_REQUEST_TIMEOUT_MS: u64 = 600_000;
+
+/// One command as the typed enum the supervisor parses, so a renamed field is
+/// reported here instead of silently doing nothing.
+fn typed_command(ty: &str, payload: Value) -> std::io::Result<pa_types::daemon::DaemonCommand> {
+    let mut command = payload;
+    if let Value::Object(map) = &mut command {
+        map.insert("type".into(), Value::String(ty.to_string()));
+    }
+    match serde_json::from_value::<pa_types::daemon::DaemonCommand>(command.clone()) {
+        Ok(command) => Ok(command),
+        Err(error) => {
+            let report = format!("command {ty} does not match DaemonCommand: {error}");
+            if std::env::var("PA_STRICT").is_ok() {
+                return Err(std::io::Error::other(report));
             }
-            self.backlog.lock().expect("backlog").push_back(frame);
+            eprintln!("[wire] {report}");
+            serde_json::from_value(command)
+                .map_err(|_| std::io::Error::other(format!("command {ty} is not on the wire")))
         }
     }
 }
 
-fn poll_loop(
-    mut file: std::fs::File,
-    mut buffer: Vec<u8>,
-    commands: Receiver<String>,
-    frames: Sender<Frame>,
-) {
-    loop {
-        loop {
-            match commands.try_recv() {
-                Ok(line) => {
-                    if file.write_all(line.as_bytes()).and_then(|()| file.flush()).is_err() {
-                        return;
-                    }
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return,
-            }
-        }
-        // a failed peek means the daemon closed the pipe: stop the poller so
-        // the frames channel disconnects and the worker reconnects
-        let Some(waiting) = pending(&file) else { return };
-        if waiting > 0 {
-            while let Some(frame) = read_frame(&mut file, &mut buffer, Duration::from_millis(50)) {
-                if frames.send(frame).is_err() {
-                    return;
-                }
-            }
-        } else {
-            std::thread::sleep(Duration::from_millis(8));
-        }
-    }
-}
-
-/// Bytes waiting on the pipe, or `None` when the handle is gone.
-///
-/// The distinction matters: a daemon restart shows up here as a failed peek.
-/// Reporting that as "0 bytes waiting" made a dead pipe look exactly like a
-/// quiet one, so the app stayed attached to a corpse and never reconnected.
-fn pending(file: &std::fs::File) -> Option<u32> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
-    let mut available = 0u32;
-    let ok = unsafe {
-        PeekNamedPipe(
-            file.as_raw_handle() as _,
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null_mut(),
-            &mut available,
-            std::ptr::null_mut(),
-        )
-    };
-    (ok != 0).then_some(available)
-}
-
-/// Read one newline-delimited frame, if one is available within `timeout`.
-fn read_frame(file: &mut std::fs::File, buffer: &mut Vec<u8>, timeout: Duration) -> Option<Frame> {
-    if let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
-        let line: Vec<u8> = buffer.drain(..=position).collect();
-        return serde_json::from_slice(&line[..line.len() - 1]).ok();
-    }
-    let deadline = Instant::now() + timeout;
-    loop {
-        match pending(file) {
-            None => return None,
-            Some(0) => {
-                if Instant::now() >= deadline {
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(4));
-                continue;
-            }
-            Some(_) => {}
-        }
-        let mut chunk = [0u8; 65536];
-        match file.read(&mut chunk) {
-            Ok(0) | Err(_) => return None,
-            Ok(read) => {
-                buffer.extend_from_slice(&chunk[..read]);
-                if let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let line: Vec<u8> = buffer.drain(..=position).collect();
-                    return serde_json::from_slice(&line[..line.len() - 1]).ok();
-                }
-            }
-        }
+/// The wire shape the rest of this crate expects, from one typed event.
+fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
+    match event {
+        wire::daemon_client::DaemonClientEvent::SessionEvent {
+            active_session_id,
+            event,
+            meta_sequence,
+        } => Some(json!({
+            "type": "session_event",
+            "activeSessionId": active_session_id,
+            "event": event,
+            "meta": {"sequence": meta_sequence},
+        })),
+        wire::daemon_client::DaemonClientEvent::SessionClosed {
+            active_session_id,
+            reason,
+        } => Some(json!({
+            "type": "session_closed",
+            "activeSessionId": active_session_id,
+            "reason": reason,
+        })),
+        _ => None,
     }
 }
 
@@ -442,6 +435,52 @@ pub fn get_messages_within(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default())
+}
+
+/// The newest `limit` messages of the branch, by page cursor.
+///
+/// The typed `TranscriptPage::End` the terminal UI uses: the daemon resolves it
+/// against the branch instead of shipping the whole session on every poll. The
+/// returned cursor is a content fingerprint — it changes when the tail moves,
+/// even if the row count does not.
+///
+/// # Errors
+/// Fails on a transport error, or when the branch moved under the cursor.
+pub fn get_tail(
+    client: &Client,
+    session: &str,
+    limit: usize,
+) -> std::io::Result<(Vec<Value>, String, bool)> {
+    let response = client.request(
+        "get_messages",
+        json!({
+            "activeSessionId": session,
+            "page": {"from": "end", "limit": limit},
+        }),
+        Duration::from_secs(10),
+    )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "get_messages failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    let data = response.get("data");
+    let messages = data
+        .and_then(|data| data.get("messages"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let last = data
+        .and_then(|data| data.get("lastEntryId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let more = data
+        .and_then(|data| data.get("more"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok((messages, last, more))
 }
 
 /// `prompt` → hand a message to the session's agent.

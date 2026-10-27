@@ -3,7 +3,7 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, get_messages_within, get_queue, list_sessions, send_prompt, session_stats,
+    abort, attach_as, get_queue, get_tail, list_sessions, send_prompt, session_stats,
     set_model, steer_prompt, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -36,7 +36,11 @@ enum Job {
 enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
     Transcript { session: String, messages: Vec<serde_json::Value> },
-    Tail { session: String, messages: Vec<serde_json::Value> },
+    Tail {
+        session: String,
+        messages: Vec<serde_json::Value>,
+        last_entry: String,
+    },
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
     PromptResult { error: Option<String> },
@@ -245,7 +249,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut tail_len = 0usize;
     // a fixed-size window keeps its length while its contents move: never
     // treat an unchanged count as "nothing new"
-    let mut tail_sig: Option<(usize, u64)> = None;
+    let mut tail_sig: Option<(u64, u64)> = None;
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
@@ -491,7 +495,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     // land on the newest turn, like every chat
                     scroll_to_end_when_ready(&ui.as_weak());
                 }
-                Msg::Tail { session, messages } => {
+                Msg::Tail {
+                    session,
+                    messages,
+                    last_entry,
+                } => {
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
@@ -512,12 +520,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     if messages.is_empty() {
                         continue;
                     }
+                    // the page cursor is the fingerprint: it moves when the tail
+                    // moves, even when the row count is unchanged
                     let newest = messages
                         .last()
                         .and_then(|message| message.get("timestamp"))
                         .and_then(serde_json::Value::as_u64)
                         .unwrap_or(0);
-                    if tail_sig == Some((messages.len(), newest)) {
+                    let cursor = page_cursor(&last_entry);
+                    if tail_sig == Some((cursor, newest)) {
                         continue;
                     }
                     // A row is being streamed: the event path owns the view,
@@ -531,7 +542,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // a quiet live row is replaced by the store's copy
                     live_row = None;
                     tail_len = messages.len();
-                    tail_sig = Some((messages.len(), newest));
+                    tail_sig = Some((cursor, newest));
                     let (built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
@@ -727,6 +738,13 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.run()
 }
 
+/// A stable number for a page cursor, so the poll can tell "same page" quickly.
+fn page_cursor(last_entry: &str) -> u64 {
+    last_entry
+        .bytes()
+        .fold(0u64, |hash, byte| hash.wrapping_mul(31).wrapping_add(u64::from(byte)))
+}
+
 fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
 
@@ -855,11 +873,17 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // local pipe open per poll; the alternative is a window that
                     // stops one turn short.
                     let _ = fresh;
-                    let read = Client::connect()
-                        .and_then(|open| get_messages_within(&open, &session, Duration::from_millis(2500)));
+                    // one tail page, not the whole branch: the typed cursor the
+                    // terminal UI uses, so a long session costs the same as a
+                    // short one
+                    let read = get_tail(active, &session, WINDOW_ROWS);
                     match read {
-                    Ok(messages) => {
-                        let _ = out.send(Msg::Tail { session, messages });
+                    Ok((messages, last_entry, _more)) => {
+                        let _ = out.send(Msg::Tail {
+                            session,
+                            messages,
+                            last_entry,
+                        });
                     }
                     Err(error) => {
                         if std::env::var("PA_DEBUG").is_ok() {

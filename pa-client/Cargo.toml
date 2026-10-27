@@ -9,9 +9,9 @@ serde_json = "1"
 # the daemon's own wire types: every command we emit is checked against the
 # enum the supervisor deserializes, so protocol drift is a build error
 pa-types = { path = "../../prime-agent/crates/pa-types" }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Pipes"] }
+anyhow = "1"
+# the vendored client in src/wire is the terminal UI's own transport
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net"] }
 
 [lib]
 name = "pa_client"
