@@ -67,6 +67,33 @@ component IconUp inherits Path {
     fill: transparent;
 }
 
+// Row actions, drawn a little larger than the 8-10px marks they replace: at
+// 14px a trash can and a "to the top" arrow are recognisable, where a 10px x and
+// a bare up arrow read as punctuation.
+component IconTrash inherits Path {
+    in property <color> tint: #8b8c85;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 14;
+    viewbox-height: 14;
+    commands: "M 3.4 4.1 L 10.6 4.1 M 5.7 4.1 L 5.7 2.8 L 8.3 2.8 L 8.3 4.1 M 4.5 4.1 L 5.2 11.7 L 8.8 11.7 L 9.5 4.1";
+    stroke: tint;
+    stroke-width: 1.15px;
+    fill: transparent;
+}
+
+component IconToTop inherits Path {
+    in property <color> tint: #a18e41;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 14;
+    viewbox-height: 14;
+    commands: "M 3.2 2.9 L 10.8 2.9 M 7 11.6 L 7 5.3 M 4.4 7.9 L 7 5.3 L 9.6 7.9";
+    stroke: tint;
+    stroke-width: 1.3px;
+    fill: transparent;
+}
+
 component IconX inherits Path {
     in property <color> tint: #8b8c85;
     width: 8px;
@@ -100,7 +127,7 @@ component QueueRow inherits Rectangle {
     row-touch := TouchArea {
         x: 0;
         y: 0;
-        width: parent.width - 30px;
+        width: parent.width - 36px;
         height: 100%;
         mouse-cursor: pointer;
         clicked => { root.act(root.lane, root.slot, "edit"); }
@@ -109,7 +136,7 @@ component QueueRow inherits Rectangle {
     Text {
         x: 6px;
         y: 3px;
-        width: parent.width - 38px;
+        width: parent.width - 44px;
         height: parent.height - 6px;
         text: root.text;
         color: #d9d8d1;
@@ -119,13 +146,15 @@ component QueueRow inherits Rectangle {
         overflow: elide;
     }
 
+    // a resting surface, not a hover-only one: an action that looks like empty
+    // space until the pointer finds it is a hidden control
     Rectangle {
-        x: parent.width - 24px;
+        x: parent.width - 28px;
         y: (parent.height - self.height) / 2;
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        background: del.has-hover ? #2a2d24 : transparent;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: del.has-hover ? #2a2d24 : #1f211a;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -134,7 +163,7 @@ component QueueRow inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.act(root.lane, root.slot, "delete"); }
         }
-        IconX {
+        IconTrash {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             tint: del.has-hover ? #f3ded8 : #8b8c85;
@@ -157,7 +186,7 @@ component QueueRowUp inherits Rectangle {
     row-touch := TouchArea {
         x: 0;
         y: 0;
-        width: parent.width - 52px;
+        width: parent.width - 64px;
         height: 100%;
         mouse-cursor: pointer;
         clicked => { root.act(root.lane, root.slot, "edit"); }
@@ -166,7 +195,7 @@ component QueueRowUp inherits Rectangle {
     Text {
         x: 6px;
         y: 3px;
-        width: parent.width - 60px;
+        width: parent.width - 72px;
         height: parent.height - 6px;
         text: root.text;
         color: #d9d8d1;
@@ -177,12 +206,12 @@ component QueueRowUp inherits Rectangle {
     }
 
     Rectangle {
-        x: parent.width - 46px;
+        x: parent.width - 56px;
         y: (parent.height - self.height) / 2;
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        background: up.has-hover ? #2a2d24 : transparent;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: up.has-hover ? #2a2d24 : #1f211a;
         up := TouchArea {
             x: 0;
             y: 0;
@@ -191,20 +220,20 @@ component QueueRowUp inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.act(root.lane, root.slot, "promote"); }
         }
-        IconUp {
+        IconToTop {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: up.has-hover ? #d9c86a : #a18e41;
+            tint: up.has-hover ? #e0cd7c : #a18e41;
         }
     }
 
     Rectangle {
-        x: parent.width - 24px;
+        x: parent.width - 28px;
         y: (parent.height - self.height) / 2;
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        background: del.has-hover ? #2a2d24 : transparent;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: del.has-hover ? #2a2d24 : #1f211a;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -213,13 +242,14 @@ component QueueRowUp inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.act(root.lane, root.slot, "delete"); }
         }
-        IconX {
+        IconTrash {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             tint: del.has-hover ? #f3ded8 : #8b8c85;
         }
     }
 }
+
 component IconRail inherits Path {
     in property <bool> open;
     width: 10px;
@@ -279,8 +309,8 @@ component IconPencil inherits Path {
 }
 
 component IconAlert inherits Path {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     viewbox-width: 14;
     viewbox-height: 14;
     commands: "M 7 3.5 L 7 8.0 M 7 9.5 L 7 10.5";
