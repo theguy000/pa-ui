@@ -1379,6 +1379,18 @@ export component AppWindow inherits Window {
         background: #0f100d;
     }
 
+    // ...and a straight divider where that border used to be: it meets the box's
+    // side borders squarely instead of curving into them
+    Rectangle {
+        x: 1px;
+        y: 0;
+        width: parent.width - 2px;
+        height: 1px;
+        visible: root.busy-h > 1px;
+        opacity: root.busy-fade;
+        background: #23251f;
+    }
+
     // the handle drawn on the box's top border
     Rectangle {
         x: (parent.width - self.width) / 2;
