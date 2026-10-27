@@ -135,13 +135,14 @@ component QueueRow inherits Rectangle {
 
     Text {
         x: 6px;
-        y: 3px;
+        y: 0;
         width: parent.width - 44px;
-        height: parent.height - 6px;
+        height: 100%;
         text: root.text;
         color: #d9d8d1;
         font-size: 11px;
-        vertical-alignment: top;
+        // centred: a one-line message sat against the top of a 34px row
+        vertical-alignment: center;
         wrap: word-wrap;
         overflow: elide;
     }
@@ -154,7 +155,9 @@ component QueueRow inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: del.has-hover ? #2a2d24 : #1f211a;
+        // colour alone, no outline: the fill sits a clear step above both the
+        // panel and the row's hover, which is what keeps the button a button
+        background: del.has-hover ? #383c30 : #2c2f26;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -194,13 +197,13 @@ component QueueRowUp inherits Rectangle {
 
     Text {
         x: 6px;
-        y: 3px;
+        y: 0;
         width: parent.width - 72px;
-        height: parent.height - 6px;
+        height: 100%;
         text: root.text;
         color: #d9d8d1;
         font-size: 11px;
-        vertical-alignment: top;
+        vertical-alignment: center;
         wrap: word-wrap;
         overflow: elide;
     }
@@ -211,7 +214,7 @@ component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: up.has-hover ? #2a2d24 : #1f211a;
+        background: up.has-hover ? #383c30 : #2c2f26;
         up := TouchArea {
             x: 0;
             y: 0;
@@ -233,7 +236,9 @@ component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: del.has-hover ? #2a2d24 : #1f211a;
+        // colour alone, no outline: the fill sits a clear step above both the
+        // panel and the row's hover, which is what keeps the button a button
+        background: del.has-hover ? #383c30 : #2c2f26;
         del := TouchArea {
             x: 0;
             y: 0;
