@@ -62,4 +62,30 @@ export component DraftEditor inherits Rectangle {
             }
         }
     }
+
+    // right-click gets the usual text actions instead of starting a selection
+    // drag; TextInput's own cut/copy/paste keep text and selection in sync
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Cut";
+                enabled: !root.text.is-empty;
+                activated => { field.cut(); }
+            }
+            MenuItem {
+                title: "Copy";
+                enabled: !root.text.is-empty;
+                activated => { field.copy(); }
+            }
+            MenuItem {
+                title: "Paste";
+                activated => { field.paste(); }
+            }
+            MenuItem {
+                title: "Select All";
+                enabled: !root.text.is-empty;
+                activated => { field.select-all(); }
+            }
+        }
+    }
 }
