@@ -384,6 +384,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     if selected_uuid.is_none() {
                         selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
                     }
+                    // nothing known about this selection: nothing is running
+                    if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
+                        ui.set_busy(false);
+                        busy_label.clear();
+                    }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
                         if state != live_state {

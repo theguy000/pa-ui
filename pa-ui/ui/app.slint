@@ -144,13 +144,6 @@ component SessionRow inherits Rectangle {
                 root.hovered(root.item.tip);
             }
         }
-        // leaving the row clears the card: previously it stuck around after the
-        // pointer moved away and looked like a stray label over the chat
-        changed has-hover => {
-            if !self.has-hover {
-                root.hovered("");
-            }
-        }
     }
 
     HorizontalLayout {
@@ -670,7 +663,12 @@ export component AppWindow inherits Window {
                             selected: item.id == root.selected-id;
                             editing: item.id == root.editing-id;
                             draft <=> root.draft;
-                            picked(id) => { root.selected-id = id; }
+                            picked(id) => {
+                                root.selected-id = id;
+                                // a picked row drops the card: leaving hover as the
+                                // only way to clear it made it look stuck
+                                root.hover-title = "";
+                            }
                             hovered(full) => { root.hover-title = full; }
                             edit(id) => { root.editing-id = id; root.draft = item.full; }
                             commit(id, name) => {

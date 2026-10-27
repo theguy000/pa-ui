@@ -437,7 +437,17 @@ pub fn get_messages(client: &Client, session: &str) -> std::io::Result<Vec<Value
 /// # Errors
 /// Fails only on transport errors (a closed pipe).
 pub fn send_prompt(client: &Client, session: &str, message: &str) -> std::io::Result<String> {
-    client.send("prompt", json!({"activeSessionId": session, "message": message}))
+    client.send(
+        "prompt",
+        json!({
+            "activeSessionId": session,
+            "message": message,
+            // without this the daemon refuses a prompt sent mid-turn instead
+            // of holding it: `queueIfBusy: false` never queues
+            "queueIfBusy": true,
+            "streamingBehavior": "followUp",
+        }),
+    )
 }
 
 /// `abort` → stop the running turn.
@@ -467,6 +477,7 @@ pub fn steer_prompt(
             "activeSessionId": session,
             "message": message,
             "streamingBehavior": "steer",
+            "queueIfBusy": true,
         }),
     )
 }
