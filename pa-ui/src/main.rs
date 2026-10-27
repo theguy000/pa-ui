@@ -3,8 +3,9 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, create_session, get_queue, get_tail, list_sessions, model_catalog, mutate_queue,
-    send_prompt, session_stats, set_model, steer_prompt, Client, SessionRow,
+    abort, attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions,
+    model_catalog, mutate_queue, send_prompt, session_stats, set_model, steer_prompt, Client,
+    SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -316,6 +317,26 @@ fn main() -> Result<(), slint::PlatformError> {
             *pending_user.borrow_mut() = None;
             ui.set_status_line("steered".into());
             let _ = jobs.send(Job::Steer { session, message });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        ui.on_queue_clear(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            ui.set_status_line("clearing the queue".into());
+            let _ = jobs.send(Job::QueueAct {
+                session,
+                lane: String::new(),
+                slot: 0,
+                text: String::new(),
+                action: "clear".into(),
+            });
         });
     }
 
@@ -1144,6 +1165,17 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     text,
                     action,
                 } => {
+                    // `clear` is not a mutation of one row: it empties both lanes
+                    if action == "clear" {
+                        let outcome = clear_queue(active, &session);
+                        if std::env::var("PA_DEBUG").is_ok() {
+                            eprintln!("[queue] clear -> {outcome:?}");
+                        }
+                        if let Ok((steering, follow_up)) = get_queue(active, &session) {
+                            let _ = out.send(Msg::Queue { steering, follow_up });
+                        }
+                        continue;
+                    }
                     let mutation = match action.as_str() {
                         // a follow-up promoted to the steering lane is the same
                         // text re-laned: the daemon delivers it inside the turn

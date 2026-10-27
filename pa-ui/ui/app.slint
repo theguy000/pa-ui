@@ -89,36 +89,39 @@ component QueueRow inherits Rectangle {
     in property <int> slot;
     callback act(string, int, string);
 
-    height: 24px;
-    border-radius: 5px;
+    // Two lines, fixed height: the panel stacks rows by arithmetic, so a row
+    // that grew with its text would overlap the next one. Wrapped and elided,
+    // a long message shows its beginning and where it was cut.
+    height: 34px;
+    border-radius: 6px;
     background: row-touch.has-hover ? #1f211a : transparent;
 
     // the text is the edit affordance; it stops short of the button
     row-touch := TouchArea {
         x: 0;
         y: 0;
-        width: parent.width - 28px;
+        width: parent.width - 30px;
         height: 100%;
         mouse-cursor: pointer;
         clicked => { root.act(root.lane, root.slot, "edit"); }
     }
 
     Text {
-        x: 4px;
-        y: 0;
-        width: parent.width - 28px;
-        height: parent.height;
+        x: 6px;
+        y: 3px;
+        width: parent.width - 38px;
+        height: parent.height - 6px;
         text: root.text;
         color: #d9d8d1;
         font-size: 11px;
-        vertical-alignment: center;
-        wrap: no-wrap;
+        vertical-alignment: top;
+        wrap: word-wrap;
         overflow: elide;
     }
 
     Rectangle {
         x: parent.width - 24px;
-        y: 3px;
+        y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
         border-radius: 4px;
@@ -147,35 +150,35 @@ component QueueRowUp inherits Rectangle {
     in property <int> slot;
     callback act(string, int, string);
 
-    height: 24px;
-    border-radius: 5px;
+    height: 34px;
+    border-radius: 6px;
     background: row-touch.has-hover ? #1f211a : transparent;
 
     row-touch := TouchArea {
         x: 0;
         y: 0;
-        width: parent.width - 50px;
+        width: parent.width - 52px;
         height: 100%;
         mouse-cursor: pointer;
         clicked => { root.act(root.lane, root.slot, "edit"); }
     }
 
     Text {
-        x: 4px;
-        y: 0;
-        width: parent.width - 50px;
-        height: parent.height;
+        x: 6px;
+        y: 3px;
+        width: parent.width - 60px;
+        height: parent.height - 6px;
         text: root.text;
         color: #d9d8d1;
         font-size: 11px;
-        vertical-alignment: center;
-        wrap: no-wrap;
+        vertical-alignment: top;
+        wrap: word-wrap;
         overflow: elide;
     }
 
     Rectangle {
         x: parent.width - 46px;
-        y: 3px;
+        y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
         border-radius: 4px;
@@ -197,7 +200,7 @@ component QueueRowUp inherits Rectangle {
 
     Rectangle {
         x: parent.width - 24px;
-        y: 3px;
+        y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
         border-radius: 4px;
@@ -217,7 +220,6 @@ component QueueRowUp inherits Rectangle {
         }
     }
 }
-
 component IconRail inherits Path {
     in property <bool> open;
     width: 10px;
@@ -736,7 +738,7 @@ export component AppWindow inherits Window {
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
         // a click that lands on nothing in particular dismisses the model menu
-        clicked => { root.model-menu = false; }
+        clicked => { root.model-menu = false; root.queue-open = false; }
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
                 // only the handle starts a drag; the rest of the band belongs
@@ -790,6 +792,17 @@ export component AppWindow inherits Window {
     in property <[QueueItem]> queued-steering;
     in property <[QueueItem]> queued-followup;
     in-out property <bool> queue-open: false;
+    // the queue panel's geometry, in one place: its rows are stacked by
+    // arithmetic, and every y below is a sum of these
+    out property <length> q-head-in: root.queued-steering.length > 0 ? 20px : 0px;
+    out property <length> q-rows-in: root.queued-steering.length * 34px;
+    out property <length> q-head-next: root.queued-followup.length > 0 ? 20px : 0px;
+    out property <length> q-rows-next: root.queued-followup.length * 34px;
+    out property <length> q-lane-gap: root.queued-steering.length > 0
+        && root.queued-followup.length > 0 ? 8px : 0px;
+    out property <length> q-content-h: root.q-head-in + root.q-rows-in + root.q-lane-gap
+        + root.q-head-next + root.q-rows-next + 24px;
+    out property <length> q-scroll-h: min(root.q-content-h, 288px);
     in-out property <string> queued-preview: "";
     in-out property <float> context-fill: 0.0;
     // composer input height; the pill on its top border toggles it
@@ -872,6 +885,7 @@ export component AppWindow inherits Window {
     callback rename-requested(string, string);
     callback toggle-row(int);
     callback queue-act(string, int, string);
+    callback queue-clear();
     callback new-chat();
 
     // true while the reader is parked at the newest row; a new row then pulls
@@ -1849,16 +1863,17 @@ export component AppWindow inherits Window {
     // The queue panel hangs off the strip, at the window root like the model
     // menu: inside the band it sat at a negative y, where it painted outside
     // the area that answers clicks.
-    if root.queue-open && root.queued-count > 0 : Rectangle {
+    if root.queue-open && root.queued-count > 0 : queue-panel := Rectangle {
+        // measured off the composer box, not the band: the strip's height is
+        // animated, and the panel has to ride it
         x: composer-box.absolute-position.x + composer-box.width - self.width;
         y: composer-box.absolute-position.y - root.busy-h - self.height - 6px;
-        width: 300px;
-        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
-            + root.queued-steering.length * 24px
-            + (root.queued-followup.length > 0 ? 16px : 0px)
-            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
-            + root.queued-followup.length * 24px
-            + 24px;
+        width: 320px;
+        // the list is capped and scrolls: a long queue used to walk off the top
+        // of the window, where the rows could not even be reached
+        // not `q-scroll.height`: a ScrollView's height reads back as nothing at
+        // the time the parent binds, which collapsed the panel to a sliver
+        height: root.q-scroll-h + 12px;
         background: #171814;
         border-color: #2c2f26;
         border-width: 1px;
@@ -1866,63 +1881,104 @@ export component AppWindow inherits Window {
         drop-shadow-blur: 12px;
         drop-shadow-color: #00000080;
 
-        if root.queued-steering.length > 0 : Text {
-            x: 10px;
-            y: 8px;
-            width: 280px;
-            height: 16px;
-            text: "INTO THIS TURN";
-            color: #a18e41;
-            font-size: 9px;
-            letter-spacing: 0.6px;
-            vertical-alignment: center;
-        }
-        for item[i] in root.queued-steering : QueueRow {
-            x: 10px;
-            y: 24px + i * 24px;
-            width: 280px;
-            text: item.text;
-            lane: "steering";
-            slot: item.slot;
-            act(lane, slot, action) => {
-                root.queue-act(lane, slot, action);
-                root.queue-open = false;
+        q-scroll := ScrollView {
+            x: 0;
+            y: 6px;
+            width: parent.width;
+            height: root.q-scroll-h;
+            vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+            content-width: self.visible-width;
+            content-height: root.q-content-h;
+
+            Rectangle {
+                width: 100%;
+                height: root.q-content-h;
+                // rows are placed by arithmetic, so the content root is the one
+                // thing that can stop a long queue painting past the panel
+                clip: true;
+
+                if root.queued-steering.length > 0 : Text {
+                    x: 10px;
+                    y: 0;
+                    height: 20px;
+                    vertical-alignment: center;
+                    text: "INTO THIS TURN";
+                    color: #a18e41;
+                    font-size: 9px;
+                    letter-spacing: 0.6px;
+                }
+                for item[i] in root.queued-steering : QueueRow {
+                    y: root.q-head-in + i * 34px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    text: item.text;
+                    lane: "steering";
+                    slot: item.slot;
+                    act(lane, slot, action) => {
+                        root.queue-act(lane, slot, action);
+                        if action != "edit" {
+                            root.queue-open = false;
+                        }
+                    }
+                }
+
+                if root.queued-followup.length > 0 : Text {
+                    x: 10px;
+                    y: root.q-head-in + root.q-rows-in + root.q-lane-gap;
+                    height: 20px;
+                    vertical-alignment: center;
+                    text: "UP NEXT";
+                    color: #8b8c85;
+                    font-size: 9px;
+                    letter-spacing: 0.6px;
+                }
+                for item[i] in root.queued-followup : QueueRowUp {
+                    y: root.q-head-in + root.q-rows-in + root.q-lane-gap + root.q-head-next + i * 34px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    text: item.text;
+                    lane: "followUp";
+                    slot: item.slot;
+                    act(lane, slot, action) => {
+                        root.queue-act(lane, slot, action);
+                        if action != "edit" {
+                            root.queue-open = false;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 8px;
+                    y: root.q-content-h - 24px;
+                    width: parent.width - 16px;
+                    height: 22px;
+                    border-radius: 5px;
+                    background: clear-touch.has-hover ? #1f211a : transparent;
+
+                    Text {
+                        x: 2px;
+                        y: 0;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        text: "clear all";
+                        color: clear-touch.has-hover ? #d9d8d1 : #6b6e63;
+                        font-size: 10px;
+                    }
+
+                    clear-touch := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.queue-clear();
+                            root.queue-open = false;
+                        }
+                    }
+                }
             }
-        }
-        if root.queued-followup.length > 0 : Text {
-            x: 10px;
-            y: 24px + root.queued-steering.length * 24px
-                + (root.queued-steering.length > 0 ? 6px : 0px);
-            width: 280px;
-            height: 16px;
-            vertical-alignment: center;
-            text: "UP NEXT";
-            color: #8b8c85;
-            font-size: 9px;
-            letter-spacing: 0.6px;
-        }
-        for item[i] in root.queued-followup : QueueRowUp {
-            x: 10px;
-            y: 40px + root.queued-steering.length * 24px
-                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
-            width: 280px;
-            text: item.text;
-            lane: "followUp";
-            slot: item.slot;
-            act(lane, slot, action) => {
-                root.queue-act(lane, slot, action);
-                root.queue-open = false;
-            }
-        }
-        Text {
-            x: 10px;
-            y: parent.height - 26px;
-            width: 280px;
-            height: 18px;
-            vertical-alignment: bottom;
-            text: "↑ sends into this turn · click a line to edit";
-            color: #565a4f;
-            font-size: 9px;
         }
     }
 }

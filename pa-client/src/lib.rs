@@ -772,6 +772,14 @@ pub fn set_model(
     )
 }
 
+/// `clear_queue` → drop everything waiting, both lanes.
+///
+/// # Errors
+/// Fails on transport errors (a refusal shows up in the status line).
+pub fn clear_queue(client: &Client, session: &str) -> std::io::Result<String> {
+    client.send("clear_queue", json!({"activeSessionId": session}))
+}
+
 /// One agent stream event → the TUI's loader vocabulary.
 ///
 /// Mirrors `track_stream_activity` in pa-tui: the event *kind*, not the delta,
