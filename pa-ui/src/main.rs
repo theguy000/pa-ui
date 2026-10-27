@@ -243,6 +243,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
     // how many messages of the attached session we have already turned into rows
     let mut tail_len = 0usize;
+    // a fixed-size window keeps its length while its contents move: never
+    // treat an unchanged count as "nothing new"
+    let mut tail_sig: Option<(usize, u64)> = None;
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
@@ -375,6 +378,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 selected_uuid = Some(uuid.to_string());
                                 loaded = None;
                                 tail_len = 0;
+                                tail_sig = None;
                                 last_seq = 0;
                                 live_row = None;
                             }
@@ -486,7 +490,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 Msg::Tail { session, messages } => {
                     if std::env::var("PA_DEBUG").is_ok() {
-                        eprintln!("[tail] {} msgs (have {})", messages.len(), tail_len);
+                        eprintln!(
+                            "[tail] {session} {} msgs (have {}) newest={:?}",
+                            messages.len(),
+                            tail_len,
+                            messages
+                                .last()
+                                .map(|m| m.get("timestamp").and_then(serde_json::Value::as_u64).unwrap_or(0))
+                                .unwrap_or(0)
+                        );
                     }
                     if loaded.as_deref() != Some(session.as_str()) {
                         continue;
@@ -497,7 +509,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     if messages.is_empty() {
                         continue;
                     }
-                    if messages.len() == tail_len {
+                    let newest = messages
+                        .last()
+                        .and_then(|message| message.get("timestamp"))
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    if tail_sig == Some((messages.len(), newest)) {
                         continue;
                     }
                     // A row is being streamed: the event path owns the view,
@@ -507,6 +524,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         continue;
                     }
                     tail_len = messages.len();
+                    tail_sig = Some((messages.len(), newest));
                     let (built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
@@ -658,6 +676,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 Msg::Reconnected => {
                     loaded = None;
                     live_row = None;
+                    tail_sig = None;
                     last_seq = 0;
                     ui.set_status_line("reconnecting".into());
                 }
@@ -688,6 +707,12 @@ fn main() -> Result<(), slint::PlatformError> {
 
 fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
+    // Reads go over a connection that never attaches: once a connection is
+    // attached to a session the daemon serves its store view, which lags the
+    // live agent by whole turns. A bare connection always answers with the
+    // current messages (verified: attached 106 frozen while a fresh one read
+    // 108 and kept moving).
+    let mut reader: Option<Client> = None;
     let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
     // prompts awaiting a daemon verdict: a fire-and-forget send would otherwise
@@ -700,6 +725,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
             match Client::connect() {
                 Ok(connected) => {
                     client = Some(connected);
+                    reader = None;
                     // a new connection has no attachments: the UI re-attaches
                     // with the resume cursor so the daemon replays the gap
                     attached = None;
@@ -787,15 +813,24 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     let error = outcome.err().map(|e| e.to_string());
                     let _ = out.send(Msg::PromptResult { error });
                 }
-                Job::Tail { session } => match get_messages(active, &session) {
+                Job::Tail { session } => {
+                    if reader.as_ref().map_or(true, |open| !open.alive()) {
+                        reader = Client::connect().ok();
+                    }
+                    let Some(rd) = reader.as_ref() else {
+                        let _ = out.send(Msg::Error("tail: no reader connection".into()));
+                        continue;
+                    };
+                    match get_messages(rd, &session) {
                     Ok(messages) => {
-                        attached = Some(session.clone());
                         let _ = out.send(Msg::Tail { session, messages });
                     }
                     Err(error) => {
+                        reader = None;
                         let _ = out.send(Msg::Error(error.to_string()));
                     }
-                },
+                    }
+                }
             }
         }
 
