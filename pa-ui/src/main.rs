@@ -119,6 +119,10 @@ fn main() -> Result<(), slint::PlatformError> {
     std::thread::spawn(move || worker(job_rx, msg_tx, worker_client_id));
 
     // transcript model, kept alive so a toggle can patch one row
+    // the rail's filter and the rows it filters: a keystroke re-filters from
+    // the cache instead of waiting for the next poll
+    let session_filter: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let sessions_cache: Rc<RefCell<Vec<SessionRow>>> = Rc::new(RefCell::new(Vec::new()));
     let rows_store: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
     let row_model: Rc<VecModel<TRow>> = Rc::new(VecModel::default());
     ui.set_transcript(ModelRc::from(row_model.clone()));
@@ -342,6 +346,21 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let filter = session_filter.clone();
+        let cache = sessions_cache.clone();
+        ui.on_search_edited(move |query| {
+            let query = query.to_string();
+            *filter.borrow_mut() = query.clone();
+            let rows = cache.borrow().clone();
+            let items = session_items(&rows, &query);
+            if let Some(ui) = weak.upgrade() {
+                ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
         let jobs = job_tx.clone();
         ui.on_new_chat(move || {
             if let Some(ui) = weak.upgrade() {
@@ -502,7 +521,11 @@ fn main() -> Result<(), slint::PlatformError> {
         while let Ok(message) = msg_rx.try_recv() {
             match message {
                 Msg::Sessions(Ok(rows)) => {
-                    let items: Vec<SessionItem> = rows.iter().map(to_item).collect();
+                    // kept so a keystroke can re-filter without waiting for the
+                    // next poll
+                    *sessions_cache.borrow_mut() = rows.clone();
+                    let items: Vec<SessionItem> =
+                        session_items(&rows, &session_filter.borrow());
                     let live = rows.iter().filter(|row| row.lifecycle == "live").count();
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     ui.set_status_line(format!("{live} live of {} known", rows.len()).into());
@@ -1446,6 +1469,21 @@ fn to_item(row: &SessionRow) -> SessionItem {
         status: status.into(),
         scroll: marquee_shift(&trim_to(&display_name(row), 90)),
     }
+}
+
+/// The rail's rows for a query: a session matches if its name or either id
+/// carries the text, case aside. An empty query keeps everything.
+fn session_items(rows: &[SessionRow], query: &str) -> Vec<SessionItem> {
+    let needle = query.trim().to_lowercase();
+    rows.iter()
+        .filter(|row| {
+            needle.is_empty()
+                || display_name(row).to_lowercase().contains(&needle)
+                || row.id.to_lowercase().contains(&needle)
+                || row.session_id.to_lowercase().contains(&needle)
+        })
+        .map(to_item)
+        .collect()
 }
 
 /// The session the selection follows: ids are re-keyed by a daemon restart,
