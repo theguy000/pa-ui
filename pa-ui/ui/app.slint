@@ -730,8 +730,9 @@ export component AppWindow inherits Window {
     // queued chip sits above the box, so the transcript has to stop short of it
     // the popup is drawn at the window root (a child at negative y paints but
     // cannot be hit), so it anchors off the composer box, which never moves
-    out property <length> composer-total: root.box-height + 12px
-        + (root.queued-count > 0 ? 30px : 0px);
+    // the band reserves a full 34px above the box, not just the chip: the last
+    // line of the transcript was butting straight into the input
+    out property <length> composer-total: root.box-height + 46px;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
