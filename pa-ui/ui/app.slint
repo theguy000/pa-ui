@@ -1308,10 +1308,55 @@ export component AppWindow inherits Window {
         width: parent.width - 36px;
         height: root.busy-h + 12px;
         background: #0f100d;
-        border-color: #23251f;
-        border-width: 1px;
+        // fill only, no border: a Rectangle can round all four corners or none,
+        // so the outline is drawn below as four pieces - round at the top,
+        // straight down the sides, open at the bottom where the box takes over
         border-radius: 12px;
         opacity: root.busy-fade;
+
+        Rectangle {
+            x: 12px;
+            y: 0;
+            width: parent.width - 24px;
+            height: 1px;
+            background: #23251f;
+        }
+        Rectangle {
+            x: 0;
+            y: 12px;
+            width: 1px;
+            height: parent.height - 12px;
+            background: #23251f;
+        }
+        Rectangle {
+            x: parent.width - 1px;
+            y: 12px;
+            width: 1px;
+            height: parent.height - 12px;
+            background: #23251f;
+        }
+        // quarter-circle approximations, 12px radius
+        Path {
+            width: 12px;
+            height: 12px;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: "M 0.5 11.5 C 0.5 5.5 5.5 0.5 11.5 0.5";
+            stroke: #23251f;
+            stroke-width: 1px;
+            fill: transparent;
+        }
+        Path {
+            x: parent.width - 12px;
+            width: 12px;
+            height: 12px;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: "M 11.5 11.5 C 11.5 5.5 6.5 0.5 0.5 0.5";
+            stroke: #23251f;
+            stroke-width: 1px;
+            fill: transparent;
+        }
 
         // the visible half of the strip: everything above the box's top edge
         Rectangle {
