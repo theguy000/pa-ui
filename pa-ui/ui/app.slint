@@ -264,16 +264,6 @@ component IconSend inherits Path {
     fill: transparent;
 }
 
-component IconCheck inherits Path {
-    width: 10px;
-    height: 10px;
-    viewbox-width: 10;
-    viewbox-height: 10;
-    commands: "M 1.8 5.4 L 4 7.6 L 8.2 2.6";
-    stroke: #a18e41;
-    stroke-width: 1.4px;
-    fill: transparent;
-}
 
 component IconPencil inherits Path {
     width: 11px;
@@ -701,11 +691,53 @@ component Chip inherits Rectangle {
             }
         }
     }
-    ct := TouchArea { clicked => { root.toggled(); } }
+    ct := TouchArea {
+        mouse-cursor: ct.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        clicked => { root.toggled(); }
+    }
 }
 
 export component AppWindow inherits Window {
     title: "prime-agent";
+
+    // The drag surface is the whole window, so the pointer can never leave it
+    // mid-drag, and it measures the pointer in window coordinates: anchored to
+    // the composer box it moved as the box grew, which is what made the drag
+    // stutter and lose the pointer.
+    drag-surface := TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
+            : MouseCursor.default;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                // only the handle starts a drag; the rest of the band belongs
+                // to the chip and the model menu
+                if root.handle-hover {
+                    root.dragging = true;
+                    root.band-freeze = root.composer-total;
+                    root.last-pointer-y = drag-surface.mouse-y;
+                }
+            }
+            if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.dragging = false;
+            }
+            if event.kind == PointerEventKind.move && root.dragging {
+                let step = root.last-pointer-y - drag-surface.mouse-y;
+                root.last-pointer-y = drag-surface.mouse-y;
+                if step > -60px && step < 60px {
+                    root.composer-height = clamp(
+                        root.composer-height + step,
+                        root.composer-min,
+                        root.composer-max
+                    );
+                }
+            }
+        }
+    }
+
     // no fixed width/height: a fixed size leaves the new area blank when the
     // user resizes the window, because the root keeps its declared size
     min-width: 900px;
@@ -752,6 +784,13 @@ export component AppWindow inherits Window {
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
+    // where the handle actually sits, in window coordinates: the drag surface
+    // is the whole window, so the press has to be tested against it
+    out property <length> handle-cy: composer-band.absolute-position.y + 34px;
+    out property <length> handle-cx: composer-band.absolute-position.x + composer-band.width / 2;
+    out property <bool> handle-hover: drag-surface.has-hover
+        && abs(drag-surface.mouse-x - root.handle-cx) <= 48px
+        && abs(drag-surface.mouse-y - root.handle-cy) <= 9px;
     // the band's height at press time: frozen for the gesture so the drag
     // origin (and the clamp on mouse-y) cannot move under the pointer
     in-out property <length> band-freeze: 0px;
@@ -1268,45 +1307,6 @@ export component AppWindow inherits Window {
                     height: root.dragging ? root.band-freeze : root.composer-total;
                     background: transparent;
 
-                    // Only the handle drags. A full-band surface swallowed the
-                    // pointer anywhere above the box, including the little strip
-                    // between the input and the model menu, so a click meant for
-                    // the menu could resize the composer instead.
-                    drag-zone := TouchArea {
-                        x: (parent.width - self.width) / 2;
-                        y: composer-box.y - 9px;
-                        width: 96px;
-                        height: 18px;
-                        mouse-cursor: pointer;
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.down {
-                                root.dragging = true;
-                                root.band-freeze = root.composer-total;
-                                root.last-pointer-y = drag-zone.mouse-y;
-                            }
-                            if event.kind == PointerEventKind.up
-                                || event.kind == PointerEventKind.cancel
-                            {
-                                root.dragging = false;
-                            }
-                            if event.kind == PointerEventKind.move && root.dragging {
-                                // incremental deltas: a stale start value (pressed-y
-                                // is only set after the press callback runs) made the
-                                // first delta enormous and snapped the box to its
-                                // limit on the slightest nudge
-                                let step = root.last-pointer-y - drag-zone.mouse-y;
-                                root.last-pointer-y = drag-zone.mouse-y;
-                                if step > -40px && step < 40px {
-                                    root.composer-height = clamp(
-                                        root.composer-height + step,
-                                        root.composer-min,
-                                        root.composer-max
-                                    );
-                                }
-                            }
-                        }
-                    }
-
                     // handle, drawn on the box's top border
                     Rectangle {
                         x: (parent.width - self.width) / 2;
@@ -1315,7 +1315,7 @@ export component AppWindow inherits Window {
                         height: 3px;
                         border-radius: 1.5px;
                         background: root.dragging ? #6b7059
-                            : (drag-zone.has-hover ? #4a4d42 : #33362d);
+                            : (root.handle-hover ? #4a4d42 : #33362d);
                     }
 
                     // queued work: a compact chip that opens into a list, so it can never
@@ -1588,7 +1588,7 @@ export component AppWindow inherits Window {
         height: 3px;
         border-radius: 1.5px;
         background: root.dragging ? #6b7059
-            : (drag-zone.has-hover ? #4a4d42 : #33362d);
+            : (root.handle-hover ? #4a4d42 : #33362d);
     }
 
     VerticalLayout {
