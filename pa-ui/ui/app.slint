@@ -785,7 +785,7 @@ export component AppWindow inherits Window {
     // running - the busy row plus another 34px above it, so the gap that keeps
     // the transcript off the input sits above the status line instead of below.
     out property <length> composer-total: root.box-height + 46px
-        + (root.busy ? 60px : 0px);
+        + (root.busy ? 26px : 0px);
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
@@ -1006,14 +1006,296 @@ export component AppWindow inherits Window {
                     // live status row: TUI-style — one cell size for glyph and label
                     // always present: an `if`-created subtree got no hover tracking
 
-                    busy-row := Rectangle {
-                        x: 0;
-                        y: parent.height - root.composer-total + 46px;
-                        width: parent.width;
-                        height: root.busy ? 26px : 0px;
+                composer-band := Rectangle {
+                    x: 0;
+                    y: parent.height - self.height;
+                    width: parent.width;
+                    height: root.dragging ? root.band-freeze : root.composer-total;
+                    background: transparent;
+
+                    // handle, drawn on the box's top border
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: composer-box.y - 1.5px;
+                        width: 36px;
+                        height: 3px;
+                        border-radius: 1.5px;
+                        background: root.dragging ? #6b7059
+                            : (root.handle-hover ? #4a4d42 : #33362d);
+                    }
+
+                    // queued work: a compact chip that opens into a list, so it can never
+                    // push the composer around or wrap into a wall of text
+                    // the model menu: real catalog, grouped by provider, each
+                    // group collapsible. Anchored above the composer box at the
+                    // right, where the model chip sits.
+                    if root.model-menu : Rectangle {
+                        x: composer-box.x + composer-box.width - self.width - 12px;
+                        y: composer-box.y - self.height - 6px;
+                        width: 300px;
+                        height: max(64px, min(340px, root.model-menu-height));
+                        background: #171814;
+                        border-color: #2c2f26;
+                        border-width: 1px;
+                        border-radius: 10px;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-color: #00000080;
+
+                        menu-scroll := ScrollView {
+                            x: 6px;
+                            y: 6px;
+                            width: parent.width - 12px;
+                            height: parent.height - 12px;
+                            vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                            content-width: self.visible-width;
+                            content-height: menu-list.preferred-height;
+
+                            // A group is one block: its header plus a row per
+                            // model. Collapsed groups carry no models at all,
+                            // so their height is just the header.
+                            menu-list := VerticalLayout {
+                                for group in root.model-groups : Rectangle {
+                                    height: 26px + group.models.length * 24px;
+
+                                    group-touch := TouchArea {
+                                        x: 0;
+                                        y: 0;
+                                        width: 100%;
+                                        height: 26px;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.provider-toggled(group.provider); }
+                                    }
+
+                                    IconCaret {
+                                        x: 6px;
+                                        y: (26px - self.height) / 2;
+                                        up: !group.open;
+                                    }
+                                    Text {
+                                        x: 22px;
+                                        y: 0;
+                                        width: parent.width - 80px;
+                                        height: 26px;
+                                        text: group.label;
+                                        color: group.configured ? #d9d8d1 : #6b6f62;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                        wrap: no-wrap;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        x: parent.width - 58px;
+                                        y: 0;
+                                        width: 52px;
+                                        height: 26px;
+                                        text: group.configured ? group.count : "not signed in";
+                                        color: #565a4f;
+                                        font-size: 9px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        wrap: no-wrap;
+                                        overflow: elide;
+                                    }
+
+                                    for model[i] in group.models : Rectangle {
+                                        x: 0;
+                                        y: 26px + i * 24px;
+                                        width: 100%;
+                                        height: 24px;
+                                        border-radius: 5px;
+                                        background: model.current ? #23251f
+                                            : (model-touch.has-hover ? #1f211a : transparent);
+
+                                        model-touch := TouchArea {
+                                            x: 0;
+                                            y: 0;
+                                            width: 100%;
+                                            height: 100%;
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.model-picked(model.id, group.provider);
+                                                root.model-menu = false;
+                                            }
+                                        }
+
+                                        Text {
+                                            x: 24px;
+                                            y: 0;
+                                            width: parent.width - 74px;
+                                            height: 100%;
+                                            text: model.label;
+                                            color: model.current ? #e7e5df : #b0b1a8;
+                                            font-size: 11px;
+                                            vertical-alignment: center;
+                                            wrap: no-wrap;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            x: parent.width - 46px;
+                                            y: 0;
+                                            width: 40px;
+                                            height: 100%;
+                                            text: model.detail;
+                                            color: #565a4f;
+                                            font-size: 9px;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                            wrap: no-wrap;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // queued work, spelled out: both lanes, each row editable.
+                    // Placed in the composer band rather than the window root:
+                    // a floating child anchored by absolute-position painted in
+                    // one place and answered clicks in another.
+                    if root.queue-open && root.queued-count > 0 : Rectangle {
+                        x: 18px;
+                        y: composer-box.y - 32px - self.height - 6px;
+                        width: 300px;
+                        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
+                            + root.queued-steering.length * 24px
+                            + (root.queued-followup.length > 0 ? 16px : 0px)
+                            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
+                            + root.queued-followup.length * 24px
+                            + 24px;
+                        background: #171814;
+                        border-color: #2c2f26;
+                        border-width: 1px;
+                        border-radius: 10px;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-color: #00000080;
+
+                        if root.queued-steering.length > 0 : Text {
+                            x: 10px;
+                            y: 8px;
+                            width: 280px;
+                            height: 16px;
+                            text: "INTO THIS TURN";
+                            color: #a18e41;
+                            font-size: 9px;
+                            letter-spacing: 0.6px;
+                            vertical-alignment: center;
+                        }
+                        for item[i] in root.queued-steering : QueueRow {
+                            x: 10px;
+                            y: 24px + i * 24px;
+                            width: 280px;
+                            text: item.text;
+                            lane: "steering";
+                            slot: item.slot;
+                            act(lane, slot, action) => {
+                                root.queue-act(lane, slot, action);
+                                root.queue-open = false;
+                            }
+                        }
+                        if root.queued-followup.length > 0 : Text {
+                            x: 10px;
+                            y: 24px + root.queued-steering.length * 24px
+                                + (root.queued-steering.length > 0 ? 6px : 0px);
+                            width: 280px;
+                            height: 16px;
+                            vertical-alignment: center;
+                            text: "UP NEXT";
+                            color: #8b8c85;
+                            font-size: 9px;
+                            letter-spacing: 0.6px;
+                        }
+                        for item[i] in root.queued-followup : QueueRowUp {
+                            x: 10px;
+                            y: 40px + root.queued-steering.length * 24px
+                                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
+                            width: 280px;
+                            text: item.text;
+                            lane: "followUp";
+                            slot: item.slot;
+                            act(lane, slot, action) => {
+                                root.queue-act(lane, slot, action);
+                                root.queue-open = false;
+                            }
+                        }
+                        Text {
+                            x: 10px;
+                            y: parent.height - 26px;
+                            width: 280px;
+                            height: 18px;
+                            vertical-alignment: bottom;
+                            text: "↑ sends into this turn · click a line to edit";
+                            color: #565a4f;
+                            font-size: 9px;
+                        }
+                    }
+
+                    if root.queued-count > 0 : queue-chip := Rectangle {
+                        x: 18px;
+                        y: composer-box.y - 32px;
+                        width: chip-row.preferred-width + 26px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: queue-touch.has-hover ? #22241d : #1a1b16;
+                        border-color: #2c2f26;
+                        border-width: 1px;
+
+                        chip-row := HorizontalLayout {
+                            x: 10px;
+                            y: 0;
+                            height: parent.height;
+                            spacing: 5px;
+                            // a drawn dot: the arrow glyph has no coverage in
+                            // the UI font and rendered as a tofu box
+                            Rectangle {
+                                width: 5px;
+                                height: 5px;
+                                border-radius: 2.5px;
+                                background: #8a7d4c;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            Text {
+                                text: root.queued-count + " queued";
+                                color: #b0b1a8;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            IconCaret {
+                                y: (parent.height - self.height) / 2;
+                                up: true;
+                            }
+                        }
+
+                        queue-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.queue-open = !root.queue-open; }
+                            // click to open: a hover-only card would close the
+                            // moment the pointer travelled up into it
+                        }
+
+                        // the list itself, anchored above the chip
+                    }
+
+                    composer-box := Rectangle {
+                    x: 18px;
+                    y: parent.height - self.height - 12px;
+                    width: parent.width - 36px;
+                    height: root.box-height + (root.busy ? 26px : 0px);
+    background: #0f100d;
+    border-color: #23251f;
+    border-width: 1px;
+    border-radius: 12px;
+
+    // the status strip lives inside the box: one border, one rounded top, so
+    // the row reads as part of the input rather than a separate bar
+    busy-row := Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: root.busy ? 26px : 0px;
 
                         spin := Text {
-                            x: 24px;
+                            x: 14px;
                             visible: root.busy;
                             text: root.spinner-frame;
                             color: #c9a86a;
@@ -1307,287 +1589,18 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                    }
-
-                composer-band := Rectangle {
-                    x: 0;
-                    y: parent.height - self.height;
-                    width: parent.width;
-                    height: root.dragging ? root.band-freeze : root.composer-total;
-                    background: transparent;
-
-                    // handle, drawn on the box's top border
-                    Rectangle {
-                        x: (parent.width - self.width) / 2;
-                        y: composer-box.y - 1.5px;
-                        width: 36px;
-                        height: 3px;
-                        border-radius: 1.5px;
-                        background: root.dragging ? #6b7059
-                            : (root.handle-hover ? #4a4d42 : #33362d);
-                    }
-
-                    // queued work: a compact chip that opens into a list, so it can never
-                    // push the composer around or wrap into a wall of text
-                    // the model menu: real catalog, grouped by provider, each
-                    // group collapsible. Anchored above the composer box at the
-                    // right, where the model chip sits.
-                    if root.model-menu : Rectangle {
-                        x: composer-box.x + composer-box.width - self.width - 12px;
-                        y: composer-box.y - self.height - 6px;
-                        width: 300px;
-                        height: max(64px, min(340px, root.model-menu-height));
-                        background: #171814;
-                        border-color: #2c2f26;
-                        border-width: 1px;
-                        border-radius: 10px;
-                        drop-shadow-blur: 12px;
-                        drop-shadow-color: #00000080;
-
-                        menu-scroll := ScrollView {
-                            x: 6px;
-                            y: 6px;
-                            width: parent.width - 12px;
-                            height: parent.height - 12px;
-                            vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
-                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                            content-width: self.visible-width;
-                            content-height: menu-list.preferred-height;
-
-                            // A group is one block: its header plus a row per
-                            // model. Collapsed groups carry no models at all,
-                            // so their height is just the header.
-                            menu-list := VerticalLayout {
-                                for group in root.model-groups : Rectangle {
-                                    height: 26px + group.models.length * 24px;
-
-                                    group-touch := TouchArea {
-                                        x: 0;
-                                        y: 0;
-                                        width: 100%;
-                                        height: 26px;
-                                        mouse-cursor: pointer;
-                                        clicked => { root.provider-toggled(group.provider); }
-                                    }
-
-                                    IconCaret {
-                                        x: 6px;
-                                        y: (26px - self.height) / 2;
-                                        up: !group.open;
-                                    }
-                                    Text {
-                                        x: 22px;
-                                        y: 0;
-                                        width: parent.width - 80px;
-                                        height: 26px;
-                                        text: group.label;
-                                        color: group.configured ? #d9d8d1 : #6b6f62;
-                                        font-size: 11px;
-                                        vertical-alignment: center;
-                                        wrap: no-wrap;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        x: parent.width - 58px;
-                                        y: 0;
-                                        width: 52px;
-                                        height: 26px;
-                                        text: group.configured ? group.count : "not signed in";
-                                        color: #565a4f;
-                                        font-size: 9px;
-                                        horizontal-alignment: right;
-                                        vertical-alignment: center;
-                                        wrap: no-wrap;
-                                        overflow: elide;
-                                    }
-
-                                    for model[i] in group.models : Rectangle {
-                                        x: 0;
-                                        y: 26px + i * 24px;
-                                        width: 100%;
-                                        height: 24px;
-                                        border-radius: 5px;
-                                        background: model.current ? #23251f
-                                            : (model-touch.has-hover ? #1f211a : transparent);
-
-                                        model-touch := TouchArea {
-                                            x: 0;
-                                            y: 0;
-                                            width: 100%;
-                                            height: 100%;
-                                            mouse-cursor: pointer;
-                                            clicked => {
-                                                root.model-picked(model.id, group.provider);
-                                                root.model-menu = false;
-                                            }
-                                        }
-
-                                        Text {
-                                            x: 24px;
-                                            y: 0;
-                                            width: parent.width - 74px;
-                                            height: 100%;
-                                            text: model.label;
-                                            color: model.current ? #e7e5df : #b0b1a8;
-                                            font-size: 11px;
-                                            vertical-alignment: center;
-                                            wrap: no-wrap;
-                                            overflow: elide;
-                                        }
-                                        Text {
-                                            x: parent.width - 46px;
-                                            y: 0;
-                                            width: 40px;
-                                            height: 100%;
-                                            text: model.detail;
-                                            color: #565a4f;
-                                            font-size: 9px;
-                                            horizontal-alignment: right;
-                                            vertical-alignment: center;
-                                            wrap: no-wrap;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // queued work, spelled out: both lanes, each row editable.
-                    // Placed in the composer band rather than the window root:
-                    // a floating child anchored by absolute-position painted in
-                    // one place and answered clicks in another.
-                    if root.queue-open && root.queued-count > 0 : Rectangle {
-                        x: 18px;
-                        y: composer-box.y - 32px - self.height - 6px;
-                        width: 300px;
-                        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
-                            + root.queued-steering.length * 24px
-                            + (root.queued-followup.length > 0 ? 16px : 0px)
-                            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
-                            + root.queued-followup.length * 24px
-                            + 24px;
-                        background: #171814;
-                        border-color: #2c2f26;
-                        border-width: 1px;
-                        border-radius: 10px;
-                        drop-shadow-blur: 12px;
-                        drop-shadow-color: #00000080;
-
-                        if root.queued-steering.length > 0 : Text {
-                            x: 10px;
-                            y: 8px;
-                            width: 280px;
-                            height: 16px;
-                            text: "INTO THIS TURN";
-                            color: #a18e41;
-                            font-size: 9px;
-                            letter-spacing: 0.6px;
-                            vertical-alignment: center;
-                        }
-                        for item[i] in root.queued-steering : QueueRow {
-                            x: 10px;
-                            y: 24px + i * 24px;
-                            width: 280px;
-                            text: item.text;
-                            lane: "steering";
-                            slot: item.slot;
-                            act(lane, slot, action) => {
-                                root.queue-act(lane, slot, action);
-                                root.queue-open = false;
-                            }
-                        }
-                        if root.queued-followup.length > 0 : Text {
-                            x: 10px;
-                            y: 24px + root.queued-steering.length * 24px
-                                + (root.queued-steering.length > 0 ? 6px : 0px);
-                            width: 280px;
-                            height: 16px;
-                            vertical-alignment: center;
-                            text: "UP NEXT";
-                            color: #8b8c85;
-                            font-size: 9px;
-                            letter-spacing: 0.6px;
-                        }
-                        for item[i] in root.queued-followup : QueueRowUp {
-                            x: 10px;
-                            y: 40px + root.queued-steering.length * 24px
-                                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
-                            width: 280px;
-                            text: item.text;
-                            lane: "followUp";
-                            slot: item.slot;
-                            act(lane, slot, action) => {
-                                root.queue-act(lane, slot, action);
-                                root.queue-open = false;
-                            }
-                        }
-                        Text {
-                            x: 10px;
-                            y: parent.height - 26px;
-                            width: 280px;
-                            height: 18px;
-                            vertical-alignment: bottom;
-                            text: "↑ sends into this turn · click a line to edit";
-                            color: #565a4f;
-                            font-size: 9px;
-                        }
-                    }
-
-                    if root.queued-count > 0 : queue-chip := Rectangle {
-                        x: 18px;
-                        y: composer-box.y - 32px;
-                        width: chip-row.preferred-width + 26px;
-                        height: 24px;
-                        border-radius: 12px;
-                        background: queue-touch.has-hover ? #22241d : #1a1b16;
-                        border-color: #2c2f26;
-                        border-width: 1px;
-
-                        chip-row := HorizontalLayout {
-                            x: 10px;
-                            y: 0;
-                            height: parent.height;
-                            spacing: 5px;
-                            // a drawn dot: the arrow glyph has no coverage in
-                            // the UI font and rendered as a tofu box
-                            Rectangle {
-                                width: 5px;
-                                height: 5px;
-                                border-radius: 2.5px;
-                                background: #8a7d4c;
-                                y: (parent.height - self.height) / 2;
-                            }
-                            Text {
-                                text: root.queued-count + " queued";
-                                color: #b0b1a8;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                            }
-                            IconCaret {
-                                y: (parent.height - self.height) / 2;
-                                up: true;
-                            }
-                        }
-
-                        queue-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.queue-open = !root.queue-open; }
-                            // click to open: a hover-only card would close the
-                            // moment the pointer travelled up into it
-                        }
-
-                        // the list itself, anchored above the chip
-                    }
-
-                    composer-box := Rectangle {
-                    x: 18px;
-                    y: parent.height - self.height - 12px;
-                    width: parent.width - 36px;
-                    height: root.box-height;
-    background: #0f100d;
-    border-color: #23251f;
-    border-width: 1px;
-    border-radius: 12px;
+                    
+        // hairline: the strip is part of the box, but it is still a different
+        // thing from what you type
+        Rectangle {
+            x: 1px;
+            y: parent.height - 1px;
+            width: parent.width - 2px;
+            height: 1px;
+            visible: root.busy;
+            background: #1a1c17;
+        }
+    }
 
     // the handle drawn on the box's top border
     Rectangle {
@@ -1603,7 +1616,7 @@ export component AppWindow inherits Window {
     VerticalLayout {
         padding-left: 12px;
         padding-right: 12px;
-        padding-top: 10px;
+        padding-top: root.busy ? 34px : 10px;
         padding-bottom: 8px;
         spacing: 10px;
         // a fixed-height window over a text input that is allowed to grow:
