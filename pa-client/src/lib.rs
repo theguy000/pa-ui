@@ -234,6 +234,8 @@ pub struct SessionRow {
     pub activity: String,
     pub lifecycle: String,
     pub model: String,
+    pub model_name: String,
+    pub model_provider: String,
     pub thinking: String,
     pub messages: u64,
     pub input_tokens: u64,
@@ -306,7 +308,23 @@ impl SessionRow {
             cwd: text("cwd"),
             activity: text("activity"),
             lifecycle: text("lifecycle"),
-            model: text("model"),
+            // the wire `model` is the whole model object, not a string: keep
+            // the id, and the provider/name the chip needs to label it
+            model: value
+                .pointer("/model/id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| text("model")),
+            model_name: value
+                .pointer("/model/name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            model_provider: value
+                .pointer("/model/provider")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             thinking: text("thinkingLevel"),
             messages: number("messageCount"),
             input_tokens: usage_num("inputTokens"),
@@ -610,6 +628,79 @@ pub fn mutate_queue(
         .and_then(Value::as_str)
         .unwrap_or("rejected")
         .to_string())
+}
+
+/// One entry of the daemon's model catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelEntry {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    /// The provider has credentials, so this model can actually be selected.
+    pub configured: bool,
+    pub context_window: u64,
+}
+
+/// Every model the daemon knows, with the providers that are signed in.
+///
+/// The catalog is large (over a thousand entries across every provider it
+/// ships with), so the provider set is what makes it navigable: only the
+/// `configuredProviders` can be switched to.
+///
+/// # Errors
+/// Fails on a transport error or a refused request.
+pub fn model_catalog(client: &Client, session: &str) -> std::io::Result<Vec<ModelEntry>> {
+    let response = client.request(
+        "get_model_catalog",
+        json!({"activeSessionId": session}),
+        Duration::from_secs(20),
+    )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "get_model_catalog failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    let data = response.get("data");
+    let configured: Vec<String> = data
+        .and_then(|data| data.get("configuredProviders"))
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let entries = data
+        .and_then(|data| data.get("models"))
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    let provider = model.get("provider").and_then(Value::as_str)?.to_string();
+                    let id = model.get("id").and_then(Value::as_str)?.to_string();
+                    let name = model
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&id)
+                        .to_string();
+                    Some(ModelEntry {
+                        configured: configured.contains(&provider),
+                        context_window: model
+                            .get("contextWindow")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                        id,
+                        name,
+                        provider,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(entries)
 }
 
 /// A session's live numbers, as the right panel shows them.

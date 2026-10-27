@@ -3,7 +3,7 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, get_queue, get_tail, list_sessions, mutate_queue, send_prompt, session_stats,
+    abort, attach_as, get_queue, get_tail, list_sessions, model_catalog, mutate_queue, send_prompt, session_stats,
     set_model, steer_prompt, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -29,6 +29,7 @@ enum Job {
     Steer { session: String, message: String },
     Abort { session: String },
     Queue { session: String },
+    ModelCatalog { session: String },
     QueueAct {
         session: String,
         lane: String,
@@ -56,6 +57,8 @@ enum Msg {
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
     Queue { steering: Vec<String>, follow_up: Vec<String> },
+    /// the daemon's model catalog, as the menu builds it
+    ModelCatalog(Vec<pa_client::ModelEntry>),
     QueueEdit { text: String },
     Stats { session: String, stats: pa_client::SessionStats },
     Activity { label: String },
@@ -93,15 +96,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
 
-    let models = vec![
-        ModelItem { id: "opus-4.6".into(), label: "Opus 4.6".into(), detail: "anthropic".into() },
-        ModelItem { id: "gpt-5.4".into(), label: "GPT-5.4".into(), detail: "openai".into() },
-        ModelItem { id: "deepseek-fast".into(), label: "DeepSeek Flash".into(), detail: "openrouter".into() },
-    ];
-    ui.set_menu_width(menu_width(&models));
-    ui.set_models(ModelRc::from(Rc::new(VecModel::from(models))));
-    ui.set_model_id("opus-4.6".into());
-    ui.set_model_label("Opus 4.6".into());
 
     // one identity for this window: the supervisor addresses session events to
     // the connections registered under it
@@ -130,6 +124,15 @@ fn main() -> Result<(), slint::PlatformError> {
     // the text of a prompt we drew optimistically, so the daemon's echo of the
     // same user message does not become a second row
     let pending_user: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+    // the model catalog and which provider groups the user has folded away.
+    // Collapse lives here, not in Slint: it has to survive closing the menu.
+    let catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let collapsed: Rc<RefCell<std::collections::HashSet<String>>> =
+        Rc::new(RefCell::new(std::collections::HashSet::new()));
+    let catalog_loaded = Rc::new(std::cell::Cell::new(false));
+
 
     {
         let weak = ui.as_weak();
@@ -173,6 +176,9 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let jobs = job_tx.clone();
+        let catalog = catalog.clone();
+        let collapsed2 = collapsed.clone();
+        let collapsed = collapsed2.clone();
         ui.on_model_picked(move |model, provider| {
             let Some(ui) = weak.upgrade() else { return };
             let session = ui.get_selected_id().to_string();
@@ -184,12 +190,59 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_line(format!("{model}: provider unknown, not switching").into());
                 return;
             }
+            // the chip follows the click; the daemon's own state lands on the
+            // next list refresh
+            if let Some(entry) = catalog.borrow().iter().find(|entry| {
+                entry.id == model.as_str() && entry.provider == provider.as_str()
+            }) {
+                ui.set_model_label(model_label(&entry.name, &entry.id).into());
+            }
+            ui.set_model_id(model.clone());
+            ui.set_model_provider(provider.clone());
+            refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
             ui.set_status_line(format!("switching to {model}").into());
             let _ = jobs.send(Job::SetModel {
                 session,
                 provider: provider.to_string(),
                 model: model.to_string(),
             });
+        });
+    }
+
+    {
+        // opening the menu pulls the catalog once; after that it is cached, and
+        // only the group fold state changes
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        let catalog_loaded = catalog_loaded.clone();
+        ui.on_model_menu_opened(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            if !catalog_loaded.get() {
+                let _ = jobs.send(Job::ModelCatalog { session });
+            }
+        });
+    }
+
+    {
+        // folding a group is remembered for the rest of the session, so a menu
+        // reopened later comes back exactly as it was left
+        let weak = ui.as_weak();
+        let catalog = catalog.clone();
+        let collapsed = collapsed.clone();
+        ui.on_provider_toggled(move |provider| {
+            let Some(ui) = weak.upgrade() else { return };
+            let provider = provider.to_string();
+            {
+                let mut folded = collapsed.borrow_mut();
+                if !folded.remove(&provider) {
+                    folded.insert(provider);
+                }
+            }
+            refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
         });
     }
 
@@ -454,6 +507,22 @@ fn main() -> Result<(), slint::PlatformError> {
                     if selected_uuid.is_none() {
                         selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
                     }
+                    // the chip names the model this session is actually on
+                    if let Some(row) = rows.iter().find(|row| row.id == selected) {
+                        if !row.model.is_empty() {
+                            let label = if row.model_name.is_empty() {
+                                row.model.clone()
+                            } else {
+                                model_label(&row.model_name, &row.model)
+                            };
+                            if ui.get_model_label().as_str() != label {
+                                ui.set_model_label(label.into());
+                            }
+                            ui.set_model_id(row.model.clone().into());
+                            ui.set_model_provider(row.model_provider.clone().into());
+                        }
+                    }
+
                     // nothing known about this selection: nothing is running
                     if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
                         ui.set_busy(false);
@@ -752,6 +821,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_composer_text(text.into());
                     ui.set_status_line("back in the composer".into());
                 }
+                Msg::ModelCatalog(entries) => {
+                    catalog_loaded.set(true);
+                    *catalog.borrow_mut() = entries;
+                    refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                }
                 Msg::Stats { session, stats } => {
                     if loaded.as_deref() != Some(session.as_str()) {
                         continue;
@@ -813,6 +887,88 @@ fn main() -> Result<(), slint::PlatformError> {
     std::mem::forget(poll);
 
     ui.run()
+}
+
+/// `river_ai` reads better as `river ai`; the catalog's own names are long.
+fn provider_label(provider: &str) -> String {
+    provider.replace('_', " ")
+}
+
+/// The catalog's `name` repeats the provider ("... (river.ai)"); the group
+/// header already says it.
+fn model_label(name: &str, id: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return id.to_string();
+    }
+    match trimmed.rfind(" (") {
+        Some(at) if trimmed.ends_with(')') => trimmed[..at].to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
+/// A rough size for the right-hand hint: `200k`, `1M`.
+fn context_hint(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{}M", tokens / 1_000_000)
+    } else if tokens >= 1000 {
+        format!("{}k", tokens / 1000)
+    } else {
+        String::new()
+    }
+}
+
+/// Rebuild the menu: configured providers first, then the rest, alphabetical.
+/// A collapsed group carries no models at all, so the panel never instantiates
+/// the whole catalog.
+fn refresh_model_groups(
+    ui: &AppWindow,
+    catalog: &[pa_client::ModelEntry],
+    collapsed: &std::collections::HashSet<String>,
+) {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<(bool, String), Vec<&pa_client::ModelEntry>> = BTreeMap::new();
+    for entry in catalog {
+        groups
+            .entry((!entry.configured, entry.provider.clone()))
+            .or_default()
+            .push(entry);
+    }
+    let current_id = ui.get_model_id().to_string();
+    let current_provider = ui.get_model_provider().to_string();
+    let mut out: Vec<ModelGroup> = Vec::with_capacity(groups.len());
+    let mut height = 12f32;
+    for ((_, provider), mut entries) in groups {
+        entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        let open = !collapsed.contains(&provider);
+        let configured = entries.first().is_some_and(|entry| entry.configured);
+        let count = entries.len() as i32;
+        height += 26.0;
+        let models: Vec<ModelItem> = if open {
+            height += 24.0 * entries.len() as f32;
+            entries
+                .iter()
+                .map(|entry| ModelItem {
+                    id: entry.id.clone().into(),
+                    label: model_label(&entry.name, &entry.id).into(),
+                    detail: context_hint(entry.context_window).into(),
+                    current: entry.id == current_id && provider == current_provider,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        out.push(ModelGroup {
+            provider: provider.clone().into(),
+            label: provider_label(&provider).into(),
+            count,
+            open,
+            configured,
+            models: ModelRc::from(Rc::new(VecModel::from(models))),
+        });
+    }
+    ui.set_model_menu_height(height.min(340.0));
+    ui.set_model_groups(ModelRc::from(Rc::new(VecModel::from(out))));
 }
 
 /// A stable number for a page cursor, so the poll can tell "same page" quickly.
@@ -894,10 +1050,32 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!("[model] {provider}/{model} -> {outcome:?}");
                     }
+                    // a provider that is not signed in fails here: say so rather
+                    // than leaving the chip naming a model the session is not on
+                    if let Err(error) = outcome {
+                        let _ = out.send(Msg::Activity {
+                            label: format!("{provider}/{model}: {error}"),
+                        });
+                    }
                 }
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
                         let _ = out.send(Msg::Stats { session, stats });
+                    }
+                }
+                Job::ModelCatalog { session } => {
+                    match model_catalog(active, &session) {
+                        Ok(catalog) => {
+                            if std::env::var("PA_DEBUG").is_ok() {
+                                eprintln!("[models] {} entries", catalog.len());
+                            }
+                            let _ = out.send(Msg::ModelCatalog(catalog));
+                        }
+                        Err(error) => {
+                            let _ = out.send(Msg::Activity {
+                                label: format!("model catalog: {error}"),
+                            });
+                        }
                     }
                 }
                 Job::Queue { session } => {

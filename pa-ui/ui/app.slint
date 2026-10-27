@@ -38,7 +38,20 @@ export struct QueueItem {
 export struct ModelItem {
     id: string,
     label: string,
+    // right-aligned hint: context window
     detail: string,
+    current: bool,
+}
+
+// one provider's models; `models` is empty while the group is collapsed, so a
+// thousand-entry catalog never becomes a thousand elements
+export struct ModelGroup {
+    provider: string,
+    label: string,
+    count: int,
+    open: bool,
+    configured: bool,
+    models: [ModelItem],
 }
 
 
@@ -704,7 +717,10 @@ export component AppWindow inherits Window {
 
     in property <[SessionItem]> sessions;
     in property <[TRow]> transcript;
-    in property <[ModelItem]> models;
+    in property <[ModelGroup]> model-groups;
+    // how tall the menu needs to be for the groups that are open
+    in-out property <length> model-menu-height: 0px;
+    in-out property <string> model-provider: "";
     in property <length> menu-width: 180px;
     in-out property <string> model-id;
     in-out property <string> model-label: "model";
@@ -768,6 +784,8 @@ export component AppWindow inherits Window {
     callback steer-requested(string);
     callback abort-requested();
     callback model-picked(string, string);
+    callback model-menu-opened;
+    callback provider-toggled(string);
     callback rename-requested(string, string);
     callback toggle-row(int);
     callback queue-act(string, int, string);
@@ -1301,6 +1319,129 @@ export component AppWindow inherits Window {
 
                     // queued work: a compact chip that opens into a list, so it can never
                     // push the composer around or wrap into a wall of text
+                    // the model menu: real catalog, grouped by provider, each
+                    // group collapsible. Anchored above the composer box at the
+                    // right, where the model chip sits.
+                    if root.model-menu : Rectangle {
+                        x: composer-box.x + composer-box.width - self.width - 12px;
+                        y: composer-box.y - self.height - 6px;
+                        width: 300px;
+                        height: max(64px, min(340px, root.model-menu-height));
+                        background: #171814;
+                        border-color: #2c2f26;
+                        border-width: 1px;
+                        border-radius: 10px;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-color: #00000080;
+
+                        menu-scroll := ScrollView {
+                            x: 6px;
+                            y: 6px;
+                            width: parent.width - 12px;
+                            height: parent.height - 12px;
+                            vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                            content-width: self.visible-width;
+                            content-height: menu-list.preferred-height;
+
+                            // A group is one block: its header plus a row per
+                            // model. Collapsed groups carry no models at all,
+                            // so their height is just the header.
+                            menu-list := VerticalLayout {
+                                for group in root.model-groups : Rectangle {
+                                    height: 26px + group.models.length * 24px;
+
+                                    group-touch := TouchArea {
+                                        x: 0;
+                                        y: 0;
+                                        width: 100%;
+                                        height: 26px;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.provider-toggled(group.provider); }
+                                    }
+
+                                    IconCaret {
+                                        x: 6px;
+                                        y: (26px - self.height) / 2;
+                                        up: !group.open;
+                                    }
+                                    Text {
+                                        x: 22px;
+                                        y: 0;
+                                        width: parent.width - 80px;
+                                        height: 26px;
+                                        text: group.label;
+                                        color: group.configured ? #d9d8d1 : #6b6f62;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                        wrap: no-wrap;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        x: parent.width - 58px;
+                                        y: 0;
+                                        width: 52px;
+                                        height: 26px;
+                                        text: group.configured ? group.count : "not signed in";
+                                        color: #565a4f;
+                                        font-size: 9px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        wrap: no-wrap;
+                                        overflow: elide;
+                                    }
+
+                                    for model[i] in group.models : Rectangle {
+                                        x: 0;
+                                        y: 26px + i * 24px;
+                                        width: 100%;
+                                        height: 24px;
+                                        border-radius: 5px;
+                                        background: model.current ? #23251f
+                                            : (model-touch.has-hover ? #1f211a : transparent);
+
+                                        model-touch := TouchArea {
+                                            x: 0;
+                                            y: 0;
+                                            width: 100%;
+                                            height: 100%;
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.model-picked(model.id, group.provider);
+                                                root.model-menu = false;
+                                            }
+                                        }
+
+                                        Text {
+                                            x: 24px;
+                                            y: 0;
+                                            width: parent.width - 74px;
+                                            height: 100%;
+                                            text: model.label;
+                                            color: model.current ? #e7e5df : #b0b1a8;
+                                            font-size: 11px;
+                                            vertical-alignment: center;
+                                            wrap: no-wrap;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            x: parent.width - 46px;
+                                            y: 0;
+                                            width: 40px;
+                                            height: 100%;
+                                            text: model.detail;
+                                            color: #565a4f;
+                                            font-size: 9px;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                            wrap: no-wrap;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // queued work, spelled out: both lanes, each row editable.
                     // Placed in the composer band rather than the window root:
                     // a floating child anchored by absolute-position painted in
@@ -1502,7 +1643,12 @@ export component AppWindow inherits Window {
             Chip {
                 label: root.model-label;
                 open: root.model-menu;
-                toggled => { root.model-menu = !root.model-menu; }
+                toggled => {
+                    root.model-menu = !root.model-menu;
+                    if root.model-menu {
+                        root.model-menu-opened();
+                    }
+                }
             }
             Rectangle {
                 width: 25px;
