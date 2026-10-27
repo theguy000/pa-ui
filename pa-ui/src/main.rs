@@ -822,6 +822,14 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_status_line("back in the composer".into());
                 }
                 Msg::ModelCatalog(entries) => {
+                    // every group starts folded: 35 providers open at once is a
+                    // wall, not a menu. Only the first load seeds that, so a
+                    // provider the user unfolds stays unfolded.
+                    if !catalog_loaded.get() {
+                        collapsed.borrow_mut().extend(
+                            entries.iter().map(|entry| entry.provider.clone()),
+                        );
+                    }
                     catalog_loaded.set(true);
                     *catalog.borrow_mut() = entries;
                     refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
