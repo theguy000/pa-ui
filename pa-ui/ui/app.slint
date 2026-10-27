@@ -1308,6 +1308,7 @@ export component AppWindow inherits Window {
         width: parent.width - 36px;
         height: root.busy-h + 12px;
         opacity: root.busy-fade;
+        clip: true;
         // No background on this rectangle at all: its own rounded corner would
         // draw a second edge a pixel off the stroke. The fill is a child, inset
         // by exactly the stroke width.
@@ -1318,6 +1319,43 @@ export component AppWindow inherits Window {
             height: 100%;
             background: #191a14;
             border-radius: 12px;
+        }
+
+        // The corner rings are built from discs: a stroke-coloured 24px disc
+        // whose centre sits on the corner, with a fill-coloured 22px disc one
+        // pixel inside it. Only the top quarter of each survives the clip, which
+        // leaves exactly a 1px arc - no stroked path, nothing to misalign.
+        Rectangle {
+            x: -12px;
+            y: -12px;
+            width: 24px;
+            height: 24px;
+            border-radius: 12px;
+            background: #2c2f26;
+        }
+        Rectangle {
+            x: -11px;
+            y: -11px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            background: #191a14;
+        }
+        Rectangle {
+            x: parent.width - 12px;
+            y: -12px;
+            width: 24px;
+            height: 24px;
+            border-radius: 12px;
+            background: #2c2f26;
+        }
+        Rectangle {
+            x: parent.width - 11px;
+            y: -11px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            background: #191a14;
         }
 
         Rectangle {
