@@ -26,10 +26,183 @@ export struct SessionItem {
     scroll: length,
 }
 
+// one waiting message, addressed by its lane and its position in that lane
+export struct QueueItem {
+    // what the row shows: one line, elided
+    text: string,
+    // what the daemon addressed it by, untouched
+    raw: string,
+    slot: int,
+}
+
 export struct ModelItem {
     id: string,
     label: string,
     detail: string,
+}
+
+
+component IconUp inherits Path {
+    in property <color> tint: #a18e41;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    commands: "M 5 8.4 L 5 1.8 M 2 4.8 L 5 1.8 L 8 4.8";
+    stroke: tint;
+    stroke-width: 1.3px;
+    fill: transparent;
+}
+
+component IconX inherits Path {
+    in property <color> tint: #8b8c85;
+    width: 8px;
+    height: 8px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    commands: "M 2 2 L 8 8 M 8 2 L 2 8";
+    stroke: tint;
+    stroke-width: 1.4px;
+    fill: transparent;
+}
+
+// One waiting message in the steering lane: already inside this turn, so the
+// only action is delete. Two row components instead of one with a conditional
+// button: a button made conditional does not take clicks here, even though it
+// paints.
+component QueueRow inherits Rectangle {
+    in property <string> text;
+    in property <string> lane;
+    in property <int> slot;
+    callback act(string, int, string);
+
+    height: 24px;
+    border-radius: 5px;
+    background: row-touch.has-hover ? #1f211a : transparent;
+
+    // the text is the edit affordance; it stops short of the button
+    row-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 28px;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.act(root.lane, root.slot, "edit"); }
+    }
+
+    Text {
+        x: 4px;
+        y: 0;
+        width: parent.width - 28px;
+        height: parent.height;
+        text: root.text;
+        color: #d9d8d1;
+        font-size: 11px;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: parent.width - 24px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: del.has-hover ? #2a2d24 : transparent;
+        del := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "delete"); }
+        }
+        IconX {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: del.has-hover ? #f3ded8 : #8b8c85;
+        }
+    }
+}
+
+// A follow-up row: the same row plus the up arrow that pulls the message into
+// the turn that is already running.
+component QueueRowUp inherits Rectangle {
+    in property <string> text;
+    in property <string> lane;
+    in property <int> slot;
+    callback act(string, int, string);
+
+    height: 24px;
+    border-radius: 5px;
+    background: row-touch.has-hover ? #1f211a : transparent;
+
+    row-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 50px;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.act(root.lane, root.slot, "edit"); }
+    }
+
+    Text {
+        x: 4px;
+        y: 0;
+        width: parent.width - 50px;
+        height: parent.height;
+        text: root.text;
+        color: #d9d8d1;
+        font-size: 11px;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: parent.width - 46px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: up.has-hover ? #2a2d24 : transparent;
+        up := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "promote"); }
+        }
+        IconUp {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: up.has-hover ? #d9c86a : #a18e41;
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 24px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: del.has-hover ? #2a2d24 : transparent;
+        del := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "delete"); }
+        }
+        IconX {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: del.has-hover ? #f3ded8 : #8b8c85;
+        }
+    }
 }
 
 component IconRail inherits Path {
@@ -539,7 +712,9 @@ export component AppWindow inherits Window {
     in-out property <string> draft: "";
     in-out property <string> composer-text: "";
     in-out property <int> queued-count: 0;
-    in property <[string]> queued-items;
+    // the two lanes, kept apart: one runs inside this turn, one after it
+    in property <[QueueItem]> queued-steering;
+    in property <[QueueItem]> queued-followup;
     in-out property <bool> queue-open: false;
     in-out property <string> queued-preview: "";
     in-out property <float> context-fill: 0.0;
@@ -553,6 +728,8 @@ export component AppWindow inherits Window {
     // the band is exactly the box plus the 12px pad under it; the queue line
     // and the jump control live elsewhere, so nothing else needs reserving
     // queued chip sits above the box, so the transcript has to stop short of it
+    // the popup is drawn at the window root (a child at negative y paints but
+    // cannot be hit), so it anchors off the composer box, which never moves
     out property <length> composer-total: root.box-height + 12px
         + (root.queued-count > 0 ? 30px : 0px);
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
@@ -592,6 +769,7 @@ export component AppWindow inherits Window {
     callback model-picked(string, string);
     callback rename-requested(string, string);
     callback toggle-row(int);
+    callback queue-act(string, int, string);
 
     // true while the reader is parked at the newest row; a new row then pulls
     // the view along, and scrolling up turns it off
@@ -1122,7 +1300,88 @@ export component AppWindow inherits Window {
 
                     // queued work: a compact chip that opens into a list, so it can never
                     // push the composer around or wrap into a wall of text
-                    if root.queued-count > 0 : Rectangle {
+                    // queued work, spelled out: both lanes, each row editable.
+                    // Placed in the composer band rather than the window root:
+                    // a floating child anchored by absolute-position painted in
+                    // one place and answered clicks in another.
+                    if root.queue-open && root.queued-count > 0 : Rectangle {
+                        x: 18px;
+                        y: composer-box.y - 32px - self.height - 6px;
+                        width: 300px;
+                        height: 8px + (root.queued-steering.length > 0 ? 16px : 0px)
+                            + root.queued-steering.length * 24px
+                            + (root.queued-followup.length > 0 ? 16px : 0px)
+                            + (root.queued-steering.length > 0 && root.queued-followup.length > 0 ? 6px : 0px)
+                            + root.queued-followup.length * 24px
+                            + 24px;
+                        background: #171814;
+                        border-color: #2c2f26;
+                        border-width: 1px;
+                        border-radius: 10px;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-color: #00000080;
+
+                        if root.queued-steering.length > 0 : Text {
+                            x: 10px;
+                            y: 8px;
+                            width: 280px;
+                            height: 16px;
+                            text: "INTO THIS TURN";
+                            color: #a18e41;
+                            font-size: 9px;
+                            letter-spacing: 0.6px;
+                            vertical-alignment: center;
+                        }
+                        for item[i] in root.queued-steering : QueueRow {
+                            x: 10px;
+                            y: 24px + i * 24px;
+                            width: 280px;
+                            text: item.text;
+                            lane: "steering";
+                            slot: item.slot;
+                            act(lane, slot, action) => {
+                                root.queue-act(lane, slot, action);
+                                root.queue-open = false;
+                            }
+                        }
+                        if root.queued-followup.length > 0 : Text {
+                            x: 10px;
+                            y: 24px + root.queued-steering.length * 24px
+                                + (root.queued-steering.length > 0 ? 6px : 0px);
+                            width: 280px;
+                            height: 16px;
+                            vertical-alignment: center;
+                            text: "UP NEXT";
+                            color: #8b8c85;
+                            font-size: 9px;
+                            letter-spacing: 0.6px;
+                        }
+                        for item[i] in root.queued-followup : QueueRowUp {
+                            x: 10px;
+                            y: 40px + root.queued-steering.length * 24px
+                                + (root.queued-steering.length > 0 ? 6px : 0px) + i * 24px;
+                            width: 280px;
+                            text: item.text;
+                            lane: "followUp";
+                            slot: item.slot;
+                            act(lane, slot, action) => {
+                                root.queue-act(lane, slot, action);
+                                root.queue-open = false;
+                            }
+                        }
+                        Text {
+                            x: 10px;
+                            y: parent.height - 26px;
+                            width: 280px;
+                            height: 18px;
+                            vertical-alignment: bottom;
+                            text: "↑ sends into this turn · click a line to edit";
+                            color: #565a4f;
+                            font-size: 9px;
+                        }
+                    }
+
+                    if root.queued-count > 0 : queue-chip := Rectangle {
                         x: 18px;
                         y: composer-box.y - 32px;
                         width: chip-row.preferred-width + 26px;
@@ -1166,62 +1425,9 @@ export component AppWindow inherits Window {
                         }
 
                         // the list itself, anchored above the chip
-                        if root.queue-open : Rectangle {
-                            x: 0;
-                            y: -self.height - 6px;
-                            width: 300px;
-                            height: min(root.queued-count, 5) * 19px + 46px;
-                            background: #171814;
-                            border-color: #2c2f26;
-                            border-width: 1px;
-                            border-radius: 10px;
-
-                            popup-touch := TouchArea {
-                                x: 0;
-                                y: 0;
-                                width: 100%;
-                                height: 100%;
-                                // leaving the card puts it away: no lingering hover
-                                changed has-hover => {
-                                    if !self.has-hover {
-                                        root.queue-open = false;
-                                    }
-                                }
-                            }
-
-                            VerticalLayout {
-                                padding-left: 10px;
-                                padding-right: 10px;
-                                padding-top: 8px;
-                                padding-bottom: 8px;
-                                spacing: 6px;
-
-                                Text {
-                                    text: root.queued-count + " queued";
-                                    color: #8b8c85;
-                                    font-size: 10px;
-                                }
-                                for item[i] in root.queued-items : Text {
-                                    visible: i < 5;
-                                    text: (i + 1) + ".  " + item;
-                                    color: #d9d8d1;
-                                    font-size: 11px;
-                                    wrap: no-wrap;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    visible: root.queued-count > 5;
-                                    text: "+" + (root.queued-count - 5) + " more";
-                                    color: #565a4f;
-                                    font-size: 10px;
-                                }
-                            }
-                        }
                     }
 
-                    
-
-composer-box := Rectangle {
+                    composer-box := Rectangle {
                     x: 18px;
                     y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
@@ -1407,7 +1613,8 @@ composer-box := Rectangle {
         }
     }
 
-    // nothing keeps a hover alive forever: this is the safety net
+
+        // nothing keeps a hover alive forever: this is the safety net
     tooltip-timer := Timer {
         interval: 6000ms;
         running: root.tooltip-on;

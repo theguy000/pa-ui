@@ -3,7 +3,7 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, get_queue, get_tail, list_sessions, send_prompt, session_stats,
+    abort, attach_as, get_queue, get_tail, list_sessions, mutate_queue, send_prompt, session_stats,
     set_model, steer_prompt, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -29,6 +29,13 @@ enum Job {
     Steer { session: String, message: String },
     Abort { session: String },
     Queue { session: String },
+    QueueAct {
+        session: String,
+        lane: String,
+        slot: usize,
+        text: String,
+        action: String,
+    },
     Stats { session: String },
     SetModel { session: String, provider: String, model: String },
 }
@@ -49,6 +56,7 @@ enum Msg {
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
     Queue { steering: Vec<String>, follow_up: Vec<String> },
+    QueueEdit { text: String },
     Stats { session: String, stats: pa_client::SessionStats },
     Activity { label: String },
     Error(String),
@@ -61,12 +69,27 @@ fn main() -> Result<(), slint::PlatformError> {
     // design check: seed the queue chip without waiting for a slow turn
     if let Ok(count) = std::env::var("PA_QUEUE") {
         if let Ok(count) = count.parse::<i32>() {
-            let items: Vec<slint::SharedString> = (1..=count)
-                .map(|n| slint::SharedString::from(format!("queued message {n}")))
-                .collect();
+            let build = |from: i32, to: i32| -> Vec<QueueItem> {
+                (from..=to)
+                    .map(|n| {
+                        let text = format!("queued message {n}");
+                        QueueItem {
+                            text: text.clone().into(),
+                            raw: text.into(),
+                            slot: n - from,
+                        }
+                    })
+                    .collect()
+            };
+            let mid = count.div_euclid(2).max(1);
             ui.set_queued_count(count);
             ui.set_queued_preview("queued message 1".into());
-            ui.set_queued_items(ModelRc::from(Rc::new(VecModel::from(items))));
+            ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(build(1, mid)))));
+            ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(if count > mid {
+                build(mid + 1, count)
+            } else {
+                Vec::new()
+            }))));
         }
     }
 
@@ -166,6 +189,40 @@ fn main() -> Result<(), slint::PlatformError> {
                 session,
                 provider: provider.to_string(),
                 model: model.to_string(),
+            });
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        ui.on_queue_act(move |lane, slot, action| {
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[queue] act {action} {lane}[{slot}]");
+            }
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            // The row's own text is the daemon's expectedText: it proves the
+            // client is editing the row it actually showed.
+            let text = if lane == "steering" {
+                ui.get_queued_steering()
+                    .row_data(slot.max(0) as usize)
+                    .map(|row| row.raw.to_string())
+            } else {
+                ui.get_queued_followup()
+                    .row_data(slot.max(0) as usize)
+                    .map(|row| row.raw.to_string())
+            };
+            let Some(text) = text else { return };
+            let _ = jobs.send(Job::QueueAct {
+                session,
+                lane: lane.to_string(),
+                slot: slot.max(0) as usize,
+                text,
+                action: action.to_string(),
             });
         });
     }
@@ -316,6 +373,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // what is stacked behind the running turn
         if ui.get_busy() && !loaded.as_deref().unwrap_or("").is_empty()
+            // PA_QUEUE is a design check: keep the seeded lanes on screen
+            && std::env::var("PA_QUEUE").is_err()
             && queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
         {
             queue_at = SystemTime::now();
@@ -663,17 +722,35 @@ fn main() -> Result<(), slint::PlatformError> {
                         .unwrap_or_default();
                     ui.set_queued_count(total as i32);
                     ui.set_queued_preview(first.into());
-                    // the popup lists what is actually waiting, in order
-                    let items: Vec<slint::SharedString> = steering
-                        .iter()
-                        .chain(follow_up.iter())
-                        .map(|text| {
-                            let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                            let cut: String = flat.chars().take(120).collect();
-                            slint::SharedString::from(cut)
-                        })
-                        .collect();
-                    ui.set_queued_items(ModelRc::from(Rc::new(VecModel::from(items))));
+                    // Each row keeps its lane and its slot in that lane, which is
+                    // what the daemon wants back when one is edited or promoted.
+                    let lane_items = |texts: &[String]| -> Vec<QueueItem> {
+                        texts
+                            .iter()
+                            .enumerate()
+                            .map(|(slot, text)| {
+                                let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                                let cut: String = flat.chars().take(120).collect();
+                                QueueItem {
+                                    text: cut.into(),
+                                    raw: text.clone().into(),
+                                    slot: slot as i32,
+                                }
+                            })
+                            .collect()
+                    };
+                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(lane_items(
+                        &steering,
+                    )))));
+                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(
+                        &follow_up,
+                    )))));
+                }
+                Msg::QueueEdit { text } => {
+                    // the row is out of the queue; the text comes back to where
+                    // it came from, so the next Enter decides the lane again
+                    ui.set_composer_text(text.into());
+                    ui.set_status_line("back in the composer".into());
                 }
                 Msg::Stats { session, stats } => {
                     if loaded.as_deref() != Some(session.as_str()) {
@@ -826,6 +903,50 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 Job::Queue { session } => {
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
                         let _ = out.send(Msg::Queue { steering, follow_up });
+                    }
+                }
+                Job::QueueAct {
+                    session,
+                    lane,
+                    slot,
+                    text,
+                    action,
+                } => {
+                    let mutation = match action.as_str() {
+                        // a follow-up promoted to the steering lane is the same
+                        // text re-laned: the daemon delivers it inside the turn
+                        // that is already running
+                        "promote" => serde_json::json!({
+                            "type": "replace",
+                            "lane": "steering",
+                            "text": text,
+                        }),
+                        // editing pulls the message back into the composer, so
+                        // the queue entry goes away first
+                        _ => serde_json::json!({"type": "delete"}),
+                    };
+                    let outcome = mutate_queue(active, &session, &lane, slot, &text, mutation);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[queue] {action} {lane}[{slot}] -> {outcome:?}");
+                    }
+                    match outcome {
+                        Ok(status) if status == "applied" => {
+                            if action == "edit" {
+                                let _ = out.send(Msg::QueueEdit { text: text.clone() });
+                            }
+                            // the lanes as the daemon now has them
+                            if let Ok((steering, follow_up)) = get_queue(active, &session) {
+                                let _ = out.send(Msg::Queue { steering, follow_up });
+                            }
+                        }
+                        Ok(_) => {
+                            let _ = out.send(Msg::Activity {
+                                label: "that queue row changed already".into(),
+                            });
+                        }
+                        Err(error) => {
+                            let _ = out.send(Msg::Activity { label: error.to_string() });
+                        }
                     }
                 }
                 Job::Abort { session } => {

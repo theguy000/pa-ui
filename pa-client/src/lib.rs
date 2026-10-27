@@ -571,6 +571,47 @@ pub fn get_queue(client: &Client, session: &str) -> std::io::Result<(Vec<String>
     Ok((texts("steering"), texts("followUp")))
 }
 
+/// Edit/delete/re-lane one waiting message.
+///
+/// The daemon addresses a queue row by `lane` + `slot` + the text the client
+/// last saw, so a row that moved under an update is rejected rather than
+/// silently rewriting somebody else's message. `mutation` is `delete`, `move`,
+/// or `replace` (a replace that names the other lane moves it there).
+///
+/// # Errors
+/// Fails on a transport error; a rejected mutation returns `"rejected"`.
+pub fn mutate_queue(
+    client: &Client,
+    session: &str,
+    lane: &str,
+    slot: usize,
+    expected: &str,
+    mutation: Value,
+) -> std::io::Result<String> {
+    let response = client.request(
+        "mutate_queued_message",
+        json!({
+            "activeSessionId": session,
+            "lane": lane,
+            "index": slot,
+            "expectedText": expected,
+            "mutation": mutation,
+        }),
+        Duration::from_secs(10),
+    )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "mutate_queued_message failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    Ok(response
+        .pointer("/data/status")
+        .and_then(Value::as_str)
+        .unwrap_or("rejected")
+        .to_string())
+}
+
 /// A session's live numbers, as the right panel shows them.
 #[derive(Debug, Clone, Default)]
 pub struct SessionStats {
