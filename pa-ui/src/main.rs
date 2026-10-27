@@ -300,8 +300,16 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // while the agent works, keep pulling the tail of the transcript so
         // completed tool calls show up as rows — the snapshot alone never updates
-        if ui.get_busy() && !loaded.as_deref().unwrap_or("").is_empty()
-            && tail_at.elapsed().unwrap_or_default() >= Duration::from_millis(900)
+        // Poll while a turn runs, and slowly the rest of the time. Gating this
+        // on `busy` alone meant one missed `message_end` froze the transcript
+        // for good: nothing would ever ask the store again.
+        let poll_every = if ui.get_busy() {
+            Duration::from_millis(900)
+        } else {
+            Duration::from_millis(3000)
+        };
+        if !loaded.as_deref().unwrap_or("").is_empty()
+            && tail_at.elapsed().unwrap_or_default() >= poll_every
         {
             tail_at = SystemTime::now();
             if let Some(session) = loaded.clone() {
@@ -439,18 +447,35 @@ fn main() -> Result<(), slint::PlatformError> {
                     if loaded.as_deref() != Some(session.as_str()) {
                         continue;
                     }
-                    if messages.len() <= tail_len {
+                    // An empty list usually means the id went stale (the daemon
+                    // restarted and re-keyed its sessions). Never let that blank
+                    // a transcript that is already on screen.
+                    if messages.is_empty() {
                         continue;
                     }
-                    let fresh = &messages[tail_len..];
+                    if messages.len() == tail_len {
+                        continue;
+                    }
+                    // A row is being streamed: the event path owns the view,
+                    // and rebuilding now would drop the in-progress row. The
+                    // next poll after the turn ends reconciles from the store.
+                    if live_row.is_some() {
+                        continue;
+                    }
                     tail_len = messages.len();
-                    let (built, _) = transcript::build(fresh, fresh.len().max(1));
-                    if built.is_empty() {
+                    let (built, skipped) = transcript::build(&messages, window_rows);
+                    if built.is_empty() && !messages.is_empty() {
                         continue;
                     }
-                    rows_store_ui.borrow_mut().extend(built.iter().cloned());
-                    for row in &built {
-                        row_model_ui.push(to_slint(row));
+                    let count = built.len();
+                    let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
+                    *rows_store_ui.borrow_mut() = built;
+                    row_model_ui.set_vec(slint_rows);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!(
+                            "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
+                            messages.len()
+                        );
                     }
                     scroll_to_end_when_ready(&ui.as_weak());
                 }
@@ -611,6 +636,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // a new connection has no attachments: the UI re-attaches
                     // with the resume cursor so the daemon replays the gap
                     attached = None;
+                    resume = None;
                     let _ = out.send(Msg::Reconnected);
                 }
                 Err(error) => {
@@ -621,6 +647,15 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
             }
         }
         let Some(active) = client.as_ref() else { continue };
+        // the daemon may have restarted under us; without this the app keeps
+        // reading a dead pipe and the transcript freezes until it is restarted
+        if !active.alive() {
+            client = None;
+            attached = None;
+            let _ = out.send(Msg::Error("daemon connection lost — reconnecting".into()));
+            std::thread::sleep(Duration::from_millis(300));
+            continue;
+        }
 
         while let Ok(job) = jobs.try_recv() {
             match job {

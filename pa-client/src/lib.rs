@@ -9,7 +9,7 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -26,6 +26,7 @@ pub struct Client {
     frames: Mutex<Receiver<Frame>>,
     backlog: Mutex<VecDeque<Frame>>,
     next_id: AtomicU64,
+    dead: AtomicBool,
     pub hello: Frame,
 }
 
@@ -52,8 +53,17 @@ impl Client {
             frames: Mutex::new(frame_rx),
             backlog: Mutex::new(VecDeque::new()),
             next_id: AtomicU64::new(1),
+            dead: AtomicBool::new(false),
             hello,
         })
+    }
+
+    /// Whether the daemon connection is still usable.
+    ///
+    /// The poller thread ends when the pipe breaks (daemon restart, shutdown),
+    /// and nothing else surfaces that: frames just stop arriving.
+    pub fn alive(&self) -> bool {
+        !self.dead.load(Ordering::Relaxed)
     }
 
     /// Send one command; returns its id.
@@ -101,7 +111,12 @@ impl Client {
         let rx = self.frames.lock().expect("frames");
         match rx.recv_timeout(timeout) {
             Ok(frame) => Some(frame),
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => None,
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => {
+                // the poller stopped: the pipe died with it
+                self.dead.store(true, Ordering::Relaxed);
+                None
+            }
         }
     }
 
@@ -145,7 +160,10 @@ fn poll_loop(
                 Err(TryRecvError::Disconnected) => return,
             }
         }
-        if pending(&file) > 0 {
+        // a failed peek means the daemon closed the pipe: stop the poller so
+        // the frames channel disconnects and the worker reconnects
+        let Some(waiting) = pending(&file) else { return };
+        if waiting > 0 {
             while let Some(frame) = read_frame(&mut file, &mut buffer, Duration::from_millis(50)) {
                 if frames.send(frame).is_err() {
                     return;
@@ -157,8 +175,12 @@ fn poll_loop(
     }
 }
 
-/// Bytes waiting on the pipe (0 when the handle is gone).
-fn pending(file: &std::fs::File) -> u32 {
+/// Bytes waiting on the pipe, or `None` when the handle is gone.
+///
+/// The distinction matters: a daemon restart shows up here as a failed peek.
+/// Reporting that as "0 bytes waiting" made a dead pipe look exactly like a
+/// quiet one, so the app stayed attached to a corpse and never reconnected.
+fn pending(file: &std::fs::File) -> Option<u32> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
     let mut available = 0u32;
@@ -172,7 +194,7 @@ fn pending(file: &std::fs::File) -> u32 {
             std::ptr::null_mut(),
         )
     };
-    if ok == 0 { 0 } else { available }
+    (ok != 0).then_some(available)
 }
 
 /// Read one newline-delimited frame, if one is available within `timeout`.
@@ -183,12 +205,16 @@ fn read_frame(file: &mut std::fs::File, buffer: &mut Vec<u8>, timeout: Duration)
     }
     let deadline = Instant::now() + timeout;
     loop {
-        if pending(file) == 0 {
-            if Instant::now() >= deadline {
-                return None;
+        match pending(file) {
+            None => return None,
+            Some(0) => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(4));
+                continue;
             }
-            std::thread::sleep(Duration::from_millis(4));
-            continue;
+            Some(_) => {}
         }
         let mut chunk = [0u8; 65536];
         match file.read(&mut chunk) {
