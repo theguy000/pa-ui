@@ -781,9 +781,11 @@ export component AppWindow inherits Window {
     // queued chip sits above the box, so the transcript has to stop short of it
     // the popup is drawn at the window root (a child at negative y paints but
     // cannot be hit), so it anchors off the composer box, which never moves
-    // the band reserves a full 34px above the box, not just the chip: the last
-    // line of the transcript was butting straight into the input
-    out property <length> composer-total: root.box-height + 46px;
+    // The band reserves 34px above the box for the chip, and - while a turn is
+    // running - the busy row plus another 34px above it, so the gap that keeps
+    // the transcript off the input sits above the status line instead of below.
+    out property <length> composer-total: root.box-height + 46px
+        + (root.busy ? 60px : 0px);
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
     out property <length> box-height: root.composer-height + 54px;
     in-out property <bool> dragging: false;
@@ -943,7 +945,7 @@ export component AppWindow inherits Window {
                         x: 0;
                         y: 0;
                         width: parent.width;
-                        height: parent.height - busy-row.height - root.composer-total;
+                        height: parent.height - root.composer-total;
                         background: #12130f;
 
                         area-touch := TouchArea {
@@ -1006,7 +1008,7 @@ export component AppWindow inherits Window {
 
                     busy-row := Rectangle {
                         x: 0;
-                        y: transcript-area.height;
+                        y: parent.height - root.composer-total + 46px;
                         width: parent.width;
                         height: root.busy ? 26px : 0px;
 
