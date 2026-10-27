@@ -315,6 +315,7 @@ component SessionRow inherits Rectangle {
         y: 0;
         width: parent.width - 30px;
         height: 100%;
+        mouse-cursor: MouseCursor.pointer;
         clicked => { root.picked(root.item.id); }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
@@ -711,6 +712,8 @@ export component AppWindow inherits Window {
         height: 100%;
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
+        // a click that lands on nothing in particular dismisses the model menu
+        clicked => { root.model-menu = false; }
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
                 // only the handle starts a drag; the rest of the band belongs
@@ -903,6 +906,7 @@ export component AppWindow inherits Window {
                             editing: item.id == root.editing-id;
                             draft <=> root.draft;
                             picked(id) => {
+                                root.model-menu = false;
                                 root.selected-id = id;
                                 // a picked row drops the card: leaving hover as the
                                 // only way to clear it made it look stuck
@@ -965,7 +969,10 @@ export component AppWindow inherits Window {
                             VerticalLayout {
                                 for item[i] in root.transcript : TranscriptRow {
                                     data: item;
-                                    toggle => { root.toggle-row(i); }
+                                    toggle => {
+                                        root.model-menu = false;
+                                        root.toggle-row(i);
+                                    }
                                 }
                             }
                         }
@@ -1661,7 +1668,9 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                 }
                 send-touch := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
                     clicked => {
+                        root.model-menu = false;
                         root.send-requested(root.composer-text);
                         root.composer-text = "";
                     }
