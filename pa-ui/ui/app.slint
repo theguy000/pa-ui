@@ -1342,6 +1342,25 @@ export component AppWindow inherits Window {
             }
         }
 
+        // The sides do not stop at the junction: the box's outline curves
+        // inward there, so the strip's line continues 12px past its own bottom
+        // to meet the box's side border where the corner arc lets go of it.
+        // (Drawn outside the clipped ring block, which cuts at the strip.)
+        Rectangle {
+            x: 0;
+            y: 12px;
+            width: 1px;
+            height: root.busy-h;
+            background: #2c2f26;
+        }
+        Rectangle {
+            x: parent.width - 1px;
+            y: 12px;
+            width: 1px;
+            height: root.busy-h;
+            background: #2c2f26;
+        }
+
         // the visible half of the strip: everything above the box's top edge
         Rectangle {
             x: 0;
