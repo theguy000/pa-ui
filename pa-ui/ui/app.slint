@@ -707,6 +707,53 @@ component TranscriptRow inherits VerticalLayout {
             font-size: 10px;
         }
     }
+
+    // A fenced block: its own surface, mono, the language named in the corner
+    // the way a code card names it. The colours are the TUI's mdCodeBlock (a
+    // sage) and its syntax palette, warmed to sit in this theme.
+    if data.kind == 6 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        Rectangle {
+            height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
+            background: #0d0e0b;
+            border-radius: 8px;
+
+            Text {
+                x: 12px;
+                y: 9px;
+                text: data.meta;
+                color: #565a4f;
+                font-size: 9px;
+                visible: data.meta != "";
+            }
+            code-text := StyledText {
+                x: 12px;
+                y: 12px + (data.meta == "" ? 0px : 15px);
+                width: parent.width - 24px;
+                text: data.code;
+                default-color: #b3bb9e;
+                default-font-size: 11.5px;
+                default-font-family: "Cascadia Code";
+            }
+        }
+    }
+
+    // A table, box-drawn as text: it stays copyable and needs no cell model.
+    if data.kind == 7 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        table-text := StyledText {
+            text: data.body;
+            default-color: #a9ab9d;
+            default-font-size: 11px;
+            default-font-family: "Cascadia Code";
+        }
+    }
 }
 
 // One line of the context ledger: the label, then the value flush right in a

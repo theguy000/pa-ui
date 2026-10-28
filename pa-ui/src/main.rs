@@ -658,6 +658,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if std::env::var("PA_DEMO").as_deref() == Ok("fail") {
                         built.extend(transcript::demo_rows());
                     }
+                    if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
+                        built.extend(transcript::markdown_demo_rows());
+                    }
                     // a prompt sent while this attach was in flight: the snapshot
                     // predates it, so the optimistic row has to be re-appended
                     if let Some(text) = pending_user.borrow().as_deref() {
@@ -737,9 +740,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     live_row = None;
                     tail_len = messages.len();
                     tail_sig = Some((cursor, newest));
-                    let (built, skipped) = transcript::build(&messages, window_rows);
+                    let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
+                    }
+                    if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
+                        // the demo rides every rebuild, or the next poll wipes it
+                        built.extend(transcript::markdown_demo_rows());
                     }
                     let count = built.len();
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
