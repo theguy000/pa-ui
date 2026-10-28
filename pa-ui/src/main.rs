@@ -7,7 +7,7 @@ slint::include_modules!();
 
 use pa_client::{
     attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
-    clamp_level, mutate_queue, send_prompt, session_state, session_stats, set_model,
+    clamp_level, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
     set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -2286,24 +2286,63 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     }
                 }
                 Job::Prompt { session, message, images } => {
-                    let outcome = send_prompt(active, &session, &message, &images);
-                    if let Ok(id) = &outcome {
-                        pending_prompts.push((id.clone(), message.clone()));
+                    // A prompt names the chat it belongs to. If this connection
+                    // is bound to another chat - or to none - bind first, then
+                    // send: sending into a session the connection is not
+                    // attached to is how a message can be accepted and then go
+                    // nowhere. The TUI does the same rebind-and-send.
+                    if attached.as_deref() != Some(session.as_str()) {
+                        match attach_as(active, &session, Some(&client_id), resume.clone()) {
+                            Ok(messages) => {
+                                attached = Some(session.clone());
+                                let _ = out.send(Msg::Transcript {
+                                    session: session.clone(),
+                                    messages,
+                                });
+                            }
+                            Err(error) => {
+                                if std::env::var("PA_DEBUG").is_ok() {
+                                    eprintln!("[prompt] bind before send failed: {error}");
+                                }
+                                let _ = out.send(Msg::PromptRejected { text: message });
+                                let _ = out.send(Msg::PromptResult {
+                                    error: Some(format!(
+                                        "the window could not reach this chat: {error}"
+                                    )),
+                                });
+                                continue;
+                            }
+                        }
                     }
+                    // The daemon's verdict, awaited: an accepted message and a
+                    // refused one used to look identical from here, so a refusal
+                    // was silence. This is what the TUI's submit does.
+                    let outcome = send_prompt_checked(active, &session, &message, &images);
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!(
                             "[prompt] session={session} message={message:?} images={} outcome={outcome:?}",
                             images.len()
                         );
                     }
-                    let error = outcome.err().map(|e| e.to_string());
                     // Ask what the daemon actually queued. This is the only
                     // source for those lanes: the window may guess that a turn
                     // is running, but it may not guess that a message is waiting.
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
                         let _ = out.send(Msg::Queue { steering, follow_up });
                     }
-                    let _ = out.send(Msg::PromptResult { error });
+                    match outcome {
+                        Ok(()) => {
+                            let _ = out.send(Msg::PromptResult { error: None });
+                        }
+                        Err(reason) => {
+                            // The text goes back to the composer and the reason
+                            // is said plainly, instead of the message vanishing.
+                            let _ = out.send(Msg::PromptRejected { text: message });
+                            let _ = out.send(Msg::PromptResult {
+                                error: Some(reason),
+                            });
+                        }
+                    }
                 }
                 Job::Tail { session, fresh } => {
                     // Event frames are droppable: the daemon publishes them with

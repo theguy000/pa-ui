@@ -538,6 +538,43 @@ pub fn send_prompt(
     client.send("prompt", payload)
 }
 
+/// Send a prompt and **wait for the daemon's verdict**.
+///
+/// The TUI's submit does this, and it is the difference that matters: a
+/// fire-and-forget send cannot tell "accepted" from "refused", so a refusal
+/// looks exactly like a message that vanished. `Err` carries the daemon's own
+/// reason, word for word.
+///
+/// # Errors
+/// Fails when the daemon refuses the prompt or does not answer in time.
+pub fn send_prompt_checked(
+    client: &Client,
+    session: &str,
+    message: &str,
+    images: &[Value],
+) -> Result<(), String> {
+    let mut payload = json!({
+        "activeSessionId": session,
+        "message": message,
+        "queueIfBusy": true,
+        "streamingBehavior": "followUp",
+    });
+    if !images.is_empty() {
+        payload["images"] = Value::Array(images.to_vec());
+    }
+    let response = client
+        .request("prompt", payload, Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    if response.get("success").and_then(Value::as_bool) == Some(true) {
+        return Ok(());
+    }
+    Err(response
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("the daemon refused the message")
+        .to_string())
+}
+
 /// `abort` → stop the running turn.
 ///
 /// Fire-and-forget like [`send_prompt`]: the outcome shows up as a `stop`
@@ -1344,5 +1381,103 @@ mod abort_then_image_probe {
         eprintln!("admission after abort: {id}");
         std::thread::sleep(std::time::Duration::from_secs(15));
         eprintln!("session id: {session}");
+    }
+}
+
+#[cfg(test)]
+mod image_response_probe {
+    use super::*;
+    use serde_json::json;
+
+    fn b64(bytes: &[u8]) -> String {
+        const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            out.push(T[(n >> 18) as usize & 63] as char);
+            out.push(T[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+            out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        }
+        out
+    }
+
+    /// Probe: what does the daemon actually answer to an image prompt sent
+    /// while a turn is running? `Client::send` is fire-and-forget, so the app
+    /// never sees this answer — this prints it.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn midturn_image_response() {
+        let path = std::env::var("PA_PROBE_IMG").expect("PA_PROBE_IMG");
+        let bytes = std::fs::read(path).expect("read image");
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        eprintln!("probe session {session} image {} bytes", bytes.len());
+        let first = client
+            .request(
+                "prompt",
+                json!({
+                    "activeSessionId": session,
+                    "message": "Run a bash command that sleeps 20 seconds, then say done.",
+                    "queueIfBusy": true,
+                    "streamingBehavior": "followUp",
+                }),
+                std::time::Duration::from_secs(20),
+            )
+            .expect("first prompt");
+        eprintln!("first prompt response: {first}");
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let images = vec![json!({"type": "image", "data": b64(&bytes), "mimeType": "image/png"})];
+        let payload = json!({
+            "activeSessionId": session,
+            "message": "probe: midturn picture",
+            "queueIfBusy": true,
+            "streamingBehavior": "followUp",
+            "images": images,
+        });
+        match client.request("prompt", payload, std::time::Duration::from_secs(30)) {
+            Ok(response) => eprintln!("MIDTURN IMAGE RESPONSE: {response}"),
+            Err(error) => eprintln!("MIDTURN IMAGE ERROR: {error}"),
+        }
+        eprintln!(
+            "queue after send: {:?}",
+            get_queue(&client, &session).map(|(s, f)| (s, f))
+        );
+        std::thread::sleep(std::time::Duration::from_secs(25));
+        eprintln!(
+            "queue after settle: {:?}",
+            get_queue(&client, &session).map(|(s, f)| (s, f))
+        );
+    }
+}
+
+#[cfg(test)]
+mod reject_probe {
+    use super::*;
+
+    /// Probe: does a refused prompt come back to the fire-and-forget send path,
+    /// or is the refusal silent? A bogus session id should be refused.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn refused_prompt_verdict() {
+        let client = Client::connect().expect("connect");
+        let id = send_prompt(&client, "nope-not-a-session", "hello", &[]).expect("send");
+        eprintln!("request id: {id}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+        while std::time::Instant::now() < deadline {
+            if let Some(frame) = client.recv(std::time::Duration::from_millis(500)) {
+                let ty = frame.get("type").and_then(serde_json::Value::as_str).unwrap_or("?");
+                if ty == "response" {
+                    eprintln!("VERDICT: {frame}");
+                    return;
+                }
+            }
+        }
+        eprintln!("NO VERDICT ARRIVED within 6s");
     }
 }
