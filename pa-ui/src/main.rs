@@ -94,7 +94,7 @@ enum Msg {
     /// new prompt rather than being lost
     Prompt { session: String, message: String, images: Vec<serde_json::Value> },
     /// the session's own slash commands, on top of the builtin table
-    ExtraCommands(Vec<(String, String)>),
+    ExtraCommands(Vec<(String, String, String)>),
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
     QueueEdit { text: String },
@@ -183,7 +183,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let editing: Rc<RefCell<Option<(String, usize, String)>>> = Rc::new(RefCell::new(None));
     // the session's own commands (templates and skills): the builtin table is
     // only half of what the agent accepts
-    let extra_commands: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    let extra_commands: Rc<RefCell<Vec<(String, String, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -1884,7 +1885,7 @@ fn apply_queue(
 
 /// The menu's rows: the builtin table first, then whatever this session adds on
 /// top of it, both narrowed by the same prefix.
-fn slash_rows(prefix: &str, extra: &[(String, String)]) -> Vec<SlashItem> {
+fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem> {
     let needle = prefix.trim_start_matches('/').to_lowercase();
     let mut rows: Vec<SlashItem> = pa_client::commands::filter(prefix)
         .iter()
@@ -1894,14 +1895,14 @@ fn slash_rows(prefix: &str, extra: &[(String, String)]) -> Vec<SlashItem> {
             description: command.description.into(),
         })
         .collect();
-    for (name, description) in extra {
+    for (name, description, hint) in extra {
         let bare = name.strip_prefix("skill:").unwrap_or(name);
         if !name.to_lowercase().starts_with(&needle) && !bare.to_lowercase().starts_with(&needle) {
             continue;
         }
         rows.push(SlashItem {
             name: name.as_str().into(),
-            hint: if name.contains(':') { "your request" } else { "" }.into(),
+            hint: hint.as_str().into(),
             description: description.as_str().into(),
         });
     }
@@ -2879,8 +2880,16 @@ mod slash_rows_tests {
     #[test]
     fn the_table_comes_first_and_the_sessions_own_follow() {
         let extra = vec![
-            ("skill:review".to_string(), "review the diff".to_string()),
-            ("template:standup".to_string(), "daily standup".to_string()),
+            (
+                "skill:review".to_string(),
+                "review the diff".to_string(),
+                "your request".to_string(),
+            ),
+            (
+                "template:standup".to_string(),
+                "daily standup".to_string(),
+                "[day]".to_string(),
+            ),
         ];
         let all = slash_rows("", &extra);
         assert!(all.len() == 43, "41 builtins + 2 session commands, got {}", all.len());
@@ -2889,7 +2898,11 @@ mod slash_rows_tests {
 
     #[test]
     fn a_prefix_narrows_both_sources() {
-        let extra = vec![("skill:compact-review".to_string(), "x".to_string())];
+        let extra = vec![(
+            "skill:compact-review".to_string(),
+            "x".to_string(),
+            "your request".to_string(),
+        )];
         let rows = slash_rows("compact", &extra);
         let names: Vec<String> = rows.iter().map(|row| row.name.to_string()).collect();
         assert!(names.contains(&"compact".to_string()));

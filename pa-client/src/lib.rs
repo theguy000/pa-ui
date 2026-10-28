@@ -717,7 +717,10 @@ pub fn mutate_queue(
 /// The builtin table is the same everywhere; these come from the session and
 /// only exist there, which is why a menu built from the table alone would look
 /// complete and still be missing commands the agent has.
-pub fn get_commands(client: &Client, session: &str) -> std::io::Result<Vec<(String, String)>> {
+pub fn get_commands(
+    client: &Client,
+    session: &str,
+) -> std::io::Result<Vec<(String, String, String)>> {
     let response = client.request(
         "get_commands",
         json!({ "activeSessionId": session }),
@@ -731,15 +734,20 @@ pub fn get_commands(client: &Client, session: &str) -> std::io::Result<Vec<(Stri
     Ok(entries
         .iter()
         .filter_map(|entry| {
-            let name = entry.get("name").and_then(Value::as_str)?;
-            // builtins are already in the table; anything extra is a template
-            // or a skill
+            let name = entry.get("name").and_then(Value::as_str)?.to_string();
             let description = entry
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            Some((name.to_string(), description))
+            let is_skill = entry.get("source").and_then(Value::as_str) == Some("skill");
+            let hint = entry
+                .get("argumentHint")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| is_skill.then(|| "your request".to_string()))
+                .unwrap_or_default();
+            Some((name, description, hint))
         })
         .collect())
 }
