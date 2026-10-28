@@ -1142,8 +1142,11 @@ fn main() -> Result<(), slint::PlatformError> {
                             let args = event.get("args").cloned().unwrap_or(serde_json::Value::Null);
                             let row = transcript::tool_cell(tool_name, &call_id, &args);
                             let mut store = rows_store_ui.borrow_mut();
-                            let tail = usize::from(pending_user.borrow().is_some());
-                            let at = store.len().saturating_sub(tail);
+                            // after the message it belongs to, for the same
+                            // reason the assistant's text is: this cell is part
+                            // of the answer, not something that came before the
+                            // prompt
+                            let at = store.len();
                             store.insert(at, row.clone());
                             row_model_ui.insert(at, to_slint(&row));
                             live_cells.insert(call_id, at);
@@ -1267,7 +1270,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             let tail = usize::from(pending_user.borrow().is_some());
                             for (offset, row) in built.iter().enumerate() {
                                 let index = start + offset;
-                                let writable = store.len().saturating_sub(tail);
+                                // the echo of the message just sent is the
+                                // user's own row, and the answer belongs after
+                                // it - nothing is withheld from the tail here
+                                let writable = store.len();
                                 if index < writable {
                                     store[index] = row.clone();
                                     row_model_ui.set_row_data(index, to_slint(row));
@@ -1292,8 +1298,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                         None => {
                             let mut store = rows_store_ui.borrow_mut();
-                            let tail = usize::from(pending_user.borrow().is_some());
-                            let start = store.len().saturating_sub(tail);
+                            // Appended, not tucked in before the pending echo.
+                            // The echo is the user's message; the rows arriving
+                            // now are the answer to it, so putting them above it
+                            // showed the previous answer sitting under the
+                            // message that had just been sent, until the next
+                            // rebuild put the order right.
+                            let start = store.len();
                             for (offset, row) in built.iter().enumerate() {
                                 store.insert(start + offset, row.clone());
                                 row_model_ui.insert(start + offset, to_slint(row));
