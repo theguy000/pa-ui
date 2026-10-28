@@ -40,6 +40,10 @@ pub struct Row {
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
     pub mime: String,
+    /// which message this row belongs to: the daemon's id when it has one, a
+    /// role+timestamp key when it does not. Rows are merged per message, so a
+    /// rebuild can replace one message without touching the rest.
+    pub message: String,
     /// how long the call took, drawn as its own column: a separator dot between
     /// two dim runs reads as a full stop
     pub elapsed: String,
@@ -63,6 +67,7 @@ impl Row {
             image: String::new(),
             mime: String::new(),
             elapsed: String::new(),
+            message: String::new(),
         }
     }
 }
@@ -107,6 +112,8 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
 
     let mut rows = Vec::new();
     for message in window {
+        let owner = message_key(message);
+        let before = rows.len();
         let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
         if role == "toolResult" {
             continue; // folded into its cell
@@ -121,6 +128,9 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                 .unwrap_or("notice")
                 .to_string();
             rows.push(row);
+            for row in &mut rows[before..] {
+                row.message.clone_from(&owner);
+            }
             continue;
         }
 
@@ -219,8 +229,28 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                 _ => {}
             }
         }
+        for row in &mut rows[before..] {
+            row.message.clone_from(&owner);
+        }
     }
     (rows, start)
+}
+
+/// The daemon's id for a message, or a stable stand-in built from what every
+/// frame carries: role and timestamp.
+#[must_use]
+pub fn message_key(message: &Value) -> String {
+    if let Some(id) = message.get("id").and_then(Value::as_str) {
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    let stamp = message
+        .get("timestamp")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    format!("{role}:{stamp}")
 }
 
 /// The `bashCommands` the python tool reports on its own result: the first

@@ -29,6 +29,8 @@ pub enum Part {
 }
 
 pub struct Live {
+    /// which message these rows are: the store's copy of it replaces them
+    pub message: String,
     /// where the message's rows begin in the store
     pub start: usize,
     /// how many rows it owns right now
@@ -38,8 +40,9 @@ pub struct Live {
 
 impl Live {
     #[must_use]
-    pub fn new(start: usize) -> Self {
+    pub fn new(start: usize, message: String) -> Self {
         Self {
+            message,
             start,
             rows: 0,
             parts: Vec::new(),
@@ -128,7 +131,7 @@ impl Live {
     /// the parts arrived.
     #[must_use]
     pub fn rows(&self) -> Vec<Row> {
-        let mut out = Vec::new();
+        let mut out: Vec<Row> = Vec::new();
         for part in &self.parts {
             match part {
                 Part::Thinking(text) => out.extend(block_rows("thinking", text)),
@@ -153,6 +156,9 @@ impl Live {
                     out.push(row);
                 }
             }
+        }
+        for row in &mut out {
+            row.message.clone_from(&self.message);
         }
         out
     }

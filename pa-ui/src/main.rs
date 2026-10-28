@@ -155,8 +155,6 @@ fn main() -> Result<(), slint::PlatformError> {
     // the last user message the daemon told us about, so its several frames
     // draw one row
     let mut drawn_user: Option<String> = None;
-    // a finished turn's rows are on screen and the store may not have them yet
-    let mut keep_live_rows = false;
     let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
     let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
     ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
@@ -1066,28 +1064,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    // The guard: while a closed turn's rows are still the newest
-                    // thing on screen, a rebuild that would make the transcript
-                    // shorter is a rebuild from a store that has not caught up.
-                    // Skip it, keep what is drawn, and look again next poll.
-                    if keep_live_rows && built.len() < rows_store_ui.borrow().len() {
-                        tail_len = messages.len();
-                        tail_sig = Some((cursor, newest));
-                        if std::env::var("PA_DEBUG").is_ok() {
-                            eprintln!(
-                                "[tail] held back: store has {} rows, screen has {}",
-                                built.len(),
-                                rows_store_ui.borrow().len()
-                            );
-                        }
-                        continue;
-                    }
-                    keep_live_rows = false;
-                    dump_rows(&built);
-                    let count = built.len();
-                    let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
-                    *rows_store_ui.borrow_mut() = built;
-                    row_model_ui.set_vec(slint_rows);
+                    // Merged per message, not replaced wholesale: a message the
+                    // store sends replaces its own rows, a message it does not
+                    // mention is left exactly as drawn, and a message it has
+                    // never sent is appended. Nothing here compares sizes, so a
+                    // store that is one message behind cannot shrink or blank
+                    // anything.
+                    let mut store = rows_store_ui.borrow_mut();
+                    merge_rows(&mut store, built, &row_model_ui);
+                    let count = store.len();
+                    drop(store);
+                    dump_rows(&rows_store_ui.borrow());
                     trace_rows("tail rebuild", &rows_store_ui);
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!(
@@ -1131,8 +1118,10 @@ fn main() -> Result<(), slint::PlatformError> {
                         // behind is what made it collapse to a line and then
                         // come back: the screen may not shrink on the strength
                         // of a store that has not caught up.
+                        // The live rows stay, carrying the message they belong
+                        // to: the store's copy of that message replaces them
+                        // when it arrives, in place.
                         open_live = None;
-                        keep_live_rows = true;
                         _stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -1234,7 +1223,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // the double that kept coming back.
                         close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                         let start = rows_store_ui.borrow().len();
-                        open_live = Some(live::Live::new(start));
+                        open_live = Some(live::Live::new(start, transcript::message_key(message)));
                         stream_started = SystemTime::now();
                         trace_rows("live row opened", &rows_store_ui);
                         continue;
@@ -1521,6 +1510,62 @@ fn context_hint(tokens: u64) -> String {
 
 /// Write the built transcript to `PA_DUMP`, so a row that appears twice can be
 /// counted instead of guessed at.
+/// Merge a rebuild into the rows already on screen, message by message.
+///
+/// This is the TUI's model, transplanted: its chat holds one entry per message
+/// and a rebuild replaces an entry it was given, appends one it has not seen, and
+/// leaves the rest alone. A flat row list can do the same as long as every row
+/// knows its message, which is what `Row.message` is for.
+fn merge_rows(
+    store: &mut Vec<transcript::Row>,
+    incoming: Vec<transcript::Row>,
+    model: &Rc<VecModel<TRow>>,
+) {
+    if store.is_empty() {
+        let slint_rows: Vec<TRow> = incoming.iter().map(to_slint).collect();
+        *store = incoming;
+        model.set_vec(slint_rows);
+        return;
+    }
+    // group both sides by message, keeping the order they arrived in
+    let group = |rows: &[transcript::Row]| -> Vec<(String, usize, usize)> {
+        let mut out: Vec<(String, usize, usize)> = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            match out.last_mut() {
+                Some((key, _, end)) if *key == row.message => *end = index + 1,
+                _ => out.push((row.message.clone(), index, index + 1)),
+            }
+        }
+        out
+    };
+    for (key, start, end) in group(&incoming) {
+        let fresh: Vec<transcript::Row> = incoming[start..end].to_vec();
+        let existing = group(store);
+        match existing.iter().find(|(open, _, _)| *open == key) {
+            Some((_, at, until)) => {
+                // replace that message's rows where they stand
+                let at = (*at).min(store.len());
+                let until = (*until).min(store.len());
+                for index in (at..until).rev() {
+                    store.remove(index);
+                    model.remove(index);
+                }
+                for (offset, row) in fresh.iter().enumerate() {
+                    store.insert(at + offset, row.clone());
+                    model.insert(at + offset, to_slint(row));
+                }
+            }
+            None => {
+                let at = store.len();
+                for (offset, row) in fresh.iter().enumerate() {
+                    store.insert(at + offset, row.clone());
+                    model.insert(at + offset, to_slint(row));
+                }
+            }
+        }
+    }
+}
+
 fn dump_rows(rows: &[Row]) {
     let Ok(path) = std::env::var("PA_DUMP") else {
         return;
