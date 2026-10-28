@@ -1481,3 +1481,25 @@ mod reject_probe {
         eprintln!("NO VERDICT ARRIVED within 6s");
     }
 }
+
+#[cfg(test)]
+mod checked_send_probe {
+    use super::*;
+
+    /// Probe: the checked send reports a refusal as an error and a real send as
+    /// success - the two states the window could not tell apart before.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn verdict_is_visible() {
+        let client = Client::connect().expect("connect");
+        eprintln!(
+            "refused -> {:?}",
+            send_prompt_checked(&client, "nope-not-a-session", "hello", &[])
+        );
+        let session = create_session(&client).expect("create");
+        eprintln!(
+            "accepted -> {:?} (session {session})",
+            send_prompt_checked(&client, &session, "probe: plain text only", &[])
+        );
+    }
+}
