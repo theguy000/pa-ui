@@ -969,8 +969,10 @@ export component AppWindow inherits Window {
     in-out property <string> model-provider: "";
     in property <length> menu-width: 180px;
     in-out property <string> model-id;
-    // the running model's thinking level, as the daemon reports it
+    // the running model's thinking level: the wire word (`max`) and the name
+    // the menu shows (`Max`)
     in-out property <string> current-effort;
+    in-out property <string> current-level;
     // the effort submenu: open while a hovered row has a ladder to choose from
     in-out property <bool> effort-open: false;
     in-out property <length> effort-y: 0px;

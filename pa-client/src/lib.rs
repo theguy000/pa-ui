@@ -718,6 +718,30 @@ fn supported_levels(reasoning: bool, map: Option<&serde_json::Value>) -> Vec<Str
         .collect()
 }
 
+/// Where a requested level lands on a model's own ladder — the daemon's rule:
+/// the level itself when the model takes it, else the nearest higher rung, else
+/// the nearest lower one, else whatever the model offers first.
+#[must_use]
+pub fn clamp_level(levels: &[String], level: &str) -> String {
+    if levels.iter().any(|available| available == level) {
+        return level.to_string();
+    }
+    let Some(index) = THINKING_LEVELS.iter().position(|candidate| *candidate == level) else {
+        return levels.first().cloned().unwrap_or_default();
+    };
+    for candidate in THINKING_LEVELS.iter().skip(index) {
+        if levels.iter().any(|available| available == candidate) {
+            return (*candidate).to_string();
+        }
+    }
+    for candidate in THINKING_LEVELS[..index].iter().rev() {
+        if levels.iter().any(|available| available == candidate) {
+            return (*candidate).to_string();
+        }
+    }
+    levels.first().cloned().unwrap_or_default()
+}
+
 /// A level's display name: the wire words are lowercase, the menu is not.
 #[must_use]
 pub fn thinking_level_label(level: &str) -> &str {
@@ -1072,5 +1096,23 @@ mod wire_tests {
             supported_levels(false, Some(&json!({"xhigh": "max"}))),
             vec!["off", "minimal", "low", "medium", "high", "xhigh"]
         );
+    }
+
+    #[test]
+    fn a_level_clamps_onto_the_models_own_ladder() {
+        let levels: Vec<String> = ["off", "low", "medium", "high"]
+            .iter()
+            .map(|level| (*level).to_string())
+            .collect();
+        // taken as is when the model has it
+        assert_eq!(clamp_level(&levels, "medium"), "medium");
+        // too strong: nearest lower
+        assert_eq!(clamp_level(&levels, "max"), "high");
+        // too weak: nearest higher
+        assert_eq!(clamp_level(&levels, "minimal"), "low");
+        // a model with no thinking surface takes everything down to off
+        assert_eq!(clamp_level(&["off".to_string()], "high"), "off");
+        // an unknown word still lands somewhere real
+        assert_eq!(clamp_level(&levels, ""), "off");
     }
 }

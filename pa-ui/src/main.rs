@@ -5,8 +5,8 @@ slint::include_modules!();
 
 use pa_client::{
     attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
-    mutate_queue, send_prompt, session_state, session_stats, set_model, set_thinking_level,
-    steer_prompt, stop, thinking_level_label, Client, SessionRow,
+    clamp_level, mutate_queue, send_prompt, session_state, session_stats, set_model,
+    set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -370,16 +370,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 *current.borrow_mut() = Some(pair);
                 return;
             }
-            let running = ui.get_model_id() == entry.id.as_str()
-                && ui.get_model_provider() == entry.provider.as_str();
-            let level = ui.get_current_effort().to_string();
+            // Switching keeps the level and clamps it to the new model's own
+            // ladder, so the rung that would apply is the clamped one — the
+            // submenu shows where this model would land, not a guess.
+            let landed = clamp_level(&entry.thinking_levels, &ui.get_current_level());
             let items: Vec<EffortItem> = entry
                 .thinking_levels
                 .iter()
                 .map(|candidate| EffortItem {
                     level: candidate.clone().into(),
                     label: thinking_level_label(candidate).into(),
-                    current: running && thinking_level_label(candidate) == level,
+                    current: *candidate == landed,
                 })
                 .collect();
             ui.set_effort_items(ModelRc::from(Rc::new(VecModel::from(items))));
@@ -1398,6 +1399,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         continue;
                     }
                     ui.set_current_effort(thinking_level_label(&state.thinking_level).into());
+                    ui.set_current_level(state.thinking_level.clone().into());
                     // the daemon is the truth about which model runs; the chip
                     // follows it rather than the last thing clicked
                     if !state.model_id.is_empty()
