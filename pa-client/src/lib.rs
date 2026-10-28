@@ -710,6 +710,40 @@ pub fn mutate_queue(
         .to_string())
 }
 
+
+/// The session's extra slash commands (prompt templates and skills), as the
+/// daemon lists them.
+///
+/// The builtin table is the same everywhere; these come from the session and
+/// only exist there, which is why a menu built from the table alone would look
+/// complete and still be missing commands the agent has.
+pub fn get_commands(client: &Client, session: &str) -> std::io::Result<Vec<(String, String)>> {
+    let response = client.request(
+        "get_commands",
+        json!({ "activeSessionId": session }),
+        Duration::from_secs(10),
+    )?;
+    let entries = response
+        .pointer("/data/commands")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?;
+            // builtins are already in the table; anything extra is a template
+            // or a skill
+            let description = entry
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            Some((name.to_string(), description))
+        })
+        .collect())
+}
+
 /// One entry of the daemon's model catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEntry {

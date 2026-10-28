@@ -7,7 +7,7 @@ slint::include_modules!();
 
 use pa_client::{
     attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
-    clamp_level, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
+    clamp_level, get_commands, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
     set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -60,6 +60,8 @@ enum Job {
         images: Vec<serde_json::Value>,
     },
     Stats { session: String },
+    /// the session's own slash commands (templates and skills)
+    Commands { session: String },
     SetModel { session: String, provider: String, model: String },
     /// the running model and the level it thinks at, straight from `get_state`
     SessionState { session: String },
@@ -91,6 +93,8 @@ enum Msg {
     /// the parked row went away before its edit landed: the text goes out as a
     /// new prompt rather than being lost
     Prompt { session: String, message: String, images: Vec<serde_json::Value> },
+    /// the session's own slash commands, on top of the builtin table
+    ExtraCommands(Vec<(String, String)>),
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
     QueueEdit { text: String },
@@ -177,6 +181,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // expected text). Sending while this is set replaces that row instead of
     // appending a new message to the back of the queue.
     let editing: Rc<RefCell<Option<(String, usize, String)>>> = Rc::new(RefCell::new(None));
+    // the session's own commands (templates and skills): the builtin table is
+    // only half of what the agent accepts
+    let extra_commands: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(Vec::new()));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -607,25 +614,14 @@ fn main() -> Result<(), slint::PlatformError> {
     // have, and the descriptions are the daemon's own words.
     {
         let weak = ui.as_weak();
+        let extra_commands = extra_commands.clone();
         ui.on_slash_typed(move |text| {
             let Some(ui) = weak.upgrade() else { return };
             let Some(prefix) = slash_name_token(&text) else {
                 ui.set_slash_open(false);
                 return;
             };
-            let items = pa_client::commands::filter(&prefix);
-            if items.is_empty() {
-                ui.set_slash_open(false);
-                return;
-            }
-            let rows: Vec<SlashItem> = items
-                .iter()
-                .map(|command| SlashItem {
-                    name: command.name.into(),
-                    hint: command.hint.into(),
-                    description: command.description.into(),
-                })
-                .collect();
+            let rows = slash_rows(&prefix, &extra_commands.borrow());
             ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
             ui.set_slash_index(0);
             ui.set_slash_open(true);
@@ -1112,6 +1108,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_busy(true);
                 }
                 Msg::Transcript { session, messages } => {
+                    // the session's own commands arrive with the session
+                    let _ = jobs.send(Job::Commands {
+                        session: session.clone(),
+                    });
                     if loaded.as_deref() != Some(session.as_str()) {
                         continue; // a newer selection won
                     }
@@ -1524,6 +1524,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     ui.set_status_line("back in the composer".into());
                 }
+                Msg::ExtraCommands(rows) => {
+                    *extra_commands.borrow_mut() = rows;
+                }
                 Msg::ModelCatalog(entries) => {
                     // every group starts folded: 35 providers open at once is a
                     // wall, not a menu. Only the first load seeds that, so a
@@ -1879,6 +1882,32 @@ fn apply_queue(
 
 }
 
+/// The menu's rows: the builtin table first, then whatever this session adds on
+/// top of it, both narrowed by the same prefix.
+fn slash_rows(prefix: &str, extra: &[(String, String)]) -> Vec<SlashItem> {
+    let needle = prefix.trim_start_matches('/').to_lowercase();
+    let mut rows: Vec<SlashItem> = pa_client::commands::filter(prefix)
+        .iter()
+        .map(|command| SlashItem {
+            name: command.name.into(),
+            hint: command.hint.into(),
+            description: command.description.into(),
+        })
+        .collect();
+    for (name, description) in extra {
+        let bare = name.strip_prefix("skill:").unwrap_or(name);
+        if !name.to_lowercase().starts_with(&needle) && !bare.to_lowercase().starts_with(&needle) {
+            continue;
+        }
+        rows.push(SlashItem {
+            name: name.as_str().into(),
+            hint: if name.contains(':') { "your request" } else { "" }.into(),
+            description: description.as_str().into(),
+        });
+    }
+    rows
+}
+
 /// The command name being typed, or `None` when the message is not a command
 /// yet.
 ///
@@ -2138,6 +2167,13 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                             let _ = out.send(Msg::Prompt { session, message: text, images });
                         }
                     }
+                }
+                Job::Commands { session } => {
+                    let rows = get_commands(active, &session).unwrap_or_default();
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[commands] {} extra command(s)", rows.len());
+                    }
+                    let _ = out.send(Msg::ExtraCommands(rows));
                 }
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
@@ -2833,5 +2869,41 @@ mod slash_menu_tests {
         assert_eq!(slash_opens_picker("/model sonnet"), None);
         assert_eq!(slash_opens_picker("/compact"), None);
         assert_eq!(slash_opens_picker("model"), None);
+    }
+}
+
+#[cfg(test)]
+mod slash_rows_tests {
+    use super::slash_rows;
+
+    #[test]
+    fn the_table_comes_first_and_the_sessions_own_follow() {
+        let extra = vec![
+            ("skill:review".to_string(), "review the diff".to_string()),
+            ("template:standup".to_string(), "daily standup".to_string()),
+        ];
+        let all = slash_rows("", &extra);
+        assert!(all.len() == 43, "41 builtins + 2 session commands, got {}", all.len());
+        assert_eq!(all.last().map(|row| row.name.to_string()), Some("template:standup".to_string()));
+    }
+
+    #[test]
+    fn a_prefix_narrows_both_sources() {
+        let extra = vec![("skill:compact-review".to_string(), "x".to_string())];
+        let rows = slash_rows("compact", &extra);
+        let names: Vec<String> = rows.iter().map(|row| row.name.to_string()).collect();
+        assert!(names.contains(&"compact".to_string()));
+        // the skill matches on its bare word too, so a typed `compact` finds it
+        assert!(names.contains(&"skill:compact-review".to_string()));
+    }
+
+    #[test]
+    fn compact_and_refine_are_in_the_menu() {
+        let names: Vec<String> = slash_rows("", &[])
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        assert!(names.contains(&"compact".to_string()));
+        assert!(names.contains(&"refine".to_string()));
     }
 }

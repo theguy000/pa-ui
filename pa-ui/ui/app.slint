@@ -2459,7 +2459,8 @@ export component AppWindow inherits Window {
         x: composer-box.absolute-position.x + 12px;
         y: composer-box.absolute-position.y - self.height - 6px;
         width: min(460px, composer-box.width - 24px);
-        height: min(252px, 12px + root.slash-items.length * 30px);
+        // ten rows at a time; the list scrolls and the highlight pulls it along
+        height: min(312px, 12px + root.slash-items.length * 30px);
         background: #171814;
         border-color: #2c2f26;
         border-width: 1px;
@@ -2476,6 +2477,13 @@ export component AppWindow inherits Window {
             horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
             content-width: self.visible-width;
             content-height: self.visible-height;
+            // the highlight must never walk off the top or bottom of the list:
+            // arrowing down past the fold used to select a row nobody could see
+            viewport-y: -clamp(
+                root.slash-index * 30px - 60px,
+                0px,
+                max(0px, root.slash-items.length * 30px - self.height)
+            );
 
             slash-rows := VerticalLayout {
                 width: slash-list.visible-width;
