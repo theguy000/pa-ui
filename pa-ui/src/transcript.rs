@@ -676,17 +676,17 @@ pub fn markdown_markup(text: &str) -> String {
             out.push_str(line);
         }
     }
-    balance_strong(&pad_inline_code(&out))
+    balance_strong(&highlight_inline_code(&out))
 }
 
-/// Give inline code room to breathe.
+/// Inline code, as a colour rather than a box.
 ///
-/// The renderer draws `code` as a box that hugs the glyphs with no padding, and
-/// there is no styling hook for it - so a space goes inside each end of the
-/// span. The box grows around it and the run stops looking cramped against the
-/// text either side.
-fn pad_inline_code(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
+/// The renderer's own treatment is a rectangle that hugs the glyphs with no
+/// padding and no styling hook; `highlight_inline_code` replaces the span with
+/// accent-coloured bold text instead. No rectangle, no cramped edges, and it
+/// still reads as "this is a symbol, not prose".
+fn highlight_inline_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '`' {
@@ -697,7 +697,6 @@ fn pad_inline_code(text: &str) -> String {
         while chars.peek() == Some(&'`') {
             ticks.push(chars.next().unwrap_or('`'));
         }
-        // find the closing run of the same length
         let mut body = String::new();
         let mut closed = false;
         while let Some(next) = chars.next() {
@@ -715,12 +714,10 @@ fn pad_inline_code(text: &str) -> String {
             }
             body.push(next);
         }
-        if closed && !body.starts_with(' ') && !body.ends_with(' ') {
-            out.push_str(&ticks);
-            out.push(' ');
-            out.push_str(&body);
-            out.push(' ');
-            out.push_str(&ticks);
+        if closed && !body.trim().is_empty() {
+            out.push_str("<font color=\"#a18e41\">**");
+            out.push_str(body.trim());
+            out.push_str("**</font>");
         } else {
             out.push_str(&ticks);
             out.push_str(&body);
