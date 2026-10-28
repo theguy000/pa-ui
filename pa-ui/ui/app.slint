@@ -469,6 +469,10 @@ component TranscriptRow inherits VerticalLayout {
 
     in property <TRow> data;
     callback toggle();
+    // where the failure reason should be drawn: at the window's root, not in
+    // this row, or the row beneath paints over it
+    callback reason-hover(string, length, length);
+    callback reason-leave();
 
     if data.kind == 0 : HorizontalLayout {
         alignment: end;
@@ -637,42 +641,24 @@ component TranscriptRow inherits VerticalLayout {
                             y: 0;
                             width: 100%;
                             height: 100%;
-                            changed has-hover => { root.err-hover = self.has-hover; }
+                            changed has-hover => {
+                                root.err-hover = self.has-hover;
+                                if self.has-hover {
+                                    root.reason-hover(
+                                        data.reason,
+                                        self.absolute-position.x,
+                                        self.absolute-position.y + self.height,
+                                    );
+                                } else {
+                                    root.reason-leave();
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            if data.failed && root.err-hover : Rectangle {
-                x: parent.width - self.width - 4px;
-                y: 28px;
-                width: self.preferred-width;
-                max-width: 320px;
-                height: self.preferred-height;
-                max-height: 4 * reason-line.preferred-height + 16px;
-                background: #1d1412;
-                border-color: #6b342b;
-                border-width: 1px;
-                border-radius: 6px;
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    padding-top: 8px;
-                    padding-bottom: 8px;
-                    Text {
-                        text: data.reason;
-                        color: #e0b6ad;
-                        font-size: 10px;
-                        wrap: word-wrap;
-                    }
-                }
-                reason-line := Text {
-                    x: -400px;
-                    text: "x";
-                    font-size: 10px;
-                    opacity: 0;
-                }
-            }
+
         }
 
         if data.expanded : Rectangle {
@@ -934,6 +920,11 @@ component Chip inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
+    // the failure reason of a cell, drawn here so no row can paint over it
+    in-out property <bool> reason-open;
+    in-out property <length> reason-x;
+    in-out property <length> reason-y;
+    in-out property <string> reason-text;
     title: "prime-agent";
 
     // The drag surface is the whole window, so the pointer can never leave it
@@ -1483,6 +1474,15 @@ export component AppWindow inherits Window {
                                     toggle => {
                                         root.model-menu = false;
                                         root.toggle-row(i);
+                                    }
+                                    reason-hover(reason, x, y) => {
+                                        root.reason-text = reason;
+                                        root.reason-x = x;
+                                        root.reason-y = y;
+                                        root.reason-open = true;
+                                    }
+                                    reason-leave => {
+                                        root.reason-open = false;
                                     }
                                 }
                             }
@@ -2694,6 +2694,40 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // A failure reason is drawn at the window root: inside the row it was
+    // covered by whatever row came next, so a command row painted over the
+    // popup that belonged to the row above it.
+    if root.reason-open : Rectangle {
+        x: min(root.reason-x, root.width - self.width - 12px);
+        y: root.reason-y + 4px;
+        width: self.preferred-width;
+        max-width: 320px;
+        height: self.preferred-height;
+        max-height: 4 * reason-line.preferred-height + 16px;
+        background: #1d1412;
+        border-color: #6b342b;
+        border-width: 1px;
+        border-radius: 6px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            Text {
+                text: root.reason-text;
+                color: #e0b6ad;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
+        }
+        reason-line := Text {
+            x: -400px;
+            text: "x";
+            font-size: 10px;
+            opacity: 0;
         }
     }
 }
