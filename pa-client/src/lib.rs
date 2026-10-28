@@ -680,6 +680,57 @@ pub struct ModelEntry {
     /// The provider has credentials, so this model can actually be selected.
     pub configured: bool,
     pub context_window: u64,
+    /// The thinking levels this model accepts, weakest first (`off` for a model
+    /// with no thinking surface). Empty when the catalog says nothing at all.
+    pub thinking_levels: Vec<String>,
+}
+
+/// The thinking-level ladder, weakest to strongest — the daemon's
+/// `EXTENDED_THINKING_LEVELS`, whose wire names are the level strings.
+pub const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Does this model have a thinking surface at all? The coarse `reasoning` flag,
+/// or a map with at least one wired level: an all-null map is the "keep the
+/// reasoning output, send no unverified controls" encoding, not a capability.
+fn supports_thinking(reasoning: bool, map: Option<&serde_json::Value>) -> bool {
+    reasoning
+        || map
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|map| map.values().any(|value| !value.is_null()))
+}
+
+/// The supported levels, in ladder order: `off` alone without a thinking
+/// surface, otherwise every level the map does not explicitly null out —
+/// `xhigh` and `max` only when a map entry names them.
+fn supported_levels(reasoning: bool, map: Option<&serde_json::Value>) -> Vec<String> {
+    if !supports_thinking(reasoning, map) {
+        return vec!["off".to_string()];
+    }
+    let map = map.and_then(serde_json::Value::as_object);
+    THINKING_LEVELS
+        .iter()
+        .filter(|level| match map.and_then(|map| map.get(**level)) {
+            None => !matches!(**level, "xhigh" | "max"),
+            Some(serde_json::Value::Null) => false,
+            Some(_) => true,
+        })
+        .map(|level| (*level).to_string())
+        .collect()
+}
+
+/// A level's display name: the wire words are lowercase, the menu is not.
+#[must_use]
+pub fn thinking_level_label(level: &str) -> &str {
+    match level {
+        "off" => "Off",
+        "minimal" => "Minimal",
+        "low" => "Low",
+        "medium" => "Medium",
+        "high" => "High",
+        "xhigh" => "X-High",
+        "max" => "Max",
+        other => other,
+    }
 }
 
 /// Every model the daemon knows, with the providers that are signed in.
@@ -727,12 +778,20 @@ pub fn model_catalog(client: &Client, session: &str) -> std::io::Result<Vec<Mode
                         .and_then(Value::as_str)
                         .unwrap_or(&id)
                         .to_string();
+                    let reasoning = model
+                        .get("reasoning")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     Some(ModelEntry {
                         configured: configured.contains(&provider),
                         context_window: model
                             .get("contextWindow")
                             .and_then(Value::as_u64)
                             .unwrap_or(0),
+                        thinking_levels: supported_levels(
+                            reasoning,
+                            model.get("thinkingLevelMap"),
+                        ),
                         id,
                         name,
                         provider,
@@ -795,6 +854,70 @@ pub fn session_stats(client: &Client, session: &str) -> std::io::Result<SessionS
         Duration::from_secs(10),
     )?;
     Ok(response.get("data").map(SessionStats::from_value).unwrap_or_default())
+}
+
+/// A session's live configuration: the model that is running and at what effort.
+#[derive(Debug, Clone, Default)]
+pub struct SessionState {
+    pub model_id: String,
+    pub provider: String,
+    /// `off | minimal | low | medium | high | xhigh | max`
+    pub thinking_level: String,
+    pub is_streaming: bool,
+}
+
+impl SessionState {
+    fn from_value(value: &Value) -> Self {
+        let model = value.get("model");
+        Self {
+            model_id: model
+                .and_then(|model| model.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            provider: model
+                .and_then(|model| model.get("provider"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            thinking_level: value
+                .get("thinkingLevel")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            is_streaming: value
+                .get("isStreaming")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+}
+
+/// `get_state` → the running model and the level it is thinking at.
+///
+/// # Errors
+/// Fails on transport errors or a refused request.
+pub fn session_state(client: &Client, session: &str) -> std::io::Result<SessionState> {
+    let response = client.request(
+        "get_state",
+        json!({"activeSessionId": session}),
+        Duration::from_secs(10),
+    )?;
+    Ok(response
+        .get("data")
+        .map(SessionState::from_value)
+        .unwrap_or_default())
+}
+
+/// `set_thinking_level` → change how hard the running model thinks.
+///
+/// # Errors
+/// Fails only on transport errors; a clamped or refused level shows in the status.
+pub fn set_thinking_level(client: &Client, session: &str, level: &str) -> std::io::Result<String> {
+    client.send(
+        "set_thinking_level",
+        json!({"activeSessionId": session, "level": level}),
+    )
 }
 
 /// `set_model` → switch the session's provider/model.
@@ -916,5 +1039,38 @@ mod wire_tests {
     #[test]
     fn a_renamed_field_is_caught() {
         assert!(!parses(json!({"type": "prompt", "session": "s", "message": "m"})));
+    }
+
+    #[test]
+    fn a_thinking_model_offers_the_ladder_but_not_the_wired_back_ends() {
+        // no map at all: everything but the two levels that need an explicit mapping
+        assert_eq!(
+            supported_levels(true, None),
+            vec!["off", "minimal", "low", "medium", "high"]
+        );
+        // a map that names xhigh and nulls out minimal
+        let map = json!({"xhigh": "max", "minimal": null});
+        assert_eq!(
+            supported_levels(true, Some(&map)),
+            vec!["off", "low", "medium", "high", "xhigh"]
+        );
+    }
+
+    #[test]
+    fn a_model_without_a_thinking_surface_offers_only_off() {
+        assert_eq!(supported_levels(false, None), vec!["off"]);
+        // an all-null map is not a capability claim
+        assert_eq!(
+            supported_levels(false, Some(&json!({"low": null}))),
+            vec!["off"]
+        );
+    }
+
+    #[test]
+    fn a_wired_level_makes_a_non_reasoning_model_think() {
+        assert_eq!(
+            supported_levels(false, Some(&json!({"xhigh": "max"}))),
+            vec!["off", "minimal", "low", "medium", "high", "xhigh"]
+        );
     }
 }

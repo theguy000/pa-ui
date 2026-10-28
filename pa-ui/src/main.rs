@@ -5,7 +5,8 @@ slint::include_modules!();
 
 use pa_client::{
     attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
-    mutate_queue, send_prompt, session_stats, set_model, steer_prompt, stop, Client, SessionRow,
+    mutate_queue, send_prompt, session_state, session_stats, set_model, set_thinking_level,
+    steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -48,6 +49,11 @@ enum Job {
     },
     Stats { session: String },
     SetModel { session: String, provider: String, model: String },
+    /// the running model and the level it thinks at, straight from `get_state`
+    SessionState { session: String },
+    /// a level picked off a model's ladder: switching models first when the row
+    /// was not the running one
+    SetLevel { session: String, provider: String, model: String, level: String, switch: bool },
     /// start a fresh chat beside the running one (the TUI's `/new`)
     NewChat,
 }
@@ -74,6 +80,7 @@ enum Msg {
     /// a `create` came back: the id of the brand new session
     NewChat(String),
     Stats { session: String, stats: pa_client::SessionStats },
+    State { session: String, state: pa_client::SessionState },
     Activity { label: String },
     Error(String),
 }
@@ -152,6 +159,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let collapsed: Rc<RefCell<std::collections::HashSet<String>>> =
         Rc::new(RefCell::new(std::collections::HashSet::new()));
     let catalog_loaded = Rc::new(std::cell::Cell::new(false));
+    // the row whose effort ladder is open, so the pick knows its target
+    let hovered: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
 
 
     {
@@ -326,9 +335,95 @@ fn main() -> Result<(), slint::PlatformError> {
             refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
             ui.set_status_line(format!("switching to {model}").into());
             let _ = jobs.send(Job::SetModel {
-                session,
+                session: session.clone(),
                 provider: provider.to_string(),
                 model: model.to_string(),
+            });
+            // the switch's own level lands on the next poll, not from here
+            let _ = jobs.send(Job::SessionState { session });
+        });
+    }
+
+    {
+        // A row's ladder hangs off the row. The hover repeats on every pointer
+        // move, so the pair is remembered and only a change rebuilds the list.
+        let current = Rc::new(RefCell::new(None::<(String, String)>));
+        let weak = ui.as_weak();
+        let catalog = catalog.clone();
+        let hovered = hovered.clone();
+        ui.on_model_hovered(move |provider, id, row_y| {
+            let Some(ui) = weak.upgrade() else { return };
+            let pair = (provider.to_string(), id.to_string());
+            if current.borrow().as_ref() == Some(&pair) {
+                return;
+            }
+            let catalog = catalog.borrow();
+            let Some(entry) = catalog
+                .iter()
+                .find(|entry| entry.provider == pair.0 && entry.id == pair.1)
+            else {
+                return;
+            };
+            // nothing to choose on a model with no thinking surface
+            if entry.thinking_levels.len() < 2 {
+                ui.set_effort_open(false);
+                *current.borrow_mut() = Some(pair);
+                return;
+            }
+            let running = ui.get_model_id() == entry.id.as_str()
+                && ui.get_model_provider() == entry.provider.as_str();
+            let level = ui.get_current_effort().to_string();
+            let items: Vec<EffortItem> = entry
+                .thinking_levels
+                .iter()
+                .map(|candidate| EffortItem {
+                    level: candidate.clone().into(),
+                    label: thinking_level_label(candidate).into(),
+                    current: running && thinking_level_label(candidate) == level,
+                })
+                .collect();
+            ui.set_effort_items(ModelRc::from(Rc::new(VecModel::from(items))));
+            ui.set_effort_y(row_y);
+            ui.set_effort_open(true);
+            *hovered.borrow_mut() = Some(pair.clone());
+            *current.borrow_mut() = Some(pair);
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        let jobs = job_tx.clone();
+        let catalog = catalog.clone();
+        let hovered = hovered.clone();
+        ui.on_effort_picked(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            let Some((provider, model)) = hovered.borrow().clone() else { return };
+            let level = catalog
+                .borrow()
+                .iter()
+                .find(|entry| entry.provider == provider && entry.id == model)
+                .and_then(|entry| {
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(|index| entry.thinking_levels.get(index).cloned())
+                });
+            let Some(level) = level else { return };
+            let switch = !(model == ui.get_model_id().to_string()
+                && provider == ui.get_model_provider().to_string());
+            ui.set_effort_open(false);
+            ui.set_status_line(
+                format!("{model} · {}", thinking_level_label(&level)).into(),
+            );
+            let _ = jobs.send(Job::SetLevel {
+                session,
+                provider,
+                model,
+                level,
+                switch,
             });
         });
     }
@@ -346,8 +441,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             if !catalog_loaded.get() {
-                let _ = jobs.send(Job::ModelCatalog { session });
+                let _ = jobs.send(Job::ModelCatalog {
+                    session: session.clone(),
+                });
             }
+            // the level can move under us (the CLI, another window), so the
+            // menu opens on a fresh reading rather than the last poll's
+            let _ = jobs.send(Job::SessionState { session });
         });
     }
 
@@ -803,6 +903,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     let count = slint_rows.len();
                     *rows_store_ui.borrow_mut() = built;
                     row_model_ui.set_vec(slint_rows);
+                    // which model is running, and at what effort: the chip and
+                    // the menu's ladder both read from this
+                    let _ = jobs.send(Job::SessionState {
+                        session: session.clone(),
+                    });
                     let note = if skipped > 0 {
                         format!("{count} rows (newest {window_rows} of {})", messages.len())
                     } else {
@@ -1288,6 +1393,31 @@ fn main() -> Result<(), slint::PlatformError> {
                     );
                     ui.set_cost_family_on(has_children);
                 }
+                Msg::State { session, state } => {
+                    if loaded.as_deref() != Some(session.as_str()) {
+                        continue;
+                    }
+                    ui.set_current_effort(thinking_level_label(&state.thinking_level).into());
+                    // the daemon is the truth about which model runs; the chip
+                    // follows it rather than the last thing clicked
+                    if !state.model_id.is_empty()
+                        && (state.model_id != ui.get_model_id().to_string()
+                            || state.provider != ui.get_model_provider().to_string())
+                    {
+                        let label = catalog
+                            .borrow()
+                            .iter()
+                            .find(|entry| {
+                                entry.id == state.model_id && entry.provider == state.provider
+                            })
+                            .map(|entry| model_label(&entry.name, &entry.id))
+                            .unwrap_or_else(|| state.model_id.clone());
+                        ui.set_model_label(label.into());
+                        ui.set_model_id(state.model_id.clone().into());
+                        ui.set_model_provider(state.provider.clone().into());
+                    }
+                    refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                }
                 Msg::Reconnected => {
                     loaded = None;
                     live_row = None;
@@ -1372,6 +1502,7 @@ fn refresh_model_groups(
     }
     let current_id = ui.get_model_id().to_string();
     let current_provider = ui.get_model_provider().to_string();
+    let effort = ui.get_current_effort().to_string();
     let mut out: Vec<ModelGroup> = Vec::with_capacity(groups.len());
     let mut height = 12f32;
     for ((_, provider), mut entries) in groups {
@@ -1384,11 +1515,16 @@ fn refresh_model_groups(
             height += 24.0 * entries.len() as f32;
             entries
                 .iter()
-                .map(|entry| ModelItem {
-                    id: entry.id.clone().into(),
-                    label: model_label(&entry.name, &entry.id).into(),
-                    detail: context_hint(entry.context_window).into(),
-                    current: entry.id == current_id && provider == current_provider,
+                .map(|entry| {
+                    let current = entry.id == current_id && provider == current_provider;
+                    ModelItem {
+                        id: entry.id.clone().into(),
+                        label: model_label(&entry.name, &entry.id).into(),
+                        detail: context_hint(entry.context_window).into(),
+                        // only the running model has a level to name
+                        effort: if current { effort.clone() } else { String::new() }.into(),
+                        current,
+                    }
                 })
                 .collect()
         } else {
@@ -1510,6 +1646,53 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
                         let _ = out.send(Msg::Stats { session, stats });
+                    }
+                }
+                Job::SessionState { session } => {
+                    if let Ok(state) = session_state(active, &session) {
+                        if std::env::var("PA_DEBUG").is_ok() {
+                            eprintln!(
+                                "[state] {}/{} at {}",
+                                state.provider, state.model_id, state.thinking_level
+                            );
+                        }
+                        let _ = out.send(Msg::State { session, state });
+                    }
+                }
+                Job::SetLevel {
+                    session,
+                    provider,
+                    model,
+                    level,
+                    switch,
+                } => {
+                    // a level belongs to a model, so the switch goes first: the
+                    // daemon clamps the level to whatever model is running
+                    let switched = if switch {
+                        set_model(active, &session, &provider, &model)
+                    } else {
+                        Ok(String::new())
+                    };
+                    if let Err(error) = switched {
+                        let _ = out.send(Msg::Activity {
+                            label: format!("{provider}/{model}: {error}"),
+                        });
+                        continue;
+                    }
+                    match set_thinking_level(active, &session, &level) {
+                        Ok(_) => {
+                            if std::env::var("PA_DEBUG").is_ok() {
+                                eprintln!("[model] {provider}/{model} effort -> {level}");
+                            }
+                            if let Ok(state) = session_state(active, &session) {
+                                let _ = out.send(Msg::State { session, state });
+                            }
+                        }
+                        Err(error) => {
+                            let _ = out.send(Msg::Activity {
+                                label: format!("effort {level}: {error}"),
+                            });
+                        }
                     }
                 }
                 Job::ModelCatalog { session } => {
