@@ -1,5 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
+import { MatEdit, MatDelete, MatDeleteForever, LucidePencil, LucideTrash2, LucideSquarePen, MatClose, SimpleBin, CrossEven, CrossHeavy, LucideCross, IMDeleteoutline, IMHighlightoff, IMIndeterminatecheckbox, ILCircleX } from "icons-real.slint";
 
 export struct TRow {
     kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 notice
@@ -113,6 +114,17 @@ component IconX inherits Path {
 // only action is delete. Two row components instead of one with a conditional
 // button: a button made conditional does not take clicks here, even though it
 // paints.
+component IconPencil inherits Path {
+    width: 11px;
+    height: 11px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 2 8.2 L 2 10 L 3.8 10 L 10 3.8 L 8.2 2 Z";
+    stroke: #8b8c85;
+    stroke-width: 1.1px;
+    fill: transparent;
+}
+
 component QueueRow inherits Rectangle {
     in property <string> text;
     in property <string> lane;
@@ -128,84 +140,6 @@ component QueueRow inherits Rectangle {
     background: row-touch.has-hover ? #1f211a : transparent;
 
     // the text is the edit affordance; it stops short of the button
-    row-touch := TouchArea {
-        x: 0;
-        y: 0;
-        width: parent.width - 36px;
-        height: 100%;
-        mouse-cursor: pointer;
-        clicked => { root.act(root.lane, root.slot, "edit"); }
-    }
-
-    if root.thumb.width > 0 : Rectangle {
-        x: 6px;
-        y: (parent.height - self.height) / 2;
-        width: 22px;
-        height: 22px;
-        border-radius: 4px;
-        clip: true;
-        Image {
-            width: 100%;
-            height: 100%;
-            source: root.thumb;
-            image-fit: cover;
-        }
-    }
-
-    Text {
-        x: root.thumb.width > 0 ? 34px : 6px;
-        y: 0;
-        width: parent.width - (root.thumb.width > 0 ? 72px : 44px);
-        height: 100%;
-        text: root.text;
-        color: #d9d8d1;
-        font-size: 11px;
-        // centred: a one-line message sat against the top of a 34px row
-        vertical-alignment: center;
-        wrap: word-wrap;
-        overflow: elide;
-    }
-
-    // a resting surface, not a hover-only one: an action that looks like empty
-    // space until the pointer finds it is a hidden control
-    Rectangle {
-        x: parent.width - 28px;
-        y: (parent.height - self.height) / 2;
-        width: 24px;
-        height: 24px;
-        border-radius: 7px;
-        // colour alone, no outline: the fill sits a clear step above both the
-        // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #383c30 : #2c2f26;
-        del := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "delete"); }
-        }
-        IconTrash {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            tint: del.has-hover ? #f3ded8 : #8b8c85;
-        }
-    }
-}
-
-// A follow-up row: the same row plus the up arrow that pulls the message into
-// the turn that is already running.
-component QueueRowUp inherits Rectangle {
-    in property <string> text;
-    in property <string> lane;
-    in property <int> slot;
-    in property <image> thumb;
-    callback act(string, int, string);
-
-    height: 34px;
-    border-radius: 6px;
-    background: row-touch.has-hover ? #1f211a : transparent;
-
     row-touch := TouchArea {
         x: 0;
         y: 0;
@@ -238,9 +172,139 @@ component QueueRowUp inherits Rectangle {
         text: root.text;
         color: #d9d8d1;
         font-size: 11px;
+        // centred: a one-line message sat against the top of a 34px row
         vertical-alignment: center;
         wrap: word-wrap;
         overflow: elide;
+    }
+
+    // editing is a button, not a lucky click on the text: a row whose only way
+    // to change is an invisible target looks uneditable
+    Rectangle {
+        x: parent.width - 56px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: edit.has-hover ? #383c30 : #2c2f26;
+        edit := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "edit"); }
+        }
+        MatEdit {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+        }
+    }
+
+    // a resting surface, not a hover-only one: an action that looks like empty
+    // space until the pointer finds it is a hidden control
+    Rectangle {
+        x: parent.width - 28px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        // colour alone, no outline: the fill sits a clear step above both the
+        // panel and the row's hover, which is what keeps the button a button
+        background: del.has-hover ? #383c30 : #2c2f26;
+        del := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "delete"); }
+        }
+        IMDeleteoutline {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+        }
+    }
+}
+
+// A follow-up row: the same row plus the up arrow that pulls the message into
+// the turn that is already running.
+component QueueRowUp inherits Rectangle {
+    in property <string> text;
+    in property <string> lane;
+    in property <int> slot;
+    in property <image> thumb;
+    callback act(string, int, string);
+
+    height: 34px;
+    border-radius: 6px;
+    background: row-touch.has-hover ? #1f211a : transparent;
+
+    row-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 92px;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.act(root.lane, root.slot, "edit"); }
+    }
+
+    if root.thumb.width > 0 : Rectangle {
+        x: 6px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        clip: true;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.thumb;
+            image-fit: cover;
+        }
+    }
+
+    Text {
+        x: root.thumb.width > 0 ? 34px : 6px;
+        y: 0;
+        width: parent.width - (root.thumb.width > 0 ? 128px : 100px);
+        height: 100%;
+        text: root.text;
+        color: #d9d8d1;
+        font-size: 11px;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: parent.width - 84px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: edit.has-hover ? #383c30 : #2c2f26;
+        edit := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "edit"); }
+        }
+        MatEdit {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+        }
     }
 
     Rectangle {
@@ -282,10 +346,12 @@ component QueueRowUp inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.act(root.lane, root.slot, "delete"); }
         }
-        IconTrash {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            tint: del.has-hover ? #f3ded8 : #8b8c85;
+        IMDeleteoutline {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: del.has-hover ? #f3ded8 : #b0b1a8;
         }
     }
 }
@@ -337,16 +403,6 @@ component IconSend inherits Path {
 }
 
 
-component IconPencil inherits Path {
-    width: 11px;
-    height: 11px;
-    viewbox-width: 12;
-    viewbox-height: 12;
-    commands: "M 2 8.2 L 2 10 L 3.8 10 L 10 3.8 L 8.2 2 Z";
-    stroke: #8b8c85;
-    stroke-width: 1.1px;
-    fill: transparent;
-}
 
 component IconAlert inherits Path {
     width: 16px;
@@ -971,6 +1027,14 @@ component Chip inherits Rectangle {
         clicked => { root.toggled(); }
     }
 }
+
+
+
+
+
+
+
+
 
 export component AppWindow inherits Window {
     // the failure reason of a cell, drawn here so no row can paint over it
@@ -2657,10 +2721,9 @@ export component AppWindow inherits Window {
                     y: 0;
                     height: 20px;
                     vertical-alignment: center;
-                    text: "INTO THIS TURN";
-                    color: #a18e41;
+                    text: root.queued-count == 1 ? "1 message waiting" : root.queued-count + " messages waiting";
+                    color: #b0b1a8;
                     font-size: 9px;
-                    letter-spacing: 0.6px;
                 }
                 for item[i] in root.queued-steering : QueueRow {
                     y: root.q-head-in + i * 34px;
@@ -2683,10 +2746,9 @@ export component AppWindow inherits Window {
                     y: root.q-head-in + root.q-rows-in + root.q-lane-gap;
                     height: 20px;
                     vertical-alignment: center;
-                    text: "UP NEXT";
-                    color: #8b8c85;
+                    text: "runs next";
+                    color: #6b6e63;
                     font-size: 9px;
-                    letter-spacing: 0.6px;
                 }
                 for item[i] in root.queued-followup : QueueRowUp {
                     y: root.q-head-in + root.q-rows-in + root.q-lane-gap + root.q-head-next + i * 34px;
@@ -2771,5 +2833,11 @@ export component AppWindow inherits Window {
             opacity: 0;
         }
     }
+
+
+
+
+
+
 
 }

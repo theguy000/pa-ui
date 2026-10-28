@@ -1,0 +1,247 @@
+
+// ---- real icons, not drawn by hand
+// Material Symbols (filled) - Apache-2.0
+export component MatEdit inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component MatDelete inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component MatDeleteForever inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm2.46-7.12 1.41-1.41L12 12.59l2.12-2.12 1.41 1.41L13.41 14l2.12 2.12-1.41 1.41L12 15.41l-2.12 2.12-1.41-1.41L10.59 14l-2.13-2.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z";
+    fill: tint;
+    stroke: transparent;
+}
+
+// Lucide (ISC) - stroke icons, 24-box
+export component LucidePencil inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z m15 5 4 4";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component LucideTrash2 inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component LucideSquarePen inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component MatClose inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z";
+    fill: tint;
+    stroke: transparent;
+}
+
+// a bin reduced to two solid shapes: lid, body. No inner lines to blur away.
+export component SimpleBin inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M2 3.2 L10 3.2 L10 4.6 L2 4.6 Z M2.8 6 L9.2 6 L8.4 10.6 L3.6 10.6 Z";
+    fill: tint;
+    stroke: transparent;
+}
+
+// a cross drawn on an even grid: two straight arms, square ends, no diagonal
+// smoothing on a half pixel
+export component CrossEven inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 3 3 L 9 9 M 9 3 L 3 9";
+    stroke: tint;
+    stroke-width: 1.6px;
+    fill: transparent;
+}
+
+export component CrossHeavy inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 2.6 2.6 L 9.4 9.4 M 9.4 2.6 L 2.6 9.4";
+    stroke: tint;
+    stroke-width: 2.2px;
+    fill: transparent;
+}
+
+export component LucideCross inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M18 6 6 18 m6 6 12 12";
+    stroke: tint;
+    stroke-width: 2.4px;
+    fill: transparent;
+}
+
+export component IMDeleteoutline inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component IMHighlightoff inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M14.59 8 12 10.59 9.41 8 8 9.41 10.59 12 8 14.59 9.41 16 12 13.41 14.59 16 16 14.59 13.41 12 16 9.41 14.59 8zM12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component IMCancel inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component IMRemove inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M19 13H5v-2h14v2z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component IMIndeterminatecheckbox inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component IMDeletesweep inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M15 16h4v2h-4zm0-8h7v2h-7zm0 4h6v2h-6zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12z";
+    fill: tint;
+    stroke: transparent;
+}
+
+export component ILCircleX inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "m15 9-6 6 m9 9 6 6";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component ILBan inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "m4.9 4.9 14.2 14.2";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component ILMinus inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M5 12h14";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+export component ILArchive inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8 M10 12h4";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
