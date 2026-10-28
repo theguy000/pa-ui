@@ -163,6 +163,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_composer_text("".into());
+            ui.set_composer_has_text(false);
             // Where the message belongs depends on whether a turn owns the
             // transcript. While one runs, this is a follow-up: it waits in the
             // queue lanes and only becomes a row once it actually runs. Drawing
@@ -185,6 +186,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     scroll_to_end_when_ready(&weak);
                 }
                 *pending_user.borrow_mut() = Some(message.clone());
+            }
+            // The turn is already starting; the poll that reports it is up to a
+            // second away, and until then the button still offers to send, so a
+            // second press queues instead of stopping. Busy starts here.
+            if !ui.get_busy() {
+                ui.set_busy_label("Waiting".into());
+                ui.set_busy(true);
             }
             if let Some(ui) = weak.upgrade() {
                 ui.set_status_line("sent".into());
@@ -329,6 +337,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_composer_text("".into());
+            ui.set_composer_has_text(false);
             *pending_user.borrow_mut() = None;
             ui.set_status_line("steered".into());
             let _ = jobs.send(Job::Steer { session, message });
@@ -429,6 +438,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
+    // Tool-call id -> row index. Cells arrive as their own events, not as
+    // message deltas, so without this the python runs a turn makes are
+    // invisible until a store rebuild happens to carry them.
+    let mut live_cells: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     // the streamed words, accumulated from the deltas: the message shell carries
     // none of them until the run ends
     let mut stream_text = String::new();
@@ -759,7 +772,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         let shown = rows_store_ui.borrow().len();
                         if built.len() > shown {
                             let mut store = rows_store_ui.borrow_mut();
-                            for row in built.iter().skip(shown) {
+                            for row in built.iter().skip(shown).filter(|row| {
+                                !(row.kind == transcript::KIND_CELL
+                                    && !row.id.is_empty()
+                                    && live_cells.contains_key(&row.id))
+                            }) {
                                 store.push(row.clone());
                                 row_model_ui.push(to_slint(row));
                             }
@@ -823,11 +840,59 @@ fn main() -> Result<(), slint::PlatformError> {
                     // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
                         live_row = None;
+                        live_cells.clear();
                         stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
                         });
+                        continue;
+                    }
+                    if matches!(kind, Some("tool_execution_start" | "tool_execution_end")) {
+                        let call_id = event
+                            .get("toolCallId")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        if call_id.is_empty() {
+                            continue;
+                        }
+                        if kind == Some("tool_execution_start") {
+                            let tool_name = event
+                                .get("toolName")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("tool");
+                            let args = event.get("args").cloned().unwrap_or(serde_json::Value::Null);
+                            let row = transcript::tool_cell(tool_name, &call_id, &args);
+                            let mut store = rows_store_ui.borrow_mut();
+                            let tail = usize::from(pending_user.borrow().is_some());
+                            let at = store.len().saturating_sub(tail);
+                            store.insert(at, row.clone());
+                            row_model_ui.insert(at, to_slint(&row));
+                            live_cells.insert(call_id, at);
+                            drop(store);
+                            trace_rows("live cell started", &rows_store_ui);
+                            scroll_to_end_when_ready(&ui.as_weak());
+                        } else {
+                            let output = tool_output_text(event.get("result"));
+                            let failed = event
+                                .get("isError")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false);
+                            if let Some(index) = live_cells.get(&call_id).copied() {
+                                let mut store = rows_store_ui.borrow_mut();
+                                let patched = store.get_mut(index).map(|slot| {
+                                    transcript::finish_cell(slot, &output, failed);
+                                    slot.clone()
+                                });
+                                drop(store);
+                                if let Some(row) = patched {
+                                    row_model_ui.set_row_data(index, to_slint(&row));
+                                    scroll_to_end_when_ready(&ui.as_weak());
+                                }
+                            }
+                        }
+                        stream_at = SystemTime::now();
                         continue;
                     }
                     let Some(message) = event.get("message") else {
@@ -895,7 +960,20 @@ fn main() -> Result<(), slint::PlatformError> {
                     // another prose block. The live row owns the whole range, so
                     // a message that grows a tool call grows the range instead of
                     // leaving the store to guess where it belongs.
-                    let built = transcript::build(std::slice::from_ref(&rendered), 1).0;
+                    let built: Vec<transcript::Row> = transcript::build(
+                        std::slice::from_ref(&rendered),
+                        1,
+                    )
+                    .0
+                    .into_iter()
+                    // A cell this turn already drew came from its own event; the
+                    // message's copy of it would be a second row for one call.
+                    .filter(|row| {
+                        !(row.kind == transcript::KIND_CELL
+                            && !row.id.is_empty()
+                            && live_cells.contains_key(&row.id))
+                    })
+                    .collect();
                     if built.is_empty() {
                         continue;
                     }
@@ -1004,6 +1082,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // a draft is the old chat's, and a queue row belongs to a
                     // session that is still running its own turn.
                     ui.set_composer_text("".into());
+                    ui.set_composer_has_text(false);
                     ui.set_queued_count(0);
                     ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
                     ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
@@ -1019,6 +1098,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // the row is out of the queue; the text comes back to where
                     // it came from, so the next Enter decides the lane again
                     ui.set_composer_text(text.into());
+                    ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     ui.set_status_line("back in the composer".into());
                 }
                 Msg::ModelCatalog(entries) => {
@@ -1115,6 +1195,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // stays on screen is a message that was never sent
                     if ui.get_composer_text().is_empty() {
                         ui.set_composer_text(text.as_str().into());
+                    ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     }
                     pending_user.borrow_mut().take();
                     drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
@@ -1681,6 +1762,34 @@ fn message_text(message: &serde_json::Value) -> String {
                 .collect::<Vec<_>>()
                 .join("")
         })
+        .unwrap_or_default()
+}
+
+/// Tool results arrive as a model-facing value: sometimes a string, sometimes
+/// `{ output, ... }`, sometimes a list of content blocks. Take the text.
+fn tool_output_text(result: Option<&serde_json::Value>) -> String {
+    fn text_of(value: &serde_json::Value, depth: usize) -> Option<String> {
+        match value {
+            serde_json::Value::String(text) => Some(text.clone()),
+            serde_json::Value::Array(items) => {
+                let parts: Vec<String> = items.iter().filter_map(|item| text_of(item, depth + 1)).collect();
+                (!parts.is_empty()).then(|| parts.join("\n"))
+            }
+            serde_json::Value::Object(map) if depth < 4 => {
+                for key in ["text", "output", "stdout", "content", "result", "message"] {
+                    if let Some(inner) = map.get(key) {
+                        if let Some(text) = text_of(inner, depth + 1) {
+                            return Some(text);
+                        }
+                    }
+                }
+                Some(value.to_string())
+            }
+            _ => None,
+        }
+    }
+    result
+        .and_then(|value| text_of(value, 0))
         .unwrap_or_default()
 }
 

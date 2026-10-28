@@ -1075,7 +1075,12 @@ export component AppWindow inherits Window {
     in-out property <string> search-query: "";
     // 0 while idle, 1 while a run is in flight: the one clock the send button's
     // two marks share
-    in-out property <float> stop-mix: root.busy ? 1.0 : 0.0;
+    // Stop is only the button's job while the composer is empty. The moment you
+    // type, the same control becomes send again — and sending while a turn runs
+    // queues the message instead of interrupting it.
+    in-out property <bool> composer-has-text: false;
+    out property <bool> stop-mode: root.busy && !root.composer-has-text;
+    in-out property <float> stop-mix: root.stop-mode ? 1.0 : 0.0;
     animate stop-mix { duration: 240ms; easing: ease-in-out; }
     in-out property <bool> search-open: false;
     // the composer taking the caret is "somewhere else" too
@@ -1670,7 +1675,10 @@ export component AppWindow inherits Window {
             height: root.composer-height;
             text <=> root.composer-text;
             font-size: 13px;
-            edited(t) => { root.composer-text = t; }
+            edited(t) => {
+                root.composer-text = t;
+                root.composer-has-text = t != "";
+            }
                     key-pressed(event) => {
                             // Enter sends, Alt+Enter steers into the
                             // running turn, Shift+Enter is a newline,
@@ -2009,7 +2017,7 @@ export component AppWindow inherits Window {
                 width: 25px;
                 height: 25px;
                 border-radius: 12.5px;
-                background: root.busy
+                background: root.stop-mode
                     ? (send-touch.has-hover ? #b8614c : #a2543f)
                     : (send-touch.has-hover ? #b39e4c : #a18e41);
                 animate background { duration: 240ms; easing: ease-in-out; }
@@ -2043,7 +2051,7 @@ export component AppWindow inherits Window {
                     mouse-cursor: MouseCursor.pointer;
                     clicked => {
                         root.model-menu = false;
-                        if root.busy {
+                        if root.stop-mode {
                             // the daemon keeps the queue flowing behind the stopped
                             // run, so the next waiting message is not stranded
                             root.abort-requested();

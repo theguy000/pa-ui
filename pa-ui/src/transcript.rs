@@ -22,6 +22,9 @@ pub const KIND_TABLE: i32 = 7;
 #[derive(Debug, Clone)]
 pub struct Row {
     pub kind: i32,
+    /// Tool-call id for cell rows: the live event path and the store path both
+    /// build a row for the same call, and this is how they are told apart.
+    pub id: String,
     pub title: String,
     pub meta: String,
     pub body: String,
@@ -38,6 +41,7 @@ impl Row {
     fn new(kind: i32) -> Self {
         Self {
             kind,
+            id: String::new(),
             title: String::new(),
             meta: String::new(),
             body: String::new(),
@@ -153,6 +157,7 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                         .and_then(Value::as_str)
                         .unwrap_or_default();
                     let mut row = Row::new(KIND_CELL);
+                    row.id = id.to_string();
                     let fallback = block.get("arguments").map(ToString::to_string).unwrap_or_default();
                     let summary = summary_line(if code.is_empty() { &fallback } else { code });
                     row.title = format!("{} · {}", short_tool(name), summary);
@@ -173,6 +178,42 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         }
     }
     (rows, start)
+}
+
+/// A cell row for a tool call that has just started, shaped exactly like the one
+/// the store will produce for it so the reconcile at turn end changes nothing
+/// on screen.
+#[must_use]
+pub fn tool_cell(tool_name: &str, call_id: &str, args: &Value) -> Row {
+    let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
+    let mut row = Row::new(KIND_CELL);
+    row.id = call_id.to_string();
+    let fallback = args.to_string();
+    let summary = summary_line(if code.is_empty() { &fallback } else { code });
+    row.title = format!("{} · {}", short_tool(tool_name), summary);
+    row.code = highlight_python(code);
+    row.has_code = !code.is_empty();
+    let lines = code.lines().count();
+    row.meta = if code.is_empty() {
+        "running".to_string()
+    } else if lines == 1 {
+        "1 line".to_string()
+    } else {
+        format!("{lines} lines")
+    };
+    row
+}
+
+/// Fill in a running cell's result, including the failure line an errored call
+/// carries so the cell can show why it failed instead of just sitting there.
+pub fn finish_cell(row: &mut Row, output: &str, failed: bool) {
+    row.output = plain_markup(output);
+    row.has_output = !output.trim().is_empty();
+    row.failed = failed;
+    row.reason = failure_reason(output, failed);
+    if row.code.is_empty() {
+        row.meta = if failed { "failed".to_string() } else { "done".to_string() };
+    }
 }
 
 /// The last meaningful line of a failed output — usually the exception itself.
