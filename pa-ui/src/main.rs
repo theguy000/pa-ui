@@ -206,10 +206,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // it in the transcript first was the flash - the bubble appeared,
             // the queue arrived, the row was swept away and everything shifted.
             if ui.get_busy() || ui.get_queued_count() > 0 {
-                ui.set_queued_count(ui.get_queued_count() + 1);
-                if ui.get_queued_preview().is_empty() {
-                    ui.set_queued_preview(message.clone().into());
-                }
+                // Nothing is drawn here. A guessed queue entry is a promise the
+                // daemon may not keep: sent at the tail of a turn it starts
+                // straight away, so the lane showed the message for a moment and
+                // then swept it away on the next poll. The worker asks for the
+                // real queue as soon as the prompt is accepted.
             } else {
                 // The echo carries the pictures too: the store will show the
                 // message this way once it lands, and the optimistic row has to
@@ -1845,6 +1846,12 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         eprintln!("[prompt] session={session} message={message:?} outcome={outcome:?}");
                     }
                     let error = outcome.err().map(|e| e.to_string());
+                    // Ask what the daemon actually queued. This is the only
+                    // source for those lanes: the window may guess that a turn
+                    // is running, but it may not guess that a message is waiting.
+                    if let Ok((steering, follow_up)) = get_queue(active, &session) {
+                        let _ = out.send(Msg::Queue { steering, follow_up });
+                    }
                     let _ = out.send(Msg::PromptResult { error });
                 }
                 Job::Tail { session, fresh } => {
