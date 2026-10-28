@@ -1164,7 +1164,10 @@ fn main() -> Result<(), slint::PlatformError> {
                                 .get("isError")
                                 .and_then(serde_json::Value::as_bool)
                                 .unwrap_or(false);
-                            turn.finish_tool(&call_id, output, failed);
+                            let bash = transcript::bash_commands(
+                                event.get("result").and_then(|result| result.get("details")),
+                            );
+                            turn.finish_tool(&call_id, output, failed, bash);
                         }
                         sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
                         scroll_to_end_when_ready(&ui.as_weak());

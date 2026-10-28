@@ -71,6 +71,9 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
 
     // tool outputs keyed by call id, so a cell carries its own result
     let mut outputs: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+    // and the bash preview the tool reported for itself: the TUI titles a cell
+    // by the command that ran, not by the first line of the cell's source
+    let mut bashes: std::collections::HashMap<String, (String, usize)> = std::collections::HashMap::new();
     for message in window {
         if message.get("role").and_then(Value::as_str) != Some("toolResult") {
             continue;
@@ -89,6 +92,9 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
             .unwrap_or_default();
         let failed = text.trim_start().starts_with("Traceback");
         outputs.insert(id.to_string(), (text, failed));
+        if let Some((first, count)) = bash_commands(message.get("details")) {
+            bashes.insert(id.to_string(), (first, count));
+        }
     }
 
     let mut rows = Vec::new();
@@ -197,6 +203,9 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                     }
                     let lines = code.lines().count();
                     row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
+                    if let Some((first, count)) = bashes.get(&row.id) {
+                        label_bash(&mut row, first, *count);
+                    }
                     rows.push(row);
                 }
                 _ => {}
@@ -204,6 +213,134 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         }
     }
     (rows, start)
+}
+
+/// The `bashCommands` the python tool reports on its own result: the first
+/// command it ran and how many it ran. This is what the TUI titles a cell with,
+/// and it is the honest label - the cell's source may begin with a variable
+/// assignment that says nothing about what was actually executed.
+#[must_use]
+pub fn bash_commands(details: Option<&Value>) -> Option<(String, usize)> {
+    let record = details?.get("bashCommands")?;
+    let first = record.get("first")?.as_str()?.to_string();
+    if first.trim().is_empty() {
+        return None;
+    }
+    let count = record
+        .get("count")
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(1);
+    Some((first, count))
+}
+
+/// Title a cell the way its tool said it ran: `bash · <the command>`.
+pub fn label_bash(row: &mut Row, first: &str, count: usize) {
+    let mut title = format!("bash \u{00b7} {}", bash_preview(first));
+    if count > 1 {
+        title.push_str(&format!(" \u{00b7} +{} more", count - 1));
+    }
+    row.title = title;
+}
+
+/// The part of a shell line worth reading in a title.
+///
+/// The TUI does not title a cell `cd '/long/path' && cargo test` either: it
+/// splits the chain and picks the segment that does the work, so a cell reads
+/// `cargo test -p pa-ui`. Same rule here, without the regex machinery.
+#[must_use]
+pub fn bash_preview(command: &str) -> String {
+    let mut best: Option<(String, usize, usize)> = None; // text, score, position
+    for (position, segment) in split_chain(command).into_iter().enumerate() {
+        let line = drop_env_prefix(segment.trim());
+        let line = line.as_str();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let first = line.split_whitespace().next().unwrap_or_default();
+        if matches!(first, "cd" | "export" | "set" | "source" | ".") {
+            continue;
+        }
+        let mut score = 30;
+        if matches!(
+            first,
+            "cargo" | "npm" | "pnpm" | "yarn" | "bun" | "deno" | "pytest" | "vitest" | "node"
+                | "python" | "python3" | "go" | "rustc" | "git" | "make" | "dotnet"
+        ) {
+            score += 40;
+        }
+        if matches!(first, "rm" | "mv" | "cp" | "sed" | "tee" | "curl" | "powershell") {
+            score += 20;
+        }
+        best = match best {
+            // a later segment wins a tie: the setup comes first, the work last
+            Some((_, winning, at)) if winning > score || (winning == score && at > position) => {
+                best
+            }
+            _ => Some((line.to_string(), score, position)),
+        };
+    }
+    clip(
+        &best.map_or_else(|| command.trim().to_string(), |(line, _, _)| line),
+        110,
+    )
+}
+
+/// `CARGO_TARGET_DIR=target-alt cargo build` is a build, not an assignment.
+fn drop_env_prefix(line: &str) -> String {
+    let mut words = line.split_whitespace();
+    let mut prefix: Vec<&str> = Vec::new();
+    while let Some(word) = words.clone().next() {
+        let Some((name, _)) = word.split_once('=') else {
+            break;
+        };
+        if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+            break;
+        }
+        prefix.push(words.next().unwrap_or_default());
+    }
+    if prefix.is_empty() {
+        return line.to_string();
+    }
+    let rest: Vec<&str> = words.collect();
+    if rest.is_empty() {
+        return line.to_string();
+    }
+    rest.join(" ")
+}
+
+/// Split a shell line on `&&` and `;` outside quotes.
+fn split_chain(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(open) => {
+                current.push(ch);
+                if ch == open {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                    current.push(ch);
+                }
+                ';' => {
+                    out.push(std::mem::take(&mut current));
+                }
+                '&' if chars.peek() == Some(&'&') => {
+                    chars.next();
+                    out.push(std::mem::take(&mut current));
+                }
+                other => current.push(other),
+            },
+        }
+    }
+    out.push(current);
+    out
 }
 
 /// A cell row for a tool call that has just started, shaped exactly like the one
@@ -281,7 +418,7 @@ fn summary_line(code: &str) -> String {
     let head = clip(first, 54);
     match lines.last() {
         Some(tail) if lines.len() > 1 && tail != first => {
-            format!("{head}  \u{22ef}  {}", clip(tail, 38))
+            format!("{head}  \u{00b7}\u{00b7}\u{00b7}  {}", clip(tail, 38))
         }
         _ => head,
     }
@@ -1139,11 +1276,67 @@ mod summary_tests {
         let first = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('a.log')";
         let second = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('b.log')";
         assert_ne!(title_of(first), title_of(second));
-        assert!(title_of(first).contains("⋯"));
+        assert!(title_of(first).contains("\u{00b7}\u{00b7}\u{00b7}"));
     }
 
     #[test]
     fn a_one_line_call_is_just_that_line() {
         assert_eq!(title_of("print(1)"), "python · print(1)");
+    }
+}
+
+#[cfg(test)]
+mod bash_label_tests {
+    use super::*;
+
+    #[test]
+    fn a_cell_is_titled_by_the_command_it_ran() {
+        let args = serde_json::json!({"code": "pa = \"C:/repo\"\nh = bash(\"ls -la\")"});
+        let mut row = tool_cell("python_repl", "call_0_x", &args);
+        label_bash(&mut row, "ls -la '/tmp'", 1);
+        assert!(row.title.starts_with("bash \u{00b7} ls -la"));
+        assert!(!row.title.contains("pa ="));
+    }
+
+    #[test]
+    fn several_commands_say_how_many() {
+        let mut row = tool_cell("python_repl", "call_0_x", &serde_json::json!({"code": "x"}));
+        label_bash(&mut row, "echo hi", 3);
+        assert!(row.title.ends_with("+2 more"));
+    }
+
+    #[test]
+    fn the_details_field_is_read_where_it_lives() {
+        let details = serde_json::json!({"bashCommands": {"first": "ls", "count": 2, "lines": 5}});
+        assert_eq!(bash_commands(Some(&details)), Some(("ls".to_string(), 2)));
+        assert_eq!(bash_commands(None), None);
+    }
+}
+
+#[cfg(test)]
+mod bash_preview_tests {
+    use super::*;
+
+    #[test]
+    fn the_setup_is_not_the_command() {
+        let preview = bash_preview("cd '/c/Users/someone/git/repo' && CARGO=x cargo test -p pa-ui | grep hi");
+        assert!(preview.starts_with("cargo test -p pa-ui"), "{preview}");
+    }
+
+    #[test]
+    fn a_single_command_is_itself() {
+        assert_eq!(bash_preview("echo hi"), "echo hi");
+    }
+
+    #[test]
+    fn a_semicolon_chain_picks_the_work_not_the_echo() {
+        let preview = bash_preview("echo ---; ls -la; rm -rf target");
+        assert_eq!(preview, "rm -rf target");
+    }
+
+    #[test]
+    fn a_quoted_semicolon_does_not_split() {
+        let preview = bash_preview("grep -n 'a;b' file.txt");
+        assert_eq!(preview, "grep -n 'a;b' file.txt");
     }
 }

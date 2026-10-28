@@ -21,6 +21,8 @@ pub enum Part {
         args: Value,
         output: Option<String>,
         failed: bool,
+        /// what the tool said it ran, when it says
+        bash: Option<(String, usize)>,
     },
 }
 
@@ -86,21 +88,30 @@ impl Live {
             args,
             output: None,
             failed: false,
+            bash: None,
         });
     }
 
-    pub fn finish_tool(&mut self, id: &str, output: String, failed: bool) {
+    pub fn finish_tool(
+        &mut self,
+        id: &str,
+        output: String,
+        failed: bool,
+        bash: Option<(String, usize)>,
+    ) {
         for part in self.parts.iter_mut().rev() {
             if let Part::Tool {
                 id: open,
                 output: slot,
                 failed: flag,
+                bash: bash_slot,
                 ..
             } = part
             {
                 if open == id {
                     *slot = Some(output);
                     *flag = failed;
+                    *bash_slot = bash;
                     return;
                 }
             }
@@ -122,10 +133,14 @@ impl Live {
                     args,
                     output,
                     failed,
+                    bash,
                 } => {
                     let mut row = transcript::tool_cell(name, id, args);
                     if let Some(output) = output {
                         transcript::finish_cell(&mut row, output, *failed);
+                    }
+                    if let Some((first, count)) = bash {
+                        transcript::label_bash(&mut row, first, *count);
                     }
                     out.push(row);
                 }
