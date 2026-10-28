@@ -155,6 +155,8 @@ fn main() -> Result<(), slint::PlatformError> {
     // the last user message the daemon told us about, so its several frames
     // draw one row
     let mut drawn_user: Option<String> = None;
+    // a finished turn's rows are on screen and the store may not have them yet
+    let mut keep_live_rows = false;
     let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
     let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
     ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
@@ -1053,12 +1055,34 @@ fn main() -> Result<(), slint::PlatformError> {
                         tail_sig = Some((cursor, newest));
                         continue;
                     }
+                    if open {
+                        // a turn just closed: give whatever we drew a moment to
+                        // find its way into the store, so the transcript never
+                        // shrinks under the reader's eyes
+                    }
                     // the same hold on every poll, or the prompt we drew
                     // vanishes on the first rebuild and the transcript jumps
                     if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
                     }
+                    // The guard: while a closed turn's rows are still the newest
+                    // thing on screen, a rebuild that would make the transcript
+                    // shorter is a rebuild from a store that has not caught up.
+                    // Skip it, keep what is drawn, and look again next poll.
+                    if keep_live_rows && built.len() < rows_store_ui.borrow().len() {
+                        tail_len = messages.len();
+                        tail_sig = Some((cursor, newest));
+                        if std::env::var("PA_DEBUG").is_ok() {
+                            eprintln!(
+                                "[tail] held back: store has {} rows, screen has {}",
+                                built.len(),
+                                rows_store_ui.borrow().len()
+                            );
+                        }
+                        continue;
+                    }
+                    keep_live_rows = false;
                     dump_rows(&built);
                     let count = built.len();
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
@@ -1102,7 +1126,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     // message_end would otherwise strand the view on a
                     // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
-                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        // The answer stays exactly where it is. Dropping it and
+                        // rebuilding from a store that is still one message
+                        // behind is what made it collapse to a line and then
+                        // come back: the screen may not shrink on the strength
+                        // of a store that has not caught up.
+                        open_live = None;
+                        keep_live_rows = true;
                         _stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -1160,8 +1190,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     let role = message.get("role").and_then(serde_json::Value::as_str);
                     if role == Some("user") {
-                        // Drawn now, because the daemon said so. Never at send
-                        // time: a row on screen is a fact, not a guess.
+                        // The store owns this row. Drawing it here as well is how
+                        // it ended up on screen twice: the rebuild had already
+                        // brought it, then the echo drew a second one. Ask for a
+                        // poll and let the one owner speak.
                         let text = message_text(message);
                         let stamp = message
                             .get("timestamp")
@@ -1174,18 +1206,10 @@ fn main() -> Result<(), slint::PlatformError> {
                         );
                         if drawn_user.as_deref() != Some(key.as_str()) {
                             drawn_user = Some(key);
-                            let built = transcript::build(std::slice::from_ref(message), 1).0;
-                            {
-                                let mut store = rows_store_ui.borrow_mut();
-                                for row in &built {
-                                    store.push(row.clone());
-                                }
-                            }
-                            for row in &built {
-                                row_model_ui.push(to_slint(row));
-                            }
-                            trace_rows("user row from the daemon", &rows_store_ui);
-                            scroll_to_end_when_ready(&ui.as_weak());
+                            let _ = jobs.send(Job::Tail {
+                                session: session.clone(),
+                                fresh: false,
+                            });
                         }
                         if kind == Some("message_end") {
                             *pending_user.borrow_mut() = None;
