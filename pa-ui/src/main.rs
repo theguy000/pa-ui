@@ -1507,10 +1507,12 @@ fn dump_rows(rows: &[Row]) {
         .iter()
         .map(|row| {
             format!(
-                "{}\t{}\t{}\t{}\n",
+                "{}\t{}\t{}\t{}\t{}\t{}\n",
                 row.kind,
                 row.id,
                 row.title.replace('\n', " "),
+                row.meta.replace('\n', " "),
+                row.elapsed.replace('\n', " "),
                 row.body.replace('\n', " ").chars().take(90).collect::<String>()
             )
         })
