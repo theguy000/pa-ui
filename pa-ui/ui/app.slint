@@ -926,6 +926,9 @@ export component AppWindow inherits Window {
         // a click that lands on nothing in particular dismisses the model menu
         clicked => { root.model-menu = false; root.queue-open = false; root.search-open = false; }
         pointer-event(event) => {
+            if event.kind == PointerEventKind.move {
+                root.pointer-moved();
+            }
             if event.kind == PointerEventKind.down {
                 // only the handle starts a drag; the rest of the band belongs
                 // to the chip and the model menu
@@ -973,6 +976,9 @@ export component AppWindow inherits Window {
     // the menu shows (`Max`)
     in-out property <string> current-effort;
     in-out property <string> current-level;
+    out property <length> box-x: composer-box.absolute-position.x;
+    out property <length> box-y: composer-box.absolute-position.y;
+    out property <length> box-w: composer-box.width;
     // the effort submenu: open while a hovered row has a ladder to choose from
     in-out property <bool> effort-open: false;
     in-out property <length> effort-y: 0px;
@@ -1093,6 +1099,11 @@ export component AppWindow inherits Window {
     callback model-picked(string, string);
     // a row's effort ladder: which model, and the row's window y to hang from
     callback model-hovered(string, string, length);
+    // the pointer is somewhere that is neither a model row nor its ladder:
+    // the popup has no reason to stay
+    callback pointer-moved();
+    // the pointer is on the ladder itself, which keeps it alive
+    callback effort-hovered();
     callback effort-picked(int);
     callback model-menu-opened;
     callback provider-toggled(string);
@@ -2310,6 +2321,19 @@ export component AppWindow inherits Window {
             // A group is one block: its header plus a row per
             // model. Collapsed groups carry no models at all,
             // so their height is just the header.
+            // behind every row: a move here is a move off the rows
+            menu-bg := TouchArea {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: parent.content-height;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.move {
+                        root.pointer-moved();
+                    }
+                }
+            }
+
             menu-list := VerticalLayout {
                 for group in root.model-groups : Rectangle {
                     height: 26px + group.models.length * 24px;
@@ -2321,6 +2345,13 @@ export component AppWindow inherits Window {
                         height: 26px;
                         mouse-cursor: pointer;
                         clicked => { root.provider-toggled(group.provider); }
+                        // a header is not a model row: the ladder does not
+                        // belong to it
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.move {
+                                root.pointer-moved();
+                            }
+                        }
                     }
 
                     IconCaret {
@@ -2374,9 +2405,17 @@ export component AppWindow inherits Window {
                                 root.model-menu = false;
                             }
                             // the ladder drops off the row under the pointer;
-                            // the row's window y is what it hangs from
+                            // the row's window y is what it hangs from. Two
+                            // sources, because the move callback alone missed
+                            // pointer entries that never reported a move.
                             moved => {
                                 if self.has-hover {
+                                    root.model-hovered(group.provider, model.id,
+                                        self.absolute-position.y);
+                                }
+                            }
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.move {
                                     root.model-hovered(group.provider, model.id,
                                         self.absolute-position.y);
                                 }
@@ -2420,7 +2459,7 @@ export component AppWindow inherits Window {
                             viewbox-width: 12;
                             viewbox-height: 12;
                             stroke: #a18e41;
-                            stroke-width: 2.2px;
+                            stroke-width: 1.5px;
                             commands: "M 1 6.4 L 4.4 9.8 L 11 2.2";
                         }
                     }
@@ -2450,6 +2489,20 @@ export component AppWindow inherits Window {
         drop-shadow-blur: 10px;
         drop-shadow-color: #00000060;
 
+        // the ladder answers for its own surface, or moving onto it would
+        // count as leaving the row it hangs from
+        ladder-bg := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.move {
+                    root.effort-hovered();
+                }
+            }
+        }
+
         for item[i] in root.effort-items : Rectangle {
             x: 0;
             y: 5px + i * 26px;
@@ -2465,6 +2518,11 @@ export component AppWindow inherits Window {
                 height: 100%;
                 mouse-cursor: pointer;
                 clicked => { root.effort-picked(i); }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.move {
+                        root.effort-hovered();
+                    }
+                }
             }
 
             Text {
@@ -2487,7 +2545,7 @@ export component AppWindow inherits Window {
                 viewbox-width: 12;
                 viewbox-height: 12;
                 stroke: #a18e41;
-                stroke-width: 1.8px;
+                stroke-width: 1.4px;
                 commands: "M 1 6.4 L 4.4 9.8 L 11 2.2";
             }
         }

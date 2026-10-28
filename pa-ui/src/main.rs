@@ -344,6 +344,36 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // Leaving a row closes its ladder. A short grace, not an instant: crossing
+    // the 6px between the row and the ladder would otherwise close the thing
+    // the pointer is on its way into.
+    let hover_close = Rc::new(Timer::default());
+    {
+        let weak = ui.as_weak();
+        let timer = hover_close.clone();
+        ui.on_pointer_moved(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if !ui.get_effort_open() {
+                return;
+            }
+            let weak = ui.as_weak();
+            timer.start(TimerMode::SingleShot, Duration::from_millis(120), move || {
+                if let Some(ui) = weak.upgrade() {
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[menu] ladder closed");
+                    }
+                    ui.set_effort_open(false);
+                }
+            });
+        });
+    }
+    {
+        let timer = hover_close.clone();
+        ui.on_effort_hovered(move || {
+            timer.stop();
+        });
+    }
+
     {
         // A row's ladder hangs off the row. The hover repeats on every pointer
         // move, so the pair is remembered and only a change rebuilds the list.
@@ -351,7 +381,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let catalog = catalog.clone();
         let hovered = hovered.clone();
+        let timer = hover_close.clone();
         ui.on_model_hovered(move |provider, id, row_y| {
+            timer.stop();
             let Some(ui) = weak.upgrade() else { return };
             let pair = (provider.to_string(), id.to_string());
             if current.borrow().as_ref() == Some(&pair) {
@@ -362,8 +394,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 .iter()
                 .find(|entry| entry.provider == pair.0 && entry.id == pair.1)
             else {
+                if std::env::var("PA_DEBUG").is_ok() {
+                    eprintln!("[menu] hover {}/{} not in catalog", pair.0, pair.1);
+                }
                 return;
             };
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!(
+                    "[menu] hover {}/{} levels={:?}",
+                    pair.0, pair.1, entry.thinking_levels
+                );
+            }
             // nothing to choose on a model with no thinking surface
             if entry.thinking_levels.len() < 2 {
                 ui.set_effort_open(false);
@@ -385,6 +426,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 .collect();
             ui.set_effort_items(ModelRc::from(Rc::new(VecModel::from(items))));
             ui.set_effort_y(row_y);
+            if !ui.get_effort_open() && std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[menu] ladder open at y={row_y}");
+            }
             ui.set_effort_open(true);
             *hovered.borrow_mut() = Some(pair.clone());
             *current.borrow_mut() = Some(pair);
@@ -441,6 +485,15 @@ fn main() -> Result<(), slint::PlatformError> {
             if session.is_empty() {
                 return;
             }
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!(
+                    "[menu] opened box=({},{},{}) height={}",
+                    ui.get_box_x(),
+                    ui.get_box_y(),
+                    ui.get_box_w(),
+                    ui.get_model_menu_height()
+                );
+            }
             if !catalog_loaded.get() {
                 let _ = jobs.send(Job::ModelCatalog {
                     session: session.clone(),
@@ -461,6 +514,9 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.on_provider_toggled(move |provider| {
             let Some(ui) = weak.upgrade() else { return };
             let provider = provider.to_string();
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[menu] fold {provider}");
+            }
             {
                 let mut folded = collapsed.borrow_mut();
                 if !folded.remove(&provider) {
@@ -909,6 +965,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = jobs.send(Job::SessionState {
                         session: session.clone(),
                     });
+                    if std::env::var("PA_MENU").is_ok() {
+                        let _ = jobs.send(Job::ModelCatalog {
+                            session: session.clone(),
+                        });
+                    }
                     let note = if skipped > 0 {
                         format!("{count} rows (newest {window_rows} of {})", messages.len())
                     } else {
@@ -1326,6 +1387,21 @@ fn main() -> Result<(), slint::PlatformError> {
                     catalog_loaded.set(true);
                     *catalog.borrow_mut() = entries;
                     refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                    // a headless hook: open the menu without a pointer, so the
+                    // geometry and the hover path can be read off the log
+                    if std::env::var("PA_MENU").is_ok() && !ui.get_model_menu() {
+                        // the headless hook needs rows, not 35 folded headers
+                        collapsed.borrow_mut().clear();
+                        refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                        ui.set_model_menu(true);
+                        eprintln!(
+                            "[menu] auto-open box=({},{},{}) height={}",
+                            ui.get_box_x(),
+                            ui.get_box_y(),
+                            ui.get_box_w(),
+                            ui.get_model_menu_height()
+                        );
+                    }
                 }
                 Msg::Stats { session, stats } => {
                     if loaded.as_deref() != Some(session.as_str()) {
