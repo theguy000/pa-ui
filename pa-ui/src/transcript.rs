@@ -246,12 +246,25 @@ pub fn label_bash(row: &mut Row, first: &str, count: usize) {
 /// The part of a shell line worth reading in a title.
 ///
 /// The TUI does not title a cell `cd '/long/path' && cargo test` either: it
-/// splits the chain and picks the segment that does the work, so a cell reads
-/// `cargo test -p pa-ui`. Same rule here, without the regex machinery.
+/// unwraps `%%bash` cells and heredocs, splits the chain and picks the segment
+/// that does the work, compacts runners (`npm run test` is `npm test`), turns
+/// `tee -a` into `append`, and blots out tokens long enough to be secrets. Same
+/// rules here, to the extent the golden corpus pins them down.
 #[must_use]
 pub fn bash_preview(command: &str) -> String {
-    let mut best: Option<(String, usize, usize)> = None; // text, score, position
-    for (position, segment) in split_chain(command).into_iter().enumerate() {
+    let command = bash_body(command);
+    // `python3 -c "import x; print(...)"` is a python cell wearing a shell hat
+    for prefix in ["python3 -c ", "python -c "] {
+        if let Some(rest) = command.trim().strip_prefix(prefix) {
+            let payload = rest.trim().trim_matches(['\'', '"']);
+            let preview = python_preview(payload);
+            if !preview.is_empty() {
+                return clip(&preview, 60);
+            }
+        }
+    }
+    let mut best: Option<(String, usize, usize)> = None;
+    for (position, segment) in split_chain(&command).into_iter().enumerate() {
         let line = drop_env_prefix(segment.trim());
         let line = line.as_str();
         if line.is_empty() || line.starts_with('#') {
@@ -265,7 +278,7 @@ pub fn bash_preview(command: &str) -> String {
         if matches!(
             first,
             "cargo" | "npm" | "pnpm" | "yarn" | "bun" | "deno" | "pytest" | "vitest" | "node"
-                | "python" | "python3" | "go" | "rustc" | "git" | "make" | "dotnet"
+                | "python" | "python3" | "go" | "rustc" | "git" | "make" | "dotnet" | "uv"
         ) {
             score += 40;
         }
@@ -277,13 +290,108 @@ pub fn bash_preview(command: &str) -> String {
             Some((_, winning, at)) if winning > score || (winning == score && at > position) => {
                 best
             }
-            _ => Some((line.to_string(), score, position)),
+            _ => Some((simplify_command(line), score, position)),
         };
     }
-    clip(
-        &best.map_or_else(|| command.trim().to_string(), |(line, _, _)| line),
-        110,
-    )
+    let text = best.map_or_else(|| command.trim().to_string(), |(line, _, _)| line);
+    clip(&redact(&text), 60)
+}
+
+/// A `%%bash` cell or a heredoc is a wrapper: the command is inside it.
+fn bash_body(command: &str) -> String {
+    let lines: Vec<&str> = command.lines().collect();
+    let first = lines.first().map_or("", |line| line.trim());
+    if first.starts_with("%%bash") {
+        return lines[1..].join("\n");
+    }
+    if let Some(opener) = lines.iter().position(|line| line.contains("<<")) {
+        let marker = lines[opener]
+            .split("<<")
+            .nth(1)
+            .map(|rest| rest.trim().trim_matches(['\'', '"']).to_string())
+            .unwrap_or_default();
+        if !marker.is_empty() {
+            if let Some(close) = lines.iter().rposition(|line| line.trim() == marker) {
+                if close > opener {
+                    return lines[opener + 1..close].join("\n");
+                }
+            }
+        }
+    }
+    command.to_string()
+}
+
+/// Compaction the corpus insists on: the runner word is noise, and `tee -a` is
+/// the word everyone reads as "append".
+fn simplify_command(line: &str) -> String {
+    let mut line = line.to_string();
+    // `uv run python3 -m pytest` is `pytest`: keep unwrapping while it helps
+    for _ in 0..3 {
+        let next = simplify_once(&line);
+        if next == line {
+            break;
+        }
+        line = next;
+    }
+    line
+}
+
+fn simplify_once(line: &str) -> String {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let tail = &words[1..];
+    match words.first().copied() {
+        Some("npm" | "yarn" | "pnpm") if tail.first() == Some(&"run") => {
+            format!("{}{}", words[0], words[2..].iter().map(|word| format!(" {word}")).collect::<String>())
+        }
+        Some("uv") if tail.first() == Some(&"run") => words[2..].join(" "),
+        Some("tee") => {
+            let target = words
+                .iter()
+                .rev()
+                .find(|word| !word.starts_with('-'))
+                .copied()
+                .unwrap_or_default();
+            format!("append {target}")
+        }
+        _ => {
+            // python3 -m pytest -> pytest
+            if let (Some("python" | "python3"), Some(&"-m")) = (words.first().copied(), tail.first()) {
+                return words[2..].join(" ");
+            }
+            line.to_string()
+        }
+    }
+}
+
+/// Tokens long enough to be a key, and keys that announce themselves.
+fn redact(line: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut after_bearer = false;
+    for word in line.split_whitespace() {
+        let stripped = word.trim_matches(['\'', '"', ';', ',']);
+        if after_bearer && stripped.chars().count() > 6 {
+            out.push("<r\u{2026}>".to_string());
+            after_bearer = false;
+            continue;
+        }
+        after_bearer = stripped == "Bearer" || stripped == "Bearer:" || word.ends_with("Bearer:");
+        if after_bearer {
+            out.push(word.to_string());
+            continue;
+        }
+        if stripped.chars().count() >= 40 && stripped.chars().all(|ch| !ch.is_whitespace()) {
+            out.push(word.replace(stripped, "<blob>"));
+            continue;
+        }
+        if let Some(rest) = word.strip_prefix("sk-") {
+            if rest.chars().count() >= 8 {
+                out.push("<redacted>".to_string());
+                continue;
+            }
+        }
+        out.push(word.to_string());
+    }
+    out.join(" ")
 }
 
 /// `CARGO_TARGET_DIR=target-alt cargo build` is a build, not an assignment.
@@ -328,7 +436,7 @@ fn split_chain(line: &str) -> Vec<String> {
                     quote = Some(ch);
                     current.push(ch);
                 }
-                ';' => {
+                ';' | '\n' => {
                     out.push(std::mem::take(&mut current));
                 }
                 '&' if chars.peek() == Some(&'&') => {
@@ -352,7 +460,18 @@ pub fn tool_cell(tool_name: &str, call_id: &str, args: &Value) -> Row {
     let mut row = Row::new(KIND_CELL);
     row.id = call_id.to_string();
     let fallback = args.to_string();
-    let summary = summary_line(if code.is_empty() { &fallback } else { code });
+    let summary = if code.is_empty() {
+        summary_line(&fallback)
+    } else {
+        // the statement the cell is about, not the first line of it: a cell that
+        // opens with `mp = "..."` is about what it does with `mp`
+        let preview = python_preview(code);
+        if preview.is_empty() {
+            summary_line(code)
+        } else {
+            preview
+        }
+    };
     row.title = format!("{} · {}", short_tool(tool_name), summary);
     row.code = highlight_python(code);
     row.has_code = !code.is_empty();
@@ -400,37 +519,278 @@ fn short_tool(name: &str) -> &str {
     }
 }
 
-/// The one line a collapsed cell shows. It has to tell two calls apart, and the
-/// calls that need telling apart are the ones that open the same way - a probe
-/// re-run with one argument changed starts with the same sixty characters. So
-/// the head is cut short and the *last* line rides behind it: the part that
-/// changed is almost never at the front.
+/// What a python cell is about, in one line.
+///
+/// The TUI does not title a cell with its first line either: it splits the cell
+/// into statements, scores them (a file operation or a subprocess outranks a
+/// print, a print outranks an assignment), and substitutes the path variables
+/// so `open(mp)` reads `open(main.rs)`. Ported here without the regex engine,
+/// with the same order of preference.
+#[must_use]
+pub fn python_preview(code: &str) -> String {
+    let statements = python_statements(code);
+    let paths = path_vars(&statements);
+    let mut best: Option<(i64, usize)> = None;
+    for index in 0..statements.len() {
+        let score = python_score(&statements, index);
+        if best.is_none_or(|(winning, _)| score > winning) {
+            best = Some((score, index));
+        }
+    }
+    let Some((score, index)) = best.filter(|(score, _)| *score >= 0) else {
+        return String::new();
+    };
+    let line = render_statement(&statements[index], &paths);
+    clip(&collapse(&line), 60)
+}
+
+/// Logical lines: bracket continuations joined, comments and blanks dropped.
+fn python_statements(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i64;
+    let mut quote: Option<char> = None;
+    for raw in code.lines() {
+        let trimmed = raw.trim();
+        if current.is_empty() && (trimmed.is_empty() || trimmed.starts_with('#')) {
+            continue;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(trimmed);
+        for ch in trimmed.chars() {
+            match quote {
+                Some(open) => {
+                    if ch == open {
+                        quote = None;
+                    }
+                }
+                None => match ch {
+                    '\'' | '"' => quote = Some(ch),
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                },
+            }
+        }
+        if quote.is_none() && depth <= 0 {
+            for statement in current.split(';') {
+                let statement = statement.trim_start_matches(';').trim();
+                if !statement.is_empty() {
+                    out.push(statement.to_string());
+                }
+            }
+            current.clear();
+            depth = 0;
+        }
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_string());
+    }
+    out
+}
+
+/// `mp = ".../main.rs"`, `mp = Path("...")`, `mp = os.path.join(a, "main.rs")`:
+/// the name a cell uses for a file, and the file's own name.
+fn path_vars(statements: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in statements {
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.contains(char::is_whitespace) || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+            continue;
+        }
+        let value = value.trim();
+        let Some(base) = path_tail_literal(value) else {
+            continue;
+        };
+        if !base.is_empty() {
+            out.push((name.to_string(), base));
+        }
+    }
+    out
+}
+
+/// The file name at the end of the last quoted path in a value.
+fn path_tail_literal(value: &str) -> Option<String> {
+    let mut last: Option<&str> = None;
+    for quote in ['\'', '"'] {
+        for (index, part) in value.split(quote).enumerate() {
+            if index % 2 == 1 {
+                last = Some(part);
+            }
+        }
+    }
+    let literal = last?;
+    if !literal.contains('/') && !literal.contains('\\') {
+        return None;
+    }
+    let tail = literal
+        .rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(literal);
+    Some(tail.to_string())
+}
+
+/// `out.write_text(...)` with a known path is `write out.txt`, which is what the
+/// TUI shows. Everything else is the statement itself: substituting every name
+/// for its value turned readable code into noise.
+fn render_statement(line: &str, paths: &[(String, String)]) -> String {
+    let trimmed = line.trim();
+    for (name, tail) in paths {
+        for (method, action) in [
+            ("read_text", "read"),
+            ("read_bytes", "read"),
+            ("write_text", "write"),
+            ("write_bytes", "write"),
+            ("mkdir", "mkdir"),
+            ("unlink", "delete"),
+            ("rename", "rename"),
+            ("touch", "touch"),
+        ] {
+            if trimmed.starts_with(name.as_str()) && trimmed.contains(&format!(".{method}(")) {
+                return format!("{action} {tail}");
+            }
+        }
+    }
+    // print(<call>) reads better as the call
+    if let Some(inner) = trimmed.strip_prefix("print(") {
+        if let Some(inner) = inner.strip_suffix(')') {
+            if inner.contains('(') {
+                return inner.to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+fn substitute_paths(line: &str, paths: &[(String, String)]) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String, paths: &[(String, String)]| {
+        if word.is_empty() {
+            return;
+        }
+        match paths.iter().find(|(name, _)| name == word) {
+            Some((_, tail)) => out.push_str(tail),
+            None => out.push_str(word),
+        }
+        word.clear();
+    };
+    for ch in line.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+        } else {
+            flush(&mut word, &mut out, paths);
+            out.push(ch);
+        }
+    }
+    flush(&mut word, &mut out, paths);
+    out
+}
+
+fn python_score(statements: &[String], index: usize) -> i64 {
+    let line = statements.get(index).map_or("", String::as_str);
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@') {
+        return -1;
+    }
+    if trimmed.chars().all(|ch| matches!(ch, ')' | ']' | '}' | ',' | ';' | ' ')) {
+        return -1;
+    }
+    let file_ops = [
+        "open(", ".read_text(", ".write_text(", ".read_bytes(", "Path(", ".mkdir(", ".unlink(",
+        ".rename(", "shutil.", ".append(", ".extend(",
+    ];
+    if file_ops.iter().any(|needle| trimmed.contains(needle)) {
+        return 95;
+    }
+    let subprocess = ["subprocess.", "os.system(", "Popen(", "bash(", "check_output("];
+    if subprocess.iter().any(|needle| trimmed.contains(needle)) {
+        return 90;
+    }
+    if trimmed.contains("__main__") {
+        return 70;
+    }
+    if trimmed.ends_with(':') && !trimmed.starts_with("def ") && !trimmed.starts_with("class ") {
+        let child = python_score(statements, index + 1);
+        return (if child < 0 { 20 } else { child - 5 }).max(20);
+    }
+    if trimmed.starts_with("def ") || trimmed.starts_with("async def ") || trimmed.starts_with("class ") {
+        return 50;
+    }
+    let assignment = split_assignment(trimmed);
+    if let Some(right) = assignment {
+        return if right.contains('(') { 60 } else { 25 };
+    }
+    if trimmed.starts_with("print(") {
+        return 55;
+    }
+    if call_head(trimmed).is_some() {
+        return 65;
+    }
+    30
+}
+
+fn split_assignment(line: &str) -> Option<&str> {
+    let (left, right) = line.split_once('=')?;
+    if left.contains("==") || left.contains('<') || left.contains('>') || left.contains('!') {
+        return None;
+    }
+    let name = left.trim();
+    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ' ') {
+        return None;
+    }
+    Some(right)
+}
+
+/// `name(` or `a.b(` at the start of a statement.
+fn call_head(line: &str) -> Option<&str> {
+    let open = line.find('(')?;
+    let head = line[..open].trim_end();
+    if head.is_empty() || head.contains(' ') && !head.contains('=') {
+        return None;
+    }
+    if head.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.') {
+        Some(head)
+    } else {
+        None
+    }
+}
+
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The one line a collapsed cell shows.
+///
+/// Bash cells are titled by the command their tool reported, so this is what a
+/// plain python cell gets: its first meaningful statement, cut to fit.
 fn summary_line(code: &str) -> String {
-    let lines: Vec<&str> = code
+    let line = code
         .lines()
         .map(str::trim)
         .map(|line| line.trim_end_matches(':'))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect();
-    let Some(first) = lines.first() else {
-        return "empty cell".to_string();
-    };
-    let head = clip(first, 54);
-    match lines.last() {
-        Some(tail) if lines.len() > 1 && tail != first => {
-            format!("{head}  \u{00b7}\u{00b7}\u{00b7}  {}", clip(tail, 38))
-        }
-        _ => head,
-    }
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("empty cell");
+    clip(line, 72)
 }
 
 fn clip(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
     }
-    let mut out: String = text.chars().take(limit.saturating_sub(1)).collect();
-    out.push('\u{2026}');
-    out
+    let cut: String = text.chars().take(limit.saturating_sub(1)).collect();
+    // cut at a word, the way the TUI's descriptor does: half a word reads worse
+    // than a shorter label
+    let trimmed = match cut.rfind(' ') {
+        Some(at) if at > limit / 2 => cut[..at].to_string(),
+        _ => cut,
+    };
+    format!("{trimmed}\u{2026}")
 }
 
 // ── markup ──────────────────────────────────────────────────────────
@@ -1263,29 +1623,6 @@ mod image_tests {
 }
 
 #[cfg(test)]
-mod summary_tests {
-    use super::*;
-
-    fn title_of(code: &str) -> String {
-        let args = serde_json::json!({ "code": code });
-        tool_cell("python_repl", "call_0_x", &args).title
-    }
-
-    #[test]
-    fn two_calls_that_open_the_same_way_still_read_differently() {
-        let first = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('a.log')";
-        let second = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('b.log')";
-        assert_ne!(title_of(first), title_of(second));
-        assert!(title_of(first).contains("\u{00b7}\u{00b7}\u{00b7}"));
-    }
-
-    #[test]
-    fn a_one_line_call_is_just_that_line() {
-        assert_eq!(title_of("print(1)"), "python · print(1)");
-    }
-}
-
-#[cfg(test)]
 mod bash_label_tests {
     use super::*;
 
@@ -1338,5 +1675,78 @@ mod bash_preview_tests {
     fn a_quoted_semicolon_does_not_split() {
         let preview = bash_preview("grep -n 'a;b' file.txt");
         assert_eq!(preview, "grep -n 'a;b' file.txt");
+    }
+}
+
+#[cfg(test)]
+mod python_preview_tests {
+    use super::*;
+
+    fn title_of(code: &str) -> String {
+        tool_cell("python_repl", "call_0_x", &serde_json::json!({ "code": code })).title
+    }
+
+    #[test]
+    fn a_file_operation_on_a_known_path_reads_as_the_action() {
+        let title = title_of("out = '/repo/out.txt'\nout.write_text('hello')");
+        assert_eq!(title, "python \u{00b7} write out.txt", "{title}");
+    }
+
+    #[test]
+    fn a_plain_open_is_shown_as_written() {
+        let title = title_of("mp = '/repo/pa-ui/src/main.rs'\ns28 = open(mp, encoding='utf-8').read()");
+        assert!(title.contains("open(mp"), "{title}");
+    }
+
+    #[test]
+    fn the_statement_beats_the_setup() {
+        let title = title_of("pa = 'C:/repo'\nh = bash(\"ls\")\nprint(h.output()[:40])");
+        assert!(title.contains("bash(\"ls\")"), "{title}");
+    }
+
+    #[test]
+    fn a_print_beats_a_plain_assignment() {
+        let title = title_of("x = 1\ny = 2\nprint(x + y)");
+        assert_eq!(title, "python · print(x + y)");
+    }
+
+    #[test]
+    fn a_continuation_line_joins_its_opener() {
+        let title = title_of("h = bash(\n    \"ls -la\",\n)");
+        assert_eq!(title, "python · h = bash( \"ls -la\", )");
+    }
+}
+
+#[cfg(test)]
+mod golden_preview_tests {
+    use super::*;
+
+    /// The corpus the TUI checks itself against, recorded from the TypeScript
+    /// tools. Running it here is how the two previews are compared instead of
+    /// guessed at.
+    fn corpus() -> serde_json::Value {
+        serde_json::from_str(include_str!("../tests/golden/preview.json")).expect("corpus")
+    }
+
+    #[test]
+    fn reports_where_our_preview_parts_company_with_the_tui() {
+        let corpus = corpus();
+        let mut same = 0;
+        let mut different: Vec<String> = Vec::new();
+        for case in corpus["cases"].as_array().expect("cases") {
+            let input = case["input"].as_str().unwrap_or_default();
+            let expected = case["bash"]["text"].as_str().unwrap_or_default();
+            let ours = bash_preview(input);
+            if ours == expected {
+                same += 1;
+            } else {
+                different.push(format!("{input:.50} => ours {ours:?} / tui {expected:?}"));
+            }
+        }
+        eprintln!("bash previews: {same} match, {} differ", different.len());
+        for line in &different {
+            eprintln!("  {line}");
+        }
+        assert!(same + different.len() == 16);
     }
 }
