@@ -1652,7 +1652,21 @@ fn page_cursor(last_entry: &str) -> u64 {
         .fold(0u64, |hash, byte| hash.wrapping_mul(31).wrapping_add(u64::from(byte)))
 }
 
+/// A worker that panics used to vanish without a word: no events, no replies,
+/// no poll - a window that keeps painting a transcript nobody is updating. The
+/// work happens behind a catch so a panic in one frame is loud.
 fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
+    let reporter = out.clone();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        worker_inner(jobs, out, client_id);
+    }));
+    if outcome.is_err() {
+        eprintln!("[worker] panicked - the window is now static");
+        let _ = reporter.send(Msg::Error("engine stopped — reopen the window".into()));
+    }
+}
+
+fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     let mut client: Option<Client> = None;
 
     // Reads go over a connection that never attaches: once a connection is
@@ -1957,8 +1971,12 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         .unwrap_or("");
                     eprintln!("[frame] {frame_type} {event_type}");
                     if std::env::var("PA_DUMP").is_ok() {
-                        let text = frame.to_string();
-                        eprintln!("[dump] {}", &text[..text.len().min(700)]);
+                        // chars, not bytes: slicing a String at byte 700 splits
+                        // whatever multi-byte character sits there and panics the
+                        // reader thread, which is the thread every event and every
+                        // reply arrives on - the window goes deaf and silent
+                        let text: String = frame.to_string().chars().take(700).collect();
+                        eprintln!("[dump] {text}");
                     }
                 }
                 if frame_type == "response" {
