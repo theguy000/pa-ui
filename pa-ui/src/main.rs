@@ -163,17 +163,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_composer_text("".into());
-            // optimistic row: the prompt shows before the daemon echoes it
-            let echo = serde_json::json!({
-                "role": "user",
-                "content": [{"type": "text", "text": message}],
-            });
-            if let Some(row) = transcript::build(std::slice::from_ref(&echo), 1).0.first() {
-                rows.borrow_mut().push(row.clone());
-                model.push(to_slint(row));
-                ui.invoke_scroll_to_end();
+            // Where the message belongs depends on whether a turn owns the
+            // transcript. While one runs, this is a follow-up: it waits in the
+            // queue lanes and only becomes a row once it actually runs. Drawing
+            // it in the transcript first was the flash - the bubble appeared,
+            // the queue arrived, the row was swept away and everything shifted.
+            if ui.get_busy() || ui.get_queued_count() > 0 {
+                ui.set_queued_count(ui.get_queued_count() + 1);
+                if ui.get_queued_preview().is_empty() {
+                    ui.set_queued_preview(message.clone().into());
+                }
+            } else {
+                let echo = serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "text", "text": message}],
+                });
+                if let Some(row) = transcript::build(std::slice::from_ref(&echo), 1).0.first() {
+                    rows.borrow_mut().push(row.clone());
+                    model.push(to_slint(row));
+                    scroll_to_end_when_ready(&weak);
+                }
+                *pending_user.borrow_mut() = Some(message.clone());
             }
-            *pending_user.borrow_mut() = Some(message.clone());
             if let Some(ui) = weak.upgrade() {
                 ui.set_status_line("sent".into());
             }
