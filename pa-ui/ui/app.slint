@@ -912,6 +912,10 @@ export component AppWindow inherits Window {
     callback new-chat();
     // the rail's filter: "" means every session is shown
     in-out property <string> search-query: "";
+    // 0 while idle, 1 while a run is in flight: the one clock the send button's
+    // two marks share
+    in-out property <float> stop-mix: root.busy ? 1.0 : 0.0;
+    animate stop-mix { duration: 240ms; easing: ease-in-out; }
     in-out property <bool> search-open: false;
     // the composer taking the caret is "somewhere else" too
     out property <bool> composer-focused: draft-window.has-focus;
@@ -1511,7 +1515,10 @@ export component AppWindow inherits Window {
                             // running turn, Shift+Enter is a newline,
                             // Esc aborts — the TUI's bindings
                             if event.text == Key.Return {
-                                if event.modifiers.alt {
+                                // Ctrl+Enter (or Alt+Enter, kept from before) folds
+                                // the message into the turn that is running instead
+                                // of parking it behind
+                                if event.modifiers.control || event.modifiers.alt {
                                     if root.composer-text != "" {
                                         root.steer-requested(root.composer-text);
                                         root.composer-text = "";
@@ -1824,21 +1831,61 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+            // One control, two jobs: send while the session is idle, stop while it
+            // works. A single TouchArea with the branch inside it - a button that
+            // swaps element on a condition does not take clicks here.
+            //
+            // The two marks are always both present and cross over: the arrow
+            // shrinks and turns as it goes, the stop square grows out of the
+            // middle and turns the other way. Slint cannot interpolate one path
+            // into another, so the fluidity is scale, rotation and opacity on the
+            // same clock - which is what a morph looks like anyway.
             Rectangle {
                 width: 25px;
                 height: 25px;
                 border-radius: 12.5px;
-                background: send-touch.has-hover ? #b39e4c : #a18e41;
+                background: root.busy
+                    ? (send-touch.has-hover ? #b8614c : #a2543f)
+                    : (send-touch.has-hover ? #b39e4c : #a18e41);
+                animate background { duration: 240ms; easing: ease-in-out; }
+
                 IconSend {
+                    width: 12px * (1.0 - 0.34 * root.stop-mix);
+                    height: self.width;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
+                    opacity: 1.0 - root.stop-mix;
+                    transform-rotation: root.stop-mix * 45deg;
                 }
+
+                Rectangle {
+                    width: 2px + 6px * root.stop-mix;
+                    height: self.width;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    // a dot rounding out into a square as it arrives
+                    border-radius: 3px - 1.5px * root.stop-mix;
+                    background: #f6efe6;
+                    opacity: root.stop-mix;
+                    transform-rotation: (1.0 - root.stop-mix) * -45deg;
+                }
+
                 send-touch := TouchArea {
+                    x: 0;
+                    y: 0;
+                    width: 100%;
+                    height: 100%;
                     mouse-cursor: MouseCursor.pointer;
                     clicked => {
                         root.model-menu = false;
-                        root.send-requested(root.composer-text);
-                        root.composer-text = "";
+                        if root.busy {
+                            // the daemon keeps the queue flowing behind the stopped
+                            // run, so the next waiting message is not stranded
+                            root.abort-requested();
+                        } else {
+                            root.send-requested(root.composer-text);
+                            root.composer-text = "";
+                        }
                     }
                 }
             }

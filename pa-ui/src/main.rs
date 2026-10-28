@@ -3,9 +3,8 @@ mod transcript;
 slint::include_modules!();
 
 use pa_client::{
-    abort, attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions,
-    model_catalog, mutate_queue, send_prompt, session_stats, set_model, steer_prompt, Client,
-    SessionRow,
+    attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
+    mutate_queue, send_prompt, session_stats, set_model, steer_prompt, stop, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -1237,7 +1236,9 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     }
                 }
                 Job::Abort { session } => {
-                    if let Err(error) = abort(active, &session) {
+                    // `stop` = abort_and_send_queued when the daemon has it, so the
+                    // queue keeps flowing behind the stopped run
+                    if let Err(error) = stop(active, &session) {
                         let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
                     }
                 }

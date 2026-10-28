@@ -535,6 +535,33 @@ pub fn abort(client: &Client, session: &str) -> std::io::Result<String> {
     client.send("abort", json!({"activeSessionId": session}))
 }
 
+/// `abort_and_send_queued` → stop the run and keep the queue flowing.
+///
+/// This is what the TUI's abort does when the daemon advertises the capability
+/// (`abort_turn` in `session_ui/apply.rs`): the run stops, the queued messages
+/// stay queued, and the pump delivers the next one at the settled boundary. A
+/// plain `abort` would strand them until something else nudged the session. A
+/// daemon without the capability gets the plain abort instead.
+///
+/// # Errors
+/// Fails only on transport errors.
+pub fn stop(client: &Client, session: &str) -> std::io::Result<String> {
+    let capable = client
+        .hello
+        .get("serverCapabilities")
+        .and_then(Value::as_array)
+        .is_some_and(|capabilities| {
+            capabilities
+                .iter()
+                .any(|entry| entry.as_str() == Some("abort_and_send_queued"))
+        });
+    if capable {
+        client.send("abort_and_send_queued", json!({"activeSessionId": session}))
+    } else {
+        client.send("abort", json!({"activeSessionId": session}))
+    }
+}
+
 /// `prompt` with an explicit streaming behaviour: `steer` folds the message into
 /// the running turn instead of queueing behind it.
 ///
