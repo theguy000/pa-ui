@@ -417,6 +417,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut last_seq = 0u64;
     // the row currently receiving `message_update` frames: (key, model index)
     let mut live_row: Option<(String, usize)> = None;
+    // the streamed words, accumulated from the deltas: the message shell carries
+    // none of them until the run ends
+    let mut stream_text = String::new();
+    let mut stream_thinking = String::new();
+    let mut stream_key: Option<String> = None;
     // when the stream last moved: a live row that has gone quiet is not proof
     // the turn is still writing, only that we stopped hearing about it
     let mut stream_at = SystemTime::now();
@@ -805,7 +810,40 @@ fn main() -> Result<(), slint::PlatformError> {
                         .and_then(serde_json::Value::as_i64)
                         .unwrap_or(0);
                     let key = format!("{}:{stamp}", role.unwrap_or_default());
-                    let built = transcript::build(std::slice::from_ref(message), 1).0;
+                    // The `message_update` payload is the message's shell - its
+                    // content is empty for the whole run - and the words ride
+                    // beside it in `assistantMessageEvent` deltas. Rendering the
+                    // shell alone is why the turn looked silent until it ended:
+                    // the row was there, blank, the whole way through.
+                    let delta_event: &serde_json::Value = event
+                        .get("assistantMessageEvent")
+                        .filter(|value| !value.is_null())
+                        .unwrap_or(&event);
+                    if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
+                        let thinking = delta_event
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|kind| kind.starts_with("thinking"));
+                        if stream_key.as_deref() != Some(key.as_str()) {
+                            stream_key = Some(key.clone());
+                            stream_text.clear();
+                            stream_thinking.clear();
+                        }
+                        if thinking {
+                            stream_thinking.push_str(delta);
+                        } else {
+                            stream_text.push_str(delta);
+                        }
+                    }
+                    // before the first delta arrives the shell is all there is
+                    let rendered = if message_text(message).is_empty() && !stream_text.is_empty() {
+                        let mut with_text = message.clone();
+                        with_text["content"] = serde_json::json!([{ "type": "text", "text": stream_text }]);
+                        with_text
+                    } else {
+                        message.clone()
+                    };
+                    let built = transcript::build(std::slice::from_ref(&rendered), 1).0;
                     let Some(row) = built.first().cloned() else {
                         continue;
                     };
@@ -831,9 +869,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     stream_at = SystemTime::now();
                     if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
                         eprintln!(
-                            "[stream] {key} patch row {} ({} chars)",
+                            "[stream] {key} patch row {} (shell {} / streamed {} chars)",
                             live_row.as_ref().map_or(usize::MAX, |(_, index)| *index),
-                            message_text(message).chars().count()
+                            message_text(message).chars().count(),
+                            stream_text.chars().count()
                         );
                     }
                     if kind == Some("message_end") {
