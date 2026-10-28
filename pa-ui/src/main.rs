@@ -260,20 +260,64 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 format!("{command} {message}")
             };
-            // A bare command is not a message: `/model` opens the model picker
-            // instead of sending the word to the agent.
-            if let Some(command) = slash_opens_picker(&message) {
-                if command == "model" {
+            // A command is only sent when the agent runs it. Everything else in
+            // the table is a window action: it either happens here or says
+            // plainly that it is not wired, but it never leaves as chat words.
+            match slash_dispatch(&message) {
+                SlashAction::Send => {}
+                SlashAction::Model => {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
+                    ui.set_composer_command("".into());
+                    ui.set_composer_command_hint("".into());
                     ui.set_model_menu(true);
                     ui.set_status_line("pick a model".into());
-                } else {
+                    return;
+                }
+                SlashAction::EffortHint => {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
-                    ui.set_status_line("thinking level opens from the model menu".into());
+                    ui.set_composer_command("".into());
+                    ui.set_composer_command_hint("".into());
+                    ui.set_status_line("the thinking level opens from the model menu".into());
+                    return;
                 }
-                return;
+                SlashAction::NewChat => {
+                    ui.set_composer_text("".into());
+                    ui.set_composer_has_text(false);
+                    ui.set_composer_command("".into());
+                    ui.set_composer_command_hint("".into());
+                    let _ = jobs.send(Job::NewChat);
+                    return;
+                }
+                SlashAction::Quit => {
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                SlashAction::Rename(name) => {
+                    if name.is_empty() {
+                        ui.set_status_line("give the chat a name: /name <name>".into());
+                        return;
+                    }
+                    ui.set_composer_text("".into());
+                    ui.set_composer_has_text(false);
+                    ui.set_composer_command("".into());
+                    ui.set_composer_command_hint("".into());
+                    let _ = jobs.send(Job::Rename {
+                        session,
+                        name,
+                    });
+                    return;
+                }
+                SlashAction::NotWired(name) => {
+                    // the text stays where it is: nothing is lost, and nothing
+                    // pretends to have happened
+                    ui.set_status_line(
+                        format!("/{name} belongs to the terminal app and isn't wired here yet")
+                            .into(),
+                    );
+                    return;
+                }
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
@@ -1947,22 +1991,48 @@ fn slash_name_token(text: &str) -> Option<String> {
     Some(body.to_string())
 }
 
-/// The builtin command a message runs without being sent, if any.
+/// What the window should do with a message that starts with a slash.
 ///
-/// Only the commands this window can carry out itself, and only bare: `/model`
-/// opens the picker, `/model sonnet` is left alone.
-fn slash_opens_picker(text: &str) -> Option<&'static str> {
+/// The daemon's table splits commands in two: the agent runs `compact`,
+/// `refine`, `goal` and `autonomous` itself, so those are sent as written. Every
+/// other builtin is a *window* action — sending `/system-prompt` down the pipe
+/// gave the agent a chat message that read like a command and did nothing.
+fn slash_dispatch(text: &str) -> SlashAction {
     let trimmed = text.trim();
-    let body = trimmed.strip_prefix('/')?;
-    if body.contains(char::is_whitespace) {
-        return None;
+    let Some(body) = trimmed.strip_prefix('/') else {
+        return SlashAction::Send;
+    };
+    let name = body.split_whitespace().next().unwrap_or("");
+    let rest = body[name.len()..].trim().to_string();
+    let Some(command) = pa_client::commands::find(name) else {
+        // not a builtin: skills and prompt templates are the agent's to run
+        return SlashAction::Send;
+    };
+    if command.session_side {
+        return SlashAction::Send;
     }
-    match body {
-        "model" => Some("model"),
-        "effort" | "thinking" => Some("effort"),
-        _ => None,
+    match name {
+        "model" => SlashAction::Model,
+        "effort" | "thinking" => SlashAction::EffortHint,
+        "new" | "clear" => SlashAction::NewChat,
+        "quit" => SlashAction::Quit,
+        "name" => SlashAction::Rename(rest),
+        _ => SlashAction::NotWired(command.name),
     }
 }
+
+/// The decision above, as a value so the send path stays readable.
+#[derive(Debug, PartialEq, Eq)]
+enum SlashAction {
+    Send,
+    Model,
+    EffortHint,
+    NewChat,
+    Quit,
+    Rename(String),
+    NotWired(&'static str),
+}
+
 
 fn dump_rows(rows: &[Row]) {
     let Ok(path) = std::env::var("PA_DUMP") else {
@@ -2867,7 +2937,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 
 #[cfg(test)]
 mod slash_menu_tests {
-    use super::{slash_name_token, slash_opens_picker};
+    use super::slash_name_token;
 
     #[test]
     fn the_menu_belongs_to_the_word_after_the_slash() {
@@ -2885,14 +2955,31 @@ mod slash_menu_tests {
     }
 
     #[test]
-    fn only_bare_picker_commands_run_without_being_sent() {
-        assert_eq!(slash_opens_picker("/model"), Some("model"));
-        assert_eq!(slash_opens_picker("  /model  "), Some("model"));
-        assert_eq!(slash_opens_picker("/effort"), Some("effort"));
-        // carry arguments or prose: sent as a message, untouched
-        assert_eq!(slash_opens_picker("/model sonnet"), None);
-        assert_eq!(slash_opens_picker("/compact"), None);
-        assert_eq!(slash_opens_picker("model"), None);
+    fn the_agent_runs_its_own_commands() {
+        use super::{slash_dispatch, SlashAction};
+        // the four session commands go down the pipe as written
+        assert_eq!(slash_dispatch("/compact"), SlashAction::Send);
+        assert_eq!(slash_dispatch("/refine tighten the notes"), SlashAction::Send);
+        // a skill is not a builtin: it is the agent's to run too
+        assert_eq!(slash_dispatch("/skill:review the diff"), SlashAction::Send);
+        assert_eq!(slash_dispatch("just prose"), SlashAction::Send);
+    }
+
+    #[test]
+    fn window_commands_never_leave_as_words() {
+        use super::{slash_dispatch, SlashAction};
+        assert_eq!(slash_dispatch("/model"), SlashAction::Model);
+        assert_eq!(slash_dispatch("/new"), SlashAction::NewChat);
+        assert_eq!(slash_dispatch("/quit"), SlashAction::Quit);
+        assert_eq!(
+            slash_dispatch("/name plan the week"),
+            SlashAction::Rename("plan the week".to_string())
+        );
+        // the one that was silently sent to the agent and did nothing
+        assert_eq!(
+            slash_dispatch("/system-prompt"),
+            SlashAction::NotWired("system-prompt")
+        );
     }
 }
 
