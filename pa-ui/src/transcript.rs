@@ -676,7 +676,58 @@ pub fn markdown_markup(text: &str) -> String {
             out.push_str(line);
         }
     }
-    balance_strong(&out)
+    balance_strong(&pad_inline_code(&out))
+}
+
+/// Give inline code room to breathe.
+///
+/// The renderer draws `code` as a box that hugs the glyphs with no padding, and
+/// there is no styling hook for it - so a space goes inside each end of the
+/// span. The box grows around it and the run stops looking cramped against the
+/// text either side.
+fn pad_inline_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '`' {
+            out.push(ch);
+            continue;
+        }
+        let mut ticks = String::from("`");
+        while chars.peek() == Some(&'`') {
+            ticks.push(chars.next().unwrap_or('`'));
+        }
+        // find the closing run of the same length
+        let mut body = String::new();
+        let mut closed = false;
+        while let Some(next) = chars.next() {
+            if next == '`' {
+                let mut closing = String::from("`");
+                while chars.peek() == Some(&'`') {
+                    closing.push(chars.next().unwrap_or('`'));
+                }
+                if closing.len() == ticks.len() {
+                    closed = true;
+                    break;
+                }
+                body.push_str(&closing);
+                continue;
+            }
+            body.push(next);
+        }
+        if closed && !body.starts_with(' ') && !body.ends_with(' ') {
+            out.push_str(&ticks);
+            out.push(' ');
+            out.push_str(&body);
+            out.push(' ');
+            out.push_str(&ticks);
+        } else {
+            out.push_str(&ticks);
+            out.push_str(&body);
+            out.push_str(&ticks);
+        }
+    }
+    out
 }
 
 /// One piece of a message: the prose between the blocks, a fenced block, or a
