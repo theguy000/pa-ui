@@ -1840,14 +1840,36 @@ export component AppWindow inherits Window {
             // middle and turns the other way. Slint cannot interpolate one path
             // into another, so the fluidity is scale, rotation and opacity on the
             // same clock - which is what a morph looks like anyway.
+            //
+            // The slot is fixed at the button's grown size: a layout child has its
+            // width handed to it by the layout, so a button that swells has to
+            // swell inside a box the layout is not measuring.
             Rectangle {
-                width: 25px;
-                height: 25px;
-                border-radius: 12.5px;
+                width: 27px;
+                height: 27px;
+                background: transparent;
+
+            Rectangle {
+                // it swells, brightens and lights a warm halo under the pointer -
+                // the fill change alone was too little to read as a control
+                width: send-touch.pressed ? 24px : (send-touch.has-hover ? 27px : 25px);
+                height: self.width;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: self.width / 2;
                 background: root.busy
-                    ? (send-touch.has-hover ? #b8614c : #a2543f)
-                    : (send-touch.has-hover ? #b39e4c : #a18e41);
+                    ? (send-touch.has-hover ? #c4654c : #a2543f)
+                    : (send-touch.has-hover ? #c8b158 : #a18e41);
+                // the halo is a hint, not a glow: 5px, one pixel down, a fifth
+                // opaque
+                drop-shadow-blur: send-touch.has-hover ? 5px : 0px;
+                drop-shadow-offset-y: send-touch.has-hover ? 1px : 0px;
+                drop-shadow-color: root.busy ? #7a2f2333 : #6d5f2233;
                 animate background { duration: 240ms; easing: ease-in-out; }
+                animate width, height, border-radius, drop-shadow-blur, drop-shadow-offset-y {
+                    duration: 130ms;
+                    easing: ease-out;
+                }
 
                 IconSend {
                     width: 12px * (1.0 - 0.34 * root.stop-mix);
@@ -1888,6 +1910,7 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+            }
             }
         }
     }
