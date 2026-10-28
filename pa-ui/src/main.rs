@@ -178,6 +178,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let pending_user = pending_user.clone();
         let attachments = attachments.clone();
         let attachment_model = attachment_model.clone();
+        let catalog_for_send = catalog.clone();
         ui.on_send_requested(move |text| {
             if std::env::var("PA_DEBUG").is_ok() {
                 eprintln!("[send] callback fired with {text:?}");
@@ -187,6 +188,26 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let Some(ui) = weak.upgrade() else { return };
+            // The daemon admits a prompt carrying images even when the session
+            // model cannot see them, then drops the turn without a word: the
+            // message never appears and the images are lost. Say so here and
+            // keep the draft, instead of watching it disappear.
+            if !attachments.borrow().is_empty() {
+                let model = ui.get_model_id().to_string();
+                let provider = ui.get_model_provider().to_string();
+                let capable = catalog_for_send
+                    .borrow()
+                    .iter()
+                    .find(|entry| entry.id == model && entry.provider == provider)
+                    .is_none_or(|entry| entry.supports_images);
+                if !capable {
+                    ui.set_status_line(format!(
+                        "{} cannot take images - switch to a vision model with /model, then send",
+                        if model.is_empty() { "this model" } else { model.as_str() }
+                    ).into());
+                    return;
+                }
+            }
             let session = ui.get_selected_id().to_string();
             if session.is_empty() {
                 ui.set_status_line("no session selected".into());
@@ -1897,7 +1918,10 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 Job::Steer { session, message, images } => {
                     let outcome = steer_prompt(active, &session, &message, &images);
                     if std::env::var("PA_DEBUG").is_ok() {
-                        eprintln!("[steer] session={session} message={message:?} outcome={outcome:?}");
+                        eprintln!(
+                            "[steer] session={session} message={message:?} images={} outcome={outcome:?}",
+                            images.len()
+                        );
                     }
                     if let Err(error) = outcome {
                         let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
@@ -1909,7 +1933,10 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         pending_prompts.push((id.clone(), message.clone()));
                     }
                     if std::env::var("PA_DEBUG").is_ok() {
-                        eprintln!("[prompt] session={session} message={message:?} outcome={outcome:?}");
+                        eprintln!(
+                            "[prompt] session={session} message={message:?} images={} outcome={outcome:?}",
+                            images.len()
+                        );
                     }
                     let error = outcome.err().map(|e| e.to_string());
                     // Ask what the daemon actually queued. This is the only

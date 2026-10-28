@@ -683,6 +683,11 @@ pub struct ModelEntry {
     /// The thinking levels this model accepts, weakest first (`off` for a model
     /// with no thinking surface). Empty when the catalog says nothing at all.
     pub thinking_levels: Vec<String>,
+    /// The model takes image input. The daemon refuses a turn that attaches
+    /// images to a model without this, and its refusal is easy to miss — the
+    /// prompt is admitted and the turn never appears — so the composer checks
+    /// first.
+    pub supports_images: bool,
 }
 
 /// The thinking-level ladder, weakest to strongest — the daemon's
@@ -697,6 +702,20 @@ fn supports_thinking(reasoning: bool, map: Option<&serde_json::Value>) -> bool {
         || map
             .and_then(serde_json::Value::as_object)
             .is_some_and(|map| map.values().any(|value| !value.is_null()))
+}
+
+/// Does the catalog say this model takes image input? `modalities.input` is the
+/// daemon's own shape; `input` alone appears in older payloads.
+fn takes_images(model: &Value) -> bool {
+    let list = model
+        .get("modalities")
+        .and_then(|modalities| modalities.get("input"))
+        .or_else(|| model.get("input"))
+        .and_then(Value::as_array);
+    list.is_some_and(|list| {
+        list.iter()
+            .any(|item| item.as_str() == Some("image"))
+    })
 }
 
 /// The supported levels, in ladder order: `off` alone without a thinking
@@ -807,6 +826,7 @@ pub fn model_catalog(client: &Client, session: &str) -> std::io::Result<Vec<Mode
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
                     Some(ModelEntry {
+                        supports_images: takes_images(model),
                         configured: configured.contains(&provider),
                         context_window: model
                             .get("contextWindow")
@@ -1114,5 +1134,39 @@ mod wire_tests {
         assert_eq!(clamp_level(&["off".to_string()], "high"), "off");
         // an unknown word still lands somewhere real
         assert_eq!(clamp_level(&levels, ""), "off");
+    }
+}
+
+#[cfg(test)]
+mod image_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// Probe: does a prompt carrying an image reach the store at all?
+    /// A 1x1 PNG, so size cannot be the reason.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn tiny_image_prompt_lands() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let images = vec![json!({"type": "image", "data": png, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "probe with image", &images).expect("send");
+        eprintln!("admission: {id}");
+        std::thread::sleep(std::time::Duration::from_secs(6));
+        let (messages, _cursor, _more) = get_tail(&client, &session, 20).expect("tail");
+        let hit = messages.iter().any(|m| {
+            m.get("message")
+                .and_then(|s| s.get("content"))
+                .and_then(Value::as_array)
+                .is_some_and(|c| c.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("image")))
+        });
+        let text = messages.iter().any(|m| {
+            m.get("message").and_then(|s| s.get("content")).and_then(Value::as_array).is_some_and(|c| {
+                c.iter().any(|b| b.get("text").and_then(Value::as_str).is_some_and(|t| t.contains("probe with image")))
+            })
+        });
+        eprintln!("text landed: {text} | image landed: {hit}");
+        assert!(text, "the prompt never became a message");
     }
 }
