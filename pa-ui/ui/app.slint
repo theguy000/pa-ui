@@ -1769,20 +1769,22 @@ export component AppWindow inherits Window {
                             if root.queued-count > 0 : Rectangle {
                                 x: parent.width - self.width - 14px;
                                 y: (parent.height - self.height) / 2;
-                                width: lane-row.preferred-width + 12px;
+                                width: lane-row.preferred-width + 16px;
                                 height: 18px;
                                 border-radius: 6px;
                                 background: lane-touch.has-hover || root.queue-open ? #1f211a : transparent;
 
                                 lane-row := HorizontalLayout {
-                                    x: 6px;
+                                    // full width with centred alignment: the
+                                    // contents are centred in the pill by the
+                                    // layout itself, not by arithmetic on a
+                                    // guessed preferred width
+                                    x: 0;
                                     y: 0;
+                                    width: parent.width;
                                     height: parent.height;
-                                    spacing: 5px;
+                                    spacing: 4px;
                                     alignment: center;
-                                    // which turn a message joins is the panel's
-                                    // business, not this glance: the strip only
-                                    // says something is waiting
                                     Text {
                                         text: root.queued-count;
                                         color: lane-touch.has-hover ? #e7e5df : #b0b1a8;
