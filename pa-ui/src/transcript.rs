@@ -263,11 +263,37 @@ fn short_tool(name: &str) -> &str {
     }
 }
 
+/// The one line a collapsed cell shows. It has to tell two calls apart, and the
+/// calls that need telling apart are the ones that open the same way - a probe
+/// re-run with one argument changed starts with the same sixty characters. So
+/// the head is cut short and the *last* line rides behind it: the part that
+/// changed is almost never at the front.
 fn summary_line(code: &str) -> String {
-    code.lines()
-        .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-        .map(|line| line.trim().trim_end_matches(':').to_string())
-        .unwrap_or_else(|| "empty cell".to_string())
+    let lines: Vec<&str> = code
+        .lines()
+        .map(str::trim)
+        .map(|line| line.trim_end_matches(':'))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let Some(first) = lines.first() else {
+        return "empty cell".to_string();
+    };
+    let head = clip(first, 54);
+    match lines.last() {
+        Some(tail) if lines.len() > 1 && tail != first => {
+            format!("{head}  \u{22ef}  {}", clip(tail, 38))
+        }
+        _ => head,
+    }
+}
+
+fn clip(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(limit.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
 }
 
 // ── markup ──────────────────────────────────────────────────────────
@@ -1096,5 +1122,28 @@ mod image_tests {
         let (rows, _) = build(std::slice::from_ref(&message), 1);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, KIND_IMAGE);
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    fn title_of(code: &str) -> String {
+        let args = serde_json::json!({ "code": code });
+        tool_cell("python_repl", "call_0_x", &args).title
+    }
+
+    #[test]
+    fn two_calls_that_open_the_same_way_still_read_differently() {
+        let first = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('a.log')";
+        let second = "h = bash(\"cd '/repo' && cargo test -p pa-ui | grep -E 'test result'\")\nlog = open('b.log')";
+        assert_ne!(title_of(first), title_of(second));
+        assert!(title_of(first).contains("⋯"));
+    }
+
+    #[test]
+    fn a_one_line_call_is_just_that_line() {
+        assert_eq!(title_of("print(1)"), "python · print(1)");
     }
 }
