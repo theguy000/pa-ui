@@ -1,5 +1,6 @@
 mod images;
 mod live;
+mod preview;
 mod transcript;
 
 slint::include_modules!();

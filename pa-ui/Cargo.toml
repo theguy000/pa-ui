@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 pa-client = { path = "../pa-client" }
 serde_json = "1"
+regex = "1"
+fancy-regex = "0.14"
 slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2", "image-default-formats"] }
 
 [build-dependencies]
