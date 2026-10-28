@@ -1070,7 +1070,7 @@ export component AppWindow inherits Window {
     // images ride beside the text: the strip is the attachment list, and the
     // prompt carries whatever is in it when the message is sent
     callback attach-requested();
-    callback attach-pasted();
+    callback attach-pasted() -> bool;
     callback attachment-removed(int);
     callback model-picked(string, string);
     callback model-menu-opened;
@@ -1781,11 +1781,20 @@ export component AppWindow inherits Window {
                             }
                             // Ctrl+Shift+V attaches an image from the clipboard;
                             // plain Ctrl+V stays text paste
-                            if event.modifiers.control && event.modifiers.shift
-                                && event.text == "v"
+                            // One key for both kinds of paste: Ctrl+V attaches the
+                            // image when the clipboard holds one, and otherwise
+                            // falls through to the text input's own paste. The text
+                            // of a chorded key is not always the letter — with
+                            // control it arrives as the control character, with
+                            // shift as the capital — so all three are the same key.
+                            if event.modifiers.control
+                                && (event.text == "v" || event.text == "V"
+                                    || event.text == "\u{16}")
                             {
-                                root.attach-pasted();
-                                return EventResult.accept;
+                                if root.attach-pasted() {
+                                    return EventResult.accept;
+                                }
+                                return EventResult.reject;
                             }
                             if event.text == Key.Escape {
                                 root.abort-requested();

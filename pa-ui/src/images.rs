@@ -100,6 +100,45 @@ fn attach(bytes: Vec<u8>) -> Option<Attachment> {
     })
 }
 
+
+/// A PowerShell invocation that never paints a console window: the child is a
+/// console app, and a black box flashing over the composer is not part of the UI.
+#[cfg(windows)]
+fn powershell(script: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = Command::new("powershell");
+    command
+        .args(["-STA", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null());
+    command
+}
+
+/// Is a bitmap on the clipboard right now? One cheap user32 call, so a plain text
+/// paste never pays for a PowerShell round trip — and so Ctrl+V can decide, before
+/// the key is consumed, whether it is pasting text or attaching an image.
+#[cfg(windows)]
+#[must_use]
+pub fn clipboard_has_image() -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
+    }
+    // CF_DIB and CF_DIBV5 are what a copy from a browser, a screenshot tool or a
+    // paint program puts down; Explorer's file copy (CF_HDROP) deliberately does
+    // not count — a file is the picker's job, not a paste's.
+    const CF_DIB: u32 = 8;
+    const CF_DIBV5: u32 = 17;
+    unsafe { IsClipboardFormatAvailable(CF_DIB) != 0 || IsClipboardFormatAvailable(CF_DIBV5) != 0 }
+}
+
+#[cfg(not(windows))]
+#[must_use]
+pub fn clipboard_has_image() -> bool {
+    false
+}
+
 /// Read an image off the Windows clipboard, if there is one. PowerShell runs the
 /// save because it owns the OS pieces (`Clipboard`, `Drawing`) without dragging a
 /// windowing toolkit into this crate.
@@ -121,8 +160,7 @@ pub fn read_clipboard() -> Option<Attachment> {
          $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); exit 0",
         path.display().to_string().replace('\'', "''")
     );
-    let status = Command::new("powershell")
-        .args(["-STA", "-NoProfile", "-NonInteractive", "-Command", &script])
+    let status = powershell(&script)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -147,8 +185,9 @@ pub fn pick_files() -> Vec<Attachment> {
          $d.Filter='Images|*.png;*.jpg;*.jpeg;*.webp;*.gif|All files|*.*'; \
          if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { \
              $d.FileNames | ForEach-Object { Write-Output $_ } }";
-    let Ok(output) = Command::new("powershell")
-        .args(["-STA", "-NoProfile", "-NonInteractive", "-Command", script])
+    let Ok(output) = powershell(script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .output()
     else {
         return Vec::new();

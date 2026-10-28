@@ -241,10 +241,19 @@ fn main() -> Result<(), slint::PlatformError> {
         });
         let tx_paste = attach_tx.clone();
         ui.on_attach_pasted(move || {
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[attach] paste chord");
+            }
+            // the answer decides the key: true consumes it, false lets the text
+            // input paste whatever text is on the clipboard
+            if !images::clipboard_has_image() {
+                return false;
+            }
             let tx = tx_paste.clone();
             std::thread::spawn(move || {
                 let _ = tx.send(images::read_clipboard().into_iter().collect());
             });
+            true
         });
         let attachments = attachments.clone();
         let model = attachment_model.clone();
