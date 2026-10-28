@@ -1016,7 +1016,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         .and_then(serde_json::Value::as_u64)
                         .unwrap_or(0);
                     let cursor = page_cursor(&last_entry);
-                    if tail_sig == Some((cursor, newest)) {
+                    // A closed turn reconciles even when the page is the same
+                    // one the busy path already folded in: that page was
+                    // appended beside the streamed row, and the signature alone
+                    // would keep both copies on screen for good.
+                    if tail_sig == Some((cursor, newest)) && !fresh {
                         continue;
                     }
                     // a quiet live row is replaced by the store's copy
