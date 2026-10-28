@@ -709,6 +709,112 @@ component TranscriptRow inherits VerticalLayout {
     }
 }
 
+// One line of the context ledger: the label, then the value flush right in a
+// fixed slot so the whole column of numbers has one edge to line up on.
+component Ledger inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> ink: #b0b1a8;
+    height: 16px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: root.label;
+            color: #6b6e63;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+        Text {
+            text: root.value;
+            color: root.ink;
+            font-size: 10.5px;
+            width: 58px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// The context card, shared by the ring's hover popup and the right column: the
+// window first (how close the session is to forgetting), then the counts, then
+// the money - one question at two scales.
+component ContextCard inherits Rectangle {
+    in property <float> fill: 0.0;
+    in property <string> used: "";
+    in property <string> percent: "";
+    in property <string> messages: "";
+    in property <string> tools: "";
+    in property <string> input: "";
+    in property <string> output: "";
+    in property <string> cached: "";
+    in property <string> cost: "";
+    in property <string> cost-family: "";
+    in property <bool> cost-family-on: false;
+    background: transparent;
+    VerticalLayout {
+        spacing: 6px;
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            Text {
+                text: "context";
+                color: #6b6e63;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Text {
+                text: root.percent;
+                color: #e7e5df;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        // the bar answers "how close am I" before a single number is read
+        Rectangle {
+            height: 3px;
+            border-radius: 1.5px;
+            background: #23251f;
+            Rectangle {
+                x: 0;
+                y: 0;
+                height: parent.height;
+                width: parent.width * root.fill;
+                border-radius: 1.5px;
+                background: #a18e41;
+            }
+        }
+        Text {
+            text: root.used;
+            color: #8b8c85;
+            font-size: 10px;
+        }
+        Rectangle { height: 1px; background: #1c1e19; }
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 1px;
+            Ledger { label: "messages"; value: root.messages; }
+            Ledger { label: "tools"; value: root.tools; }
+            Ledger { label: "in"; value: root.input; }
+            Ledger { label: "out"; value: root.output; }
+            Ledger { label: "cached"; value: root.cached; }
+        }
+        Rectangle { height: 1px; background: #1c1e19; }
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 1px;
+            Ledger { label: "cost"; value: root.cost; ink: #d9d7cd; }
+            if root.cost-family-on : Ledger {
+                label: "with subagents";
+                value: root.cost-family;
+                ink: #d9d7cd;
+            }
+        }
+    }
+}
+
 component Chip inherits Rectangle {
     in property <string> label;
     in property <bool> open;
@@ -878,7 +984,15 @@ export component AppWindow inherits Window {
     in-out property <length> drag-start-y: 0px;
     in-out property <length> drag-start-h: 0px;
     in-out property <string> context-text: "";
-    in-out property <string> stats-text: "";
+    in-out property <string> ctx-percent: "";
+    in-out property <string> stat-messages: "";
+    in-out property <string> stat-tools: "";
+    in-out property <string> stat-in: "";
+    in-out property <string> stat-out: "";
+    in-out property <string> stat-cache: "";
+    in-out property <string> cost-session: "";
+    in-out property <string> cost-family: "";
+    in-out property <bool> cost-family-on: false;
     in-out property <bool> ctx-hover: false;
     in-out property <string> editing-id: "";
     in property <string> status-line: "connecting";
@@ -1794,7 +1908,7 @@ export component AppWindow inherits Window {
                 if root.ctx-hover : Rectangle {
                     x: -self.width + 20px;
                     y: -self.height - 14px;
-                    width: 210px;
+                    width: 216px;
                     height: self.preferred-height;
                     background: #171814;
                     border-color: #2a2c24;
@@ -1807,14 +1921,18 @@ export component AppWindow inherits Window {
                         padding-right: 12px;
                         padding-top: 9px;
                         padding-bottom: 9px;
-                        spacing: 4px;
-                        Text { text: "context"; color: #565a4f; font-size: 10px; }
-                        Text { text: root.context-text; color: #e0dcc8; font-size: 12px; }
-                        Text {
-                            text: root.stats-text;
-                            color: #8b8c85;
-                            font-size: 10px;
-                            wrap: word-wrap;
+                        ContextCard {
+                            fill: root.context-fill;
+                            used: root.context-text;
+                            percent: root.ctx-percent;
+                            messages: root.stat-messages;
+                            tools: root.stat-tools;
+                            input: root.stat-in;
+                            output: root.stat-out;
+                            cached: root.stat-cache;
+                            cost: root.cost-session;
+                            cost-family: root.cost-family;
+                            cost-family-on: root.cost-family-on;
                         }
                     }
                 }
@@ -1901,43 +2019,6 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: 12px;
                     spacing: 10px;
-
-                    Rectangle {
-                        height: 16px;
-                        Text {
-                            text: "session";
-                            color: #565a4f;
-                            font-size: 10px;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    // the ring lives in the status row; the panel keeps the numbers
-                    HorizontalLayout {
-                        spacing: 6px;
-                        Text {
-                            text: "context";
-                            color: #8b8c85;
-                            font-size: 10px;
-                            vertical-alignment: center;
-                        }
-                        Rectangle { horizontal-stretch: 1; background: transparent; }
-                        Text {
-                            text: root.context-text;
-                            color: #565a4f;
-                            font-size: 10px;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    Text {
-                        text: root.stats-text;
-                        color: #565a4f;
-                        font-size: 10px;
-                        wrap: word-wrap;
-                    }
-
-                    Rectangle { height: 1px; background: #1c1e19; }
 
                     Text {
                         text: "review";

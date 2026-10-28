@@ -248,6 +248,9 @@ pub struct SessionRow {
     pub is_quota_parked: bool,
     pub worker_state: String,
     pub has_subagents: bool,
+    /// The parent's `sessionId` for a subagent's own session: the link the
+    /// family cost rolls up.
+    pub parent: String,
     pub last_activity: String,
     pub modified: String,
 }
@@ -352,6 +355,7 @@ impl SessionRow {
                 .get("hasRunningSubagents")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            parent: text("parentSessionId"),
             last_activity: text("lastActivityAt"),
             modified: text("modified"),
         }

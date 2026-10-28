@@ -422,6 +422,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut stream_text = String::new();
     let mut stream_thinking = String::new();
     let mut stream_key: Option<String> = None;
+    // when the row's first delta landed: the update timestamps are what tell a
+    // real stream from one paint at the end
+    let mut stream_started = SystemTime::now();
     // when the stream last moved: a live row that has gone quiet is not proof
     // the turn is still writing, only that we stopped hearing about it
     let mut stream_at = SystemTime::now();
@@ -819,20 +822,25 @@ fn main() -> Result<(), slint::PlatformError> {
                         .get("assistantMessageEvent")
                         .filter(|value| !value.is_null())
                         .unwrap_or(&event);
+                    let delta_kind = delta_event
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
                     if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
-                        let thinking = delta_event
-                            .get("type")
-                            .and_then(serde_json::Value::as_str)
-                            .is_some_and(|kind| kind.starts_with("thinking"));
                         if stream_key.as_deref() != Some(key.as_str()) {
                             stream_key = Some(key.clone());
                             stream_text.clear();
                             stream_thinking.clear();
+                            stream_started = SystemTime::now();
                         }
-                        if thinking {
-                            stream_thinking.push_str(delta);
-                        } else {
+                        // Only the prose belongs in the body. A tool call also
+                        // streams deltas, and they are the call's JSON: feeding
+                        // them in printed the code as text, then the real tool
+                        // row arrived and it looked like the code had moved.
+                        if delta_kind.starts_with("text") {
                             stream_text.push_str(delta);
+                        } else if delta_kind.starts_with("thinking") {
+                            stream_thinking.push_str(delta);
                         }
                     }
                     // before the first delta arrives the shell is all there is
@@ -869,10 +877,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     stream_at = SystemTime::now();
                     if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
                         eprintln!(
-                            "[stream] {key} patch row {} (shell {} / streamed {} chars)",
+                            "[stream] {key} +{:>5}ms patch row {} (shell {} / streamed {} chars, {})",
+                            stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
                             live_row.as_ref().map_or(usize::MAX, |(_, index)| *index),
                             message_text(message).chars().count(),
-                            stream_text.chars().count()
+                            stream_text.chars().count(),
+                            delta_kind
                         );
                     }
                     if kind == Some("message_end") {
@@ -961,24 +971,60 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_context_fill(fill.clamp(0.0, 1.0));
                     ui.set_context_text(
                         format!(
-                            "{} of {} · {:.0}%",
+                            "{} / {}",
                             tokens(stats.context_tokens),
-                            tokens(stats.context_window),
-                            stats.percent
+                            tokens(stats.context_window)
                         )
                         .into(),
                     );
-                    ui.set_stats_text(
-                        format!(
-                            "{} messages · {} tools\nin {} · out {} · cache {}",
-                            stats.messages,
-                            stats.tool_calls,
-                            tokens(stats.input_tokens),
-                            tokens(stats.output_tokens),
-                            tokens(stats.cache_read)
-                        )
+                    ui.set_ctx_percent(format!("{:.0}%", stats.percent).into());
+                    ui.set_stat_messages(stats.messages.to_string().into());
+                    ui.set_stat_tools(stats.tool_calls.to_string().into());
+                    ui.set_stat_in(tokens(stats.input_tokens).into());
+                    ui.set_stat_out(tokens(stats.output_tokens).into());
+                    ui.set_stat_cache(tokens(stats.cache_read).into());
+                    // A model with no price in the catalog reports zero, and
+                    // "$0.00" would claim the run was free: say the number is
+                    // unknown rather than invent one.
+                    let spent = stats.input_tokens + stats.output_tokens + stats.cache_read;
+                    ui.set_cost_session(
+                        if stats.cost > 0.0 {
+                            format!("${:.2}", stats.cost)
+                        } else if spent > 0 {
+                            "unpriced".to_string()
+                        } else {
+                            "$0.00".to_string()
+                        }
                         .into(),
                     );
+                    // What this session costs on its own understates it once it
+                    // has spawned: a child's spend is the same bill. The child
+                    // rows carry their own cost and name their parent, so the
+                    // family total needs no extra command.
+                    let mut children_cost = 0.0f64;
+                    let mut has_children = false;
+                    if let Ok(cache) = sessions_cache.try_borrow() {
+                        let own_sid = cache
+                            .iter()
+                            .find(|row| row.id == session)
+                            .map(|row| row.session_id.clone());
+                        if let Some(own_sid) = own_sid.filter(|sid| !sid.is_empty()) {
+                            for row in cache.iter().filter(|row| row.parent == own_sid) {
+                                has_children = true;
+                                children_cost += row.cost;
+                            }
+                        }
+                    }
+                    let family = stats.cost + children_cost;
+                    ui.set_cost_family(
+                        if family > 0.0 {
+                            format!("${:.2}", family)
+                        } else {
+                            "unpriced".to_string()
+                        }
+                        .into(),
+                    );
+                    ui.set_cost_family_on(has_children);
                 }
                 Msg::Reconnected => {
                     loaded = None;
