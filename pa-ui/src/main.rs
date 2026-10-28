@@ -200,6 +200,17 @@ fn main() -> Result<(), slint::PlatformError> {
                     .iter()
                     .find(|entry| entry.id == model && entry.provider == provider)
                     .is_none_or(|entry| entry.supports_images);
+                if capable && ui.get_busy() {
+                    // An image sent mid-turn is delivered as text only: the
+                    // daemon folds the prompt into the running turn, and images
+                    // cannot join an in-flight request. The message arrives with
+                    // the picture missing, which reads as "ignored".
+                    ui.set_status_line(
+                        "images send when the turn finishes - press send again after it stops"
+                            .into(),
+                    );
+                    return;
+                }
                 if !capable {
                     ui.set_status_line(format!(
                         "{} cannot take images - switch to a vision model with /model, then send",

@@ -1170,3 +1170,96 @@ mod image_probe {
         assert!(text, "the prompt never became a message");
     }
 }
+
+#[cfg(test)]
+mod queue_image_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// Probe: does a prompt carrying an image survive being QUEUED behind a
+    /// running turn? The user's window is busy whenever they attach an image,
+    /// which is why every image prompt they send disappears.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn queued_image_prompt_lands() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let _ = send_prompt(&client, &session, "first", &[]).expect("first");
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let images = vec![json!({"type": "image", "data": png, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "queued with image", &images).expect("second");
+        eprintln!("queued admission: {id}");
+        std::thread::sleep(std::time::Duration::from_secs(25));
+        let (messages, _cur, _more) = get_tail(&client, &session, 40).expect("tail");
+        let mut kinds: Vec<String> = Vec::new();
+        for record in &messages {
+            let Some(message) = record.get("message") else { continue };
+            if message.get("role").and_then(Value::as_str) != Some("user") {
+                continue;
+            }
+            let Some(blocks) = message.get("content").and_then(Value::as_array) else { continue };
+            let has_image = blocks.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("image"));
+            let text: String = blocks.iter().filter_map(|b| b.get("text").and_then(Value::as_str)).collect();
+            kinds.push(format!("{} image={has_image}", text.trim()));
+        }
+        eprintln!("user rows: {kinds:?}");
+    }
+}
+
+#[cfg(test)]
+mod big_image_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// Probe: is there a size at which a prompt carrying an image stops landing?
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn large_image_prompt_lands() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let big = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==".to_string() + &"A".repeat(96_000);
+        let images = vec![json!({"type": "image", "data": big, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "big image probe", &images).expect("send");
+        eprintln!("admission: {id} ({} base64 chars)", images[0]["data"].as_str().unwrap().len());
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        eprintln!("session file: {session}");
+    }
+}
+
+#[cfg(test)]
+mod live_queue_probe {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn print_live_queue() {
+        let client = Client::connect().expect("connect");
+        let session = "4aca1ad66bb5";
+        eprintln!("state: {:?}", session_state(&client, session).map(|s| format!("{}/{} streaming={} ", s.provider, s.model_id, s.is_streaming)));
+        match get_queue(&client, session) {
+            Ok((steering, follow_up)) => eprintln!("queue steering={steering:?} follow_up={follow_up:?}"),
+            Err(error) => eprintln!("queue error: {error}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod catalog_probe {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn print_image_capability() {
+        let client = Client::connect().expect("connect");
+        let catalog = model_catalog(&client, "4aca1ad66bb5").expect("catalog");
+        let hit: Vec<String> = catalog
+            .iter()
+            .filter(|entry| entry.id.contains("DeepSeek-V4.1-Flash-1017"))
+            .map(|entry| format!("{}/{} images={}", entry.provider, entry.id, entry.supports_images))
+            .collect();
+        eprintln!("catalog: {hit:?} (of {} models)", catalog.len());
+        let vision = catalog.iter().filter(|e| e.supports_images).count();
+        eprintln!("models declaring image input: {vision}");
+    }
+}
