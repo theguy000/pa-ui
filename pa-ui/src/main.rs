@@ -152,6 +152,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // the text of a prompt we drew optimistically, so the daemon's echo of the
     // same user message does not become a second row
     let pending_user: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    // the last user message the daemon told us about, so its several frames
+    // draw one row
+    let mut drawn_user: Option<String> = None;
     let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
     let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
     ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
@@ -205,33 +208,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // queue lanes and only becomes a row once it actually runs. Drawing
             // it in the transcript first was the flash - the bubble appeared,
             // the queue arrived, the row was swept away and everything shifted.
-            if ui.get_busy() || ui.get_queued_count() > 0 {
-                // Nothing is drawn here. A guessed queue entry is a promise the
-                // daemon may not keep: sent at the tail of a turn it starts
-                // straight away, so the lane showed the message for a moment and
-                // then swept it away on the next poll. The worker asks for the
-                // real queue as soon as the prompt is accepted.
-            } else {
-                // The echo carries the pictures too: the store will show the
-                // message this way once it lands, and the optimistic row has to
-                // match it or the send reads as text that lost its image.
-                let mut content: Vec<serde_json::Value> = Vec::new();
-                if !message.is_empty() {
-                    content.push(serde_json::json!({"type": "text", "text": message}));
-                }
-                content.extend(blocks.iter().cloned());
-                let echo = serde_json::json!({
-                    "role": "user",
-                    "content": content,
-                });
-                for row in transcript::build(std::slice::from_ref(&echo), 1).0 {
-                    rows.borrow_mut().push(row.clone());
-                    model.push(to_slint(&row));
-                }
-                trace_rows("send: optimistic row", &rows);
-                scroll_to_end_when_ready(&weak);
-                *pending_user.borrow_mut() = Some(message.clone());
-            }
+            // Nothing is drawn here. Tthe row appears when the daemon echoes the
+            // message - the same way the TUI does it - so the transcript never
+            // shows a message the daemon has not accepted, and never has to take
+            // one back.
+            *pending_user.borrow_mut() = Some(message.clone());
             // The turn is already starting; the poll that reports it is up to a
             // second away, and until then the button still offers to send, so a
             // second press queues instead of stopping. Busy starts here.
@@ -966,9 +947,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     // a prompt sent while this snapshot was in flight: the
                     // store predates it, so the row we drew has to survive the
                     // rebuild
-                    let pending = pending_user.borrow();
-                    keep_pending_prompt(&mut built, pending.as_deref());
-                    drop(pending);
                     dump_rows(&built);
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     let count = slint_rows.len();
@@ -1077,9 +1055,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     // the same hold on every poll, or the prompt we drew
                     // vanishes on the first rebuild and the transcript jumps
-                    let pending = pending_user.borrow();
-                    keep_pending_prompt(&mut built, pending.as_deref());
-                    drop(pending);
                     if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
@@ -1185,15 +1160,37 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     let role = message.get("role").and_then(serde_json::Value::as_str);
                     if role == Some("user") {
-                        // our own prompt echo: the optimistic row already exists
+                        // Drawn now, because the daemon said so. Never at send
+                        // time: a row on screen is a fact, not a guess.
                         let text = message_text(message);
-                        let mut slot = pending_user.borrow_mut();
-                        if slot.as_deref() == Some(text.trim()) {
-                            if kind == Some("message_end") {
-                                *slot = None;
+                        let stamp = message
+                            .get("timestamp")
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0);
+                        let key = format!(
+                            "{stamp}:{}:{}",
+                            text.chars().count(),
+                            text.chars().take(40).collect::<String>()
+                        );
+                        if drawn_user.as_deref() != Some(key.as_str()) {
+                            drawn_user = Some(key);
+                            let built = transcript::build(std::slice::from_ref(message), 1).0;
+                            {
+                                let mut store = rows_store_ui.borrow_mut();
+                                for row in &built {
+                                    store.push(row.clone());
+                                }
                             }
-                            continue;
+                            for row in &built {
+                                row_model_ui.push(to_slint(row));
+                            }
+                            trace_rows("user row from the daemon", &rows_store_ui);
+                            scroll_to_end_when_ready(&ui.as_weak());
                         }
+                        if kind == Some("message_end") {
+                            *pending_user.borrow_mut() = None;
+                        }
+                        continue;
                     }
                     if role != Some("assistant") {
                         continue;
@@ -2091,26 +2088,6 @@ fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
         })
         .collect();
     eprintln!("[rows] {what:24} n={:<4} tail={:?}", rows.len(), tail);
-}
-
-fn keep_pending_prompt(built: &mut Vec<transcript::Row>, pending: Option<&str>) {
-    let Some(text) = pending else { return };
-    let echo = serde_json::json!({
-        "role": "user",
-        "content": [{ "type": "text", "text": text }],
-    });
-    let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1).0.into_iter().next()
-    else {
-        return;
-    };
-    let already = built
-        .iter()
-        .rev()
-        .take(8)
-        .any(|row| row.kind == candidate.kind && row.body == candidate.body);
-    if !already {
-        built.push(candidate);
-    }
 }
 
 fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
