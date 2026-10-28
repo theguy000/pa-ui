@@ -514,18 +514,26 @@ pub fn get_tail(
 ///
 /// # Errors
 /// Fails only on transport errors (a closed pipe).
-pub fn send_prompt(client: &Client, session: &str, message: &str) -> std::io::Result<String> {
-    client.send(
-        "prompt",
-        json!({
-            "activeSessionId": session,
-            "message": message,
-            // without this the daemon refuses a prompt sent mid-turn instead
-            // of holding it: `queueIfBusy: false` never queues
-            "queueIfBusy": true,
-            "streamingBehavior": "followUp",
-        }),
-    )
+pub fn send_prompt(
+    client: &Client,
+    session: &str,
+    message: &str,
+    images: &[Value],
+) -> std::io::Result<String> {
+    let mut payload = json!({
+        "activeSessionId": session,
+        "message": message,
+        // without this the daemon refuses a prompt sent mid-turn instead
+        // of holding it: `queueIfBusy: false` never queues
+        "queueIfBusy": true,
+        "streamingBehavior": "followUp",
+    });
+    if !images.is_empty() {
+        // `{type:"image", data:<base64>, mimeType}`; the daemon drops entries
+        // missing either half rather than failing the turn.
+        payload["images"] = Value::Array(images.to_vec());
+    }
+    client.send("prompt", payload)
 }
 
 /// `abort` → stop the running turn.
@@ -575,16 +583,18 @@ pub fn steer_prompt(
     client: &Client,
     session: &str,
     message: &str,
+    images: &[Value],
 ) -> std::io::Result<String> {
-    client.send(
-        "prompt",
-        json!({
-            "activeSessionId": session,
-            "message": message,
-            "streamingBehavior": "steer",
-            "queueIfBusy": true,
-        }),
-    )
+    let mut payload = json!({
+        "activeSessionId": session,
+        "message": message,
+        "streamingBehavior": "steer",
+        "queueIfBusy": true,
+    });
+    if !images.is_empty() {
+        payload["images"] = Value::Array(images.to_vec());
+    }
+    client.send("prompt", payload)
 }
 
 /// `get_queue` → the messages stacked behind the running turn.

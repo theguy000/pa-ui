@@ -1,3 +1,4 @@
+mod images;
 mod transcript;
 
 slint::include_modules!();
@@ -25,8 +26,16 @@ enum Job {
     Rename { session: String, name: String },
     Attach { session: String },
     Tail { session: String, fresh: bool },
-    Prompt { session: String, message: String },
-    Steer { session: String, message: String },
+    Prompt {
+        session: String,
+        message: String,
+        images: Vec<serde_json::Value>,
+    },
+    Steer {
+        session: String,
+        message: String,
+        images: Vec<serde_json::Value>,
+    },
     Abort { session: String },
     Queue { session: String },
     ModelCatalog { session: String },
@@ -132,6 +141,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // the text of a prompt we drew optimistically, so the daemon's echo of the
     // same user message does not become a second row
     let pending_user: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
+    let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
+    ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
 
     // the model catalog and which provider groups the user has folded away.
     // Collapse lives here, not in Slint: it has to survive closing the menu.
@@ -148,12 +160,14 @@ fn main() -> Result<(), slint::PlatformError> {
         let rows = rows_store.clone();
         let model = row_model.clone();
         let pending_user = pending_user.clone();
+        let attachments = attachments.clone();
+        let attachment_model = attachment_model.clone();
         ui.on_send_requested(move |text| {
             if std::env::var("PA_DEBUG").is_ok() {
                 eprintln!("[send] callback fired with {text:?}");
             }
             let message = text.trim().to_string();
-            if message.is_empty() {
+            if message.is_empty() && attachments.borrow().is_empty() {
                 return;
             }
             let Some(ui) = weak.upgrade() else { return };
@@ -164,6 +178,15 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
+            let blocks: Vec<serde_json::Value> = {
+                let mut held = attachments.borrow_mut();
+                let blocks = held.iter().map(images::Attachment::block).collect();
+                held.clear();
+                blocks
+            };
+            while attachment_model.row_count() > 0 {
+                attachment_model.remove(attachment_model.row_count() - 1);
+            }
             // Where the message belongs depends on whether a turn owns the
             // transcript. While one runs, this is a follow-up: it waits in the
             // queue lanes and only becomes a row once it actually runs. Drawing
@@ -197,8 +220,72 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = weak.upgrade() {
                 ui.set_status_line("sent".into());
             }
-            let _ = jobs.send(Job::Prompt { session, message });
+            let _ = jobs.send(Job::Prompt { session, message, images: blocks });
         });
+    }
+
+    // Attachments: the bytes live here, the model holds the thumbnails. The
+    // readers shell out, so they run off the event loop and come back through
+    // `invoke_from_event_loop`.
+    // The readers block (a dialog, a PowerShell round trip), so they run on their
+    // own thread and drop their result into a channel the event loop drains: an
+    // Rc<VecModel> cannot cross a thread boundary, a Vec can.
+    let (attach_tx, attach_rx) = std::sync::mpsc::channel::<Vec<images::Attachment>>();
+    {
+        let tx_pick = attach_tx.clone();
+        ui.on_attach_requested(move || {
+            let tx = tx_pick.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(images::pick_files());
+            });
+        });
+        let tx_paste = attach_tx.clone();
+        ui.on_attach_pasted(move || {
+            let tx = tx_paste.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(images::read_clipboard().into_iter().collect());
+            });
+        });
+        let attachments = attachments.clone();
+        let model = attachment_model.clone();
+        ui.on_attachment_removed(move |index| {
+            let index = usize::try_from(index).unwrap_or(usize::MAX);
+            let mut held = attachments.borrow_mut();
+            if index < held.len() {
+                held.remove(index);
+                model.remove(index);
+            }
+        });
+    }
+    {
+        let attachments = attachments.clone();
+        let model = attachment_model.clone();
+        let drain = Timer::default();
+        drain.start(TimerMode::Repeated, std::time::Duration::from_millis(120), move || {
+            while let Ok(found) = attach_rx.try_recv() {
+                let mut held = attachments.borrow_mut();
+                for attachment in found {
+                    match slint::Image::load_from_path(&attachment.path) {
+                        Ok(thumb) => {
+                            if std::env::var("PA_DEBUG").is_ok() {
+                                eprintln!(
+                                    "[attach] {} ({} base64 chars) {}x{}",
+                                    attachment.mime,
+                                    attachment.base64.len(),
+                                    thumb.size().width,
+                                    thumb.size().height
+                                );
+                            }
+                            held.push(attachment);
+                            model.push(thumb);
+                        }
+                        // sendable without a preview; a blank tile is worse than none
+                        Err(error) => eprintln!("[attach] no thumbnail: {error}"),
+                    }
+                }
+            }
+        });
+        std::mem::forget(drain);
     }
 
     {
@@ -326,6 +413,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let jobs = job_tx.clone();
         let pending_user = pending_user.clone();
+        let attachments = attachments.clone();
+        let attachment_model = attachment_model.clone();
         ui.on_steer_requested(move |text| {
             let message = text.trim().to_string();
             if message.is_empty() {
@@ -338,9 +427,18 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
+            let blocks: Vec<serde_json::Value> = {
+                let mut held = attachments.borrow_mut();
+                let blocks = held.iter().map(images::Attachment::block).collect();
+                held.clear();
+                blocks
+            };
+            while attachment_model.row_count() > 0 {
+                attachment_model.remove(attachment_model.row_count() - 1);
+            }
             *pending_user.borrow_mut() = None;
             ui.set_status_line("steered".into());
-            let _ = jobs.send(Job::Steer { session, message });
+            let _ = jobs.send(Job::Steer { session, message, images: blocks });
         });
     }
 
@@ -1487,8 +1585,8 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
                     }
                 }
-                Job::Steer { session, message } => {
-                    let outcome = steer_prompt(active, &session, &message);
+                Job::Steer { session, message, images } => {
+                    let outcome = steer_prompt(active, &session, &message, &images);
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!("[steer] session={session} message={message:?} outcome={outcome:?}");
                     }
@@ -1496,8 +1594,8 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
                     }
                 }
-                Job::Prompt { session, message } => {
-                    let outcome = send_prompt(active, &session, &message);
+                Job::Prompt { session, message, images } => {
+                    let outcome = send_prompt(active, &session, &message, &images);
                     if let Ok(id) = &outcome {
                         pending_prompts.push((id.clone(), message.clone()));
                     }

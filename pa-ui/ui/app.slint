@@ -983,6 +983,10 @@ export component AppWindow inherits Window {
     in-out property <float> context-fill: 0.0;
     // composer input height; the pill on its top border toggles it
     in-out property <length> composer-height: 68px;
+    in-out property <[image]> attachment-images: [];
+    // 44px tiles plus the layout's 10px spacing plus a hairline of slack
+    out property <length> attach-h: root.attachment-images.length > 0 ? 62px : 0px;
+    animate attach-h { duration: 170ms; easing: ease-out; }
     // input + box chrome (10+8 padding, 10 spacing, 24 button row, 2 borders)
     // + strip (24) + band padding (8+10)
     // 13px text is ~17px per line: 4 lines by default, 10 at most
@@ -1015,7 +1019,7 @@ export component AppWindow inherits Window {
     }
     out property <length> composer-total: root.box-height + 46px + root.busy-h;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
-    out property <length> box-height: root.composer-height + 54px;
+    out property <length> box-height: root.composer-height + 54px + root.attach-h;
     in-out property <bool> dragging: false;
     // where the handle actually sits, in window coordinates: the drag surface
     // is the whole window, so the press has to be tested against it
@@ -1063,6 +1067,11 @@ export component AppWindow inherits Window {
     callback send-requested(string);
     callback steer-requested(string);
     callback abort-requested();
+    // images ride beside the text: the strip is the attachment list, and the
+    // prompt carries whatever is in it when the message is sent
+    callback attach-requested();
+    callback attach-pasted();
+    callback attachment-removed(int);
     callback model-picked(string, string);
     callback model-menu-opened;
     callback provider-toggled(string);
@@ -1671,6 +1680,70 @@ export component AppWindow inherits Window {
         // a fixed-height window over a text input that is allowed to grow:
         // pinning its bottom edge keeps the caret (newest line) in view, which
         // a fixed-height TextInput does not do on its own
+        // thumbnails, 44px tiles at an 8px pitch, only while something is attached
+        if root.attachment-images.length > 0 : Rectangle {
+            height: 52px;
+            clip: true;
+            background: transparent;
+            HorizontalLayout {
+                y: (parent.height - 44px) / 2;
+                spacing: 8px;
+                for image[i] in root.attachment-images : Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 8px;
+                    clip: true;
+                    background: #191a15;
+                    border-width: 1px;
+                    border-color: thumb-touch.has-hover ? #3a3d32 : #2a2c24;
+
+                    Image {
+                        x: 1px;
+                        y: 1px;
+                        width: parent.width - 2px;
+                        height: parent.height - 2px;
+                        source: image;
+                        image-fit: cover;
+                    }
+                    thumb-touch := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.attachment-removed(i); }
+                    }
+                    // the × only shows when the pointer is on the tile: a strip of
+                    // crosses at rest reads as a toolbar, not as your attachment
+                    Rectangle {
+                        x: parent.width - 17px;
+                        y: 3px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: #0b0c09;
+                        opacity: thumb-touch.has-hover ? 0.92 : 0.0;
+                        animate opacity { duration: 120ms; }
+                        Rectangle {
+                            x: (parent.width - 7px) / 2;
+                            y: (parent.height - 1.5px) / 2;
+                            width: 7px;
+                            height: 1.5px;
+                            border-radius: 0.75px;
+                            background: #d9d6cc;
+                            transform-rotation: 45deg;
+                        }
+                        Rectangle {
+                            x: (parent.width - 7px) / 2;
+                            y: (parent.height - 1.5px) / 2;
+                            width: 7px;
+                            height: 1.5px;
+                            border-radius: 0.75px;
+                            background: #d9d6cc;
+                            transform-rotation: -45deg;
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+            }
+        }
+
         draft-window := DraftEditor {
             height: root.composer-height;
             text <=> root.composer-text;
@@ -1688,19 +1761,31 @@ export component AppWindow inherits Window {
                                 // the message into the turn that is running instead
                                 // of parking it behind
                                 if event.modifiers.control || event.modifiers.alt {
-                                    if root.composer-text != "" {
+                                    if root.composer-text != ""
+                                        || root.attachment-images.length > 0
+                                    {
                                         root.steer-requested(root.composer-text);
                                         root.composer-text = "";
                                     }
                                     return EventResult.accept;
                                 }
                                 if !event.modifiers.shift {
-                                    if root.composer-text != "" {
+                                    if root.composer-text != ""
+                                        || root.attachment-images.length > 0
+                                    {
                                         root.send-requested(root.composer-text);
                                         root.composer-text = "";
                                     }
                                     return EventResult.accept;
                                 }
+                            }
+                            // Ctrl+Shift+V attaches an image from the clipboard;
+                            // plain Ctrl+V stays text paste
+                            if event.modifiers.control && event.modifiers.shift
+                                && event.text == "v"
+                            {
+                                root.attach-pasted();
+                                return EventResult.accept;
                             }
                             if event.text == Key.Escape {
                                 root.abort-requested();
@@ -1993,6 +2078,34 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // attach: a plus in a quiet resting surface, same family as the rest
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 6px;
+                background: attach-touch.has-hover ? #23251f : #1a1b16;
+                animate background { duration: 120ms; }
+                Rectangle {
+                    x: (parent.width - 8px) / 2;
+                    y: (parent.height - 1.5px) / 2;
+                    width: 8px;
+                    height: 1.5px;
+                    border-radius: 0.75px;
+                    background: attach-touch.has-hover ? #b0b1a8 : #8a8d82;
+                }
+                Rectangle {
+                    x: (parent.width - 1.5px) / 2;
+                    y: (parent.height - 8px) / 2;
+                    width: 1.5px;
+                    height: 8px;
+                    border-radius: 0.75px;
+                    background: attach-touch.has-hover ? #b0b1a8 : #8a8d82;
+                }
+                attach-touch := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.attach-requested(); }
+                }
+            }
             Chip {
                 label: root.model-label;
                 open: root.model-menu;
