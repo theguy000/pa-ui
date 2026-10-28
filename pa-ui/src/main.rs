@@ -718,7 +718,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut stream_started = SystemTime::now();
     // when the stream last moved: a live row that has gone quiet is not proof
     // the turn is still writing, only that we stopped hearing about it
-    let mut stream_at = SystemTime::now();
+    let mut _stream_at = SystemTime::now();
     // the selected session's uuid: survives the id re-keying a daemon restart causes
     let mut selected_uuid: Option<String> = None;
     let mut tail_at = SystemTime::now();
@@ -1048,29 +1048,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     // (no deltas, so the quiet timer expires) would otherwise
                     // replace rows the store has not written yet and tear the
                     // transcript down by however many rows that turn had.
-                    let writing = live_row.is_some()
-                        && stream_at.elapsed().unwrap_or_default() < Duration::from_secs(15);
-                    // A closed turn (fresh) is the one moment the view is allowed
-                    // to be rewritten even while the daemon still reports busy:
-                    // appending the store's copy beside the streamed row is what
-                    // showed every answer twice, and nothing would ever take the
-                    // streamed copy back down.
-                    if (ui.get_busy() || writing) && !fresh {
-                        let shown = rows_store_ui.borrow().len();
-                        if built.len() > shown {
-                            let mut store = rows_store_ui.borrow_mut();
-                            for row in built.iter().skip(shown).filter(|row| {
-                                !(row.kind == transcript::KIND_CELL
-                                    && !row.id.is_empty()
-                                    && live_cells.contains_key(&row.id))
-                            }) {
-                                store.push(row.clone());
-                                row_model_ui.push(to_slint(row));
-                            }
-                            drop(store);
-                            trace_rows("tail append (busy)", &rows_store_ui);
-                            scroll_to_end_when_ready(&ui.as_weak());
-                        }
+                    // While this client is drawing the open turn — a live row,
+                    // or cells keyed by call id — the store's copy of that same
+                    // turn is not a second opinion worth having. Appending the
+                    // rows the store had written so far is what put the previous
+                    // answer back on screen for a few seconds after a send and
+                    // then drew the same code block twice: `built` is a rebuilt,
+                    // windowed list, so its index range stops lining up with the
+                    // rows already shown the moment the store reshapes one row or
+                    // the window slides. Nothing is appended now; the store only
+                    // speaks when nothing is open, or when a turn closes.
+                    let open = live_row.is_some() || !live_cells.is_empty();
+                    if open && !fresh {
                         tail_len = messages.len();
                         tail_sig = Some((cursor, newest));
                         continue;
@@ -1129,7 +1118,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if matches!(kind, Some("turn_end" | "agent_end")) {
                         live_row = None;
                         live_cells.clear();
-                        stream_at = SystemTime::now() - Duration::from_secs(60);
+                        _stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -1180,7 +1169,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 }
                             }
                         }
-                        stream_at = SystemTime::now();
+                        _stream_at = SystemTime::now();
                         continue;
                     }
                     let Some(message) = event.get("message") else {
@@ -1315,7 +1304,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             scroll_to_end_when_ready(&ui.as_weak());
                         }
                     }
-                    stream_at = SystemTime::now();
+                    _stream_at = SystemTime::now();
                     if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
                         eprintln!(
                             "[stream] {key} +{:>5}ms patch row {} (shell {} / streamed {} chars, {})",
