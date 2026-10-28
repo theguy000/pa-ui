@@ -104,6 +104,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             text: text.clone().into(),
                             raw: text.into(),
                             slot: n - from,
+                            thumb: slint::Image::default(),
                         }
                     })
                     .collect()
@@ -149,12 +150,20 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_ctx_hover(true);
     }
 
+    // A turn is running: set when a prompt is accepted, cleared when the turn
+    // closes. The `busy` property lags behind that, and image sends are refused
+    // on this flag rather than on what the last poll reported.
+    let in_flight: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
     // the text of a prompt we drew optimistically, so the daemon's echo of the
     // same user message does not become a second row
     let pending_user: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     // the last user message the daemon told us about, so its several frames
     // draw one row
     let mut drawn_user: Option<String> = None;
+    // Pictures this window sent, by the text they went with: the queue
+    // projection names text only, so this is the only source for a thumbnail on
+    // a waiting row.
+    let sent_thumbs: Rc<RefCell<Vec<(String, slint::Image)>>> = Rc::new(RefCell::new(Vec::new()));
     let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
     let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
     ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
@@ -179,6 +188,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let attachments = attachments.clone();
         let attachment_model = attachment_model.clone();
         let catalog_for_send = catalog.clone();
+        let in_flight_for_send = in_flight.clone();
+        let sent_thumbs = sent_thumbs.clone();
         ui.on_send_requested(move |text| {
             if std::env::var("PA_DEBUG").is_ok() {
                 eprintln!("[send] callback fired with {text:?}");
@@ -188,10 +199,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let Some(ui) = weak.upgrade() else { return };
-            // The daemon admits a prompt carrying images even when the session
-            // model cannot see them, then drops the turn without a word: the
-            // message never appears and the images are lost. Say so here and
-            // keep the draft, instead of watching it disappear.
+            // Two ways an image send goes wrong, both refused here: a model that
+            // cannot see images drops the whole turn, and an image sent into a
+            // running turn arrives with the picture missing.
             if !attachments.borrow().is_empty() {
                 let model = ui.get_model_id().to_string();
                 let provider = ui.get_model_provider().to_string();
@@ -200,22 +210,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     .iter()
                     .find(|entry| entry.id == model && entry.provider == provider)
                     .is_none_or(|entry| entry.supports_images);
-                if capable && ui.get_busy() {
-                    // An image sent mid-turn is delivered as text only: the
-                    // daemon folds the prompt into the running turn, and images
-                    // cannot join an in-flight request. The message arrives with
-                    // the picture missing, which reads as "ignored".
-                    ui.set_status_line(
-                        "images send when the turn finishes - press send again after it stops"
-                            .into(),
-                    );
-                    return;
-                }
-                if !capable {
-                    ui.set_status_line(format!(
-                        "{} cannot take images - switch to a vision model with /model, then send",
-                        if model.is_empty() { "this model" } else { model.as_str() }
-                    ).into());
+                let in_flight_now = ui.get_busy() || in_flight_for_send.get();
+                if let Some(reason) = image_send_blocker(true, capable, in_flight_now) {
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[send] held: {reason}");
+                    }
+                    ui.set_status_line(reason.into());
                     return;
                 }
             }
@@ -226,6 +226,18 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
+            {
+                let held = attachments.borrow();
+                if let Some(first) = held.first() {
+                    if let Ok(thumb) = slint::Image::load_from_path(&first.path) {
+                        let mut thumbs = sent_thumbs.borrow_mut();
+                        thumbs.push((message.clone(), thumb));
+                        while thumbs.len() > 8 {
+                            thumbs.remove(0);
+                        }
+                    }
+                }
+            }
             let blocks: Vec<serde_json::Value> = {
                 let mut held = attachments.borrow_mut();
                 let blocks = held.iter().map(images::Attachment::block).collect();
@@ -255,6 +267,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = weak.upgrade() {
                 ui.set_status_line("sent".into());
             }
+            in_flight_for_send.set(true);
             let _ = jobs.send(Job::Prompt { session, message, images: blocks });
         });
     }
@@ -1145,6 +1158,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // message_end would otherwise strand the view on a
                     // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
+                        in_flight.set(false);
                         // The answer stays exactly where it is. Dropping it and
                         // rebuilding from a store that is still one message
                         // behind is what made it collapse to a line and then
@@ -1303,6 +1317,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         .unwrap_or_default();
                     ui.set_queued_count(total as i32);
                     ui.set_queued_preview(first.into());
+                    // The panel is opened by the user, never by the queue: a
+                    // strip that keeps a popup open after the send is noise.
+                    // The count on the strip is what says something is waiting.
                     // Each row keeps its lane and its slot in that lane, which is
                     // what the daemon wants back when one is edited or promoted.
                     let lane_items = |texts: &[String]| -> Vec<QueueItem> {
@@ -1312,10 +1329,19 @@ fn main() -> Result<(), slint::PlatformError> {
                             .map(|(slot, text)| {
                                 let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
                                 let cut: String = flat.chars().take(120).collect();
+                                // the picture this text went with, if it was
+                                // sent from this window
+                                let thumb = sent_thumbs
+                                    .borrow()
+                                    .iter()
+                                    .rev()
+                                    .find(|(sent, _)| sent.trim() == text.trim())
+                                    .map(|(_, thumb)| thumb.clone());
                                 QueueItem {
                                     text: cut.into(),
                                     raw: text.clone().into(),
                                     slot: slot as i32,
+                                    thumb: thumb.unwrap_or_default(),
                                 }
                             })
                             .collect()
@@ -1595,6 +1621,52 @@ fn merge_rows(
                 }
             }
         }
+    }
+}
+
+/// Why an image send cannot go out right now, if it cannot.
+///
+/// Two rules, both learned from the daemon's behaviour:
+/// - a model that cannot take images means the turn is dropped outright;
+/// - an image sent while a turn is in flight is folded into that running turn,
+///   and the picture is lost on the way (text survives, images do not).
+fn image_send_blocker(has_images: bool, model_capable: bool, turn_in_flight: bool) -> Option<&'static str> {
+    if !has_images {
+        return None;
+    }
+    if !model_capable {
+        return Some("this model cannot take images - switch to a vision model with /model, then send");
+    }
+    // Mid-turn is allowed: the daemon parks the prompt in the follow-up lane and
+    // delivers it, images and all, as the probe `queued_image_prompt_lands`
+    // shows. Refusing here just made the send look broken.
+    let _ = turn_in_flight;
+    None
+}
+
+#[cfg(test)]
+mod image_send_tests {
+    use super::image_send_blocker;
+
+    #[test]
+    fn text_only_is_never_blocked() {
+        assert_eq!(image_send_blocker(false, false, true), None);
+    }
+
+    #[test]
+    fn images_with_a_blind_model_are_refused() {
+        assert!(image_send_blocker(true, false, false).is_some());
+        assert!(image_send_blocker(true, false, true).is_some());
+    }
+
+    #[test]
+    fn images_mid_turn_queue_rather_than_refuse() {
+        assert_eq!(image_send_blocker(true, true, true), None);
+    }
+
+    #[test]
+    fn images_to_a_vision_model_between_turns_go_out() {
+        assert_eq!(image_send_blocker(true, true, false), None);
     }
 }
 

@@ -1263,3 +1263,84 @@ mod catalog_probe {
         eprintln!("models declaring image input: {vision}");
     }
 }
+
+#[cfg(test)]
+mod midturn_image_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// Probe: send an image prompt INTO a running turn and see whether the
+    /// stored user message still carries the image.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn midturn_image_prompt() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let _ = send_prompt(&client, &session, "count slowly from one to five", &[]).expect("first");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let images = vec![json!({"type": "image", "data": png, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "midturn with image", &images).expect("second");
+        eprintln!("midturn admission: {id} | session file stem: {session}");
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    }
+}
+
+#[cfg(test)]
+mod queue_trace_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// Trace one image prompt sent while a long turn runs: is it queued, and
+    /// does it still exist after the turn settles?
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn trace_queued_image_prompt() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let _ = send_prompt(&client, &session, "Run a bash command that sleeps 20 seconds, then say done.", &[])
+            .expect("first");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        eprintln!("queue before send: {:?}", get_queue(&client, &session).map(|(s, f)| (s.len(), f.len())));
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let images = vec![json!({"type": "image", "data": png, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "trace image text", &images).expect("second");
+        eprintln!("admission: {id}");
+        for step in 0..6 {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let q = get_queue(&client, &session).map(|(s, f)| (s, f));
+            match q {
+                Ok((steering, follow_up)) => eprintln!("t+{}s steering={steering:?} follow_up={follow_up:?}", (step + 1) * 5),
+                Err(error) => eprintln!("t+{}s queue error {error}", (step + 1) * 5),
+            }
+        }
+        eprintln!("session id: {session}");
+    }
+}
+
+#[cfg(test)]
+mod abort_then_image_probe {
+    use super::*;
+    use serde_json::json;
+
+    /// After a stop, the daemon suspends queued input until a prompt resumes it.
+    /// Does an image prompt sent in that window get swallowed?
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn image_after_abort() {
+        let client = Client::connect().expect("connect");
+        let session = create_session(&client).expect("create");
+        let _ = send_prompt(&client, &session, "Run a bash command that sleeps 20 seconds, then say done.", &[])
+            .expect("first");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let _ = abort(&client, &session);
+        eprintln!("aborted");
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let images = vec![json!({"type": "image", "data": png, "mimeType": "image/png"})];
+        let id = send_prompt(&client, &session, "after abort image text", &images).expect("second");
+        eprintln!("admission after abort: {id}");
+        std::thread::sleep(std::time::Duration::from_secs(15));
+        eprintln!("session id: {session}");
+    }
+}
