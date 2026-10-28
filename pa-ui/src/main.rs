@@ -49,6 +49,16 @@ enum Job {
         text: String,
         action: String,
     },
+    /// An edit of a parked message: replaces it where it stands, so the queue
+    /// keeps its order instead of sending the message to the back.
+    QueueEdit {
+        session: String,
+        lane: String,
+        slot: usize,
+        expected: String,
+        text: String,
+        images: Vec<serde_json::Value>,
+    },
     Stats { session: String },
     SetModel { session: String, provider: String, model: String },
     /// the running model and the level it thinks at, straight from `get_state`
@@ -78,6 +88,9 @@ enum Msg {
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
     Queue { steering: Vec<String>, follow_up: Vec<String> },
+    /// the parked row went away before its edit landed: the text goes out as a
+    /// new prompt rather than being lost
+    Prompt { session: String, message: String, images: Vec<serde_json::Value> },
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
     QueueEdit { text: String },
@@ -160,6 +173,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // the last user message the daemon told us about, so its several frames
     // draw one row
     let mut drawn_user: Option<String> = None;
+    // The parked row currently held in the composer, if any: (lane, slot,
+    // expected text). Sending while this is set replaces that row instead of
+    // appending a new message to the back of the queue.
+    let editing: Rc<RefCell<Option<(String, usize, String)>>> = Rc::new(RefCell::new(None));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -190,6 +207,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let catalog_for_send = catalog.clone();
         let in_flight_for_send = in_flight.clone();
         let sent_thumbs = sent_thumbs.clone();
+        let editing_to_send = editing.clone();
         ui.on_send_requested(move |text| {
             if std::env::var("PA_DEBUG").is_ok() {
                 eprintln!("[send] callback fired with {text:?}");
@@ -246,6 +264,21 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             while attachment_model.row_count() > 0 {
                 attachment_model.remove(attachment_model.row_count() - 1);
+            }
+            // An edit of a parked message replaces it where it stands: taking it
+            // out and sending it again put it at the back of the queue, which is
+            // not what editing means.
+            if let Some((lane, slot, expected)) = editing_to_send.borrow_mut().take() {
+                ui.set_status_line("parked message updated".into());
+                let _ = jobs.send(Job::QueueEdit {
+                    session,
+                    lane,
+                    slot,
+                    expected,
+                    text: message,
+                    images: blocks,
+                });
+                return;
             }
             // Where the message belongs depends on whether a turn owns the
             // transcript. While one runs, this is a follow-up: it waits in the
@@ -599,6 +632,17 @@ fn main() -> Result<(), slint::PlatformError> {
                     .map(|row| row.raw.to_string())
             };
             let Some(text) = text else { return };
+            if action == "edit" {
+                // The row stays where it is: it is being changed, not withdrawn.
+                *editing.borrow_mut() = Some((lane.to_string(), slot.max(0) as usize, text.clone()));
+                let _ = jobs.send(Job::Queue { session });
+                // the row's text comes back to the composer, and the row stays
+                // visible: it is being edited, not withdrawn
+                ui.set_composer_text(text.as_str().into());
+                ui.set_composer_has_text(!text.is_empty());
+                ui.set_status_line("editing the parked message".into());
+                return;
+            }
             let _ = jobs.send(Job::QueueAct {
                 session,
                 lane: lane.to_string(),
@@ -1153,6 +1197,28 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
 
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
+                    // The queue's own truth: the daemon pushes the projection
+                    // whenever either lane changes, so a delivered message leaves
+                    // the rows the moment it stops waiting. Polling alone could
+                    // only notice after the fact, and nothing polled at all while
+                    // the window sat idle.
+                    if kind == Some("session_action_update") {
+                        let lane = |name: &str| -> Vec<String> {
+                            event
+                                .get("actions")
+                                .and_then(|actions| actions.get(name))
+                                .and_then(serde_json::Value::as_array)
+                                .map(|rows| {
+                                    rows.iter()
+                                        .filter_map(serde_json::Value::as_str)
+                                        .map(str::to_string)
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        };
+                        apply_queue(&ui, &lane("steering"), &lane("followUps"), &sent_thumbs);
+                        continue;
+                    }
                     // A closed turn is reconciled from the store: the live row
                     // holds whatever text last arrived, and one dropped
                     // message_end would otherwise strand the view on a
@@ -1309,49 +1375,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
                 Msg::Queue { steering, follow_up } => {
-                    let total = steering.len() + follow_up.len();
-                    let first = steering
-                        .first()
-                        .or_else(|| follow_up.first())
-                        .cloned()
-                        .unwrap_or_default();
-                    ui.set_queued_count(total as i32);
-                    ui.set_queued_preview(first.into());
-                    // The panel is opened by the user, never by the queue: a
-                    // strip that keeps a popup open after the send is noise.
-                    // The count on the strip is what says something is waiting.
-                    // Each row keeps its lane and its slot in that lane, which is
-                    // what the daemon wants back when one is edited or promoted.
-                    let lane_items = |texts: &[String]| -> Vec<QueueItem> {
-                        texts
-                            .iter()
-                            .enumerate()
-                            .map(|(slot, text)| {
-                                let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                                let cut: String = flat.chars().take(120).collect();
-                                // the picture this text went with, if it was
-                                // sent from this window
-                                let thumb = sent_thumbs
-                                    .borrow()
-                                    .iter()
-                                    .rev()
-                                    .find(|(sent, _)| sent.trim() == text.trim())
-                                    .map(|(_, thumb)| thumb.clone());
-                                QueueItem {
-                                    text: cut.into(),
-                                    raw: text.clone().into(),
-                                    slot: slot as i32,
-                                    thumb: thumb.unwrap_or_default(),
-                                }
-                            })
-                            .collect()
-                    };
-                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(lane_items(
-                        &steering,
-                    )))));
-                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(
-                        &follow_up,
-                    )))));
+                    apply_queue(&ui, &steering, &follow_up, &sent_thumbs);
+                }
+                Msg::Prompt { session, message, images } => {
+                    in_flight.set(true);
+                    let _ = jobs.send(Job::Prompt { session, message, images });
                 }
                 Msg::NewChat(id) => {
                     // selection drives everything else: the follow-selection
@@ -1670,6 +1698,64 @@ mod image_send_tests {
     }
 }
 
+fn apply_queue(
+    ui: &AppWindow,
+    steering: &[String],
+    follow_up: &[String],
+    sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>,
+) {
+    if std::env::var("PA_DEBUG").is_ok() {
+        eprintln!(
+            "[queue] projection steering={} follow_up={steering:?}->{follow_up:?}",
+            steering.len()
+        );
+    }
+                let total = steering.len() + follow_up.len();
+                let first = steering
+                    .first()
+                    .or_else(|| follow_up.first())
+                    .cloned()
+                    .unwrap_or_default();
+                ui.set_queued_count(total as i32);
+                ui.set_queued_preview(first.into());
+                // The panel is opened by the user, never by the queue: a
+                // strip that keeps a popup open after the send is noise.
+                // The count on the strip is what says something is waiting.
+                // Each row keeps its lane and its slot in that lane, which is
+                // what the daemon wants back when one is edited or promoted.
+                let lane_items = |texts: &[String]| -> Vec<QueueItem> {
+                    texts
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, text)| {
+                            let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            let cut: String = flat.chars().take(120).collect();
+                            // the picture this text went with, if it was
+                            // sent from this window
+                            let thumb = sent_thumbs
+                                .borrow()
+                                .iter()
+                                .rev()
+                                .find(|(sent, _)| sent.trim() == text.trim())
+                                .map(|(_, thumb)| thumb.clone());
+                            QueueItem {
+                                text: cut.into(),
+                                raw: text.clone().into(),
+                                slot: slot as i32,
+                                thumb: thumb.unwrap_or_default(),
+                            }
+                        })
+                        .collect()
+                };
+                ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(lane_items(
+                    &steering,
+                )))));
+                ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(
+                    &follow_up,
+                )))));
+
+}
+
 fn dump_rows(rows: &[Row]) {
     let Ok(path) = std::env::var("PA_DUMP") else {
         return;
@@ -1864,6 +1950,40 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         });
                     }
                 },
+                Job::QueueEdit {
+                    session,
+                    lane,
+                    slot,
+                    expected,
+                    text,
+                    images,
+                } => {
+                    let mut mutation =
+                        serde_json::json!({"type": "replace", "text": text.clone()});
+                    if !images.is_empty() {
+                        // the daemon keeps the parked attachments unless a new
+                        // list is present
+                        mutation["images"] = serde_json::Value::Array(images.clone());
+                    }
+                    let outcome = mutate_queue(active, &session, &lane, slot, &expected, mutation);
+                    if std::env::var("PA_DEBUG").is_ok() {
+                        eprintln!("[queue] replace {lane}[{slot}] -> {outcome:?}");
+                    }
+                    if let Ok((steering, follow_up)) = get_queue(active, &session) {
+                        let _ = out.send(Msg::Queue { steering, follow_up });
+                    }
+                    match outcome {
+                        Ok(status) if status == "applied" => {}
+                        // the row moved or went away under us: send it as a new
+                        // message rather than lose what was typed
+                        other => {
+                            if std::env::var("PA_DEBUG").is_ok() {
+                                eprintln!("[queue] replace rejected ({other:?}); sending as new");
+                            }
+                            let _ = out.send(Msg::Prompt { session, message: text, images });
+                        }
+                    }
+                }
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
                         let _ = out.send(Msg::Stats { session, stats });
