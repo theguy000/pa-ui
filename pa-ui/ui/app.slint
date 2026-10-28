@@ -1705,44 +1705,30 @@ export component AppWindow inherits Window {
                             if root.queued-count > 0 : Rectangle {
                                 x: parent.width - self.width - 14px;
                                 y: (parent.height - self.height) / 2;
-                                width: lane-row.preferred-width + 16px;
+                                width: lane-row.preferred-width + 12px;
                                 height: 18px;
                                 border-radius: 6px;
-                                background: lane-touch.has-hover || root.queue-open ? #23251f : transparent;
+                                background: lane-touch.has-hover || root.queue-open ? #1f211a : transparent;
 
                                 lane-row := HorizontalLayout {
-                                    x: 8px;
+                                    x: 6px;
                                     y: 0;
                                     height: parent.height;
-                                    spacing: 7px;
+                                    spacing: 5px;
                                     alignment: center;
-                                    if root.queued-steering.length > 0 : Text {
-                                        text: root.queued-steering.length + " INTO TURN";
-                                        color: #a18e41;
-                                        font-size: 9px;
-                                        letter-spacing: 0.5px;
+                                    // which turn a message joins is the panel's
+                                    // business, not this glance: the strip only
+                                    // says something is waiting
+                                    Text {
+                                        text: root.queued-count;
+                                        color: lane-touch.has-hover ? #e7e5df : #b0b1a8;
+                                        font-size: 10px;
                                         vertical-alignment: center;
                                     }
-                                    // the rule is a layout child, so it takes the
-                                    // row's height and centres the 9px hairline
-                                    // itself - a fixed-height child sat at the top
-                                    if root.queued-steering.length > 0 && root.queued-followup.length > 0 : Rectangle {
-                                        width: 1px;
-                                        height: 100%;
-
-                                        Rectangle {
-                                            x: 0;
-                                            y: (parent.height - self.height) / 2;
-                                            width: 1px;
-                                            height: 9px;
-                                            background: #2c2f26;
-                                        }
-                                    }
-                                    if root.queued-followup.length > 0 : Text {
-                                        text: root.queued-followup.length + " NEXT";
-                                        color: #8b8c85;
-                                        font-size: 9px;
-                                        letter-spacing: 0.5px;
+                                    Text {
+                                        text: "queued";
+                                        color: lane-touch.has-hover ? #b0b1a8 : #6b6e63;
+                                        font-size: 10px;
                                         vertical-alignment: center;
                                     }
                                 }
@@ -2785,4 +2771,5 @@ export component AppWindow inherits Window {
             opacity: 0;
         }
     }
+
 }
