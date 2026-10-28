@@ -1118,6 +1118,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if matches!(kind, Some("turn_end" | "agent_end")) {
                         live_row = None;
                         live_cells.clear();
+                        stream_key = None;
+                        stream_text.clear();
+                        stream_thinking.clear();
                         _stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -1198,6 +1201,18 @@ fn main() -> Result<(), slint::PlatformError> {
                         .and_then(serde_json::Value::as_i64)
                         .unwrap_or(0);
                     let key = format!("{}:{stamp}", role.unwrap_or_default());
+                    // A new message starts a new buffer. The key alone cannot be
+                    // trusted to notice: the streaming shell carries no usable
+                    // timestamp, so two turns can share "assistant:0" and the
+                    // second would inherit the first one's words - the previous
+                    // answer streaming again under the message just sent, until
+                    // the closing rebuild replaced it.
+                    if kind == Some("message_start") && role == Some("assistant") {
+                        stream_key = None;
+                        stream_text.clear();
+                        stream_thinking.clear();
+                        stream_started = SystemTime::now();
+                    }
                     // The `message_update` payload is the message's shell - its
                     // content is empty for the whole run - and the words ride
                     // beside it in `assistantMessageEvent` deltas. Rendering the
