@@ -661,24 +661,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    // a prompt sent while this attach was in flight: the snapshot
-                    // predates it, so the optimistic row has to be re-appended
-                    if let Some(text) = pending_user.borrow().as_deref() {
-                        let echo = serde_json::json!({
-                            "role": "user",
-                            "content": [{"type": "text", "text": text}],
-                        });
-                        let already = built.iter().rev().take(6).any(|row| {
-                            row.kind == transcript::KIND_USER && row.title.contains(text)
-                        });
-                        if !already {
-                            if let Some(row) =
-                                transcript::build(std::slice::from_ref(&echo), 1).0.first()
-                            {
-                                built.push(row.clone());
-                            }
-                        }
-                    }
+                    // a prompt sent while this snapshot was in flight: the
+                    // store predates it, so the row we drew has to survive the
+                    // rebuild
+                    let pending = pending_user.borrow();
+                    keep_pending_prompt(&mut built, pending.as_deref());
+                    drop(pending);
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     let count = slint_rows.len();
                     *rows_store_ui.borrow_mut() = built;
@@ -744,6 +732,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     if built.is_empty() && !messages.is_empty() {
                         continue;
                     }
+                    // the same hold on every poll, or the prompt we drew
+                    // vanishes on the first rebuild and the transcript jumps
+                    let pending = pending_user.borrow();
+                    keep_pending_prompt(&mut built, pending.as_deref());
+                    drop(pending);
                     if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
@@ -1042,16 +1035,20 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 Msg::PromptRejected { text } => {
                     // the daemon refused the prompt (usually a stale session id):
-                    // put the text back rather than losing what was typed
+                    // put the text back rather than losing what was typed, and
+                    // take the row we drew back out - a refused message that
+                    // stays on screen is a message that was never sent
                     if ui.get_composer_text().is_empty() {
                         ui.set_composer_text(text.as_str().into());
                     }
                     pending_user.borrow_mut().take();
+                    drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
                     ui.set_status_line("prompt not accepted — text restored".into());
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
-                        pending_user.borrow_mut().take();
+                        let text = pending_user.borrow_mut().take().unwrap_or_default();
+                        drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
                         ui.set_status_line(format!("prompt failed: {error}").into());
                     }
                     None => ui.set_status_line("working".into()),
@@ -1482,15 +1479,86 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
 ///
 /// A single call can land before `content-height` is known, which leaves the
 /// view at the top — the exact bug that made a chat open on its oldest row.
+thread_local! {
+    /// One timer for every follow request. Each call restarts it, so a burst of
+    /// rebuilds produces a single scroll when they stop - not one scroll per
+    /// rebuild, each landing on a half-measured row height and creeping the
+    /// view down in visible steps.
+    static FOLLOW_TIMER: std::cell::RefCell<Option<slint::Timer>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The prompt we drew the moment it was sent, put back on top of a rebuild that
+/// predates the daemon's echo. Without it the row disappears for a poll and
+/// reappears, which reads as the transcript jumping under the pointer.
+/// Pull the optimistic row back out when the daemon refuses the prompt: the
+/// transcript must not keep showing a message that was never sent.
+fn drop_pending_prompt(
+    rows: &Rc<RefCell<Vec<transcript::Row>>>,
+    model: &slint::VecModel<TRow>,
+    text: &str,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let echo = serde_json::json!({
+        "role": "user",
+        "content": [{ "type": "text", "text": text }],
+    });
+    let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1).0.into_iter().next()
+    else {
+        return;
+    };
+    let mut store = rows.borrow_mut();
+    let Some(last) = store.last() else { return };
+    if last.kind != candidate.kind || last.body != candidate.body {
+        return;
+    }
+    store.pop();
+    let index = store.len();
+    drop(store);
+    model.remove(index);
+}
+
+fn keep_pending_prompt(built: &mut Vec<transcript::Row>, pending: Option<&str>) {
+    let Some(text) = pending else { return };
+    let echo = serde_json::json!({
+        "role": "user",
+        "content": [{ "type": "text", "text": text }],
+    });
+    let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1).0.into_iter().next()
+    else {
+        return;
+    };
+    let already = built
+        .iter()
+        .rev()
+        .take(8)
+        .any(|row| row.kind == candidate.kind && row.body == candidate.body);
+    if !already {
+        built.push(candidate);
+    }
+}
+
 fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
-    for delay in [30u64, 120, 320, 700, 1500, 3000] {
+    FOLLOW_TIMER.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let timer = slot.get_or_insert_with(slint::Timer::default);
         let ui = ui.clone();
-        slint::Timer::single_shot(Duration::from_millis(delay), move || {
+        // tall rows (a code block, a table) can settle a frame later than the
+        // model change, so one short correction follows the first
+        timer.start(slint::TimerMode::SingleShot, Duration::from_millis(55), move || {
             if let Some(ui) = ui.upgrade() {
                 ui.invoke_scroll_to_end();
+                let late = ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(180), move || {
+                    if let Some(ui) = late.upgrade() {
+                        ui.invoke_scroll_to_end();
+                    }
+                });
             }
         });
-    }
+    });
 }
 
 /// 1234 → "1.2k", 47_011_000 → "47.0M".
