@@ -1,4 +1,5 @@
 mod images;
+mod live;
 mod transcript;
 
 slint::include_modules!();
@@ -711,17 +712,8 @@ fn main() -> Result<(), slint::PlatformError> {
     // treat an unchanged count as "nothing new"
     let mut tail_sig: Option<(u64, u64)> = None;
     let mut last_seq = 0u64;
-    // the row currently receiving `message_update` frames: (key, model index)
-    let mut live_row: Option<(String, usize)> = None;
-    // Tool-call id -> row index. Cells arrive as their own events, not as
-    // message deltas, so without this the python runs a turn makes are
-    // invisible until a store rebuild happens to carry them.
-    let mut live_cells: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    // the streamed words, accumulated from the deltas: the message shell carries
-    // none of them until the run ends
-    let mut stream_text = String::new();
-    let mut stream_thinking = String::new();
-    let mut stream_key: Option<String> = None;
+    // the message still being written: one range of rows, rebuilt whole
+    let mut open_live: Option<live::Live> = None;
     // when the row's first delta landed: the update timestamps are what tell a
     // real stream from one paint at the end
     let mut stream_started = SystemTime::now();
@@ -865,7 +857,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 tail_len = 0;
                                 tail_sig = None;
                                 last_seq = 0;
-                                live_row = None;
+                                close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                             }
                         }
                     }
@@ -1033,7 +1025,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         continue;
                     }
                     // a quiet live row is replaced by the store's copy
-                    live_row = None;
+                    close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                     tail_len = messages.len();
                     tail_sig = Some((cursor, newest));
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
@@ -1067,7 +1059,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // rows already shown the moment the store reshapes one row or
                     // the window slides. Nothing is appended now; the store only
                     // speaks when nothing is open, or when a turn closes.
-                    let open = live_row.is_some() || !live_cells.is_empty();
+                    let open = open_live.is_some();
                     if open && !fresh {
                         tail_len = messages.len();
                         tail_sig = Some((cursor, newest));
@@ -1125,11 +1117,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // message_end would otherwise strand the view on a
                     // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
-                        live_row = None;
-                        live_cells.clear();
-                        stream_key = None;
-                        stream_text.clear();
-                        stream_thinking.clear();
+                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                         _stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -1146,44 +1134,32 @@ fn main() -> Result<(), slint::PlatformError> {
                         if call_id.is_empty() {
                             continue;
                         }
+                        let Some(turn) = open_live.as_mut() else {
+                            // no message is open: the turn's own frames are the
+                            // only thing that may draw a cell, and the store
+                            // will carry it when the turn closes
+                            continue;
+                        };
                         if kind == Some("tool_execution_start") {
                             let tool_name = event
                                 .get("toolName")
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or("tool");
-                            let args = event.get("args").cloned().unwrap_or(serde_json::Value::Null);
-                            let row = transcript::tool_cell(tool_name, &call_id, &args);
-                            let mut store = rows_store_ui.borrow_mut();
-                            // after the message it belongs to, for the same
-                            // reason the assistant's text is: this cell is part
-                            // of the answer, not something that came before the
-                            // prompt
-                            let at = store.len();
-                            store.insert(at, row.clone());
-                            row_model_ui.insert(at, to_slint(&row));
-                            live_cells.insert(call_id, at);
-                            drop(store);
-                            trace_rows("live cell started", &rows_store_ui);
-                            scroll_to_end_when_ready(&ui.as_weak());
+                            let args = event
+                                .get("args")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            turn.start_tool(&call_id, tool_name, args);
                         } else {
                             let output = tool_output_text(event.get("result"));
                             let failed = event
                                 .get("isError")
                                 .and_then(serde_json::Value::as_bool)
                                 .unwrap_or(false);
-                            if let Some(index) = live_cells.get(&call_id).copied() {
-                                let mut store = rows_store_ui.borrow_mut();
-                                let patched = store.get_mut(index).map(|slot| {
-                                    transcript::finish_cell(slot, &output, failed);
-                                    slot.clone()
-                                });
-                                drop(store);
-                                if let Some(row) = patched {
-                                    row_model_ui.set_row_data(index, to_slint(&row));
-                                    scroll_to_end_when_ready(&ui.as_weak());
-                                }
-                            }
+                            turn.finish_tool(&call_id, output, failed);
                         }
+                        sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        scroll_to_end_when_ready(&ui.as_weak());
                         _stream_at = SystemTime::now();
                         continue;
                     }
@@ -1205,28 +1181,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             continue;
                         }
                     }
-                    let stamp = message
-                        .get("timestamp")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(0);
-                    let key = format!("{}:{stamp}", role.unwrap_or_default());
-                    // A new message starts a new buffer. The key alone cannot be
-                    // trusted to notice: the streaming shell carries no usable
-                    // timestamp, so two turns can share "assistant:0" and the
-                    // second would inherit the first one's words - the previous
-                    // answer streaming again under the message just sent, until
-                    // the closing rebuild replaced it.
-                    if kind == Some("message_start") && role == Some("assistant") {
-                        stream_key = None;
-                        stream_text.clear();
-                        stream_thinking.clear();
-                        stream_started = SystemTime::now();
+                    if role != Some("assistant") {
+                        continue;
                     }
-                    // The `message_update` payload is the message's shell - its
-                    // content is empty for the whole run - and the words ride
-                    // beside it in `assistantMessageEvent` deltas. Rendering the
-                    // shell alone is why the turn looked silent until it ended:
-                    // the row was there, blank, the whole way through.
                     let delta_event: &serde_json::Value = event
                         .get("assistantMessageEvent")
                         .filter(|value| !value.is_null())
@@ -1235,123 +1192,50 @@ fn main() -> Result<(), slint::PlatformError> {
                         .get("type")
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or_default();
-                    if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
-                        if stream_key.as_deref() != Some(key.as_str()) {
-                            stream_key = Some(key.clone());
-                            stream_text.clear();
-                            stream_thinking.clear();
-                            stream_started = SystemTime::now();
-                        }
-                        // Only the prose belongs in the body. A tool call also
-                        // streams deltas, and they are the call's JSON: feeding
-                        // them in printed the code as text, then the real tool
-                        // row arrived and it looked like the code had moved.
-                        if delta_kind.starts_with("text") {
-                            stream_text.push_str(delta);
-                        } else if delta_kind.starts_with("thinking") {
-                            stream_thinking.push_str(delta);
-                        }
-                    }
-                    // before the first delta arrives the shell is all there is
-                    let rendered = if message_text(message).is_empty() && !stream_text.is_empty() {
-                        let mut with_text = message.clone();
-                        with_text["content"] = serde_json::json!([{ "type": "text", "text": stream_text }]);
-                        with_text
-                    } else {
-                        message.clone()
-                    };
-                    // One message is several rows: prose, then a tool cell, then
-                    // another prose block. The live row owns the whole range, so
-                    // a message that grows a tool call grows the range instead of
-                    // leaving the store to guess where it belongs.
-                    let built: Vec<transcript::Row> = transcript::build(
-                        std::slice::from_ref(&rendered),
-                        1,
-                    )
-                    .0
-                    .into_iter()
-                    // A cell this turn already drew came from its own event; the
-                    // message's copy of it would be a second row for one call.
-                    .filter(|row| {
-                        !(row.kind == transcript::KIND_CELL
-                            && !row.id.is_empty()
-                            && live_cells.contains_key(&row.id))
-                    })
-                    .collect();
-                    if built.is_empty() {
+                    if kind == Some("message_start") || delta_kind == "start" {
+                        // A message that opens takes a range of its own, after
+                        // whatever the last one owned. The previous range has to
+                        // be dropped first: two ranges for one answer is exactly
+                        // the double that kept coming back.
+                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        let start = rows_store_ui.borrow().len();
+                        open_live = Some(live::Live::new(start));
+                        stream_started = SystemTime::now();
+                        trace_rows("live row opened", &rows_store_ui);
                         continue;
                     }
-                    let open = live_row.clone().filter(|(open_key, _)| open_key == &key);
-                    match open {
-                        Some((_, start)) => {
-                            let mut store = rows_store_ui.borrow_mut();
-                            let mut removed = false;
-                            // The prompt drawn optimistically sits at the end of
-                            // the model, but it belongs AFTER the turn that is
-                            // still writing: this message's new rows have to go
-                            // in front of it, or the bubble slides up the screen
-                            // and then drops back into place on the next rebuild.
-                            let tail = usize::from(pending_user.borrow().is_some());
-                            for (offset, row) in built.iter().enumerate() {
-                                let index = start + offset;
-                                // the echo of the message just sent is the
-                                // user's own row, and the answer belongs after
-                                // it - nothing is withheld from the tail here
-                                let writable = store.len();
-                                if index < writable {
-                                    store[index] = row.clone();
-                                    row_model_ui.set_row_data(index, to_slint(row));
-                                } else {
-                                    store.insert(index, row.clone());
-                                    row_model_ui.insert(index, to_slint(row));
-                                }
-                            }
-                            // the message shed a row (a tool call that turned out
-                            // to be prose): drop what is left of the old range
-                            while store.len() > start + built.len() {
-                                store.pop();
-                                removed = true;
-                            }
-                            let len = store.len();
-                            drop(store);
-                            if removed {
-                                for index in (start + built.len())..len {
-                                    row_model_ui.remove(index);
-                                }
-                            }
-                        }
-                        None => {
-                            let mut store = rows_store_ui.borrow_mut();
-                            // Appended, not tucked in before the pending echo.
-                            // The echo is the user's message; the rows arriving
-                            // now are the answer to it, so putting them above it
-                            // showed the previous answer sitting under the
-                            // message that had just been sent, until the next
-                            // rebuild put the order right.
-                            let start = store.len();
-                            for (offset, row) in built.iter().enumerate() {
-                                store.insert(start + offset, row.clone());
-                                row_model_ui.insert(start + offset, to_slint(row));
-                            }
-                            drop(store);
-                            live_row = Some((key.clone(), start));
-                            trace_rows("live row appended", &rows_store_ui);
-                            scroll_to_end_when_ready(&ui.as_weak());
+                    let Some(turn) = open_live.as_mut() else {
+                        // a delta with no open message is the tail of something
+                        // already reconciled; the store has it
+                        continue;
+                    };
+                    if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
+                        // Only the prose belongs in the body. A tool call also
+                        // streams deltas, and they are the call's JSON: feeding
+                        // them in printed the code as text, then the real cell
+                        // arrived and it looked like the code had moved.
+                        if delta_kind.starts_with("text") {
+                            turn.push_text(delta);
+                        } else if delta_kind.starts_with("thinking") {
+                            turn.push_thinking(delta);
                         }
                     }
+                    // the frame's own copy of the message wins over the deltas
+                    let whole = message_text(message);
+                    if !whole.is_empty() {
+                        turn.set_text(&whole);
+                    }
+                    sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                    scroll_to_end_when_ready(&ui.as_weak());
                     _stream_at = SystemTime::now();
                     if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
                         eprintln!(
-                            "[stream] {key} +{:>5}ms patch row {} (shell {} / streamed {} chars, {})",
+                            "[stream] +{:>5}ms rows {} ({} chars, {})",
                             stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
-                            live_row.as_ref().map_or(usize::MAX, |(_, index)| *index),
-                            message_text(message).chars().count(),
-                            stream_text.chars().count(),
+                            open_live.as_ref().map_or(0, |turn| turn.rows),
+                            whole.chars().count(),
                             delta_kind
                         );
-                    }
-                    if kind == Some("message_end") {
-                        live_row = None;
                     }
                 }
                 Msg::Queue { steering, follow_up } => {
@@ -1536,7 +1420,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 Msg::Reconnected => {
                     loaded = None;
-                    live_row = None;
+                    close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                     tail_sig = None;
                     last_seq = 0;
                     ui.set_status_line("reconnecting".into());
@@ -2124,6 +2008,51 @@ fn drop_pending_prompt(
 /// Every change to the row model, logged in order: the shape of a send is a
 /// sequence of appends, rebuilds and patches, and a jump is one of them landing
 /// in the wrong order. Only compiled in at PA_DEBUG.
+/// Walk the open message's range back to what it looks like now: the old rows
+/// go, the new ones take their place. Called for every frame, because the range
+/// is the message - there is no second copy to keep in step.
+fn sync_live(
+    live: &mut Option<live::Live>,
+    store: &Rc<RefCell<Vec<transcript::Row>>>,
+    model: &Rc<VecModel<TRow>>,
+) {
+    let Some(turn) = live.as_mut() else {
+        return;
+    };
+    let rows = turn.rows();
+    let mut rows_store = store.borrow_mut();
+    let end = (turn.start + turn.rows).min(rows_store.len());
+    let begin = turn.start.min(end);
+    for index in (begin..end).rev() {
+        rows_store.remove(index);
+        model.remove(index);
+    }
+    for (offset, row) in rows.iter().enumerate() {
+        let index = turn.start + offset;
+        rows_store.insert(index, row.clone());
+        model.insert(index, to_slint(row));
+    }
+    turn.rows = rows.len();
+}
+
+/// Drop the open range: the store speaks for that message from here on.
+fn close_live(
+    live: &mut Option<live::Live>,
+    store: &Rc<RefCell<Vec<transcript::Row>>>,
+    model: &Rc<VecModel<TRow>>,
+) {
+    let _ = &store;
+    if let Some(turn) = live.take() {
+        let mut rows_store = store.borrow_mut();
+        let end = (turn.start + turn.rows).min(rows_store.len());
+        let begin = turn.start.min(end);
+        for index in (begin..end).rev() {
+            rows_store.remove(index);
+            model.remove(index);
+        }
+    }
+}
+
 fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
     if std::env::var("PA_DEBUG").is_err() {
         return;
