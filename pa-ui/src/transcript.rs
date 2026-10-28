@@ -246,7 +246,31 @@ fn summary_line(code: &str) -> String {
 
 // ── markup ──────────────────────────────────────────────────────────
 
+/// Text as the layout engine wants it: no non-breaking or thin spaces.
+///
+/// Slint lays text out through parley, and parley panics outright when an elide
+/// range lands inside a multi-byte character — `end byte index 7 is not a char
+/// boundary; it is inside '\u{a0}'`. A U+00A0 that reaches a narrow elided
+/// label is therefore enough to kill the window. A transcript has no use for a
+/// space that refuses to break, so they are folded to plain spaces.
+#[must_use]
+pub fn plain(text: &str) -> String {
+    if !text
+        .chars()
+        .any(|ch| matches!(ch, '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}'))
+    {
+        return text.to_string();
+    }
+    text.chars()
+        .map(|ch| match ch {
+            '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}' => ' ',
+            other => other,
+        })
+        .collect()
+}
+
 pub fn styled(markup: &str) -> StyledText {
+    let markup = &plain(markup);
     match StyledText::from_markdown(markup) {
         Ok(text) => text,
         Err(error) => {
@@ -294,7 +318,8 @@ pub fn decode_entities(text: &str) -> String {
                 "gt" => Some('>'),
                 "quot" => Some('"'),
                 "apos" => Some('\''),
-                "nbsp" => Some('\u{a0}'),
+                // folded, not preserved: U+00A0 crashes the layout engine
+                "nbsp" => Some(' '),
                 _ => None,
             }
         };

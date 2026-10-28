@@ -430,7 +430,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .iter()
                 .map(|candidate| EffortItem {
                     level: candidate.clone().into(),
-                    label: thinking_level_label(candidate).into(),
+                    label: transcript::plain(thinking_level_label(candidate)).into(),
                     current: *candidate == landed,
                 })
                 .collect();
@@ -1656,7 +1656,7 @@ fn refresh_model_groups(
                     let current = entry.id == current_id && provider == current_provider;
                     ModelItem {
                         id: entry.id.clone().into(),
-                        label: model_label(&entry.name, &entry.id).into(),
+                        label: transcript::plain(&model_label(&entry.name, &entry.id)).into(),
                         detail: context_hint(entry.context_window).into(),
                         // only the running model has a level to name
                         effort: if current { effort.clone() } else { String::new() }.into(),
@@ -1669,7 +1669,7 @@ fn refresh_model_groups(
         };
         out.push(ModelGroup {
             provider: provider.clone().into(),
-            label: provider_label(&provider).into(),
+            label: transcript::plain(&provider_label(&provider)).into(),
             count,
             open,
             configured,
@@ -2241,8 +2241,8 @@ fn tool_output_text(result: Option<&serde_json::Value>) -> String {
 fn to_slint(row: &Row) -> TRow {
     TRow {
         kind: row.kind,
-        title: row.title.clone().into(),
-        meta: row.meta.clone().into(),
+        title: transcript::plain(&row.title).into(),
+        meta: transcript::plain(&row.meta).into(),
         body: transcript::styled(&row.body),
         code: transcript::styled(&row.code),
         output: transcript::styled(&row.output),
@@ -2250,7 +2250,7 @@ fn to_slint(row: &Row) -> TRow {
         has_output: row.has_output,
         expanded: row.expanded,
         failed: row.failed,
-        reason: row.reason.clone().into(),
+        reason: transcript::plain(&row.reason).into(),
     }
 }
 
