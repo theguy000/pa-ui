@@ -350,20 +350,28 @@ fn main() -> Result<(), slint::PlatformError> {
     // the 6px between the row and the ladder would otherwise close the thing
     // the pointer is on its way into.
     let hover_close = Rc::new(Timer::default());
+    // which row's ladder was last built. Cleared when the ladder closes: the
+    // hover repeats on every pointer move, and a remembered pair that outlives
+    // the popup makes the same row read as "already open" - hover away to a
+    // header and back and nothing came up until a different row was touched.
+    let hover_current: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
     {
         let weak = ui.as_weak();
         let timer = hover_close.clone();
+        let current = hover_current.clone();
         ui.on_pointer_moved(move || {
             let Some(ui) = weak.upgrade() else { return };
             if !ui.get_effort_open() {
                 return;
             }
             let weak = ui.as_weak();
+            let current = current.clone();
             timer.start(TimerMode::SingleShot, Duration::from_millis(120), move || {
                 if let Some(ui) = weak.upgrade() {
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!("[menu] ladder closed");
                     }
+                    *current.borrow_mut() = None;
                     ui.set_effort_open(false);
                 }
             });
@@ -379,7 +387,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         // A row's ladder hangs off the row. The hover repeats on every pointer
         // move, so the pair is remembered and only a change rebuilds the list.
-        let current = Rc::new(RefCell::new(None::<(String, String)>));
+        let current = hover_current.clone();
         let weak = ui.as_weak();
         let catalog = catalog.clone();
         let hovered = hovered.clone();
@@ -462,6 +470,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let switch = !(model == ui.get_model_id().to_string()
                 && provider == ui.get_model_provider().to_string());
             ui.set_effort_open(false);
+            *hover_current.borrow_mut() = None;
             ui.set_status_line(
                 format!("{model} · {}", thinking_level_label(&level)).into(),
             );
