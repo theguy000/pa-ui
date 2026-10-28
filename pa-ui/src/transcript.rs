@@ -73,7 +73,7 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     let mut outputs: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
     // and the bash preview the tool reported for itself: the TUI titles a cell
     // by the command that ran, not by the first line of the cell's source
-    let mut bashes: std::collections::HashMap<String, (String, usize)> = std::collections::HashMap::new();
+    let mut bashes: std::collections::HashMap<String, BashInfo> = std::collections::HashMap::new();
     for message in window {
         if message.get("role").and_then(Value::as_str) != Some("toolResult") {
             continue;
@@ -92,8 +92,8 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
             .unwrap_or_default();
         let failed = text.trim_start().starts_with("Traceback");
         outputs.insert(id.to_string(), (text, failed));
-        if let Some((first, count)) = bash_commands(message.get("details")) {
-            bashes.insert(id.to_string(), (first, count));
+        if let Some(info) = bash_commands(message.get("details")) {
+            bashes.insert(id.to_string(), info);
         }
     }
 
@@ -203,9 +203,8 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                     }
                     let lines = code.lines().count();
                     row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
-                    if let Some((first, count)) = bashes.get(&row.id) {
-                        label_bash(&mut row, first, *count);
-                    }
+                    let info = bashes.get(&row.id).cloned();
+                    apply_header(&mut row, code, info.as_ref());
                     rows.push(row);
                 }
                 _ => {}
@@ -216,29 +215,81 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
 }
 
 /// The `bashCommands` the python tool reports on its own result: the first
-/// command it ran and how many it ran. This is what the TUI titles a cell with,
-/// and it is the honest label - the cell's source may begin with a variable
-/// assignment that says nothing about what was actually executed.
+/// command it ran, how many it ran, and how many of the cell's lines they
+/// account for. That last number is what decides whether the cell *is* a bash
+/// cell or merely contains bash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BashInfo {
+    pub first: String,
+    pub count: usize,
+    pub lines: usize,
+}
+
 #[must_use]
-pub fn bash_commands(details: Option<&Value>) -> Option<(String, usize)> {
+pub fn bash_commands(details: Option<&Value>) -> Option<BashInfo> {
     let record = details?.get("bashCommands")?;
     let first = record.get("first")?.as_str()?.to_string();
     if first.trim().is_empty() {
         return None;
     }
-    let count = record
-        .get("count")
-        .and_then(Value::as_u64)
-        .and_then(|count| usize::try_from(count).ok())
-        .unwrap_or(1);
-    Some((first, count))
+    let number = |key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(1)
+    };
+    Some(BashInfo {
+        count: number("count"),
+        lines: number("lines"),
+        first,
+    })
 }
 
-/// Title a cell the way its tool said it ran: `bash · <the command>`.
-pub fn label_bash(row: &mut Row, first: &str, count: usize) {
-    let mut title = format!("bash \u{00b7} {}", bash_preview(first));
-    if count > 1 {
-        title.push_str(&format!(" \u{00b7} +{} more", count - 1));
+/// Non-blank lines of the cell, after a `%%bash` magic is stripped.
+fn input_line_count(code: &str) -> usize {
+    let body = crate::preview::parse_ipython_bash_cell(code)
+        .map_or_else(|| code.to_string(), |cell| cell.body);
+    body.lines().filter(|line| !line.trim().is_empty()).count()
+}
+
+/// A cell is a bash cell when bash accounts for half its lines or more -
+/// `1/BASH_DOMINANCE_DIVISOR`, the same threshold the TUI uses.
+const BASH_DOMINANCE_DIVISOR: usize = 2;
+
+/// The title line of a cell, decided exactly as the TUI's collapsed line decides
+/// it: the label from the dominance test, then the preview of whichever side
+/// won, then how many further commands ran.
+pub fn apply_header(row: &mut Row, code: &str, bash: Option<&BashInfo>) {
+    let code = code.trim_end();
+    let dominant = bash.filter(|bash| bash.lines * BASH_DOMINANCE_DIVISOR >= input_line_count(code));
+    let preview = crate::preview::preview_ipython_code(code);
+    let is_bash_cell = crate::preview::parse_ipython_bash_cell(code).is_some();
+    let label = if dominant.is_some() {
+        "bash"
+    } else {
+        match (is_bash_cell, preview.language) {
+            (true, crate::preview::CodePreviewLanguage::Python) => "bash \u{00b7} python",
+            (_, crate::preview::CodePreviewLanguage::Bash) => "bash",
+            (false, crate::preview::CodePreviewLanguage::Python) => "python",
+        }
+    };
+    let text = match dominant {
+        Some(bash) => crate::preview::preview_bash_command(&bash.first).text,
+        None => preview.text,
+    };
+    let text = if text.trim().is_empty() {
+        summary_line(code)
+    } else {
+        text
+    };
+    let mut title = if text.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} \u{00b7} {text}")
+    };
+    if let Some(bash) = dominant.filter(|bash| bash.count > 1) {
+        title.push_str(&format!(" \u{00b7} +{} more", bash.count - 1));
     }
     row.title = title;
 }
@@ -259,24 +310,8 @@ pub fn tool_cell(tool_name: &str, call_id: &str, args: &Value) -> Row {
     let mut row = Row::new(KIND_CELL);
     row.id = call_id.to_string();
     let fallback = args.to_string();
-    let summary = if code.is_empty() {
-        summary_line(&fallback)
-    } else {
-        // the statement the cell is about, not the first line of it: a cell that
-        // opens with `mp = "..."` is about what it does with `mp`
-        let preview = python_preview(code);
-        if preview.is_empty() {
-            summary_line(code)
-        } else {
-            preview
-        }
-    };
-    let label = preview_label(tool_name, code, false);
-    row.title = if summary.is_empty() {
-        label.to_string()
-    } else {
-        format!("{label} \u{00b7} {summary}")
-    };
+    let source = if code.is_empty() { fallback.as_str() } else { code };
+    apply_header(&mut row, source, None);
     row.code = highlight_python(code);
     row.has_code = !code.is_empty();
     let lines = code.lines().count();
@@ -328,23 +363,6 @@ fn short_tool(name: &str) -> &str {
 #[must_use]
 pub fn python_preview(code: &str) -> String {
     crate::preview::preview_ipython_code(code).text
-}
-
-/// The label a cell carries: `bash`, `python`, or `bash · python` for a cell
-/// that is both, decided the way the TUI decides it.
-#[must_use]
-pub fn preview_label(tool_name: &str, code: &str, ran_bash: bool) -> &'static str {
-    if ran_bash {
-        return "bash";
-    }
-    let preview = crate::preview::preview_ipython_code(code);
-    let bash_cell = crate::preview::parse_ipython_bash_cell(code.trim_end()).is_some();
-    match (bash_cell, preview.language) {
-        (true, crate::preview::CodePreviewLanguage::Python) => "bash \u{00b7} python",
-        (_, crate::preview::CodePreviewLanguage::Bash) => "bash",
-        _ if short_tool(tool_name) == "python" => "python",
-        _ => "python",
-    }
 }
 
 /// The one line a collapsed cell shows.
@@ -1260,5 +1278,65 @@ mod golden_preview_tests {
         let args = serde_json::json!({ "code": "out = '/repo/out.txt'\nout.write_text('hello')" });
         let row = crate::transcript::tool_cell("python_repl", "call_0_x", &args);
         assert_eq!(row.title, "python \u{00b7} write /repo/out.txt");
+    }
+}
+
+#[cfg(test)]
+mod header_parity_tests {
+    use super::*;
+
+    fn title(code: &str, details: Option<serde_json::Value>) -> String {
+        let args = serde_json::json!({ "code": code });
+        let mut row = tool_cell("python_repl", "call_0_x", &args);
+        let info = bash_commands(details.as_ref());
+        apply_header(&mut row, code, info.as_ref());
+        row.title
+    }
+
+    /// `bash_dominated_cell_renders_as_bash` in the TUI's tool_card tests: bash
+    /// accounts for 4 of 5 lines, so the cell reads as bash and previews the
+    /// command, with the count of the rest.
+    #[test]
+    fn a_bash_dominated_cell_reads_as_bash() {
+        let code = "r = await sh(\"\"\"\ncd crates/pa-tui\ncargo test -p pa-tui\n\"\"\")\nprint(r.output)";
+        let details = serde_json::json!({
+            "status": "ok",
+            "durationMs": 2,
+            "bashCommands": {
+                "first": "\ncd crates/pa-tui\ncargo test -p pa-tui\n",
+                "count": 3,
+                "lines": 4,
+            },
+        });
+        assert_eq!(title(code, Some(details)), "bash \u{00b7} cargo test -p pa-tui \u{00b7} +2 more");
+    }
+
+    /// `bash_minority_cell_stays_python`: one bash line among four is not
+    /// dominance, so the cell keeps the python label and the python preview.
+    #[test]
+    fn a_bash_minority_cell_stays_python() {
+        let code = "async def sh(cmd):\n    return await bash(cmd)\nr = await sh(\"ls\")\nprint(r.pid)";
+        let details = serde_json::json!({
+            "status": "ok",
+            "durationMs": 5,
+            "stdout": "0\n",
+            "bashCommands": { "first": "ls", "count": 1, "lines": 1 },
+        });
+        let line = title(code, Some(details));
+        assert_eq!(line, "python \u{00b7} r = await sh(\"ls\")");
+        assert!(!line.contains("bash \u{00b7}"));
+    }
+
+    /// Nothing reported yet: the header still has to say something useful, and
+    /// the label comes from the code alone.
+    #[test]
+    fn a_running_cell_previews_its_own_code() {
+        assert_eq!(title("out = '/repo/out.txt'\nout.write_text('hi')", None), "python \u{00b7} write /repo/out.txt");
+    }
+
+    /// A `%%bash` cell is bash, label and all.
+    #[test]
+    fn a_bash_cell_magic_is_bash() {
+        assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
     }
 }

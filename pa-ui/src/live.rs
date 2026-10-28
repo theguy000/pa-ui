@@ -22,7 +22,7 @@ pub enum Part {
         output: Option<String>,
         failed: bool,
         /// what the tool said it ran, when it says
-        bash: Option<(String, usize)>,
+        bash: Option<transcript::BashInfo>,
     },
 }
 
@@ -97,7 +97,7 @@ impl Live {
         id: &str,
         output: String,
         failed: bool,
-        bash: Option<(String, usize)>,
+        bash: Option<transcript::BashInfo>,
     ) {
         for part in self.parts.iter_mut().rev() {
             if let Part::Tool {
@@ -139,8 +139,9 @@ impl Live {
                     if let Some(output) = output {
                         transcript::finish_cell(&mut row, output, *failed);
                     }
-                    if let Some((first, count)) = bash {
-                        transcript::label_bash(&mut row, first, *count);
+                    if let Some(info) = bash {
+                        let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
+                        transcript::apply_header(&mut row, code, Some(info));
                     }
                     out.push(row);
                 }
