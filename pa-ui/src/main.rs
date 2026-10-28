@@ -181,6 +181,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(row) = transcript::build(std::slice::from_ref(&echo), 1).0.first() {
                     rows.borrow_mut().push(row.clone());
                     model.push(to_slint(row));
+                    trace_rows("send: optimistic row", &rows);
                     scroll_to_end_when_ready(&weak);
                 }
                 *pending_user.borrow_mut() = Some(message.clone());
@@ -727,20 +728,47 @@ fn main() -> Result<(), slint::PlatformError> {
                     if tail_sig == Some((cursor, newest)) {
                         continue;
                     }
-                    // A row is being streamed: the event path owns the view,
-                    // and rebuilding now would drop the in-progress row. The
-                    // next poll after the turn ends reconciles from the store.
-                    if live_row.is_some()
-                        && stream_at.elapsed().unwrap_or_default() < Duration::from_millis(2000)
-                    {
-                        continue;
-                    }
                     // a quiet live row is replaced by the store's copy
                     live_row = None;
                     tail_len = messages.len();
                     tail_sig = Some((cursor, newest));
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
+                        continue;
+                    }
+                    // While a turn runs, the store's copy of it is still growing:
+                    // its rows change shape from poll to poll (a thinking row
+                    // becomes a tool cell, a cell becomes a code block), and
+                    // replacing the model on each one made the transcript jump up
+                    // and down as it settled. So the live view is only ever
+                    // APPENDED to while busy - nothing already on screen is
+                    // rewritten - and the single reconcile happens at turn end.
+                    // A turn is live if the daemon says so OR if a message is
+                    // still being written into the view: the busy flag flickers
+                    // between tool calls, and a rebuild taken on the flicker
+                    // replaces rows the store has not persisted yet, which tears
+                    // a dozen rows off the transcript and puts them back.
+                    // A message that is still open owns its rows for as long as
+                    // it is open: a rebuild that lands during a long tool call
+                    // (no deltas, so the quiet timer expires) would otherwise
+                    // replace rows the store has not written yet and tear the
+                    // transcript down by however many rows that turn had.
+                    let writing = live_row.is_some()
+                        && stream_at.elapsed().unwrap_or_default() < Duration::from_secs(15);
+                    if ui.get_busy() || writing {
+                        let shown = rows_store_ui.borrow().len();
+                        if built.len() > shown {
+                            let mut store = rows_store_ui.borrow_mut();
+                            for row in built.iter().skip(shown) {
+                                store.push(row.clone());
+                                row_model_ui.push(to_slint(row));
+                            }
+                            drop(store);
+                            trace_rows("tail append (busy)", &rows_store_ui);
+                            scroll_to_end_when_ready(&ui.as_weak());
+                        }
+                        tail_len = messages.len();
+                        tail_sig = Some((cursor, newest));
                         continue;
                     }
                     // the same hold on every poll, or the prompt we drew
@@ -756,6 +784,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     *rows_store_ui.borrow_mut() = built;
                     row_model_ui.set_vec(slint_rows);
+                    trace_rows("tail rebuild", &rows_store_ui);
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!(
                             "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
@@ -862,26 +891,61 @@ fn main() -> Result<(), slint::PlatformError> {
                     } else {
                         message.clone()
                     };
+                    // One message is several rows: prose, then a tool cell, then
+                    // another prose block. The live row owns the whole range, so
+                    // a message that grows a tool call grows the range instead of
+                    // leaving the store to guess where it belongs.
                     let built = transcript::build(std::slice::from_ref(&rendered), 1).0;
-                    let Some(row) = built.first().cloned() else {
+                    if built.is_empty() {
                         continue;
-                    };
+                    }
                     let open = live_row.clone().filter(|(open_key, _)| open_key == &key);
                     match open {
-                        // the same message, growing: repaint that row in place
-                        Some((_, index)) => {
-                            if let Some(slot) = rows_store_ui.borrow_mut().get_mut(index) {
-                                *slot = row.clone();
+                        Some((_, start)) => {
+                            let mut store = rows_store_ui.borrow_mut();
+                            let mut removed = false;
+                            // The prompt drawn optimistically sits at the end of
+                            // the model, but it belongs AFTER the turn that is
+                            // still writing: this message's new rows have to go
+                            // in front of it, or the bubble slides up the screen
+                            // and then drops back into place on the next rebuild.
+                            let tail = usize::from(pending_user.borrow().is_some());
+                            for (offset, row) in built.iter().enumerate() {
+                                let index = start + offset;
+                                let writable = store.len().saturating_sub(tail);
+                                if index < writable {
+                                    store[index] = row.clone();
+                                    row_model_ui.set_row_data(index, to_slint(row));
+                                } else {
+                                    store.insert(index, row.clone());
+                                    row_model_ui.insert(index, to_slint(row));
+                                }
                             }
-                            row_model_ui.set_row_data(index, to_slint(&row));
+                            // the message shed a row (a tool call that turned out
+                            // to be prose): drop what is left of the old range
+                            while store.len() > start + built.len() {
+                                store.pop();
+                                removed = true;
+                            }
+                            let len = store.len();
+                            drop(store);
+                            if removed {
+                                for index in (start + built.len())..len {
+                                    row_model_ui.remove(index);
+                                }
+                            }
                         }
                         None => {
                             let mut store = rows_store_ui.borrow_mut();
-                            store.push(row.clone());
-                            let index = store.len() - 1;
+                            let tail = usize::from(pending_user.borrow().is_some());
+                            let start = store.len().saturating_sub(tail);
+                            for (offset, row) in built.iter().enumerate() {
+                                store.insert(start + offset, row.clone());
+                                row_model_ui.insert(start + offset, to_slint(row));
+                            }
                             drop(store);
-                            row_model_ui.push(to_slint(&row));
-                            live_row = Some((key.clone(), index));
+                            live_row = Some((key.clone(), start));
+                            trace_rows("live row appended", &rows_store_ui);
                             scroll_to_end_when_ready(&ui.as_weak());
                         }
                     }
@@ -1529,6 +1593,27 @@ fn drop_pending_prompt(
     let index = store.len();
     drop(store);
     model.remove(index);
+}
+
+/// Every change to the row model, logged in order: the shape of a send is a
+/// sequence of appends, rebuilds and patches, and a jump is one of them landing
+/// in the wrong order. Only compiled in at PA_DEBUG.
+fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
+    if std::env::var("PA_DEBUG").is_err() {
+        return;
+    }
+    let rows = rows.borrow();
+    let tail: Vec<String> = rows
+        .iter()
+        .rev()
+        .take(2)
+        .rev()
+        .map(|row| {
+            let body: String = row.body.chars().take(18).collect();
+            format!("{}:{:?}", row.kind, body)
+        })
+        .collect();
+    eprintln!("[rows] {what:24} n={:<4} tail={:?}", rows.len(), tail);
 }
 
 fn keep_pending_prompt(built: &mut Vec<transcript::Row>, pending: Option<&str>) {
