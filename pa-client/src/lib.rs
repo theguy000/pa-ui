@@ -8,6 +8,7 @@
 
 mod wire;
 
+pub mod commands;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -46,7 +47,8 @@ impl Client {
     ///
     /// # Errors
     /// Fails when the daemon cannot be reached or refuses the handshake.
-    pub fn connect() -> std::io::Result<Self> {
+
+pub fn connect() -> std::io::Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()

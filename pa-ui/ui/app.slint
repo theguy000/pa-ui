@@ -30,6 +30,14 @@ export struct SessionItem {
 }
 
 // one waiting message, addressed by its lane and its position in that lane
+// One row of the command menu: the word after the slash, the argument hint the
+// command takes, and what it does.
+export struct SlashItem {
+    name: string,
+    hint: string,
+    description: string,
+}
+
 export struct QueueItem {
     // what the row shows: one line, elided
     text: string,
@@ -68,22 +76,6 @@ export struct ModelGroup {
     open: bool,
     configured: bool,
     models: [ModelItem],
-}
-
-
-// Row actions, drawn a little larger than the 8-10px marks they replace: at
-// 14px a trash can and a "to the top" arrow are recognisable, where a 10px x and
-// a bare up arrow read as punctuation.
-component IconTrash inherits Path {
-    in property <color> tint: #8b8c85;
-    width: 16px;
-    height: 16px;
-    viewbox-width: 14;
-    viewbox-height: 14;
-    commands: "M 3.4 4.1 L 10.6 4.1 M 5.7 4.1 L 5.7 2.8 L 8.3 2.8 L 8.3 4.1 M 4.5 4.1 L 5.2 11.7 L 8.8 11.7 L 9.5 4.1";
-    stroke: tint;
-    stroke-width: 1.15px;
-    fill: transparent;
 }
 
 component IconToTop inherits Path {
@@ -401,8 +393,6 @@ component IconSend inherits Path {
     stroke-width: 1.6px;
     fill: transparent;
 }
-
-
 
 component IconAlert inherits Path {
     width: 16px;
@@ -1119,6 +1109,35 @@ export component AppWindow inherits Window {
     in-out property <string> title-text: "";
     in-out property <string> draft: "";
     in-out property <string> composer-text: "";
+    // The command menu: every builtin the daemon knows, narrowed by what is
+    // typed after the slash. It answers keys before the composer does, so Enter
+    // picks the highlighted command instead of sending half a word.
+    in-out property <[SlashItem]> slash-items;
+    in-out property <bool> slash-open: false;
+    in-out property <int> slash-index: 0;
+    // the menu takes the keys it wants before the message box sees them
+    public function slash-take(event: KeyEvent) -> bool {
+        if !root.slash-open || root.slash-items.length == 0 {
+            return false;
+        }
+        if event.text == Key.DownArrow {
+            root.slash-move(1);
+            return true;
+        }
+        if event.text == Key.UpArrow {
+            root.slash-move(-1);
+            return true;
+        }
+        if event.text == Key.Escape {
+            root.slash-dismiss();
+            return true;
+        }
+        if event.text == Key.Return || event.text == Key.Tab {
+            root.slash-accept();
+            return true;
+        }
+        false
+    }
     in-out property <int> queued-count: 0;
     // the two lanes, kept apart: one runs inside this turn, one after it
     in property <[QueueItem]> queued-steering;
@@ -1221,6 +1240,12 @@ export component AppWindow inherits Window {
     in property <float> shimmer: 0.0;
 
     callback send-requested(string);
+    // the command menu: what is typed after the slash, moving the highlight, and
+    // taking the highlighted command
+    callback slash-typed(string);
+    callback slash-move(int);
+    callback slash-accept();
+    callback slash-dismiss();
     callback steer-requested(string);
     callback abort-requested();
     // images ride beside the text: the strip is the attachment list, and the
@@ -1912,8 +1937,13 @@ export component AppWindow inherits Window {
             edited(t) => {
                 root.composer-text = t;
                 root.composer-has-text = t != "";
+                root.slash-typed(t);
             }
                     key-pressed(event) => {
+                            // The command menu answers first while it is open.
+                            if root.slash-take(event) {
+                                return EventResult.accept;
+                            }
                             // Enter sends, Alt+Enter steers into the
                             // running turn, Shift+Enter is a newline,
                             // Esc aborts — the TUI's bindings
@@ -2419,6 +2449,86 @@ export component AppWindow inherits Window {
     changed composer-focused => {
         if root.composer-focused {
             root.search-open = false;
+        }
+    }
+
+    // The command menu: opens the moment a slash starts the message, narrows as
+    // more is typed, and sits directly above the box it belongs to. Capped and
+    // scrollable, because it can hold every builtin at once.
+    if root.slash-open && root.slash-items.length > 0 : Rectangle {
+        x: composer-box.absolute-position.x + 12px;
+        y: composer-box.absolute-position.y - self.height - 6px;
+        width: min(460px, composer-box.width - 24px);
+        height: min(252px, 12px + root.slash-items.length * 30px);
+        background: #171814;
+        border-color: #2c2f26;
+        border-width: 1px;
+        border-radius: 10px;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
+
+        slash-list := ScrollView {
+            x: 6px;
+            y: 6px;
+            width: parent.width - 12px;
+            height: parent.height - 12px;
+            vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+            content-width: self.visible-width;
+            content-height: self.visible-height;
+
+            slash-rows := VerticalLayout {
+                width: slash-list.visible-width;
+                for item[index] in root.slash-items : Rectangle {
+                    width: parent.width;
+                    height: 30px;
+                    border-radius: 6px;
+                    background: index == root.slash-index ? #1f211a : transparent;
+
+                    HorizontalLayout {
+                        x: 8px;
+                        y: 0;
+                        width: parent.width - 16px;
+                        height: 100%;
+                        spacing: 6px;
+                        Text {
+                            text: "/" + item.name;
+                            font-size: 13px;
+                            color: index == root.slash-index ? #e7e5df : #b0b1a8;
+                            vertical-alignment: center;
+                        }
+                        if item.hint != "" : Text {
+                            text: item.hint;
+                            font-size: 11px;
+                            color: index == root.slash-index ? #8f917f : #565a4f;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: item.description;
+                            font-size: 11px;
+                            color: index == root.slash-index ? #a9ab9d : #6b6e63;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    slash-touch := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => {
+                            root.slash-index = index;
+                            root.slash-accept();
+                        }
+                        moved => {
+                            if self.has-hover {
+                                root.slash-index = index;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

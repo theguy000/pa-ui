@@ -242,6 +242,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_line("no session selected".into());
                 return;
             }
+            // A bare command is not a message: `/model` opens the model picker
+            // instead of sending the word to the agent.
+            if let Some(command) = slash_opens_picker(&message) {
+                if command == "model" {
+                    ui.set_composer_text("".into());
+                    ui.set_composer_has_text(false);
+                    ui.set_model_menu(true);
+                    ui.set_status_line("pick a model".into());
+                } else {
+                    ui.set_composer_text("".into());
+                    ui.set_composer_has_text(false);
+                    ui.set_status_line("thinking level opens from the model menu".into());
+                }
+                return;
+            }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
             {
@@ -587,7 +602,89 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        // folding a group is remembered for the rest of the session, so a menu
+        // The command menu. Everything it shows comes from pa-client's copy of the
+    // daemon's table, so the window cannot offer a command the agent does not
+    // have, and the descriptions are the daemon's own words.
+    {
+        let weak = ui.as_weak();
+        ui.on_slash_typed(move |text| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(prefix) = slash_name_token(&text) else {
+                ui.set_slash_open(false);
+                return;
+            };
+            let items = pa_client::commands::filter(&prefix);
+            if items.is_empty() {
+                ui.set_slash_open(false);
+                return;
+            }
+            let rows: Vec<SlashItem> = items
+                .iter()
+                .map(|command| SlashItem {
+                    name: command.name.into(),
+                    hint: command.hint.into(),
+                    description: command.description.into(),
+                })
+                .collect();
+            ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
+            ui.set_slash_index(0);
+            ui.set_slash_open(true);
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_slash_move(move |delta| {
+            let Some(ui) = weak.upgrade() else { return };
+            let count = ui.get_slash_items().row_count() as i32;
+            if !ui.get_slash_open() || count == 0 {
+                return;
+            }
+            let next = (ui.get_slash_index() + delta).rem_euclid(count);
+            ui.set_slash_index(next);
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_slash_dismiss(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_slash_open(false);
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
+        ui.on_slash_accept(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let index = ui.get_slash_index().max(0) as usize;
+            let rows = ui.get_slash_items();
+            let Some(row) = rows.row_data(index) else {
+                ui.set_slash_open(false);
+                return;
+            };
+            ui.set_slash_open(false);
+            let name = row.name.to_string();
+            // The commands this window can carry out itself open their own
+            // pickers instead of leaving a word in the box to press Enter on.
+            if name == "model" {
+                ui.set_composer_text("".into());
+                ui.set_composer_has_text(false);
+                ui.set_model_menu(true);
+                ui.set_status_line("pick a model".into());
+                return;
+            }
+            let text = match pa_client::commands::find(&name) {
+                Some(command) if command.takes_argument => format!("/{name} "),
+                _ => format!("/{name}"),
+            };
+            ui.set_composer_text(text.as_str().into());
+            ui.set_composer_has_text(true);
+        });
+    }
+
+    // folding a group is remembered for the rest of the session, so a menu
         // reopened later comes back exactly as it was left
         let weak = ui.as_weak();
         let catalog = catalog.clone();
@@ -1382,6 +1479,26 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = jobs.send(Job::Prompt { session, message, images });
                 }
                 Msg::NewChat(id) => {
+                    // PA_SLASH: a look at the command menu in this fresh chat,
+                    // never in a session that holds the user's draft.
+                    if let Ok(opening) = std::env::var("PA_SLASH") {
+                        ui.set_composer_text(opening.as_str().into());
+                        ui.set_composer_has_text(!opening.is_empty());
+                        if let Some(prefix) = slash_name_token(&opening) {
+                            let rows: Vec<SlashItem> = pa_client::commands::filter(&prefix)
+                                .iter()
+                                .map(|command| SlashItem {
+                                    name: command.name.into(),
+                                    hint: command.hint.into(),
+                                    description: command.description.into(),
+                                })
+                                .collect();
+                            if !rows.is_empty() {
+                                ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
+                                ui.set_slash_open(true);
+                            }
+                        }
+                    }
                     // selection drives everything else: the follow-selection
                     // block below attaches, and the attach reply replaces the
                     // rows. Nothing from the old chat may survive the switch -
@@ -1560,6 +1677,12 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
+    // A look at the command menu in a session of its own: the flag opens a fresh
+    // chat first, so the draft in the user's own session is never touched.
+    if let Ok(opening) = std::env::var("PA_SLASH") {
+        let _ = job_tx.send(Job::NewChat);
+    }
+
     std::mem::forget(poll);
 
     ui.run()
@@ -1754,6 +1877,38 @@ fn apply_queue(
                     &follow_up,
                 )))));
 
+}
+
+/// The command name being typed, or `None` when the message is not a command
+/// yet.
+///
+/// The menu belongs to the word right after the slash: once a space is typed the
+/// user is into the arguments and the list goes away, the same rule the TUI uses
+/// (only the first line, only before the first space).
+fn slash_name_token(text: &str) -> Option<String> {
+    let first = text.lines().next().unwrap_or("");
+    let body = first.strip_prefix('/')?;
+    if body.contains(char::is_whitespace) || body.contains('/') {
+        return None;
+    }
+    Some(body.to_string())
+}
+
+/// The builtin command a message runs without being sent, if any.
+///
+/// Only the commands this window can carry out itself, and only bare: `/model`
+/// opens the picker, `/model sonnet` is left alone.
+fn slash_opens_picker(text: &str) -> Option<&'static str> {
+    let trimmed = text.trim();
+    let body = trimmed.strip_prefix('/')?;
+    if body.contains(char::is_whitespace) {
+        return None;
+    }
+    match body {
+        "model" => Some("model"),
+        "effort" | "thinking" => Some("effort"),
+        _ => None,
+    }
 }
 
 fn dump_rows(rows: &[Row]) {
@@ -2609,4 +2764,35 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
+}
+
+#[cfg(test)]
+mod slash_menu_tests {
+    use super::{slash_name_token, slash_opens_picker};
+
+    #[test]
+    fn the_menu_belongs_to_the_word_after_the_slash() {
+        assert_eq!(slash_name_token("/"), Some(String::new()));
+        assert_eq!(slash_name_token("/mo"), Some("mo".to_string()));
+        // a space means the arguments have started: the list goes away
+        assert_eq!(slash_name_token("/model "), None);
+        assert_eq!(slash_name_token("/new --name x"), None);
+        // prose is not a command
+        assert_eq!(slash_name_token("hello"), None);
+        assert_eq!(slash_name_token("a /model"), None);
+        // a second line is the message, not the command
+        assert_eq!(slash_name_token("/model\nsecond"), Some("model".to_string()));
+        assert_eq!(slash_name_token("/a/b"), None);
+    }
+
+    #[test]
+    fn only_bare_picker_commands_run_without_being_sent() {
+        assert_eq!(slash_opens_picker("/model"), Some("model"));
+        assert_eq!(slash_opens_picker("  /model  "), Some("model"));
+        assert_eq!(slash_opens_picker("/effort"), Some("effort"));
+        // carry arguments or prose: sent as a message, untouched
+        assert_eq!(slash_opens_picker("/model sonnet"), None);
+        assert_eq!(slash_opens_picker("/compact"), None);
+        assert_eq!(slash_opens_picker("model"), None);
+    }
 }
