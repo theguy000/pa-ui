@@ -2194,6 +2194,7 @@ fn to_slint(row: &Row) -> TRow {
         failed: row.failed,
         reason: transcript::plain(&row.reason).into(),
         image: images::from_wire(&row.image, &row.mime),
+        elapsed: row.elapsed.clone().into(),
     }
 }
 

@@ -40,6 +40,9 @@ pub struct Row {
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
     pub mime: String,
+    /// how long the call took, drawn as its own column: a separator dot between
+    /// two dim runs reads as a full stop
+    pub elapsed: String,
 }
 
 impl Row {
@@ -59,6 +62,7 @@ impl Row {
             reason: String::new(),
             image: String::new(),
             mime: String::new(),
+            elapsed: String::new(),
         }
     }
 }
@@ -330,15 +334,10 @@ pub fn apply_header(
         title.push_str(&format!(" \u{00b7} +{} more", bash.count - 1));
     }
     row.title = title;
-    // the TUI trails the timing after the line counts, and so does this
-    let elapsed = format_duration(duration);
-    if !elapsed.is_empty() {
-        row.meta = if row.meta.is_empty() {
-            elapsed
-        } else {
-            format!("{} \u{00b7} {elapsed}", row.meta)
-        };
-    }
+    // the TUI trails the timing after the line counts; here it gets its own
+    // column so nothing has to be separated by a dot that vanishes into the
+    // background
+    row.elapsed = format_duration(duration);
 }
 
 /// The part of a shell line worth reading in a title: exactly what the TUI
@@ -1348,7 +1347,8 @@ mod duration_tests {
         let args = serde_json::json!({ "code": code });
         let mut row = tool_cell("python_repl", "call_0_x", &args);
         apply_header(&mut row, code, None, Some(2));
-        assert_eq!(row.meta, "1 line \u{00b7} 2ms");
+        assert_eq!(row.meta, "1 line");
+        assert_eq!(row.elapsed, "2ms");
     }
 
     #[test]
