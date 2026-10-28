@@ -250,6 +250,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_line("no session selected".into());
                 return;
             }
+            // A picked command rides in front of the argument, exactly as the
+            // terminal app sends it.
+            let command = ui.get_composer_command().to_string();
+            let message = if command.is_empty() {
+                message
+            } else if message.trim().is_empty() {
+                command
+            } else {
+                format!("{command} {message}")
+            };
             // A bare command is not a message: `/model` opens the model picker
             // instead of sending the word to the agent.
             if let Some(command) = slash_opens_picker(&message) {
@@ -267,6 +277,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
+            ui.set_composer_command("".into());
+            ui.set_composer_command_hint("".into());
             {
                 let held = attachments.borrow();
                 if let Some(first) = held.first() {
@@ -615,6 +627,15 @@ fn main() -> Result<(), slint::PlatformError> {
     // have, and the descriptions are the daemon's own words.
     {
         let weak = ui.as_weak();
+        ui.on_composer_command_cleared(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_composer_command("".into());
+            ui.set_composer_command_hint("".into());
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
         let extra_commands = extra_commands.clone();
         ui.on_slash_typed(move |text| {
             let Some(ui) = weak.upgrade() else { return };
@@ -672,12 +693,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_line("pick a model".into());
                 return;
             }
-            let text = match pa_client::commands::find(&name) {
-                Some(command) if command.takes_argument => format!("/{name} "),
-                _ => format!("/{name}"),
-            };
-            ui.set_composer_text(text.as_str().into());
-            ui.set_composer_has_text(true);
+            // The command leaves the box: it becomes the chip above it, and the
+            // box keeps only the arguments. Typing over a half-word and leaving
+            // the caret inside it was the whole ""text autocomplete"" feeling.
+            ui.set_composer_command(format!("/{name}").as_str().into());
+            ui.set_composer_command_hint(row.hint.clone());
+            ui.set_composer_text("".into());
+            ui.set_composer_has_text(false);
+            ui.set_status_line("command ready — add its argument".into());
         });
     }
 
