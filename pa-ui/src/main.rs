@@ -210,16 +210,24 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_queued_preview(message.clone().into());
                 }
             } else {
+                // The echo carries the pictures too: the store will show the
+                // message this way once it lands, and the optimistic row has to
+                // match it or the send reads as text that lost its image.
+                let mut content: Vec<serde_json::Value> = Vec::new();
+                if !message.is_empty() {
+                    content.push(serde_json::json!({"type": "text", "text": message}));
+                }
+                content.extend(blocks.iter().cloned());
                 let echo = serde_json::json!({
                     "role": "user",
-                    "content": [{"type": "text", "text": message}],
+                    "content": content,
                 });
-                if let Some(row) = transcript::build(std::slice::from_ref(&echo), 1).0.first() {
+                for row in transcript::build(std::slice::from_ref(&echo), 1).0 {
                     rows.borrow_mut().push(row.clone());
-                    model.push(to_slint(row));
-                    trace_rows("send: optimistic row", &rows);
-                    scroll_to_end_when_ready(&weak);
+                    model.push(to_slint(&row));
                 }
+                trace_rows("send: optimistic row", &rows);
+                scroll_to_end_when_ready(&weak);
                 *pending_user.borrow_mut() = Some(message.clone());
             }
             // The turn is already starting; the poll that reports it is up to a
@@ -2180,6 +2188,7 @@ fn to_slint(row: &Row) -> TRow {
         expanded: row.expanded,
         failed: row.failed,
         reason: transcript::plain(&row.reason).into(),
+        image: images::from_wire(&row.image, &row.mime),
     }
 }
 

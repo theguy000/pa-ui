@@ -13,6 +13,7 @@ export struct TRow {
     expanded: bool,
     failed: bool,
     reason: string,
+    image: image,
 }
 
 export struct SessionItem {
@@ -764,7 +765,30 @@ component TranscriptRow inherits VerticalLayout {
             default-font-family: "Cascadia Code";
         }
     }
+    // an image the user sent: the picture itself, thumbnailed, on the same edge
+    // as the bubble so the sent turn reads as one thing
+    if data.kind == 8 : HorizontalLayout {
+        alignment: end;
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        Rectangle {
+            width: 220px;
+            height: 150px;
+            background: #1a1c16;
+            border-radius: 10px;
+            clip: true;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: data.image;
+                image-fit: contain;
+            }
+        }
+    }
 }
+
 
 // One line of the context ledger: the label, then the value flush right in a
 // fixed slot so the whole column of numbers has one edge to line up on.

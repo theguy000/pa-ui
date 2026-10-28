@@ -230,3 +230,84 @@ mod tests {
         assert_eq!(SUPPORTED.len(), 4);
     }
 }
+
+/// Base64 decode: the encoder above hands bytes out, this is how the pictures in
+/// a transcript come back in.
+#[must_use]
+pub fn decode_base64(input: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len() * 3 / 4 + 4);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for ch in input.bytes() {
+        let value = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            b'\n' | b'\r' | b' ' | b'\t' => continue,
+            _ => continue,
+        };
+        acc = (acc << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
+}
+
+thread_local! {
+    /// Decoded once per payload. The transcript rebuilds on every poll, and
+    /// writing and reading a file per row per poll would be absurd.
+    static CACHE: std::cell::RefCell<std::collections::HashMap<u64, slint::Image>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// A base64 payload as something Slint can draw, cached by content.
+#[must_use]
+pub fn from_wire(base64: &str, mime: &str) -> slint::Image {
+    if base64.is_empty() {
+        return slint::Image::default();
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(base64, &mut hasher);
+    let key = std::hash::Hasher::finish(&hasher);
+    if let Some(image) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return image;
+    }
+    let bytes = decode_base64(base64);
+    let extension = match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "png",
+    };
+    let path = std::env::temp_dir().join(format!(
+        "pa-ui-{}-{key:x}.{extension}",
+        std::process::id()
+    ));
+    let image = if std::fs::write(&path, &bytes).is_ok() {
+        let loaded = slint::Image::load_from_path(&path).unwrap_or_default();
+        let _ = std::fs::remove_file(&path);
+        loaded
+    } else {
+        slint::Image::default()
+    };
+    CACHE.with(|cache| cache.borrow_mut().insert(key, image.clone()));
+    image
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::{base64, decode_base64};
+
+    #[test]
+    fn decodes_what_the_encoder_writes() {
+        assert_eq!(decode_base64("QUJD"), b"ABC");
+        assert_eq!(decode_base64("QUJDRA=="), b"ABCD");
+        assert_eq!(decode_base64(&base64(b"a longer payload \x00\x01\xf0")), b"a longer payload \x00\x01\xf0");
+    }
+}

@@ -18,6 +18,8 @@ pub const KIND_NOTICE: i32 = 5;
 pub const KIND_CODE: i32 = 6;
 /// A GFM table, drawn with box characters in a monospace face.
 pub const KIND_TABLE: i32 = 7;
+/// An image the user sent: drawn as a thumbnail, not as words.
+pub const KIND_IMAGE: i32 = 8;
 
 #[derive(Debug, Clone)]
 pub struct Row {
@@ -35,6 +37,9 @@ pub struct Row {
     pub expanded: bool,
     pub failed: bool,
     pub reason: String,
+    /// base64 payload of an image row, exactly as it sits on the wire
+    pub image: String,
+    pub mime: String,
 }
 
 impl Row {
@@ -52,6 +57,8 @@ impl Row {
             expanded: false,
             failed: false,
             reason: String::new(),
+            image: String::new(),
+            mime: String::new(),
         }
     }
 }
@@ -108,6 +115,25 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         };
         for block in blocks {
             match block.get("type").and_then(Value::as_str).unwrap_or_default() {
+                // An image is a row of its own. Without this a message that is
+                // nothing but a picture produced no row at all, and one with
+                // words lost the picture: the blocks were read for text only.
+                "image" => {
+                    let Some(data) = block.get("data").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if data.is_empty() {
+                        continue;
+                    }
+                    let mut row = Row::new(KIND_IMAGE);
+                    row.image = data.to_string();
+                    row.mime = block
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png")
+                        .to_string();
+                    rows.push(row);
+                }
                 "text" => {
                     let text = block.get("text").and_then(Value::as_str).unwrap_or_default();
                     if text.trim().is_empty() {
@@ -1041,5 +1067,34 @@ mod strong_tests {
             markdown_markup("# Title"),
             "<font color=\"#c8b158\">**Title**</font>"
         );
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn an_image_block_becomes_its_own_row() {
+        let message = serde_json::json!({"role": "user", "content": [
+            {"type": "text", "text": "look at this"},
+            {"type": "image", "data": "QUJD", "mimeType": "image/png"},
+        ]});
+        let (rows, _) = build(std::slice::from_ref(&message), 1);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, KIND_USER);
+        assert_eq!(rows[1].kind, KIND_IMAGE);
+        assert_eq!(rows[1].image, "QUJD");
+        assert_eq!(rows[1].mime, "image/png");
+    }
+
+    #[test]
+    fn an_image_only_message_is_still_a_row() {
+        let message = serde_json::json!({"role": "user", "content": [
+            {"type": "image", "data": "QUJD", "mimeType": "image/png"},
+        ]});
+        let (rows, _) = build(std::slice::from_ref(&message), 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_IMAGE);
     }
 }
