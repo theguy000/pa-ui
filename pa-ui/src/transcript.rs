@@ -74,6 +74,7 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     // and the bash preview the tool reported for itself: the TUI titles a cell
     // by the command that ran, not by the first line of the cell's source
     let mut bashes: std::collections::HashMap<String, BashInfo> = std::collections::HashMap::new();
+    let mut durations: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for message in window {
         if message.get("role").and_then(Value::as_str) != Some("toolResult") {
             continue;
@@ -94,6 +95,9 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         outputs.insert(id.to_string(), (text, failed));
         if let Some(info) = bash_commands(message.get("details")) {
             bashes.insert(id.to_string(), info);
+        }
+        if let Some(ms) = duration_ms(message.get("details")) {
+            durations.insert(id.to_string(), ms);
         }
     }
 
@@ -204,7 +208,8 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
                     let lines = code.lines().count();
                     row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
                     let info = bashes.get(&row.id).cloned();
-                    apply_header(&mut row, code, info.as_ref());
+                    let taken = durations.get(&row.id).copied();
+                    apply_header(&mut row, code, info.as_ref(), taken);
                     rows.push(row);
                 }
                 _ => {}
@@ -246,6 +251,34 @@ pub fn bash_commands(details: Option<&Value>) -> Option<BashInfo> {
     })
 }
 
+/// How long a call took, in the TUI's own words: `2ms`, `12.3s`, `5m 04s`.
+#[must_use]
+pub fn format_duration(duration_ms: Option<u64>) -> String {
+    let Some(ms) = duration_ms else {
+        return String::new();
+    };
+    if ms < 1_000 {
+        return format!("{ms}ms");
+    }
+    let total_seconds = ms / 1_000;
+    if total_seconds < 60 {
+        return format!("{total_seconds}.{}s", (ms % 1_000) / 100);
+    }
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes}m {seconds:02}s")
+}
+
+/// The tool's own timing, beside the rest of its details.
+#[must_use]
+pub fn duration_ms(details: Option<&Value>) -> Option<u64> {
+    let details = details?;
+    details
+        .get("durationMs")
+        .or_else(|| details.get("duration_ms"))
+        .and_then(Value::as_u64)
+}
+
 /// Non-blank lines of the cell, after a `%%bash` magic is stripped.
 fn input_line_count(code: &str) -> usize {
     let body = crate::preview::parse_ipython_bash_cell(code)
@@ -260,7 +293,12 @@ const BASH_DOMINANCE_DIVISOR: usize = 2;
 /// The title line of a cell, decided exactly as the TUI's collapsed line decides
 /// it: the label from the dominance test, then the preview of whichever side
 /// won, then how many further commands ran.
-pub fn apply_header(row: &mut Row, code: &str, bash: Option<&BashInfo>) {
+pub fn apply_header(
+    row: &mut Row,
+    code: &str,
+    bash: Option<&BashInfo>,
+    duration: Option<u64>,
+) {
     let code = code.trim_end();
     let dominant = bash.filter(|bash| bash.lines * BASH_DOMINANCE_DIVISOR >= input_line_count(code));
     let preview = crate::preview::preview_ipython_code(code);
@@ -292,6 +330,15 @@ pub fn apply_header(row: &mut Row, code: &str, bash: Option<&BashInfo>) {
         title.push_str(&format!(" \u{00b7} +{} more", bash.count - 1));
     }
     row.title = title;
+    // the TUI trails the timing after the line counts, and so does this
+    let elapsed = format_duration(duration);
+    if !elapsed.is_empty() {
+        row.meta = if row.meta.is_empty() {
+            elapsed
+        } else {
+            format!("{} \u{00b7} {elapsed}", row.meta)
+        };
+    }
 }
 
 /// The part of a shell line worth reading in a title: exactly what the TUI
@@ -311,7 +358,7 @@ pub fn tool_cell(tool_name: &str, call_id: &str, args: &Value) -> Row {
     row.id = call_id.to_string();
     let fallback = args.to_string();
     let source = if code.is_empty() { fallback.as_str() } else { code };
-    apply_header(&mut row, source, None);
+    apply_header(&mut row, source, None, None);
     row.code = highlight_python(code);
     row.has_code = !code.is_empty();
     let lines = code.lines().count();
@@ -1282,6 +1329,39 @@ mod golden_preview_tests {
 }
 
 #[cfg(test)]
+mod duration_tests {
+    use super::*;
+
+    #[test]
+    fn durations_read_the_way_the_tui_writes_them() {
+        assert_eq!(format_duration(Some(2)), "2ms");
+        assert_eq!(format_duration(Some(999)), "999ms");
+        assert_eq!(format_duration(Some(1_000)), "1.0s");
+        assert_eq!(format_duration(Some(12_345)), "12.3s");
+        assert_eq!(format_duration(Some(65_000)), "1m 05s");
+        assert_eq!(format_duration(None), "");
+    }
+
+    #[test]
+    fn the_timing_trails_the_line_count() {
+        let code = "r = await sh(\"ls\")";
+        let args = serde_json::json!({ "code": code });
+        let mut row = tool_cell("python_repl", "call_0_x", &args);
+        apply_header(&mut row, code, None, Some(2));
+        assert_eq!(row.meta, "1 line \u{00b7} 2ms");
+    }
+
+    #[test]
+    fn the_details_field_is_read_from_either_spelling() {
+        let camel = serde_json::json!({ "durationMs": 1500 });
+        let snake = serde_json::json!({ "duration_ms": 1500 });
+        assert_eq!(duration_ms(Some(&camel)), Some(1500));
+        assert_eq!(duration_ms(Some(&snake)), Some(1500));
+        assert_eq!(duration_ms(None), None);
+    }
+}
+
+#[cfg(test)]
 mod header_parity_tests {
     use super::*;
 
@@ -1289,7 +1369,7 @@ mod header_parity_tests {
         let args = serde_json::json!({ "code": code });
         let mut row = tool_cell("python_repl", "call_0_x", &args);
         let info = bash_commands(details.as_ref());
-        apply_header(&mut row, code, info.as_ref());
+        apply_header(&mut row, code, info.as_ref(), None);
         row.title
     }
 

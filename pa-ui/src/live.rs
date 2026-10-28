@@ -23,6 +23,8 @@ pub enum Part {
         failed: bool,
         /// what the tool said it ran, when it says
         bash: Option<transcript::BashInfo>,
+        /// and how long it took
+        duration: Option<u64>,
     },
 }
 
@@ -89,6 +91,7 @@ impl Live {
             output: None,
             failed: false,
             bash: None,
+            duration: None,
         });
     }
 
@@ -98,6 +101,7 @@ impl Live {
         output: String,
         failed: bool,
         bash: Option<transcript::BashInfo>,
+        duration: Option<u64>,
     ) {
         for part in self.parts.iter_mut().rev() {
             if let Part::Tool {
@@ -105,6 +109,7 @@ impl Live {
                 output: slot,
                 failed: flag,
                 bash: bash_slot,
+                duration: elapsed,
                 ..
             } = part
             {
@@ -112,6 +117,7 @@ impl Live {
                     *slot = Some(output);
                     *flag = failed;
                     *bash_slot = bash;
+                    *elapsed = duration;
                     return;
                 }
             }
@@ -134,6 +140,7 @@ impl Live {
                     output,
                     failed,
                     bash,
+                    duration,
                 } => {
                     let mut row = transcript::tool_cell(name, id, args);
                     if let Some(output) = output {
@@ -141,7 +148,7 @@ impl Live {
                     }
                     if let Some(info) = bash {
                         let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
-                        transcript::apply_header(&mut row, code, Some(info));
+                        transcript::apply_header(&mut row, code, Some(info), *duration);
                     }
                     out.push(row);
                 }
