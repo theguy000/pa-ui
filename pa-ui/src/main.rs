@@ -65,6 +65,8 @@ enum Msg {
         session: String,
         messages: Vec<serde_json::Value>,
         last_entry: String,
+        /// the turn just closed: reconcile for real instead of appending
+        fresh: bool,
     },
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
@@ -956,6 +958,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let pending = pending_user.borrow();
                     keep_pending_prompt(&mut built, pending.as_deref());
                     drop(pending);
+                    dump_rows(&built);
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     let count = slint_rows.len();
                     *rows_store_ui.borrow_mut() = built;
@@ -983,6 +986,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     session,
                     messages,
                     last_entry,
+                    fresh,
                 } => {
                     if std::env::var("PA_DEBUG").is_ok() {
                         eprintln!(
@@ -1042,7 +1046,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     // transcript down by however many rows that turn had.
                     let writing = live_row.is_some()
                         && stream_at.elapsed().unwrap_or_default() < Duration::from_secs(15);
-                    if ui.get_busy() || writing {
+                    // A closed turn (fresh) is the one moment the view is allowed
+                    // to be rewritten even while the daemon still reports busy:
+                    // appending the store's copy beside the streamed row is what
+                    // showed every answer twice, and nothing would ever take the
+                    // streamed copy back down.
+                    if (ui.get_busy() || writing) && !fresh {
                         let shown = rows_store_ui.borrow().len();
                         if built.len() > shown {
                             let mut store = rows_store_ui.borrow_mut();
@@ -1071,6 +1080,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
                     }
+                    dump_rows(&built);
                     let count = built.len();
                     let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
                     *rows_store_ui.borrow_mut() = built;
@@ -1562,6 +1572,27 @@ fn context_hint(tokens: u64) -> String {
     }
 }
 
+/// Write the built transcript to `PA_DUMP`, so a row that appears twice can be
+/// counted instead of guessed at.
+fn dump_rows(rows: &[Row]) {
+    let Ok(path) = std::env::var("PA_DUMP") else {
+        return;
+    };
+    let dump: String = rows
+        .iter()
+        .map(|row| {
+            format!(
+                "{}\t{}\t{}\t{}\n",
+                row.kind,
+                row.id,
+                row.title.replace('\n', " "),
+                row.body.replace('\n', " ").chars().take(90).collect::<String>()
+            )
+        })
+        .collect();
+    let _ = std::fs::write(path, dump);
+}
+
 /// Rebuild the menu: configured providers first, then the rest, alphabetical.
 /// A collapsed group carries no models at all, so the panel never instantiates
 /// the whole catalog.
@@ -1894,7 +1925,6 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // while fresh connections advanced 96 -> 108). The cost is a
                     // local pipe open per poll; the alternative is a window that
                     // stops one turn short.
-                    let _ = fresh;
                     // one tail page, not the whole branch: the typed cursor the
                     // terminal UI uses, so a long session costs the same as a
                     // short one
@@ -1905,6 +1935,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                             session,
                             messages,
                             last_entry,
+                            fresh,
                         });
                     }
                     Err(error) => {
