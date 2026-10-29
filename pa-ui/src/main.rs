@@ -668,6 +668,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         ui.on_composer_command_cleared(move || {
             let Some(ui) = weak.upgrade() else { return };
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!("[composer] command word removed");
+            }
             ui.set_composer_command("".into());
         });
     }

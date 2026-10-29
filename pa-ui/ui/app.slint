@@ -1938,10 +1938,6 @@ export component AppWindow inherits Window {
             }
         }
 
-        // The command lives inside the writing area: a block at the start of the
-        // first line, coloured like the accent, with the caret and the text
-        // starting after it. Backspace at the start of the text deletes it, the
-        // way a token behaves in any chat box.
         Rectangle {
             height: root.composer-height;
             background: transparent;
@@ -1973,6 +1969,16 @@ export component AppWindow inherits Window {
                         key-pressed(event) => {
                                 // The command menu answers first while it is open.
                                 if root.slash-take(event) {
+                                    return EventResult.accept;
+                                }
+                                // Backspace at the very start of the words takes
+                                // the command word away with it: it is the only
+                                // way to remove it, and it must work
+                                if event.text == Key.Backspace
+                                    && root.composer-command != ""
+                                    && (root.composer-text == "" || self.caret-offset <= 0)
+                                {
+                                    root.composer-command-cleared();
                                     return EventResult.accept;
                                 }
                                 // Enter sends, Alt+Enter steers into the
