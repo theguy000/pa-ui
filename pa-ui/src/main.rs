@@ -684,23 +684,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let token = slash_token.clone();
         ui.on_slash_typed(move |text, caret| {
             let Some(ui) = weak.upgrade() else { return };
-            let caret_offset = usize::try_from(caret.max(0)).unwrap_or(0);
-            let (start, end) = slash_token_at(&text, caret_offset);
+            let (start, end) = slash_token_at(&text, usize::try_from(caret.max(0)).unwrap_or(0));
             *token.borrow_mut() = (start, end);
-            let known = extra_commands.borrow().clone();
-            // gold while the word being written is a command - including while it
-            // is still only a prefix of one, which is exactly when the menu is open
-            ui.set_composer_is_command(caret_in_command(&text, caret_offset, |name| {
-                is_command_word(&known, name)
-                    || !pa_client::commands::filter(name).is_empty()
-                    || known.iter().any(|(known, _, _)| {
-                        known
-                            .rsplit(':')
-                            .next()
-                            .unwrap_or(known.as_str())
-                            .starts_with(name)
-                    })
-            }));
             let body = text.get(start..end).unwrap_or_default();
             let Some(prefix) = body
                 .strip_prefix('/')
@@ -1986,20 +1971,6 @@ fn apply_queue(
 
 }
 
-/// Whether a bare word, typed after a slash, names a command this session has.
-///
-/// Builtins come from the copied table; the session's own entries may carry a
-/// `skill:` prefix while the typed word does not.
-fn is_command_word(extra: &[(String, String, String)], name: &str) -> bool {
-    if pa_client::commands::find(name).is_some() {
-        return true;
-    }
-    extra.iter().any(|(known, _, _)| {
-        let bare = known.rsplit(':').next().unwrap_or(known.as_str());
-        known == name || bare == name
-    })
-}
-
 /// The menu's rows: the builtin table first, then whatever this session adds on
 /// top of it, both narrowed by the same prefix.
 fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem> {
@@ -2024,31 +1995,6 @@ fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem
         });
     }
     rows
-}
-
-/// Whether the caret is on — or right after — a command token.
-///
-/// This is what makes a command look like a command while it is being written: the
-/// words are drawn in the accent while the caret is in the token, and go back to
-/// prose the moment the caret moves into the argument. A text box colours all of
-/// its text or none of it, so the unit of colour has to be the moment, not the word.
-fn caret_in_command(text: &str, caret: usize, is_command: impl Fn(&str) -> bool) -> bool {
-    let caret = caret.min(text.len());
-    let (start, end) = slash_token_at(text, caret);
-    if let Some(name) = text.get(start..end).and_then(|token| token.strip_prefix('/')) {
-        return is_command(name);
-    }
-    // the caret just left the token (accepted, or a space typed after it): keep the
-    // colour on it until the argument starts
-    let before = &text[..caret];
-    let trimmed = before.trim_end_matches(char::is_whitespace);
-    if trimmed.len() == before.len() {
-        return false;
-    }
-    let (start, end) = slash_token_at(trimmed, trimmed.len());
-    text.get(start..end)
-        .and_then(|token| token.strip_prefix('/'))
-        .is_some_and(&is_command)
 }
 
 /// The `/command` token under the caret, as byte range `[start, end)`.
@@ -3019,15 +2965,10 @@ mod slash_menu_tests {
     use super::slash_token_at;
 
     #[test]
-    fn the_token_under_the_caret_is_the_one_being_typed() {
-        // at the start of the message
+    fn the_menu_belongs_to_the_word_after_the_slash() {
         assert_eq!(slash_token_at("/mo", 3), (0, 3));
-        // in the middle: only the token, not the sentence
         let text = "please /ref now";
         assert_eq!(slash_token_at(text, 10), (7, 11));
-        // at the very end, and at the very start
-        assert_eq!(slash_token_at("/a b/", 5), (3, 5));
-        // caret at the start of a word finds the whole word it begins
         assert_eq!(slash_token_at("x /y", 2), (2, 4));
     }
 
@@ -3105,41 +3046,5 @@ mod slash_rows_tests {
             .collect();
         assert!(names.contains(&"compact".to_string()));
         assert!(names.contains(&"refine".to_string()));
-    }
-}
-
-#[cfg(test)]
-mod caret_command_tests {
-    use super::caret_in_command;
-
-    /// The real predicate counts prefixes too: while a command is half-typed the
-    /// menu is open and the word is already a command in the making.
-    fn known(name: &str) -> bool {
-        ["refine", "compact"]
-            .iter()
-            .any(|command| command.starts_with(name))
-    }
-
-    #[test]
-    fn gold_while_the_caret_is_in_the_token() {
-        let text = "please /ref tighten";
-        // caret inside "/ref"
-        assert!(caret_in_command(text, 11, known));
-    }
-
-    #[test]
-    fn gold_right_after_the_token_until_the_argument_starts() {
-        let text = "please /refine ";
-        assert!(caret_in_command(text, text.len(), known));
-        let with_argument = "please /refine tit";
-        assert!(!caret_in_command(with_argument, with_argument.len(), known));
-    }
-
-    #[test]
-    fn prose_is_prose() {
-        let text = "please read /nonsense now";
-        assert!(!caret_in_command(text, 20, known));
-        let plain = "just words";
-        assert!(!caret_in_command(plain, plain.len(), known));
     }
 }
