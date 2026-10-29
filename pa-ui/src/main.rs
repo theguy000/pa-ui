@@ -1,3 +1,4 @@
+mod composer_canvas;
 mod images;
 mod live;
 mod preview;
@@ -185,6 +186,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // only half of what the agent accepts
     let extra_commands: Rc<RefCell<Vec<(String, String, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
+    // the composer's painted canvas: shaped once per change, not per frame
+    let canvas_cell = Rc::new(RefCell::new(composer_canvas::Canvas::new(13.0, 18.0)));
+    let canvas_key: Rc<RefCell<(String, usize, i32)>> =
+        Rc::new(RefCell::new((String::new(), usize::MAX, i32::MAX)));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -1055,6 +1060,45 @@ fn main() -> Result<(), slint::PlatformError> {
             loaded = Some(selected.clone());
             ui.set_status_line("loading transcript".into());
             let _ = jobs.send(Job::Attach { session: selected });
+        }
+
+        // The canvas is the only thing that draws the message, so it is repainted
+        // whenever the words, the caret or the width change - and not otherwise.
+        {
+            let text_now = ui.get_composer_text().to_string();
+            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
+            let width_now = ui.get_composer_width();
+            let key = (text_now.clone(), caret_now, (width_now * 10.0) as i32);
+            if *canvas_key.borrow() != key {
+                *canvas_key.borrow_mut() = key;
+                let known = extra_commands.borrow().clone();
+                let (image, caret) = canvas_cell.borrow_mut().render(
+                    &text_now,
+                    caret_now,
+                    width_now,
+                    |name| is_command_word(&known, name),
+                );
+                if std::env::var("PA_DEBUG").is_ok() {
+                    let gold = composer_canvas::spans(&text_now, |name| {
+                        is_command_word(&extra_commands.borrow(), name)
+                    })
+                    .iter()
+                    .filter(|span| span.command)
+                    .count();
+                    eprintln!(
+                        "[canvas] {} chars, {gold} command run(s), w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
+                        text_now.chars().count(),
+                        caret.content_height,
+                        caret.x,
+                        caret.y
+                    );
+                }
+                ui.set_composer_canvas(image);
+                ui.set_composer_caret_x(caret.x);
+                ui.set_composer_caret_y(caret.y);
+                ui.set_composer_caret_height(caret.height);
+                ui.set_composer_canvas_height(caret.content_height);
+            }
         }
 
         while let Ok(message) = msg_rx.try_recv() {
@@ -1947,6 +1991,20 @@ fn apply_queue(
                     &follow_up,
                 )))));
 
+}
+
+/// Whether a bare word, typed after a slash, names a command this session has.
+///
+/// Builtins come from the copied table; the session's own entries may carry a
+/// `skill:` prefix while the typed word does not.
+fn is_command_word(extra: &[(String, String, String)], name: &str) -> bool {
+    if pa_client::commands::find(name).is_some() {
+        return true;
+    }
+    extra.iter().any(|(known, _, _)| {
+        let bare = known.rsplit(':').next().unwrap_or(known.as_str());
+        known == name || bare == name
+    })
 }
 
 /// The menu's rows: the builtin table first, then whatever this session adds on

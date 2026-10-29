@@ -1116,6 +1116,14 @@ export component AppWindow inherits Window {
     in-out property <length> command-word-width: 0px;
     // where the caret should land once new text has arrived (byte offset)
     in-out property <int> composer-caret-request: -1;
+    // the painted message, and where the caret sits in it
+    in property <image> composer-canvas;
+    out property <int> composer-caret: draft-window.caret-offset;
+    out property <length> composer-width: draft-window.width;
+    in-out property <length> composer-caret-x: 0px;
+    in-out property <length> composer-caret-y: 0px;
+    in-out property <length> composer-caret-height: 18px;
+    in-out property <length> composer-canvas-height: 18px;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter
     // picks the highlighted command instead of sending half a word.

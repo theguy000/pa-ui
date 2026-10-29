@@ -6,6 +6,12 @@ import { ScrollView } from "std-widgets.slint";
 export component DraftEditor inherits Rectangle {
     in property <length> font-size: 13px;
     in property <brush> foreground: #e7e5df;
+    /// The painted message: coloured runs drawn by the canvas behind the input.
+    in property <image> canvas;
+    in property <length> canvas-height: 18px;
+    in property <length> caret-x: 0px;
+    in property <length> caret-y: 0px;
+    in property <length> caret-height: 18px;
     in property <brush> selection-background: #3b3f2e;
     in property <brush> selection-foreground: #f2f0e8;
     in-out property <string> text <=> field.text;
@@ -39,12 +45,34 @@ export component DraftEditor inherits Rectangle {
         content-width: self.visible-width;
         content-height: max(self.visible-height, field.preferred-height);
 
+        // the words themselves: exactly what the input would have drawn, but
+        // coloured run by run, with the caret placed from the same layout
+        Image {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.canvas-height;
+            source: root.canvas;
+        }
+
+        caret-bar := Rectangle {
+            x: root.caret-x;
+            y: root.caret-y;
+            width: 1.5px;
+            height: root.caret-height;
+            background: #e7e5df;
+            visible: root.has-focus;
+        }
+
         field := TextInput {
             width: parent.width;
             single-line: false;
             wrap: word-wrap;
             font-size: root.font-size;
-            color: root.foreground;
+            // transparent glyphs and a zero-width native caret: this input keeps
+            // the keys, IME, clipboard and selection, and paints nothing
+            color: transparent;
+            text-cursor-width: 0px;
             selection-background-color: root.selection-background;
             selection-foreground-color: root.selection-foreground;
             // PageUp/PageDown become sensible inside the box
