@@ -14,6 +14,18 @@ export component DraftEditor inherits Rectangle {
     in property <length> caret-y: 0px;
     in property <length> caret-height: 18px;
     in-out property <bool> blink-on: true;
+    /// Where the field itself says the caret is, in its own coordinates. The
+    /// painted glyphs and the typing position can disagree by a pixel or two; the
+    /// field's own answer is the one the writer expects, so it wins.
+    in-out property <length> native-caret-x: 0px;
+    in-out property <length> native-caret-y: 0px;
+    in-out property <length> canvas-caret-x: 0px;
+    in-out property <length> canvas-caret-y: 0px;
+    /// the truth for typing, converted into the painted canvas' coordinates
+    out property <length> caret-drawn-x: root.native-caret-x > 0px
+        ? root.native-caret-x : root.caret-x;
+    out property <length> caret-drawn-y: root.native-caret-y > 0px
+        ? root.native-caret-y : root.caret-y;
     in property <brush> selection-background: #3b3f2e;
     in property <brush> selection-foreground: #f2f0e8;
     in-out property <string> text <=> field.text;
@@ -61,8 +73,8 @@ export component DraftEditor inherits Rectangle {
         // the caret the canvas measured, blinking on its own: the native one is
         // invisible while the glyphs are transparent
         if root.use-canvas : Rectangle {
-            x: root.caret-x;
-            y: root.caret-y;
+            x: root.caret-drawn-x;
+            y: root.caret-drawn-y;
             width: 1.5px;
             height: root.caret-height;
             background: #e7e5df;
@@ -96,6 +108,8 @@ export component DraftEditor inherits Rectangle {
             // view then maps mouse hits back through that offset, which moving
             // the input around by hand did not
             cursor-position-changed(cpos) => {
+                root.native-caret-x = cpos.x;
+                root.native-caret-y = cpos.y;
                 if cpos.y + scroll.content-y < 0px {
                     scroll.content-y = min(
                         0px,
