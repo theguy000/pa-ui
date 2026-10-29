@@ -1116,6 +1116,16 @@ export component AppWindow inherits Window {
     in-out property <length> command-word-width: 0px;
     // where the caret should land once new text has arrived (byte offset)
     in-out property <int> composer-caret-request: -1;
+    // canvas mode (PA_CANVAS=1): the words are painted by Rust so a command can be
+    // gold wherever it sits; off, everything behaves as it always has
+    in-out property <bool> canvas-mode: false;
+    in property <image> composer-canvas;
+    in-out property <length> composer-canvas-height: 18px;
+    in-out property <length> composer-caret-x: 0px;
+    in-out property <length> composer-caret-y: 0px;
+    in-out property <length> composer-caret-height: 18px;
+    out property <int> composer-caret: draft-window.caret-offset;
+    out property <length> composer-width: draft-window.width;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter
     // picks the highlighted command instead of sending half a word.
@@ -1955,6 +1965,12 @@ export component AppWindow inherits Window {
             }
 
             draft-window := DraftEditor {
+                use-canvas: root.canvas-mode;
+                canvas: root.composer-canvas;
+                canvas-height: root.composer-canvas-height;
+                caret-x: root.composer-caret-x;
+                caret-y: root.composer-caret-y;
+                caret-height: root.composer-caret-height;
                 x: root.composer-command == "" ? 0px : root.command-word-width + 6px;
                 width: parent.width - self.x;
                 height: root.composer-height;

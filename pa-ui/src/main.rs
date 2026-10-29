@@ -1,3 +1,4 @@
+mod composer_canvas;
 mod images;
 mod live;
 mod preview;
@@ -188,6 +189,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // the byte range of the `/command` token the caret is in, so taking a command
     // can replace exactly that token and leave the words around it alone
     let slash_token: Rc<RefCell<(usize, usize)>> = Rc::new(RefCell::new((0, 0)));
+    // canvas mode: the composer paints its own words so a command can be gold
+    // wherever it sits. Off unless asked for: a bad paint must never take the
+    // composer away from the writer.
+    let canvas_mode = std::env::var("PA_CANVAS").is_ok();
+    let canvas_cell = Rc::new(RefCell::new(composer_canvas::Canvas::new(13.0, 18.0)));
+    let canvas_key: Rc<RefCell<(String, usize, i32)>> =
+        Rc::new(RefCell::new((String::new(), usize::MAX, i32::MIN)));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -752,7 +760,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let text = ui.get_composer_text().to_string();
             let (start, end) = *token.borrow();
             let (start, end) = (start.min(text.len()), end.min(text.len()));
-            if start == 0 && end == text.len() {
+            // In canvas mode the command is always part of the text: the painting
+            // colours it wherever it sits, so there is no outside slot to keep.
+            if !ui.get_canvas_mode() && start == 0 && end == text.len() {
                 // The whole box is the command: it becomes the gold word in
                 // front of the caret, and the box is left empty for arguments.
                 ui.set_composer_command(format!("/{name}").as_str().into());
@@ -1083,6 +1093,37 @@ fn main() -> Result<(), slint::PlatformError> {
             loaded = Some(selected.clone());
             ui.set_status_line("loading transcript".into());
             let _ = jobs.send(Job::Attach { session: selected });
+        }
+
+        // Canvas mode: repaint the words when they, the caret or the width change.
+        if ui.get_canvas_mode() {
+            let text_now = ui.get_composer_text().to_string();
+            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
+            let width_now = ui.get_composer_width();
+            let key = (text_now.clone(), caret_now, (width_now * 4.0) as i32);
+            if *canvas_key.borrow() != key {
+                *canvas_key.borrow_mut() = key;
+                let known = extra_commands.borrow().clone();
+                let (image, caret) = canvas_cell
+                    .borrow_mut()
+                    .render(&text_now, caret_now, width_now, |name| {
+                        is_command_word(&known, name)
+                    });
+                if std::env::var("PA_DEBUG").is_ok() {
+                    eprintln!(
+                        "[canvas] {} chars, w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
+                        text_now.chars().count(),
+                        caret.content_height,
+                        caret.x,
+                        caret.y
+                    );
+                }
+                ui.set_composer_canvas(image);
+                ui.set_composer_canvas_height(caret.content_height);
+                ui.set_composer_caret_x(caret.x);
+                ui.set_composer_caret_y(caret.y);
+                ui.set_composer_caret_height(caret.height);
+            }
         }
 
         while let Ok(message) = msg_rx.try_recv() {
@@ -1777,6 +1818,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     std::mem::forget(poll);
 
+    ui.set_canvas_mode(canvas_mode);
     ui.run()
 }
 
@@ -1969,6 +2011,20 @@ fn apply_queue(
                     &follow_up,
                 )))));
 
+}
+
+/// Whether a bare word, typed after a slash, names a command this session has.
+///
+/// Builtins come from the copied table; the session's own entries may carry a
+/// `skill:` prefix while the typed word does not.
+fn is_command_word(extra: &[(String, String, String)], name: &str) -> bool {
+    if pa_client::commands::find(name).is_some() {
+        return true;
+    }
+    extra.iter().any(|(known, _, _)| {
+        let bare = known.rsplit(':').next().unwrap_or(known.as_str());
+        known == name || bare == name
+    })
 }
 
 /// The menu's rows: the builtin table first, then whatever this session adds on

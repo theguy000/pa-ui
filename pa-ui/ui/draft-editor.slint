@@ -6,6 +6,14 @@ import { ScrollView } from "std-widgets.slint";
 export component DraftEditor inherits Rectangle {
     in property <length> font-size: 13px;
     in property <brush> foreground: #e7e5df;
+    // canvas mode: the words are painted by Rust and this input only edits them
+    in property <bool> use-canvas: false;
+    in property <image> canvas;
+    in property <length> canvas-height: 18px;
+    in property <length> caret-x: 0px;
+    in property <length> caret-y: 0px;
+    in property <length> caret-height: 18px;
+    in-out property <bool> blink-on: true;
     in property <brush> selection-background: #3b3f2e;
     in property <brush> selection-foreground: #f2f0e8;
     in-out property <string> text <=> field.text;
@@ -39,18 +47,42 @@ export component DraftEditor inherits Rectangle {
         content-width: self.visible-width;
         content-height: max(self.visible-height, field.preferred-height);
 
+        // painted first, so it sits under the field and never sees a click
+        if root.use-canvas : Image {
+            x: 0;
+            y: 0;
+            width: max(parent.width, 1px);
+            height: root.canvas-height;
+            source: root.canvas;
+            image-fit: fill;
+        }
+
+        // the caret the canvas measured, blinking on its own: the native one is
+        // invisible while the glyphs are transparent
+        if root.use-canvas : Rectangle {
+            x: root.caret-x;
+            y: root.caret-y;
+            width: 1.5px;
+            height: root.caret-height;
+            background: #e7e5df;
+            visible: root.blink-on;
+        }
+
         field := TextInput {
             width: parent.width;
             single-line: false;
             wrap: word-wrap;
             font-size: root.font-size;
-            color: root.foreground;
+            color: root.use-canvas ? transparent : root.foreground;
             selection-background-color: root.selection-background;
             selection-foreground-color: root.selection-foreground;
             // PageUp/PageDown become sensible inside the box
             page-height: scroll.visible-height;
 
-            edited => { root.edited(self.text); }
+            edited => {
+                root.blink-on = true;
+                root.edited(self.text);
+            }
             changed text => {
                 if root.caret-request >= 0 {
                     root.place-caret(root.caret-request);
@@ -76,6 +108,13 @@ export component DraftEditor inherits Rectangle {
                 }
             }
         }
+    }
+
+    // 530ms is the Windows default half-period
+    blink := Timer {
+        interval: 530ms;
+        running: root.use-canvas && field.has-focus;
+        triggered => { root.blink-on = !root.blink-on; }
     }
 
     // right-click gets the usual text actions instead of starting a selection
