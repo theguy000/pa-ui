@@ -1621,30 +1621,33 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        transcript-list := ScrollView {
-                            // explicit geometry: without it the view sizes itself to its
-                            // content, its viewport height equals the content height, and
-                            // there is no scroll range at all
+                                                transcript-list := ListView {
+                            // A ListView, not a ScrollView: it creates only the
+                            // rows in view. The ScrollView version built every
+                            // row of a 300-message page as a live element tree,
+                            // so a long chat got slower the longer it was.
+                            // Geometry stays explicit for the same reason as
+                            // before: a view that sizes itself to its content
+                            // has no scroll range.
                             x: 0;
                             y: 0;
                             width: parent.width;
                             height: parent.height;
-                            VerticalLayout {
-                                for item[i] in root.transcript : TranscriptRow {
-                                    data: item;
-                                    toggle => {
-                                        root.model-menu = false;
-                                        root.toggle-row(i);
-                                    }
-                                    reason-hover(reason, x, y) => {
-                                        root.reason-text = reason;
-                                        root.reason-x = x;
-                                        root.reason-y = y;
-                                        root.reason-open = true;
-                                    }
-                                    reason-leave => {
-                                        root.reason-open = false;
-                                    }
+                            for item[i] in root.transcript : TranscriptRow {
+                                width: transcript-list.width;
+                                data: item;
+                                toggle => {
+                                    root.model-menu = false;
+                                    root.toggle-row(i);
+                                }
+                                reason-hover(reason, x, y) => {
+                                    root.reason-text = reason;
+                                    root.reason-x = x;
+                                    root.reason-y = y;
+                                    root.reason-open = true;
+                                }
+                                reason-leave => {
+                                    root.reason-open = false;
                                 }
                             }
                         }

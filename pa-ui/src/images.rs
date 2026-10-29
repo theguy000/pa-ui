@@ -267,42 +267,93 @@ thread_local! {
 }
 
 /// A base64 payload as something Slint can draw, cached by content.
+///
+/// Decoded straight to the size the transcript draws it at: a 787 × 515
+/// screenshot is 1.6 MB of RGBA at full size and is shown in a 220 × 150 box, so
+/// the full bitmap is never worth holding — and the poll rebuilds the row.
 #[must_use]
 pub fn from_wire(base64: &str, mime: &str) -> slint::Image {
+    from_wire_sized(base64, mime, THUMB_W, THUMB_H)
+}
+
+/// Transcript images are drawn at this size with `image-fit: contain`.
+pub const THUMB_W: u32 = 440;
+pub const THUMB_H: u32 = 300;
+
+/// The same decode, at an explicit bound (2× the drawn box, so a high-DPI
+/// screen still has pixels to spare).
+#[must_use]
+pub fn from_wire_sized(base64: &str, mime: &str, max_w: u32, max_h: u32) -> slint::Image {
     if base64.is_empty() {
         return slint::Image::default();
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(base64, &mut hasher);
+    std::hash::Hash::hash(&(base64, max_w, max_h), &mut hasher);
     let key = std::hash::Hasher::finish(&hasher);
     if let Some(image) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return image;
     }
     let bytes = decode_base64(base64);
-    let extension = match mime {
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        _ => "png",
-    };
-    let path = std::env::temp_dir().join(format!(
-        "pa-ui-{}-{key:x}.{extension}",
-        std::process::id()
-    ));
-    let image = if std::fs::write(&path, &bytes).is_ok() {
-        let loaded = slint::Image::load_from_path(&path).unwrap_or_default();
-        let _ = std::fs::remove_file(&path);
-        loaded
-    } else {
-        slint::Image::default()
-    };
+    let image = decode_thumbnail(&bytes, max_w, max_h).unwrap_or_default();
     CACHE.with(|cache| cache.borrow_mut().insert(key, image.clone()));
     image
 }
 
+/// Decode a picture and shrink it to fit the box, keeping the aspect ratio.
+/// Falls back to the file path when the bytes cannot be read as an image.
+#[must_use]
+fn decode_thumbnail(bytes: &[u8], max_w: u32, max_h: u32) -> Option<slint::Image> {
+    use image::imageops::FilterType;
+    let decoded = image::load_from_memory(bytes).ok()?;
+    let (width, height) = (decoded.width(), decoded.height());
+    if width <= max_w && height <= max_h {
+        let rgba = decoded.to_rgba8();
+        let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+            rgba.as_raw(),
+            width,
+            height,
+        );
+        return Some(slint::Image::from_rgba8(buffer));
+    }
+    // Triangle is the cheap filter that still looks clean at half size; Lanczos3
+    // doubles the decode cost for a difference nobody sees in a 220 px box.
+    let scale = (f64::from(max_w) / f64::from(width)).min(f64::from(max_h) / f64::from(height));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let target_w = ((f64::from(width) * scale).round() as u32).max(1);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let target_h = ((f64::from(height) * scale).round() as u32).max(1);
+    let thumb = decoded.resize_exact(target_w, target_h, FilterType::Triangle);
+    let rgba = thumb.to_rgba8();
+    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        rgba.as_raw(),
+        target_w,
+        target_h,
+    );
+    Some(slint::Image::from_rgba8(buffer))
+}
+
 #[cfg(test)]
 mod decode_tests {
-    use super::{base64, decode_base64};
+    use super::{base64, decode_base64, from_wire_sized};
+
+    #[test]
+    fn a_big_picture_arrives_at_thumbnail_size() {
+        // 800 x 600, so the bound has to bite
+        let mut picture = image::RgbaImage::new(800, 600);
+        for (x, y, pixel) in picture.enumerate_pixels_mut() {
+            *pixel = image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]);
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(picture)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let payload = base64(png.get_ref());
+        let drawn = from_wire_sized(&payload, "image/png", 440, 300);
+        let size = drawn.size();
+        assert!(size.width <= 440 && size.height <= 300, "got {size:?}");
+        // and the aspect ratio is kept: 800x600 -> 400x300
+        assert_eq!((size.width, size.height), (400, 300));
+    }
 
     #[test]
     fn decodes_what_the_encoder_writes() {

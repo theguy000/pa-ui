@@ -1,4 +1,5 @@
 mod composer_canvas;
+mod env_cfg;
 mod images;
 mod live;
 mod preview;
@@ -192,7 +193,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // canvas mode: the composer paints its own words so a command can be gold
     // wherever it sits. Off unless asked for: a bad paint must never take the
     // composer away from the writer.
-    let canvas_mode = std::env::var("PA_CANVAS").is_ok();
+    let canvas_mode = crate::env_cfg::cfg().canvas;
     let canvas_cell: Rc<RefCell<Option<composer_canvas::Canvas>>> = Rc::new(RefCell::new(None));
     let canvas_key: Rc<RefCell<(String, usize, i32)>> =
         Rc::new(RefCell::new((String::new(), usize::MAX, i32::MIN)));
@@ -232,7 +233,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let sent_thumbs = sent_thumbs.clone();
         let editing_to_send = editing.clone();
         ui.on_send_requested(move |text| {
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!("[send] callback fired with {text:?}");
             }
             let message = text.trim().to_string();
@@ -253,7 +254,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     .is_none_or(|entry| entry.supports_images);
                 let in_flight_now = ui.get_busy() || in_flight_for_send.get();
                 if let Some(reason) = image_send_blocker(true, capable, in_flight_now) {
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[send] held: {reason}");
                     }
                     ui.set_status_line(reason.into());
@@ -411,7 +412,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
         let tx_paste = attach_tx.clone();
         ui.on_attach_pasted(move || {
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!("[attach] paste chord");
             }
             // the answer decides the key: true consumes it, false lets the text
@@ -446,7 +447,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 for attachment in found {
                     match slint::Image::load_from_path(&attachment.path) {
                         Ok(thumb) => {
-                            if std::env::var("PA_DEBUG").is_ok() {
+                            if crate::env_cfg::cfg().debug {
                                 eprintln!(
                                     "[attach] {} ({} base64 chars) {}x{}",
                                     attachment.mime,
@@ -527,7 +528,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let current = current.clone();
             timer.start(TimerMode::SingleShot, Duration::from_millis(120), move || {
                 if let Some(ui) = weak.upgrade() {
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[menu] ladder closed");
                     }
                     *current.borrow_mut() = None;
@@ -563,12 +564,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 .iter()
                 .find(|entry| entry.provider == pair.0 && entry.id == pair.1)
             else {
-                if std::env::var("PA_DEBUG").is_ok() {
+                if crate::env_cfg::cfg().debug {
                     eprintln!("[menu] hover {}/{} not in catalog", pair.0, pair.1);
                 }
                 return;
             };
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!(
                     "[menu] hover {}/{} levels={:?}",
                     pair.0, pair.1, entry.thinking_levels
@@ -595,7 +596,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .collect();
             ui.set_effort_items(ModelRc::from(Rc::new(VecModel::from(items))));
             ui.set_effort_y(row_y);
-            if !ui.get_effort_open() && std::env::var("PA_DEBUG").is_ok() {
+            if !ui.get_effort_open() && crate::env_cfg::cfg().debug {
                 eprintln!("[menu] ladder open at y={row_y}");
             }
             ui.set_effort_open(true);
@@ -655,7 +656,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if session.is_empty() {
                 return;
             }
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!(
                     "[menu] opened box=({},{},{}) height={}",
                     ui.get_box_x(),
@@ -683,7 +684,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         ui.on_composer_command_cleared(move || {
             let Some(ui) = weak.upgrade() else { return };
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!("[composer] command word removed");
             }
             ui.set_composer_command("".into());
@@ -723,7 +724,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 width_now,
                 |name| is_command_word(&known, name),
             );
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!(
                     "[canvas] {} chars, w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
                     text_now.chars().count(),
@@ -892,7 +893,7 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.on_provider_toggled(move |provider| {
             let Some(ui) = weak.upgrade() else { return };
             let provider = provider.to_string();
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!("[menu] fold {provider}");
             }
             {
@@ -909,7 +910,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let jobs = job_tx.clone();
         ui.on_queue_act(move |lane, slot, action| {
-            if std::env::var("PA_DEBUG").is_ok() {
+            if crate::env_cfg::cfg().debug {
                 eprintln!("[queue] act {action} {lane}[{slot}]");
             }
             let Some(ui) = weak.upgrade() else { return };
@@ -1131,7 +1132,7 @@ fn main() -> Result<(), slint::PlatformError> {
     poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
         let Some(ui) = weak.upgrade() else { return };
 
-        if std::env::var("PA_DEBUG").is_ok() {
+        if crate::env_cfg::cfg().debug {
             ui.set_status_line(
                 format!(
                     "cy={} ch={} h={} at-bottom={}",
@@ -1158,7 +1159,7 @@ fn main() -> Result<(), slint::PlatformError> {
         // what is stacked behind the running turn
         if ui.get_busy() && !loaded.as_deref().unwrap_or("").is_empty()
             // PA_QUEUE is a design check: keep the seeded lanes on screen
-            && std::env::var("PA_QUEUE").is_err()
+            && !crate::env_cfg::cfg().queue_preset
             && queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
         {
             queue_at = SystemTime::now();
@@ -1231,7 +1232,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             if let Some(rebound) =
                                 rows.iter().find(|row| row.session_id == uuid).map(|row| row.id.clone())
                             {
-                                if std::env::var("PA_DEBUG").is_ok() {
+                                if crate::env_cfg::cfg().debug {
                                     eprintln!("[rebind] {selected} -> {rebound}");
                                 }
                                 ui.set_selected_id(rebound.clone().into());
@@ -1327,7 +1328,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     tail_len = messages.len();
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[attach] {} msgs -> {} rows (skipped {skipped})",
                             messages.len(),
@@ -1337,7 +1338,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if std::env::var("PA_DEMO").as_deref() == Ok("fail") {
                         built.extend(transcript::demo_rows());
                     }
-                    if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
+                    if crate::env_cfg::cfg().demo_markdown {
                         built.extend(transcript::markdown_demo_rows());
                     }
                     // a prompt sent while this snapshot was in flight: the
@@ -1353,7 +1354,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = jobs.send(Job::SessionState {
                         session: session.clone(),
                     });
-                    if std::env::var("PA_MENU").is_ok() {
+                    if crate::env_cfg::cfg().menu {
                         let _ = jobs.send(Job::ModelCatalog {
                             session: session.clone(),
                         });
@@ -1373,7 +1374,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     last_entry,
                     fresh,
                 } => {
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
                             messages.len(),
@@ -1456,7 +1457,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     // the same hold on every poll, or the prompt we drew
                     // vanishes on the first rebuild and the transcript jumps
-                    if std::env::var("PA_DEMO").as_deref() == Ok("markdown") {
+                    if crate::env_cfg::cfg().demo_markdown {
                         // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
                     }
@@ -1470,9 +1471,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     merge_rows(&mut store, built, &row_model_ui);
                     let count = store.len();
                     drop(store);
-                    dump_rows(&rows_store_ui.borrow());
+                    if crate::env_cfg::cfg().dump.is_some() {
+                        dump_rows(&rows_store_ui.borrow());
+                    }
                     trace_rows("tail rebuild", &rows_store_ui);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
                             messages.len()
@@ -1671,7 +1674,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
                     scroll_to_end_when_ready(&ui.as_weak());
                     _stream_at = SystemTime::now();
-                    if std::env::var("PA_DEBUG").is_ok() && kind == Some("message_update") {
+                    if crate::env_cfg::cfg().debug && kind == Some("message_update") {
                         eprintln!(
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
                             stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
@@ -1717,7 +1720,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_title_text("".into());
                     ui.set_status_line("new chat".into());
                     ui.set_selected_id(id.clone().into());
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[new] selected {id}");
                     }
                 }
@@ -1745,7 +1748,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
                     // a headless hook: open the menu without a pointer, so the
                     // geometry and the hover path can be read off the log
-                    if std::env::var("PA_MENU").is_ok() && !ui.get_model_menu() {
+                    if crate::env_cfg::cfg().menu && !ui.get_model_menu() {
                         // the headless hook needs rows, not 35 folded headers
                         collapsed.borrow_mut().clear();
                         refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
@@ -1933,6 +1936,22 @@ fn context_hint(tokens: u64) -> String {
 /// and a rebuild replaces an entry it was given, appends one it has not seen, and
 /// leaves the rest alone. A flat row list can do the same as long as every row
 /// knows its message, which is what `Row.message` is for.
+///
+/// The grouping of the store is computed once, not once per incoming message, and
+/// a message whose row count did not change is replaced in place — `set_row_data`
+/// instead of a remove/insert pair — because every model mutation is a layout
+/// notification and a transcript that jitters while it streams is the result.
+fn group_ranges(rows: &[transcript::Row]) -> Vec<(String, std::ops::Range<usize>)> {
+    let mut out: Vec<(String, std::ops::Range<usize>)> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        match out.last_mut() {
+            Some((key, range)) if *key == row.message => range.end = index + 1,
+            _ => out.push((row.message.clone(), index..index + 1)),
+        }
+    }
+    out
+}
+
 fn merge_rows(
     store: &mut Vec<transcript::Row>,
     incoming: Vec<transcript::Row>,
@@ -1944,25 +1963,22 @@ fn merge_rows(
         model.set_vec(slint_rows);
         return;
     }
-    // group both sides by message, keeping the order they arrived in
-    let group = |rows: &[transcript::Row]| -> Vec<(String, usize, usize)> {
-        let mut out: Vec<(String, usize, usize)> = Vec::new();
-        for (index, row) in rows.iter().enumerate() {
-            match out.last_mut() {
-                Some((key, _, end)) if *key == row.message => *end = index + 1,
-                _ => out.push((row.message.clone(), index, index + 1)),
+    let mut store_map: std::collections::HashMap<String, std::ops::Range<usize>> =
+        group_ranges(store).into_iter().collect();
+    for (key, range) in group_ranges(&incoming) {
+        let fresh = &incoming[range];
+        match store_map.get(&key).cloned() {
+            // same shape: rewrite the rows where they stand, one notification each
+            Some(current) if current.len() == fresh.len() => {
+                for (offset, row) in fresh.iter().enumerate() {
+                    let index = current.start + offset;
+                    store[index] = row.clone();
+                    model.set_row_data(index, to_slint(row));
+                }
             }
-        }
-        out
-    };
-    for (key, start, end) in group(&incoming) {
-        let fresh: Vec<transcript::Row> = incoming[start..end].to_vec();
-        let existing = group(store);
-        match existing.iter().find(|(open, _, _)| *open == key) {
-            Some((_, at, until)) => {
-                // replace that message's rows where they stand
-                let at = (*at).min(store.len());
-                let until = (*until).min(store.len());
+            Some(current) => {
+                let at = current.start.min(store.len());
+                let until = current.end.min(store.len());
                 for index in (at..until).rev() {
                     store.remove(index);
                     model.remove(index);
@@ -1971,6 +1987,8 @@ fn merge_rows(
                     store.insert(at + offset, row.clone());
                     model.insert(at + offset, to_slint(row));
                 }
+                // the indices after this message moved: re-group once
+                store_map = group_ranges(store).into_iter().collect();
             }
             None => {
                 let at = store.len();
@@ -1978,6 +1996,7 @@ fn merge_rows(
                     store.insert(at + offset, row.clone());
                     model.insert(at + offset, to_slint(row));
                 }
+                store_map.insert(key, at..at + fresh.len());
             }
         }
     }
@@ -2035,7 +2054,7 @@ fn apply_queue(
     follow_up: &[String],
     sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>,
 ) {
-    if std::env::var("PA_DEBUG").is_ok() {
+    if crate::env_cfg::cfg().debug {
         eprintln!(
             "[queue] projection steering={} follow_up={steering:?}->{follow_up:?}",
             steering.len()
@@ -2190,7 +2209,7 @@ enum SlashAction {
 
 
 fn dump_rows(rows: &[Row]) {
-    let Ok(path) = std::env::var("PA_DUMP") else {
+    let Some(path) = crate::env_cfg::cfg().dump.clone() else {
         return;
     };
     let dump: String = rows
@@ -2359,7 +2378,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     model,
                 } => {
                     let outcome = set_model(active, &session, &provider, &model);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[model] {provider}/{model} -> {outcome:?}");
                     }
                     // a provider that is not signed in fails here: say so rather
@@ -2372,7 +2391,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 }
                 Job::NewChat => match create_session(active) {
                     Ok(id) => {
-                        if std::env::var("PA_DEBUG").is_ok() {
+                        if crate::env_cfg::cfg().debug {
                             eprintln!("[new] created {id}");
                         }
                         let _ = out.send(Msg::NewChat(id));
@@ -2399,7 +2418,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         mutation["images"] = serde_json::Value::Array(images.clone());
                     }
                     let outcome = mutate_queue(active, &session, &lane, slot, &expected, mutation);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[queue] replace {lane}[{slot}] -> {outcome:?}");
                     }
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
@@ -2410,7 +2429,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         // the row moved or went away under us: send it as a new
                         // message rather than lose what was typed
                         other => {
-                            if std::env::var("PA_DEBUG").is_ok() {
+                            if crate::env_cfg::cfg().debug {
                                 eprintln!("[queue] replace rejected ({other:?}); sending as new");
                             }
                             let _ = out.send(Msg::Prompt { session, message: text, images });
@@ -2419,7 +2438,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 }
                 Job::Commands { session } => {
                     let rows = get_commands(active, &session).unwrap_or_default();
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[commands] {} extra command(s)", rows.len());
                     }
                     let _ = out.send(Msg::ExtraCommands(rows));
@@ -2431,7 +2450,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 }
                 Job::SessionState { session } => {
                     if let Ok(state) = session_state(active, &session) {
-                        if std::env::var("PA_DEBUG").is_ok() {
+                        if crate::env_cfg::cfg().debug {
                             eprintln!(
                                 "[state] {}/{} at {}",
                                 state.provider, state.model_id, state.thinking_level
@@ -2462,7 +2481,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     }
                     match set_thinking_level(active, &session, &level) {
                         Ok(_) => {
-                            if std::env::var("PA_DEBUG").is_ok() {
+                            if crate::env_cfg::cfg().debug {
                                 eprintln!("[model] {provider}/{model} effort -> {level}");
                             }
                             if let Ok(state) = session_state(active, &session) {
@@ -2479,7 +2498,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 Job::ModelCatalog { session } => {
                     match model_catalog(active, &session) {
                         Ok(catalog) => {
-                            if std::env::var("PA_DEBUG").is_ok() {
+                            if crate::env_cfg::cfg().debug {
                                 eprintln!("[models] {} entries", catalog.len());
                             }
                             let _ = out.send(Msg::ModelCatalog(catalog));
@@ -2506,7 +2525,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // `clear` is not a mutation of one row: it empties both lanes
                     if action == "clear" {
                         let outcome = clear_queue(active, &session);
-                        if std::env::var("PA_DEBUG").is_ok() {
+                        if crate::env_cfg::cfg().debug {
                             eprintln!("[queue] clear -> {outcome:?}");
                         }
                         if let Ok((steering, follow_up)) = get_queue(active, &session) {
@@ -2528,7 +2547,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         _ => serde_json::json!({"type": "delete"}),
                     };
                     let outcome = mutate_queue(active, &session, &lane, slot, &text, mutation);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!("[queue] {action} {lane}[{slot}] -> {outcome:?}");
                     }
                     match outcome {
@@ -2560,7 +2579,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                 }
                 Job::Steer { session, message, images } => {
                     let outcome = steer_prompt(active, &session, &message, &images);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[steer] session={session} message={message:?} images={} outcome={outcome:?}",
                             images.len()
@@ -2586,7 +2605,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                                 });
                             }
                             Err(error) => {
-                                if std::env::var("PA_DEBUG").is_ok() {
+                                if crate::env_cfg::cfg().debug {
                                     eprintln!("[prompt] bind before send failed: {error}");
                                 }
                                 let _ = out.send(Msg::PromptRejected { text: message });
@@ -2603,7 +2622,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // refused one used to look identical from here, so a refusal
                     // was silence. This is what the TUI's submit does.
                     let outcome = send_prompt_checked(active, &session, &message, &images);
-                    if std::env::var("PA_DEBUG").is_ok() {
+                    if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[prompt] session={session} message={message:?} images={} outcome={outcome:?}",
                             images.len()
@@ -2662,7 +2681,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         });
                     }
                     Err(error) => {
-                        if std::env::var("PA_DEBUG").is_ok() {
+                        if crate::env_cfg::cfg().debug {
                             eprintln!("[tail] {session} FAILED: {error}");
                         }
                     }
@@ -2679,14 +2698,14 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     .get("type")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("?");
-                if std::env::var("PA_DEBUG").is_ok() {
+                if crate::env_cfg::cfg().debug {
                     let event_type = frame
                         .get("event")
                         .and_then(|event| event.get("type"))
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("");
                     eprintln!("[frame] {frame_type} {event_type}");
-                    if std::env::var("PA_DUMP").is_ok() {
+                    if crate::env_cfg::cfg().dump.is_some() {
                         // chars, not bytes: slicing a String at byte 700 splits
                         // whatever multi-byte character sits there and panics the
                         // reader thread, which is the thread every event and every
@@ -2851,7 +2870,7 @@ fn close_live(
 }
 
 fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
-    if std::env::var("PA_DEBUG").is_err() {
+    if !crate::env_cfg::cfg().debug {
         return;
     }
     let rows = rows.borrow();
@@ -2879,9 +2898,18 @@ fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
             if let Some(ui) = ui.upgrade() {
                 ui.invoke_scroll_to_end();
                 let late = ui.as_weak();
+                // A list view measures its rows as it creates them, so the
+                // content height - and therefore the end - moves twice after the
+                // first correction.
                 slint::Timer::single_shot(Duration::from_millis(180), move || {
                     if let Some(ui) = late.upgrade() {
                         ui.invoke_scroll_to_end();
+                        let last = ui.as_weak();
+                        slint::Timer::single_shot(Duration::from_millis(300), move || {
+                            if let Some(ui) = last.upgrade() {
+                                ui.invoke_scroll_to_end();
+                            }
+                        });
                     }
                 });
             }

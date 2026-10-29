@@ -74,6 +74,207 @@ impl Row {
 
 /// Build the transcript rows for the newest `limit` messages.
 #[must_use]
+/// What a message row-set depends on, so an unchanged message is not parsed
+/// again: a poll every 900 ms was re-running markdown and highlighting for all
+/// three hundred messages of a page and then throwing most of it away.
+#[derive(Clone)]
+struct CachedMessage {
+    fingerprint: u64,
+    rows: Vec<Row>,
+}
+
+thread_local! {
+    static MESSAGE_CACHE: std::cell::RefCell<std::collections::HashMap<String, CachedMessage>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// A message plus every tool result it owns. The result is what a cell row
+/// draws, so a result that arrives late must change the fingerprint.
+fn fingerprint(
+    message: &Value,
+    outputs: &std::collections::HashMap<String, (String, bool)>,
+    bashes: &std::collections::HashMap<String, BashInfo>,
+    durations: &std::collections::HashMap<String, u64>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    message.to_string().hash(&mut hasher);
+    if let Some(blocks) = message.get("content").and_then(Value::as_array) {
+        for block in blocks {
+            if block.get("type").and_then(Value::as_str) != Some("toolCall") {
+                continue;
+            }
+            let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+            if let Some((text, failed)) = outputs.get(id) {
+                text.hash(&mut hasher);
+                failed.hash(&mut hasher);
+            }
+            if let Some(info) = bashes.get(id) {
+                info.first.hash(&mut hasher);
+                info.count.hash(&mut hasher);
+            }
+            durations.get(id).hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// Drop the cache when it grows past what a very long session could hold, so a
+/// window left open all day cannot creep upward without bound.
+fn cache_put(owner: &str, fingerprint: u64, rows: &[Row]) {
+    MESSAGE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        cache.insert(
+            owner.to_string(),
+            CachedMessage {
+                fingerprint,
+                rows: rows.to_vec(),
+            },
+        );
+    });
+}
+
+fn cache_get(owner: &str, fingerprint: u64) -> Option<Vec<Row>> {
+    MESSAGE_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        match cache.get(owner) {
+            Some(entry) if entry.fingerprint == fingerprint => Some(entry.rows.clone()),
+            _ => None,
+        }
+    })
+}
+
+/// One message -> its rows. `owner` is stamped on every row so a rebuild can
+/// replace a message where it stands.
+fn build_message(
+    message: &Value,
+    owner: &str,
+    outputs: &std::collections::HashMap<String, (String, bool)>,
+    bashes: &std::collections::HashMap<String, BashInfo>,
+    durations: &std::collections::HashMap<String, u64>,
+) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    if message.get("customType").is_some() {
+        let text = message.get("content").and_then(Value::as_str).unwrap_or_default();
+        let mut row = Row::new(KIND_NOTICE);
+        row.body = plain_markup(text);
+        row.title = message
+            .get("customType")
+            .and_then(Value::as_str)
+            .unwrap_or("notice")
+            .to_string();
+        rows.push(row);
+        for row in &mut rows {
+            row.message = owner.to_string();
+        }
+        return rows;
+    }
+
+    let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+        return rows;
+    };
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str).unwrap_or_default() {
+            // An image is a row of its own. Without this a message that is
+            // nothing but a picture produced no row at all, and one with
+            // words lost the picture: the blocks were read for text only.
+            "image" => {
+                let Some(data) = block.get("data").and_then(Value::as_str) else {
+                    continue;
+                };
+                if data.is_empty() {
+                    continue;
+                }
+                let mut row = Row::new(KIND_IMAGE);
+                row.image = data.to_string();
+                row.mime = block
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("image/png")
+                    .to_string();
+                rows.push(row);
+            }
+            "text" => {
+                let text = block.get("text").and_then(Value::as_str).unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                // A message is not one row: a fenced block needs its own
+                // surface and a table needs a grid, so each is its own row
+                // and the prose between them keeps the markdown renderer.
+                for piece in split_blocks(text) {
+                    match piece {
+                        Block::Prose(prose) => {
+                            let mut row =
+                                Row::new(if role == "user" { KIND_USER } else { KIND_AGENT });
+                            row.body = markdown_markup(&prose);
+                            rows.push(row);
+                        }
+                        Block::Code { lang, body } => {
+                            let mut row = Row::new(KIND_CODE);
+                            row.code = highlight_code(&lang, &body);
+                            row.meta = lang;
+                            row.has_code = true;
+                            rows.push(row);
+                        }
+                        Block::Table(rendered) => {
+                            let mut row = Row::new(KIND_TABLE);
+                            row.body = plain_markup(&rendered);
+                            rows.push(row);
+                        }
+                    }
+                }
+            }
+            "thinking" => {
+                let text = block.get("thinking").and_then(Value::as_str).unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let mut row = Row::new(KIND_THINKING);
+                row.body = plain_markup(text);
+                row.meta = format!("{} lines", text.lines().count());
+                rows.push(row);
+            }
+            "toolCall" => {
+                let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+                let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let code = block
+                    .pointer("/arguments/code")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let mut row = Row::new(KIND_CELL);
+                row.id = id.to_string();
+                let fallback = block.get("arguments").map(ToString::to_string).unwrap_or_default();
+                let summary = summary_line(if code.is_empty() { &fallback } else { code });
+                row.title = format!("{} · {}", short_tool(name), summary);
+                row.code = highlight_python(code);
+                row.has_code = !code.is_empty();
+                if let Some((output, failed)) = outputs.get(id) {
+                    row.output = plain_markup(output);
+                    row.has_output = !output.trim().is_empty();
+                    row.failed = *failed;
+                    row.reason = failure_reason(output, *failed);
+                }
+                let lines = code.lines().count();
+                row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
+                let info = bashes.get(&row.id).cloned();
+                let taken = durations.get(&row.id).copied();
+                apply_header(&mut row, code, info.as_ref(), taken);
+                rows.push(row);
+            }
+            _ => {}
+        }
+    }
+    for row in &mut rows {
+        row.message = owner.to_string();
+    }
+    rows
+}
+
 pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     let start = messages.len().saturating_sub(limit);
     let window = &messages[start..];
@@ -112,125 +313,19 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
 
     let mut rows = Vec::new();
     for message in window {
+        // folded into its cell
+        if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+            continue;
+        }
         let owner = message_key(message);
-        let before = rows.len();
-        let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
-        if role == "toolResult" {
-            continue; // folded into its cell
-        }
-        if message.get("customType").is_some() {
-            let text = message.get("content").and_then(Value::as_str).unwrap_or_default();
-            let mut row = Row::new(KIND_NOTICE);
-            row.body = plain_markup(text);
-            row.title = message
-                .get("customType")
-                .and_then(Value::as_str)
-                .unwrap_or("notice")
-                .to_string();
-            rows.push(row);
-            for row in &mut rows[before..] {
-                row.message.clone_from(&owner);
+        let stamp = fingerprint(message, &outputs, &bashes, &durations);
+        match cache_get(&owner, stamp) {
+            Some(cached) => rows.extend(cached),
+            None => {
+                let built = build_message(message, &owner, &outputs, &bashes, &durations);
+                cache_put(&owner, stamp, &built);
+                rows.extend(built);
             }
-            continue;
-        }
-
-        let Some(blocks) = message.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for block in blocks {
-            match block.get("type").and_then(Value::as_str).unwrap_or_default() {
-                // An image is a row of its own. Without this a message that is
-                // nothing but a picture produced no row at all, and one with
-                // words lost the picture: the blocks were read for text only.
-                "image" => {
-                    let Some(data) = block.get("data").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if data.is_empty() {
-                        continue;
-                    }
-                    let mut row = Row::new(KIND_IMAGE);
-                    row.image = data.to_string();
-                    row.mime = block
-                        .get("mimeType")
-                        .and_then(Value::as_str)
-                        .unwrap_or("image/png")
-                        .to_string();
-                    rows.push(row);
-                }
-                "text" => {
-                    let text = block.get("text").and_then(Value::as_str).unwrap_or_default();
-                    if text.trim().is_empty() {
-                        continue;
-                    }
-                    // A message is not one row: a fenced block needs its own
-                    // surface and a table needs a grid, so each is its own row
-                    // and the prose between them keeps the markdown renderer.
-                    for piece in split_blocks(text) {
-                        match piece {
-                            Block::Prose(prose) => {
-                                let mut row =
-                                    Row::new(if role == "user" { KIND_USER } else { KIND_AGENT });
-                                row.body = markdown_markup(&prose);
-                                rows.push(row);
-                            }
-                            Block::Code { lang, body } => {
-                                let mut row = Row::new(KIND_CODE);
-                                row.code = highlight_code(&lang, &body);
-                                row.meta = lang;
-                                row.has_code = true;
-                                rows.push(row);
-                            }
-                            Block::Table(rendered) => {
-                                let mut row = Row::new(KIND_TABLE);
-                                row.body = plain_markup(&rendered);
-                                rows.push(row);
-                            }
-                        }
-                    }
-                }
-                "thinking" => {
-                    let text = block.get("thinking").and_then(Value::as_str).unwrap_or_default();
-                    if text.trim().is_empty() {
-                        continue;
-                    }
-                    let mut row = Row::new(KIND_THINKING);
-                    row.body = plain_markup(text);
-                    row.meta = format!("{} lines", text.lines().count());
-                    rows.push(row);
-                }
-                "toolCall" => {
-                    let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
-                    let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
-                    let code = block
-                        .pointer("/arguments/code")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    let mut row = Row::new(KIND_CELL);
-                    row.id = id.to_string();
-                    let fallback = block.get("arguments").map(ToString::to_string).unwrap_or_default();
-                    let summary = summary_line(if code.is_empty() { &fallback } else { code });
-                    row.title = format!("{} · {}", short_tool(name), summary);
-                    row.code = highlight_python(code);
-                    row.has_code = !code.is_empty();
-                    if let Some((output, failed)) = outputs.get(id) {
-                        row.output = plain_markup(output);
-                        row.has_output = !output.trim().is_empty();
-                        row.failed = *failed;
-                        row.reason = failure_reason(output, *failed);
-                    }
-                    let lines = code.lines().count();
-                    row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
-                    let info = bashes.get(&row.id).cloned();
-                    let taken = durations.get(&row.id).copied();
-                    apply_header(&mut row, code, info.as_ref(), taken);
-                    rows.push(row);
-                }
-                _ => {}
-            }
-        }
-        for row in &mut rows[before..] {
-            row.message.clone_from(&owner);
         }
     }
     (rows, start)
@@ -495,7 +590,25 @@ pub fn plain(text: &str) -> String {
 }
 
 pub fn styled(markup: &str) -> StyledText {
-    let markup = &plain(markup);
+    // Only the narrow spaces are folded here. U+00A0 is the guard that stops a
+    // four-space indent being read as a code block (which the renderer refuses
+    // outright, printing the row as plain text); `plain` would undo it.
+    let folded;
+    let markup = if markup
+        .chars()
+        .any(|ch| matches!(ch, '\u{202f}' | '\u{2009}' | '\u{2007}'))
+    {
+        folded = markup
+            .chars()
+            .map(|ch| match ch {
+                '\u{202f}' | '\u{2009}' | '\u{2007}' => ' ',
+                other => other,
+            })
+            .collect::<String>();
+        folded.as_str()
+    } else {
+        markup
+    };
     match StyledText::from_markdown(markup) {
         Ok(text) => text,
         Err(error) => {
@@ -587,6 +700,23 @@ pub fn plain_markup(text: &str) -> String {
     guard_block_markers(&out)
 }
 
+/// `<`, `>` and `&` in the source become entities, so a message that *talks*
+/// about a tag (``</font>``, `<div>`) draws the characters instead of opening a
+/// tag the renderer then fails to close — which rejects the whole row.
+/// Markdown syntax is left alone here: backticks and asterisks are still ours.
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
 /// headings become bold lines, rules become blank lines, quotes lose their `>`.
 /// How many `**` markers a line carries, ignoring escapes and code spans.
@@ -651,7 +781,7 @@ fn balance_strong(text: &str) -> String {
 }
 
 pub fn markdown_markup(text: &str) -> String {
-    let decoded = decode_entities(text);
+    let decoded = escape_html(&decode_entities(text));
     let text = decoded.as_str();
     let mut out = String::with_capacity(text.len() + 16);
     for (index, line) in text.split('\n').enumerate() {
@@ -676,7 +806,9 @@ pub fn markdown_markup(text: &str) -> String {
             out.push_str(line);
         }
     }
-    balance_strong(&highlight_inline_code(&out))
+    // the indentation guard has to be the last thing: an indented line is a code
+    // block to CommonMark, and the renderer has no code blocks
+    guard_block_markers(&balance_strong(&highlight_inline_code(&out)))
 }
 
 /// Inline code, as a colour rather than a box.
@@ -715,9 +847,20 @@ fn highlight_inline_code(text: &str) -> String {
             body.push(next);
         }
         if closed && !body.trim().is_empty() {
-            out.push_str("<font color=\"#a18e41\">**");
-            out.push_str(body.trim());
-            out.push_str("**</font>");
+            // The engine nests spans: a `**` inside an already-open bold is an
+            // overlap and the whole row falls back to plain text. So the weight
+            // goes OUTSIDE the colour tag, and is skipped when the line is
+            // already bold (a heading, or prose wrapped in `**`).
+            let bold_already = out.matches("**").count() % 2 == 1;
+            if bold_already {
+                out.push_str("<font color=\"#a18e41\">");
+                out.push_str(body.trim());
+                out.push_str("</font>");
+            } else {
+                out.push_str("**<font color=\"#a18e41\">");
+                out.push_str(body.trim());
+                out.push_str("</font>**");
+            }
         } else {
             out.push_str(&ticks);
             out.push_str(&body);
@@ -1496,5 +1639,74 @@ mod header_parity_tests {
     #[test]
     fn a_bash_cell_magic_is_bash() {
         assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
+    }
+}
+
+#[cfg(test)]
+mod markup_tests {
+    use super::{markdown_markup, plain_markup, styled};
+    use slint::StyledText;
+
+    /// The renderer refuses a document whole when one span is malformed, and
+    /// then the row prints as plain text. These are the shapes that did it.
+    fn parses(text: &str) -> bool {
+        StyledText::from_markdown(&markdown_markup(text)).is_ok()
+    }
+
+    #[test]
+    fn indented_text_is_not_a_code_block() {
+        // four spaces used to be folded back to a plain space before parsing,
+        // which made CommonMark call it an indented code block - unsupported,
+        // so the whole row fell back to plain text
+        assert!(parses("first line\n    indented continuation"));
+        assert!(parses("    leading indent on the first line"));
+        assert!(parses("a\n\n        eight spaces deep"));
+    }
+
+    #[test]
+    fn inline_code_inside_bold_does_not_overlap() {
+        assert!(parses("**bold with `code` inside**"));
+        assert!(parses("## heading with `code`"));
+        assert!(parses("### another `one` and `two`"));
+        assert!(parses("`plain code` in prose"));
+        assert!(parses("**a** and `b` and **c**"));
+    }
+
+    #[test]
+    fn a_message_that_mentions_a_tag_draws_it() {
+        // a handover line talking about `</font>` used to emit a real closing tag
+        assert!(parses("the `</font>` overlap is fixed"));
+        assert!(parses("write <font color=\"#fff\"> by hand"));
+        assert!(parses("**bold `</font>` bold**"));
+        assert!(parses("a < b && c > d"));
+        let drawn = markdown_markup("the `</font>` overlap");
+        assert!(drawn.contains("&lt;/font&gt;"), "got {drawn}");
+    }
+
+    #[test]
+    fn bold_running_over_a_line_break_is_balanced() {
+        assert!(parses("**starts here\nand ends here**"));
+        assert!(parses("**open\nstill open"));
+    }
+
+    #[test]
+    fn plain_rows_still_parse() {
+        assert!(StyledText::from_markdown(&plain_markup("just words\n    and indented"))
+            .is_ok());
+    }
+
+    #[test]
+    fn styled_never_returns_a_failed_parse() {
+        for sample in [
+            "**bold `code` bold**",
+            "- a dash line\n- another",
+            "> quoted words",
+            "1. numbered\n2. list",
+            "| a | b |\n|---|---|\n| 1 | 2 |",
+            "text with <b>html</b> in it",
+            "text with a &amp; entity and `code`",
+        ] {
+            let _ = styled(&markdown_markup(sample));
+        }
     }
 }

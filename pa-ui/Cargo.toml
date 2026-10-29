@@ -10,6 +10,7 @@ regex = "1"
 fancy-regex = "0.14"
 slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2", "image-default-formats"] }
 cosmic-text = "0.12"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
 [build-dependencies]
 slint-build = "1.18"
