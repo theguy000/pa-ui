@@ -87,8 +87,10 @@ export component DraftEditor inherits Rectangle {
             wrap: word-wrap;
             font-size: root.font-size;
             color: root.use-canvas ? transparent : root.foreground;
-            selection-background-color: root.selection-background;
-            selection-foreground-color: root.selection-foreground;
+            // in canvas mode the highlight is painted into the picture; a native
+            // one on top of it would blot the words out
+            selection-background-color: root.use-canvas ? transparent : root.selection-background;
+            selection-foreground-color: root.use-canvas ? transparent : root.selection-foreground;
             // PageUp/PageDown become sensible inside the box
             page-height: scroll.visible-height;
 

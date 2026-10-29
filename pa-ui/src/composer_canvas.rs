@@ -103,15 +103,22 @@ pub fn spans(text: &str, is_command: impl Fn(&str) -> bool) -> Vec<Span> {
 /// DirectWrite and Skia darken antialiased text on dark backgrounds so light
 /// strokes keep their weight; without it every glyph reads about a quarter
 /// thinner than the native text beside it.
+/// `((i / 255)^0.55 × 255)` for every coverage value, computed once.
+///
+/// 0.55 is the curve DirectWrite uses at 96 DPI for light-on-dark text; calling
+/// `powf` per pixel of every glyph was the most expensive thing in a keystroke.
+static BOOST_LUT: std::sync::LazyLock<[u8; 256]> = std::sync::LazyLock::new(|| {
+    let mut table = [0u8; 256];
+    for (index, slot) in table.iter_mut().enumerate() {
+        let normalised = index as f32 / 255.0;
+        *slot = (normalised.powf(0.55) * 255.0).round() as u8;
+    }
+    table
+});
+
 #[inline]
 fn boost_coverage(coverage: u8) -> u8 {
-    if coverage == 0 || coverage == 255 {
-        return coverage;
-    }
-    let normalised = f32::from(coverage) / 255.0;
-    // 0.55 is the 96-DPI curve DirectWrite uses for light-on-dark text; 0.69 was
-    // leaving horizontal stems visibly thinner than the native text beside them
-    (normalised.powf(0.55) * 255.0).round() as u8
+    BOOST_LUT[coverage as usize]
 }
 
 /// Put one premultiplied pixel over what is already there.
@@ -263,12 +270,8 @@ impl Canvas {
                     if color.a() == 0 || x < 0 || y < 0 {
                         return;
                     }
-                    // glyphs inside a selection are painted bright, so the words
-                    // stay readable on the highlight
-                    let inside = selected
-                        && color.r() != COLOR_NORMAL.r()
-                        && false;
-                    let color = if inside { COLOR_SELECTED_TEXT } else { color };
+                    // the highlight sits under the glyphs; the words keep their
+                    // own colour, which reads fine on it
                     for py in y..y.saturating_add(h as i32) {
                         if py as u32 >= image_h {
                             continue;

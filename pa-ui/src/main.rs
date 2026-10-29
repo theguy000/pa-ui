@@ -193,9 +193,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // wherever it sits. Off unless asked for: a bad paint must never take the
     // composer away from the writer.
     let canvas_mode = std::env::var("PA_CANVAS").is_ok();
-    let canvas_cell = Rc::new(RefCell::new(composer_canvas::Canvas::new(13.0, 18.0)));
+    let canvas_cell: Rc<RefCell<Option<composer_canvas::Canvas>>> = Rc::new(RefCell::new(None));
     let canvas_key: Rc<RefCell<(String, usize, i32)>> =
         Rc::new(RefCell::new((String::new(), usize::MAX, i32::MIN)));
+    // the painter is defined with the callbacks, but caret moves arrive on the poll
+    // tick, which is set up earlier: one slot the tick can call through
+    let repaint_slot: Rc<RefCell<Option<Rc<dyn Fn(&AppWindow)>>>> =
+        Rc::new(RefCell::new(None));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -686,12 +690,65 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // Painting on the keystroke, not on the poll tick: a letter that waits for a
+    // timer is a letter that arrives late, and holding a key shows it plainly.
+    let repaint_canvas = {
+        let canvas_cell = canvas_cell.clone();
+        let canvas_key = canvas_key.clone();
+        let extra_commands = extra_commands.clone();
+        Rc::new(move |ui: &AppWindow| {
+            if !ui.get_canvas_mode() {
+                return;
+            }
+            let text_now = ui.get_composer_text().to_string();
+            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
+            let anchor_now = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
+            let width_now = ui.get_composer_width();
+            let key = (
+                text_now.clone(),
+                caret_now * 100_000 + anchor_now,
+                (width_now * 4.0) as i32,
+            );
+            if *canvas_key.borrow() == key {
+                return;
+            }
+            *canvas_key.borrow_mut() = key;
+            let known = extra_commands.borrow().clone();
+            let mut slot = canvas_cell.borrow_mut();
+            let canvas = slot.get_or_insert_with(|| composer_canvas::Canvas::new(13.0, 18.0));
+            let (image, caret) = canvas.render(
+                &text_now,
+                caret_now,
+                (anchor_now, caret_now),
+                width_now,
+                |name| is_command_word(&known, name),
+            );
+            if std::env::var("PA_DEBUG").is_ok() {
+                eprintln!(
+                    "[canvas] {} chars, w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
+                    text_now.chars().count(),
+                    caret.content_height,
+                    caret.x,
+                    caret.y
+                );
+            }
+            ui.set_composer_canvas(image);
+            ui.set_composer_canvas_height(caret.content_height);
+            ui.set_composer_caret_x(caret.x);
+            ui.set_composer_caret_y(caret.y);
+            ui.set_composer_caret_height(caret.height);
+        })
+    };
+
     {
         let weak = ui.as_weak();
         let extra_commands = extra_commands.clone();
         let token = slash_token.clone();
+        let paint = repaint_canvas.clone();
         ui.on_slash_typed(move |text, caret| {
             let Some(ui) = weak.upgrade() else { return };
+            // the words paint in the same frame as the keystroke
+            paint(&ui);
             let (start, end) = slash_token_at(&text, usize::try_from(caret.max(0)).unwrap_or(0));
             *token.borrow_mut() = (start, end);
             let body = text.get(start..end).unwrap_or_default();
@@ -712,6 +769,47 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_slash_open(true);
         });
     }
+
+    *repaint_slot.borrow_mut() = Some(repaint_canvas.clone());
+
+    let repaint_canvas_for_accept = {
+        let canvas_cell = canvas_cell.clone();
+        let canvas_key = canvas_key.clone();
+        let extra_commands = extra_commands.clone();
+        Rc::new(move |ui: &AppWindow| {
+            if !ui.get_canvas_mode() {
+                return;
+            }
+            let text_now = ui.get_composer_text().to_string();
+            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
+            let anchor_now = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
+            let width_now = ui.get_composer_width();
+            let key = (
+                text_now.clone(),
+                caret_now * 100_000 + anchor_now,
+                (width_now * 4.0) as i32,
+            );
+            if *canvas_key.borrow() == key {
+                return;
+            }
+            *canvas_key.borrow_mut() = key;
+            let known = extra_commands.borrow().clone();
+            let mut slot = canvas_cell.borrow_mut();
+            let canvas = slot.get_or_insert_with(|| composer_canvas::Canvas::new(13.0, 18.0));
+            let (image, caret) = canvas.render(
+                &text_now,
+                caret_now,
+                (anchor_now, caret_now),
+                width_now,
+                |name| is_command_word(&known, name),
+            );
+            ui.set_composer_canvas(image);
+            ui.set_composer_canvas_height(caret.content_height);
+            ui.set_composer_caret_x(caret.x);
+            ui.set_composer_caret_y(caret.y);
+            ui.set_composer_caret_height(caret.height);
+        })
+    };
 
     {
         let weak = ui.as_weak();
@@ -782,6 +880,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_composer_text(next.as_str().into());
             ui.set_composer_has_text(true);
             ui.set_composer_caret_request(i32::try_from(start + name.len() + 2).unwrap_or(0));
+            repaint_canvas_for_accept(&ui);
         });
     }
 
@@ -1095,43 +1194,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = jobs.send(Job::Attach { session: selected });
         }
 
-        // Canvas mode: repaint the words when they, the caret or the width change.
-        if ui.get_canvas_mode() {
-            let text_now = ui.get_composer_text().to_string();
-            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
-            let width_now = ui.get_composer_width();
-            let anchor_key = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
-            let key = (
-                text_now.clone(),
-                caret_now * 100_000 + anchor_key,
-                (width_now * 4.0) as i32,
-            );
-            if *canvas_key.borrow() != key {
-                *canvas_key.borrow_mut() = key;
-                let known = extra_commands.borrow().clone();
-                let anchor_now = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
-                let (image, caret) = canvas_cell.borrow_mut().render(
-                    &text_now,
-                    caret_now,
-                    (anchor_now, caret_now),
-                    width_now,
-                    |name| is_command_word(&known, name),
-                );
-                if std::env::var("PA_DEBUG").is_ok() {
-                    eprintln!(
-                        "[canvas] {} chars, w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
-                        text_now.chars().count(),
-                        caret.content_height,
-                        caret.x,
-                        caret.y
-                    );
-                }
-                ui.set_composer_canvas(image);
-                ui.set_composer_canvas_height(caret.content_height);
-                ui.set_composer_caret_x(caret.x);
-                ui.set_composer_caret_y(caret.y);
-                ui.set_composer_caret_height(caret.height);
-            }
+        // caret and selection moves arrive here (arrow keys, clicks); keystrokes
+        // paint themselves
+        if let Some(paint) = repaint_slot.borrow().as_ref() {
+            paint(&ui);
         }
 
         while let Ok(message) = msg_rx.try_recv() {
