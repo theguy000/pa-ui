@@ -3388,6 +3388,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "fancy-regex",
+ "image",
  "pa-client",
  "regex",
  "serde_json",

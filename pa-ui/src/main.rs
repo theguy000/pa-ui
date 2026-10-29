@@ -20,6 +20,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use transcript::Row;
 
 const WINDOW_ROWS: usize = 300;
+/// How much history one scroll-to-the-top pulls in. The TUI pages by the same
+/// order of magnitude; a page costs the page, not the session.
+const OLDER_PAGE: usize = 150;
 
 /// The TUI's loader frames (pa-tui `LOADER_FRAMES`), advanced every poll tick.
 const SPINNER_FRAMES: [&str; 10] = [
@@ -31,6 +34,12 @@ enum Job {
     Rename { session: String, name: String },
     Attach { session: String },
     Tail { session: String, fresh: bool },
+    /// the page before the one already loaded, walked from a row id
+    LoadOlder {
+        session: String,
+        before: String,
+        limit: usize,
+    },
     Prompt {
         session: String,
         message: String,
@@ -81,8 +90,19 @@ enum Msg {
         session: String,
         messages: Vec<serde_json::Value>,
         last_entry: String,
+        /// id of the oldest row in this page: where a walk backwards starts
+        first_entry: String,
+        /// whether the store has rows older than this page
+        more: bool,
         /// the turn just closed: reconcile for real instead of appending
         fresh: bool,
+    },
+    /// an older page, to be put above what is already shown
+    Older {
+        session: String,
+        messages: Vec<serde_json::Value>,
+        first_entry: String,
+        more: bool,
     },
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
@@ -1079,6 +1099,53 @@ fn main() -> Result<(), slint::PlatformError> {
     let jobs = job_tx.clone();
     let rows_store_ui = rows_store.clone();
     let row_model_ui = row_model.clone();
+    // backward pagination: the row id the next older page resumes from, whether
+    // the store has one, and whether a page is already in flight
+    let oldest_cursor: Rc<std::cell::RefCell<Option<String>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let has_older = Rc::new(std::cell::Cell::new(false));
+    let loading_older = Rc::new(std::cell::Cell::new(false));
+
+    // Walking backwards: the page before the one on screen, asked for when the
+    // reader reaches the top. The geometry comes from the list (content-y,
+    // content-height, height); the decision is a plain function, so it can be
+    // tested without a window.
+    let request_older = {
+        let jobs = job_tx.clone();
+        let oldest_cursor = oldest_cursor.clone();
+        let has_older = has_older.clone();
+        let loading_older = loading_older.clone();
+        Rc::new(move |ui: &AppWindow| {
+            let state = PagerState {
+                follows_bottom: ui.get_follow_bottom() && ui.get_at_bottom(),
+                ready: ui.get_pager_ready(),
+                loading: loading_older.get(),
+                has_older: has_older.get(),
+                content_y: ui.get_dbg_cy() as f32,
+                content_height: ui.get_dbg_ch() as f32,
+                height: ui.get_dbg_h() as f32,
+            };
+            if !should_load_older(state) {
+                return;
+            }
+            let Some(before) = oldest_cursor.borrow().clone() else { return };
+            let session = ui.get_selected_id().to_string();
+            if session.is_empty() {
+                return;
+            }
+            loading_older.set(true);
+            ui.set_loading_older(true);
+            if crate::env_cfg::cfg().debug {
+                eprintln!("[older] asking for the page before {before}");
+            }
+            let _ = jobs.send(Job::LoadOlder {
+                session,
+                before,
+                limit: OLDER_PAGE,
+            });
+        })
+    };
+
     let mut loaded: Option<String> = None;
     let mut live_state = String::new();
     let mut live_since = SystemTime::now();
@@ -1128,6 +1195,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let mut scroll_ticks: u64 = 0;
     let poll = Timer::default();
     poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
         let Some(ui) = weak.upgrade() else { return };
@@ -1143,6 +1211,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 )
                 .into(),
             );
+            // the pager only moves on a scroll; when it does not, this says which
+            // of the four conditions was false
+            scroll_ticks += 1;
+            if scroll_ticks % 15 == 0 {
+                eprintln!(
+                    "[scroll] cy={} ch={} h={} at-bottom={} older={} ready={} loading={}",
+                    ui.get_dbg_cy(),
+                    ui.get_dbg_ch(),
+                    ui.get_dbg_h(),
+                    ui.get_at_bottom(),
+                    ui.get_has_older(),
+                    ui.get_pager_ready(),
+                    ui.get_loading_older()
+                );
+            }
         }
 
         // right-panel telemetry
@@ -1191,9 +1274,19 @@ fn main() -> Result<(), slint::PlatformError> {
         let selected = ui.get_selected_id().to_string();
         if !selected.is_empty() && loaded.as_deref() != Some(selected.as_str()) {
             loaded = Some(selected.clone());
+            // a different chat starts its own walk backwards
+            *oldest_cursor.borrow_mut() = None;
+            has_older.set(false);
+            loading_older.set(false);
+            ui.set_has_older(false);
+            ui.set_loading_older(false);
+            ui.set_pager_ready(false);
             ui.set_status_line("loading transcript".into());
             let _ = jobs.send(Job::Attach { session: selected });
         }
+
+        // reaching the top pulls in the page before this one
+        request_older(&ui);
 
         // caret and selection moves arrive here (arrow keys, clicks); keystrokes
         // paint themselves
@@ -1372,8 +1465,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     session,
                     messages,
                     last_entry,
+                    first_entry,
+                    more,
                     fresh,
                 } => {
+                    // Where the reader is now, before the model changes: a
+                    // rebuild must not drag them back to the newest row when they
+                    // have scrolled up to read. This is what made scrolling up
+                    // while the agent worked impossible.
+                    let follow = ui.get_at_bottom() || ui.get_follow_bottom();
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
@@ -1409,6 +1509,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     if tail_sig == Some((cursor, newest)) && !fresh {
                         continue;
                     }
+                    // the walk backwards starts at the oldest row of the page
+                    // being shown; a fresh page re-anchors it
+                    if !first_entry.is_empty() {
+                        *oldest_cursor.borrow_mut() = Some(first_entry.clone());
+                    }
+                    has_older.set(more);
+                    ui.set_has_older(more);
                     // a quiet live row is replaced by the store's copy
                     close_live(&mut open_live, &rows_store_ui, &row_model_ui);
                     tail_len = messages.len();
@@ -1481,7 +1588,70 @@ fn main() -> Result<(), slint::PlatformError> {
                             messages.len()
                         );
                     }
-                    scroll_to_end_when_ready(&ui.as_weak());
+                    if follow {
+                        scroll_to_end_when_ready(&ui.as_weak());
+                    }
+                    {
+                        let weak = ui.as_weak();
+                        slint::Timer::single_shot(Duration::from_millis(700), move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_pager_ready(true);
+                            }
+                        });
+                    }
+                }
+                Msg::Older {
+                    session,
+                    messages,
+                    first_entry,
+                    more,
+                } => {
+                    loading_older.set(false);
+                    ui.set_loading_older(false);
+                    if loaded.as_deref() != Some(session.as_str()) || messages.is_empty() {
+                        // nothing to prepend: stop asking rather than loop
+                        has_older.set(false);
+                        ui.set_has_older(false);
+                        continue;
+                    }
+                    let (older, _) = transcript::build(&messages, messages.len());
+                    if older.is_empty() {
+                        has_older.set(false);
+                        ui.set_has_older(false);
+                        continue;
+                    }
+                    // Where the reader was, and how tall the content was, before
+                    // the page goes in. Both are read from the list itself.
+                    let before_y = ui.get_dbg_cy() as f32;
+                    let before_h = ui.get_dbg_ch() as f32;
+                    prepend_rows(&mut rows_store_ui.borrow_mut(), &older, &row_model_ui);
+                    *oldest_cursor.borrow_mut() = if first_entry.is_empty() {
+                        None
+                    } else {
+                        Some(first_entry)
+                    };
+                    has_older.set(more && oldest_cursor.borrow().is_some());
+                    ui.set_has_older(has_older.get());
+                    // a list view measures the new rows a frame or two later, so
+                    // the correction is applied again once they have heights
+                    for delay in [30u64, 200] {
+                        let weak = ui.as_weak();
+                        slint::Timer::single_shot(Duration::from_millis(delay), move || {
+                            if let Some(ui) = weak.upgrade() {
+                                let after = ui.get_dbg_ch() as f32;
+                                let y = anchor_after_prepend(before_y, before_h, after);
+                                ui.invoke_set_scroll_y(y as f32);
+                            }
+                        });
+                    }
+                    if crate::env_cfg::cfg().debug {
+                        eprintln!(
+                            "[older] {} msgs -> {} rows, more={more} after={:?}",
+                            messages.len(),
+                            older.len(),
+                            oldest_cursor.borrow()
+                        );
+                    }
                 }
                 Msg::Event { session, event } => {
                     if loaded.as_deref() != Some(session.as_str()) {
@@ -1950,6 +2120,88 @@ fn group_ranges(rows: &[transcript::Row]) -> Vec<(String, std::ops::Range<usize>
         }
     }
     out
+}
+
+/// Why the window would (or would not) ask for older history.
+///
+/// Kept as a value so the rule can be tested: the pager used to be a Slint
+/// expression, where the only way to check it was to scroll a real window by
+/// hand.
+#[derive(Debug, Clone, Copy)]
+pub struct PagerState {
+    /// the reader is parked at the newest row (nothing to fetch above them)
+    pub follows_bottom: bool,
+    /// the transcript has settled since the last rebuild
+    pub ready: bool,
+    /// a page is already in flight
+    pub loading: bool,
+    /// the store said there is a page before this one
+    pub has_older: bool,
+    /// scroll offset of the list (negative once scrolled down)
+    pub content_y: f32,
+    /// full height of the list's content
+    pub content_height: f32,
+    /// height of the list itself
+    pub height: f32,
+}
+
+/// How close to the top counts as "the reader reached the top".
+const TOP_SLACK: f32 = 90.0;
+
+/// Where the list must be scrolled after a page of older rows went in above the
+/// viewport: the same rows stay under the reader's eye, no jump.
+///
+/// `anchor-y` is the offset before the page, and the two heights are the
+/// content height before and after. Prepend only ever grows the content upwards,
+/// so a shrink is treated as "nothing happened" rather than a jump.
+#[must_use]
+pub fn anchor_after_prepend(anchor_y: f32, height_before: f32, height_after: f32) -> f32 {
+    let grown = (height_after - height_before).max(0.0);
+    anchor_y - grown
+}
+
+#[must_use]
+pub fn should_load_older(state: PagerState) -> bool {
+    // nothing is above the newest row, so being at the bottom means nothing to do
+    if state.follows_bottom {
+        return false;
+    }
+    // the first frames of a chat sit at offset zero, which looks exactly like a
+    // reader at the top; `ready` is what tells them apart
+    if !state.ready || state.loading || !state.has_older {
+        return false;
+    }
+    // a transcript shorter than the view cannot be scrolled, so it cannot have
+    // been scrolled to the top either
+    if state.content_height <= state.height {
+        return false;
+    }
+    state.content_y >= -TOP_SLACK
+}
+
+/// Put a page of older rows above what is on screen.
+///
+/// Both copies of the transcript move together — the store, which is the truth
+/// here, and the model Slint draws — because a prepend that touched only one of
+/// them would leave the next merge operating on rows nobody can see.
+pub fn prepend_rows(
+    store: &mut Vec<transcript::Row>,
+    older: &[transcript::Row],
+    model: &Rc<VecModel<TRow>>,
+) {
+    if older.is_empty() {
+        return;
+    }
+    let mut combined = Vec::with_capacity(store.len() + older.len());
+    combined.extend_from_slice(older);
+    combined.append(store);
+    *store = combined;
+    // one insertion per row: a ListView only keeps the rows it draws, so this
+    // costs the rows inserted, not the transcript
+    let slint_rows: Vec<TRow> = older.iter().map(to_slint).collect();
+    for (offset, row) in slint_rows.into_iter().enumerate() {
+        model.insert(offset, row);
+    }
 }
 
 fn merge_rows(
@@ -2648,6 +2900,35 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                         }
                     }
                 }
+                Job::LoadOlder {
+                    session,
+                    before,
+                    limit,
+                } => {
+                    match pa_client::get_page(active, &session, Some(&before), limit) {
+                        Ok(page) => {
+                            let _ = out.send(Msg::Older {
+                                session,
+                                messages: page.messages,
+                                first_entry: page.first_entry,
+                                more: page.more,
+                            });
+                        }
+                        Err(error) => {
+                            if crate::env_cfg::cfg().debug {
+                                eprintln!("[older] {session} FAILED: {error}");
+                            }
+                            // the reader must not be left waiting on a page that
+                            // will never arrive
+                            let _ = out.send(Msg::Older {
+                                session: session.clone(),
+                                messages: Vec::new(),
+                                first_entry: String::new(),
+                                more: false,
+                            });
+                        }
+                    }
+                }
                 Job::Tail { session, fresh } => {
                     // Event frames are droppable: the daemon publishes them with
                     // try_send into a bounded per-connection queue, so a client
@@ -2670,13 +2951,15 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
                     // one tail page, not the whole branch: the typed cursor the
                     // terminal UI uses, so a long session costs the same as a
                     // short one
-                    let read = get_tail(active, &session, WINDOW_ROWS);
+                    let read = pa_client::get_page(active, &session, None, WINDOW_ROWS);
                     match read {
-                    Ok((messages, last_entry, _more)) => {
+                    Ok(page) => {
                         let _ = out.send(Msg::Tail {
                             session,
-                            messages,
-                            last_entry,
+                            messages: page.messages,
+                            last_entry: page.last_entry,
+                            first_entry: page.first_entry,
+                            more: page.more,
                             fresh,
                         });
                     }
@@ -3204,5 +3487,145 @@ mod slash_rows_tests {
             .collect();
         assert!(names.contains(&"compact".to_string()));
         assert!(names.contains(&"refine".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod pager_tests {
+    use super::{anchor_after_prepend, prepend_rows, should_load_older, to_slint, PagerState, TRow};
+    use crate::transcript::{self, Row};
+    use slint::{Model, VecModel};
+    use std::rc::Rc;
+
+    fn row(message: &str, body: &str) -> Row {
+        // the struct's fields are all public, and `Row::new` is the crate's own
+        // constructor - a test only needs a key and a body
+        let mut row = transcript::Row {
+            kind: transcript::KIND_AGENT,
+            id: String::new(),
+            title: String::new(),
+            meta: String::new(),
+            body: String::new(),
+            code: String::new(),
+            output: String::new(),
+            has_code: false,
+            has_output: false,
+            expanded: false,
+            failed: false,
+            reason: String::new(),
+            image: String::new(),
+            mime: String::new(),
+            elapsed: String::new(),
+            message: String::new(),
+        };
+        row.message = message.to_string();
+        row.body = body.to_string();
+        row
+    }
+
+    /// A reader parked at the newest row has nothing above them to fetch.
+    fn settled() -> PagerState {
+        PagerState {
+            follows_bottom: false,
+            ready: true,
+            loading: false,
+            has_older: true,
+            content_y: -900.0,
+            content_height: 2000.0,
+            height: 600.0,
+        }
+    }
+
+    #[test]
+    fn a_page_is_fetched_only_at_the_top() {
+        let mut state = settled();
+        assert!(!should_load_older(state), "mid-transcript must not fetch");
+        state.content_y = -120.0;
+        assert!(!should_load_older(state), "still below the slack band");
+        state.content_y = -90.0;
+        assert!(should_load_older(state), "at the top: fetch");
+        state.content_y = 0.0;
+        assert!(should_load_older(state), "clamped at the very top");
+    }
+
+    #[test]
+    fn nothing_is_fetched_when_there_is_nothing_to_fetch() {
+        let mut state = settled();
+        state.content_y = 0.0;
+        // the reader is at the bottom, so nothing is above them
+        state.follows_bottom = true;
+        assert!(!should_load_older(state));
+        // the store says this was the first page
+        state.follows_bottom = false;
+        state.has_older = false;
+        assert!(!should_load_older(state));
+        // a page is already on its way
+        state.has_older = true;
+        state.loading = true;
+        assert!(!should_load_older(state));
+        // the window has just opened and the list has not settled yet
+        state.loading = false;
+        state.ready = false;
+        assert!(!should_load_older(state));
+        // a short transcript cannot be scrolled at all
+        state.ready = true;
+        state.content_height = 400.0;
+        assert!(!should_load_older(state));
+    }
+
+    #[test]
+    fn the_reader_stays_on_the_row_they_were_reading() {
+        // at the very top, a 1500 px page goes in above: the viewport follows it
+        // down by 1500 px, so the words that were on screen are still on screen
+        assert_eq!(anchor_after_prepend(0.0, 2000.0, 3500.0), -1500.0);
+        // half way up: same rule, the anchor is simply deeper already
+        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 3500.0), -2400.0);
+        // nothing grew (a page that carried no visible rows)
+        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 2000.0), -900.0);
+        // a height that has not been re-measured yet must not jump the wrong way
+        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 1500.0), -900.0);
+    }
+
+    #[test]
+    fn older_rows_go_above_and_the_model_follows() {
+        let mut store = vec![row("m2", "second"), row("m3", "third")];
+        let model = Rc::new(VecModel::<TRow>::from(
+            store.iter().map(to_slint).collect::<Vec<_>>(),
+        ));
+        let older = vec![row("m0", "first"), row("m1", "middle")];
+        prepend_rows(&mut store, &older, &model);
+
+        let order: Vec<String> = store.iter().map(|row| row.message.clone()).collect();
+        assert_eq!(order, ["m0", "m1", "m2", "m3"]);
+        assert_eq!(model.row_count(), 4);
+        assert_eq!(model.row_data(0).unwrap().kind, transcript::KIND_AGENT);
+    }
+
+    #[test]
+    fn a_page_that_arrives_after_the_merge_still_keeps_its_rows() {
+        // the poll runs while a page is in flight: the prepend must survive a
+        // rebuild that does not mention the older messages
+        let mut store = vec![row("m2", "second")];
+        let model = Rc::new(VecModel::<TRow>::from(
+            store.iter().map(to_slint).collect::<Vec<_>>(),
+        ));
+        prepend_rows(&mut store, &[row("m1", "first")], &model);
+        super::merge_rows(&mut store, vec![row("m2", "second, edited")], &model);
+
+        let order: Vec<String> = store.iter().map(|row| row.message.clone()).collect();
+        assert_eq!(order, ["m1", "m2"], "the older page was dropped by the merge");
+        assert_eq!(store[1].body, "second, edited");
+        assert_eq!(model.row_count(), 2);
+    }
+
+    #[test]
+    fn an_empty_page_changes_nothing() {
+        let mut store = vec![row("m1", "one")];
+        let model = Rc::new(VecModel::<TRow>::from(
+            store.iter().map(to_slint).collect::<Vec<_>>(),
+        ));
+        prepend_rows(&mut store, &[], &model);
+        assert_eq!(store.len(), 1);
+        assert_eq!(model.row_count(), 1);
     }
 }

@@ -470,16 +470,26 @@ pub fn get_messages_within(
 ///
 /// # Errors
 /// Fails on a transport error, or when the branch moved under the cursor.
-pub fn get_tail(
+/// One page of the transcript, walking backwards from `before`.
+///
+/// `before` is a **row id** (`firstEntryId` of the page already held), not a
+/// timestamp: the daemon walks its branch from that anchor, so a page costs the
+/// page and not the session. `None` means "the newest page", which is `get_tail`.
+pub fn get_page(
     client: &Client,
     session: &str,
+    before: Option<&str>,
     limit: usize,
-) -> std::io::Result<(Vec<Value>, String, bool)> {
+) -> std::io::Result<Page> {
+    let mut page = json!({"from": "end", "limit": limit});
+    if let Some(before) = before {
+        page["before"] = json!(before);
+    }
     let response = client.request(
         "get_messages",
         json!({
             "activeSessionId": session,
-            "page": {"from": "end", "limit": limit},
+            "page": page,
         }),
         Duration::from_secs(10),
     )?;
@@ -490,21 +500,48 @@ pub fn get_tail(
         )));
     }
     let data = response.get("data");
-    let messages = data
-        .and_then(|data| data.get("messages"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let last = data
-        .and_then(|data| data.get("lastEntryId"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let more = data
-        .and_then(|data| data.get("more"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    Ok((messages, last, more))
+    let text = |key: &str| {
+        data.and_then(|data| data.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    Ok(Page {
+        messages: data
+            .and_then(|data| data.get("messages"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        first_entry: text("firstEntryId"),
+        last_entry: text("lastEntryId"),
+        more: data
+            .and_then(|data| data.get("more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// One page of a session's transcript.
+#[derive(Debug, Clone, Default)]
+pub struct Page {
+    /// oldest first, as the store returns them
+    pub messages: Vec<Value>,
+    /// id of the oldest row in the page: the cursor for the page before it
+    pub first_entry: String,
+    /// id of the newest row in the page
+    pub last_entry: String,
+    /// whether the store has older rows behind this page
+    pub more: bool,
+}
+
+/// The newest page: the tail without a cursor.
+pub fn get_tail(
+    client: &Client,
+    session: &str,
+    limit: usize,
+) -> std::io::Result<(Vec<Value>, String, bool)> {
+    let page = get_page(client, session, None, limit)?;
+    Ok((page.messages, page.last_entry, page.more))
 }
 
 /// `prompt` → hand a message to the session's agent.
@@ -1543,5 +1580,59 @@ mod checked_send_probe {
             "accepted -> {:?} (session {session})",
             send_prompt_checked(&client, &session, "probe: plain text only", &[])
         );
+    }
+}
+
+#[cfg(test)]
+mod pagination_probe {
+    use super::*;
+
+    /// Probe: does a page cursor actually walk backwards, and does the second
+    /// page end where the first one begins?
+    ///
+    /// Read-only: it picks the busiest session and reads two pages of it.
+    #[test]
+    #[ignore = "needs the live daemon"]
+    fn a_page_cursor_walks_backwards() {
+        let client = Client::connect().expect("connect");
+        let mut sessions = list_sessions(&client).expect("sessions");
+        sessions.sort_by_key(|row| std::cmp::Reverse(row.messages));
+        let session = &sessions[0].session_id;
+
+        let newest = get_page(&client, session, None, 20).expect("tail page");
+        eprintln!(
+            "page 1: {} msgs first={:?} last={:?} more={}",
+            newest.messages.len(),
+            newest.first_entry,
+            newest.last_entry,
+            newest.more
+        );
+        assert!(!newest.messages.is_empty(), "no messages to page through");
+
+        let older = get_page(&client, session, Some(&newest.first_entry), 20).expect("older page");
+        eprintln!(
+            "page 2: {} msgs first={:?} last={:?} more={}",
+            older.messages.len(),
+            older.first_entry,
+            older.last_entry,
+            older.more
+        );
+
+        let stamp = |message: &Value| {
+            message
+                .get("timestamp")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+        };
+        let newest_first = newest.messages.iter().map(stamp).min().unwrap_or(0);
+        let older_last = older.messages.iter().map(stamp).max().unwrap_or(u64::MAX);
+        assert!(
+            older_last <= newest_first,
+            "the older page is not older: {older_last} > {newest_first}"
+        );
+        if older.more {
+            assert!(!older.first_entry.is_empty(), "no cursor for the third page");
+            assert_ne!(older.first_entry, newest.first_entry, "the cursor did not move");
+        }
     }
 }

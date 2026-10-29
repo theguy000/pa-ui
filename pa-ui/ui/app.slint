@@ -1321,6 +1321,25 @@ export component AppWindow inherits Window {
         transcript-list.content-height - transcript-list.height
     );
 
+    // ---- walking backwards -------------------------------------------------
+    // Older history is fetched a page at a time when the reader reaches the top.
+    // The window asks; Rust answers by prepending rows and calling
+    // `restore-anchor`, so what is on screen does not move.
+    in property <bool> has-older: false;
+    in property <bool> loading-older: false;
+    // Rust raises this once the transcript has settled at its newest row: until
+    // then the list is at offset zero, which looks exactly like "the reader
+    // scrolled to the top" and would fetch history on every launch.
+    in property <bool> pager-ready: false;
+    // `pager-ready` is raised by Rust once the transcript has settled at its
+    // newest row; the decision itself lives in Rust, where it can be tested.
+
+    // The offset is worked out in Rust (`anchor_after_prepend`), where it can be
+    // tested: the window only applies it.
+    public function set-scroll-y(value: length) {
+        transcript-list.content-y = value;
+    }
+
     public function scroll-to-end() {
         root.follow-bottom = true;
         transcript-list.content-y = -root.scroll-range;
