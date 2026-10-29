@@ -1314,6 +1314,12 @@ export component AppWindow inherits Window {
     out property <length> dbg-h: transcript-list.height;
     out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 80px;
 
+    // the reader's own scrolling is what turns following off; the flag is not
+    // cleared anywhere else, so it cannot go stale
+    changed at-bottom => {
+        root.follow-bottom = root.at-bottom;
+    }
+
     // ---- walking backwards -------------------------------------------------
     // Older history is fetched a page at a time when the reader reaches the top.
     // The window asks; Rust answers by prepending rows and calling

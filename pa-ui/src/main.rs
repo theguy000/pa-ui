@@ -1117,7 +1117,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let loading_older = loading_older.clone();
         Rc::new(move |ui: &AppWindow| {
             let state = PagerState {
-                follows_bottom: ui.get_follow_bottom() && ui.get_at_bottom(),
+                follows_bottom: ui.get_at_bottom(),
                 ready: ui.get_pager_ready(),
                 loading: loading_older.get(),
                 has_older: has_older.get(),
@@ -1473,7 +1473,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // rebuild must not drag them back to the newest row when they
                     // have scrolled up to read. This is what made scrolling up
                     // while the agent worked impossible.
-                    let follow = ui.get_at_bottom() || ui.get_follow_bottom();
+                    let follow = ui.get_at_bottom();
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
@@ -1759,7 +1759,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             turn.finish_tool(&call_id, output, failed, bash, taken);
                         }
                         sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
-                        scroll_to_end_when_ready(&ui.as_weak());
+                        scroll_if_parked(&ui);
                         _stream_at = SystemTime::now();
                         continue;
                     }
@@ -1842,7 +1842,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         turn.set_text(&whole);
                     }
                     sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
-                    scroll_to_end_when_ready(&ui.as_weak());
+                    scroll_if_parked(&ui);
                     _stream_at = SystemTime::now();
                     if crate::env_cfg::cfg().debug && kind == Some("message_update") {
                         eprintln!(
@@ -2224,20 +2224,29 @@ fn merge_rows(
             Some(current) if current.len() == fresh.len() => {
                 for (offset, row) in fresh.iter().enumerate() {
                     let index = current.start + offset;
+                    // a rebuilt row is collapsed by default; what the reader
+                    // opened must not close under them every poll
+                    let was_open = store[index].expanded;
                     store[index] = row.clone();
-                    model.set_row_data(index, to_slint(row));
+                    store[index].expanded = was_open;
+                    model.set_row_data(index, to_slint(&store[index]));
                 }
             }
             Some(current) => {
                 let at = current.start.min(store.len());
                 let until = current.end.min(store.len());
+                let opened = opened_rows(&store[at..until]);
                 for index in (at..until).rev() {
                     store.remove(index);
                     model.remove(index);
                 }
                 for (offset, row) in fresh.iter().enumerate() {
+                    let mut row = row.clone();
+                    if opened.contains(&row_identity(&row)) {
+                        row.expanded = true;
+                    }
                     store.insert(at + offset, row.clone());
-                    model.insert(at + offset, to_slint(row));
+                    model.insert(at + offset, to_slint(&row));
                 }
                 // the indices after this message moved: re-group once
                 store_map = group_ranges(store).into_iter().collect();
@@ -2252,6 +2261,24 @@ fn merge_rows(
             }
         }
     }
+}
+
+/// Stable identity of a row across a rebuild: the tool call's id when it has
+/// one, otherwise the message it belongs to plus its kind and its place among
+/// the rows of that kind.
+fn row_identity(row: &transcript::Row) -> String {
+    if !row.id.is_empty() {
+        return format!("id:{}", row.id);
+    }
+    format!("{}#{}#{}", row.message, row.kind, row.title)
+}
+
+/// Which rows of a range the reader had opened.
+fn opened_rows(rows: &[transcript::Row]) -> std::collections::HashSet<String> {
+    rows.iter()
+        .filter(|row| row.expanded)
+        .map(row_identity)
+        .collect()
 }
 
 /// Why an image send cannot go out right now, if it cannot.
@@ -3170,6 +3197,17 @@ fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
     eprintln!("[rows] {what:24} n={:<4} tail={:?}", rows.len(), tail);
 }
 
+/// Follow the newest row only when the reader is already there.
+///
+/// Every streamed delta and every poll used to drag the view to the bottom, so
+/// scrolling up to read while the agent worked was impossible: the next frame
+/// pulled the page out from under the pointer.
+fn scroll_if_parked(ui: &AppWindow) {
+    if ui.get_at_bottom() {
+        scroll_to_end_when_ready(&ui.as_weak());
+    }
+}
+
 fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
     FOLLOW_TIMER.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -3627,5 +3665,101 @@ mod pager_tests {
         prepend_rows(&mut store, &[], &model);
         assert_eq!(store.len(), 1);
         assert_eq!(model.row_count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod row_state_tests {
+    use super::{merge_rows, row_identity, to_slint, TRow};
+    use crate::transcript::{self, Row};
+    use slint::{Model, VecModel};
+    use std::rc::Rc;
+
+    fn row(message: &str, kind: i32, title: &str, id: &str) -> Row {
+        let mut row = transcript::Row {
+            kind,
+            id: id.to_string(),
+            title: title.to_string(),
+            meta: String::new(),
+            body: format!("body of {title}"),
+            code: String::new(),
+            output: String::new(),
+            has_code: false,
+            has_output: false,
+            expanded: false,
+            failed: false,
+            reason: String::new(),
+            image: String::new(),
+            mime: String::new(),
+            elapsed: String::new(),
+            message: message.to_string(),
+        };
+        row.expanded = false;
+        row
+    }
+
+    fn model_of(rows: &[Row]) -> Rc<VecModel<TRow>> {
+        Rc::new(VecModel::<TRow>::from(rows.iter().map(to_slint).collect::<Vec<_>>()))
+    }
+
+    #[test]
+    fn an_open_row_stays_open_when_the_poll_rebuilds_it() {
+        let mut store = vec![row("m1", transcript::KIND_CODE, "rust", ""),
+                             row("m2", transcript::KIND_CELL, "shell", "call-7")];
+        store[0].expanded = true;
+        let model = model_of(&store);
+
+        // the same two rows arrive again, collapsed, as a poll would deliver them
+        let incoming = vec![row("m1", transcript::KIND_CODE, "rust", ""),
+                            row("m2", transcript::KIND_CELL, "shell", "call-7")];
+        merge_rows(&mut store, incoming, &model);
+
+        assert!(store[0].expanded, "the open code block was collapsed by the poll");
+        assert!(!store[1].expanded);
+        assert!(model.row_data(0).unwrap().expanded);
+    }
+
+    #[test]
+    fn an_open_cell_survives_the_message_growing() {
+        // a message that gains a row: the group is re-inserted whole, so the
+        // toggle has to be carried by identity rather than by position
+        let mut store = vec![row("m1", transcript::KIND_CELL, "shell", "call-1"),
+                             row("m1", transcript::KIND_CELL, "python", "call-2")];
+        store[1].expanded = true;
+        let model = model_of(&store);
+
+        let incoming = vec![row("m1", transcript::KIND_CELL, "shell", "call-1"),
+                            row("m1", transcript::KIND_CELL, "python", "call-2"),
+                            row("m1", transcript::KIND_CODE, "rust", "")];
+        merge_rows(&mut store, incoming, &model);
+
+        assert_eq!(store.len(), 3);
+        assert!(store[1].expanded, "the open python cell closed when a row was added");
+        assert!(!store[2].expanded, "a row the reader never opened starts closed");
+        assert!(model.row_data(1).unwrap().expanded);
+    }
+
+    #[test]
+    fn a_message_the_store_does_not_mention_is_left_exactly_as_drawn() {
+        // the merge appends and replaces, it never deletes: a store that is one
+        // message behind must not tear rows off the transcript, and the toggle
+        // on those rows belongs to the reader
+        let mut store = vec![row("m1", transcript::KIND_CODE, "rust", ""),
+                             row("m2", transcript::KIND_CODE, "sql", "")];
+        store[1].expanded = true;
+        let model = model_of(&store);
+        merge_rows(&mut store, vec![row("m1", transcript::KIND_CODE, "rust", "")], &model);
+        assert_eq!(store.len(), 2, "the unmentioned message was dropped");
+        assert!(store[1].expanded);
+        assert_eq!(model.row_count(), 2);
+    }
+
+    #[test]
+    fn identity_prefers_the_call_id() {
+        let mut with_id = row("m1", transcript::KIND_CELL, "shell", "call-9");
+        with_id.expanded = true;
+        assert_eq!(row_identity(&with_id), "id:call-9");
+        let plain = row("m1", transcript::KIND_CODE, "rust", "");
+        assert!(row_identity(&plain).starts_with("m1#6#rust"));
     }
 }
