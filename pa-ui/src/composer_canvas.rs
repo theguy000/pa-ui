@@ -10,8 +10,8 @@
 //! Three things had to be got right for this to look like the rest of the window:
 //! the family must be asked for by name (the generic one is Arial, not Segoe UI),
 //! coverage must get the light-on-dark gamma lift that DirectWrite applies or the
-//! strokes read thin, and the pixels must be premultiplied, which is what Slint
-//! expects from `Image::from_rgba8`.
+//! strokes read thin, and the buffer is premultiplied — `Image::from_rgba8` takes
+//! straight alpha and would square the alpha if handed premultiplied pixels.
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
@@ -109,7 +109,9 @@ fn boost_coverage(coverage: u8) -> u8 {
         return coverage;
     }
     let normalised = f32::from(coverage) / 255.0;
-    (normalised.powf(0.69) * 255.0).round() as u8
+    // 0.55 is the 96-DPI curve DirectWrite uses for light-on-dark text; 0.69 was
+    // leaving horizontal stems visibly thinner than the native text beside them
+    (normalised.powf(0.55) * 255.0).round() as u8
 }
 
 /// Put one premultiplied pixel over what is already there.
@@ -284,7 +286,9 @@ impl Canvas {
         }
 
         (
-            Image::from_rgba8(pixels),
+            // premultiplied: `from_rgba8` would multiply the channels by alpha a
+            // second time and crush every antialiased edge
+            Image::from_rgba8_premultiplied(pixels),
             Caret {
                 x: caret_x,
                 y: caret_y,
