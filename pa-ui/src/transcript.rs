@@ -21,7 +21,7 @@ pub const KIND_TABLE: i32 = 7;
 /// An image the user sent: drawn as a thumbnail, not as words.
 pub const KIND_IMAGE: i32 = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub kind: i32,
     /// Tool-call id for cell rows: the live event path and the store path both
@@ -135,6 +135,12 @@ fn cache_put(owner: &str, fingerprint: u64, rows: &[Row]) {
             },
         );
     });
+}
+
+/// Empty the per-message cache. Only a measurement needs this: the cache is
+/// bounded on its own and follows the messages it is keyed by.
+pub fn reset_cache() {
+    MESSAGE_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 fn cache_get(owner: &str, fingerprint: u64) -> Option<Vec<Row>> {
