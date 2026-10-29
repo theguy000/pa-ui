@@ -1100,15 +1100,23 @@ fn main() -> Result<(), slint::PlatformError> {
             let text_now = ui.get_composer_text().to_string();
             let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
             let width_now = ui.get_composer_width();
-            let key = (text_now.clone(), caret_now, (width_now * 4.0) as i32);
+            let anchor_key = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
+            let key = (
+                text_now.clone(),
+                caret_now * 100_000 + anchor_key,
+                (width_now * 4.0) as i32,
+            );
             if *canvas_key.borrow() != key {
                 *canvas_key.borrow_mut() = key;
                 let known = extra_commands.borrow().clone();
-                let (image, caret) = canvas_cell
-                    .borrow_mut()
-                    .render(&text_now, caret_now, width_now, |name| {
-                        is_command_word(&known, name)
-                    });
+                let anchor_now = usize::try_from(ui.get_composer_anchor().max(0)).unwrap_or(0);
+                let (image, caret) = canvas_cell.borrow_mut().render(
+                    &text_now,
+                    caret_now,
+                    (anchor_now, caret_now),
+                    width_now,
+                    |name| is_command_word(&known, name),
+                );
                 if std::env::var("PA_DEBUG").is_ok() {
                     eprintln!(
                         "[canvas] {} chars, w={width_now:.0} h={:.0} caret=({:.1},{:.1})",

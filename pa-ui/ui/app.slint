@@ -1125,6 +1125,7 @@ export component AppWindow inherits Window {
     in-out property <length> composer-caret-y: 0px;
     in-out property <length> composer-caret-height: 18px;
     out property <int> composer-caret: draft-window.caret-offset;
+    out property <int> composer-anchor: draft-window.anchor-offset;
     out property <length> composer-width: draft-window.width;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter

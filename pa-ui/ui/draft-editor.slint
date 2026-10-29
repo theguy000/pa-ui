@@ -20,6 +20,7 @@ export component DraftEditor inherits Rectangle {
     out property <bool> has-focus: field.has-focus;
     /// Where the caret sits, in bytes.
     out property <int> caret-offset: field.cursor-position-byte-offset;
+    out property <int> anchor-offset: field.anchor-position-byte-offset;
     /// Ask for the caret to land at a byte offset once the text has arrived.
     /// Setting text from outside leaves the caret where it was - in the middle
     /// of a half-typed word - so the move has to wait for the text change.
