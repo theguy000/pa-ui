@@ -261,6 +261,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let Some(ui) = weak.upgrade() else { return };
+            // Sending is the reader saying "show me the answer": follow again,
+            // even if they had scrolled up to read something first
+            force_scroll_to_end(&ui);
             // Two ways an image send goes wrong, both refused here: a model that
             // cannot see images drops the whole turn, and an image sent into a
             // running turn arrives with the picture missing.
@@ -602,7 +605,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             // Switching keeps the level and clamps it to the new model's own
-            // ladder, so the rung that would apply is the clamped one — the
+            // ladder, so the rung that would apply is the clamped one � the
             // submenu shows where this model would land, not a guess.
             let landed = clamp_level(&entry.thinking_levels, &ui.get_current_level());
             let items: Vec<EffortItem> = entry
@@ -652,7 +655,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_effort_open(false);
             *hover_current.borrow_mut() = None;
             ui.set_status_line(
-                format!("{model} · {}", thinking_level_label(&level)).into(),
+                format!("{model} � {}", thinking_level_label(&level)).into(),
             );
             let _ = jobs.send(Job::SetLevel {
                 session,
@@ -1117,7 +1120,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let loading_older = loading_older.clone();
         Rc::new(move |ui: &AppWindow| {
             let state = PagerState {
-                follows_bottom: ui.get_at_bottom(),
+                follows_bottom: ui.get_follow_bottom(),
                 ready: ui.get_pager_ready(),
                 loading: loading_older.get(),
                 has_older: has_older.get(),
@@ -1174,7 +1177,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(WINDOW_ROWS);
-    // the spinner runs on its own clock — 10 frames at 80 ms is one 0.8 s turn,
+    // the spinner runs on its own clock � 10 frames at 80 ms is one 0.8 s turn,
     // independent of how often the daemon happens to send status
     let spin_weak = ui.as_weak();
     let spin_index = std::cell::Cell::new(0usize);
@@ -1252,7 +1255,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
 
         // while the agent works, keep pulling the tail of the transcript so
-        // completed tool calls show up as rows — the snapshot alone never updates
+        // completed tool calls show up as rows � the snapshot alone never updates
         // Poll while a turn runs, and slowly the rest of the time. Gating this
         // on `busy` alone meant one missed `message_end` froze the transcript
         // for good: nothing would ever ask the store again.
@@ -1373,7 +1376,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if !busy_now && ui.get_busy() {
                             ui.set_busy(false);
                             busy_label.clear();
-                            // the run just ended — grab whatever landed after the
+                            // the run just ended � grab whatever landed after the
                             // last refresh so the final tool calls are not lost
                             if let Some(session) = loaded.clone() {
                                 let _ = jobs.send(Job::Tail { session, fresh: false });
@@ -1473,7 +1476,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // rebuild must not drag them back to the newest row when they
                     // have scrolled up to read. This is what made scrolling up
                     // while the agent worked impossible.
-                    let follow = ui.get_at_bottom();
+                    let follow = ui.get_follow_bottom() && !ui.get_scrollbar_dragging();
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
@@ -1541,8 +1544,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     // (no deltas, so the quiet timer expires) would otherwise
                     // replace rows the store has not written yet and tear the
                     // transcript down by however many rows that turn had.
-                    // While this client is drawing the open turn — a live row,
-                    // or cells keyed by call id — the store's copy of that same
+                    // While this client is drawing the open turn � a live row,
+                    // or cells keyed by call id � the store's copy of that same
                     // turn is not a second opinion worth having. Appending the
                     // rows the store had written so far is what put the previous
                     // answer back on screen for a few seconds after a send and
@@ -1574,10 +1577,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     // never sent is appended. Nothing here compares sizes, so a
                     // store that is one message behind cannot shrink or blank
                     // anything.
+                    let held = hold_offset(&ui);
                     let mut store = rows_store_ui.borrow_mut();
                     merge_rows(&mut store, built, &row_model_ui);
                     let count = store.len();
                     drop(store);
+                    pin_offset_across_layout(&ui, held);
                     if crate::env_cfg::cfg().dump.is_some() {
                         dump_rows(&rows_store_ui.borrow());
                     }
@@ -1662,7 +1667,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         ui.set_busy_label(label.into());
                     }
                     // gap detection: a skipped sequence means we missed frames
-                    // (daemon restart, a stalled pipe) — backfill from the store
+                    // (daemon restart, a stalled pipe) � backfill from the store
                     if let Some(sequence) = event
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
@@ -1758,7 +1763,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             let taken = transcript::duration_ms(details);
                             turn.finish_tool(&call_id, output, failed, bash, taken);
                         }
+                        let held = hold_offset(&ui);
                         sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        pin_offset_across_layout(&ui, held);
                         scroll_if_parked(&ui);
                         _stream_at = SystemTime::now();
                         continue;
@@ -1841,7 +1848,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if !whole.is_empty() {
                         turn.set_text(&whole);
                     }
+                    let held = hold_offset(&ui);
                     sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                    pin_offset_across_layout(&ui, held);
                     scroll_if_parked(&ui);
                     _stream_at = SystemTime::now();
                     if crate::env_cfg::cfg().debug && kind == Some("message_update") {
@@ -2043,7 +2052,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     pending_user.borrow_mut().take();
                     drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
-                    ui.set_status_line("prompt not accepted — text restored".into());
+                    ui.set_status_line("prompt not accepted � text restored".into());
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
@@ -2108,8 +2117,8 @@ fn context_hint(tokens: u64) -> String {
 /// knows its message, which is what `Row.message` is for.
 ///
 /// The grouping of the store is computed once, not once per incoming message, and
-/// a message whose row count did not change is replaced in place — `set_row_data`
-/// instead of a remove/insert pair — because every model mutation is a layout
+/// a message whose row count did not change is replaced in place � `set_row_data`
+/// instead of a remove/insert pair � because every model mutation is a layout
 /// notification and a transcript that jitters while it streams is the result.
 fn group_ranges(rows: &[transcript::Row]) -> Vec<(String, std::ops::Range<usize>)> {
     let mut out: Vec<(String, std::ops::Range<usize>)> = Vec::new();
@@ -2181,8 +2190,8 @@ pub fn should_load_older(state: PagerState) -> bool {
 
 /// Put a page of older rows above what is on screen.
 ///
-/// Both copies of the transcript move together — the store, which is the truth
-/// here, and the model Slint draws — because a prepend that touched only one of
+/// Both copies of the transcript move together � the store, which is the truth
+/// here, and the model Slint draws � because a prepend that touched only one of
 /// them would leave the next merge operating on rows nobody can see.
 pub fn prepend_rows(
     store: &mut Vec<transcript::Row>,
@@ -2427,7 +2436,7 @@ fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem
 
 /// The `/command` token under the caret, as byte range `[start, end)`.
 ///
-/// The menu belongs to whichever word the caret sits in — the first or the fifth —
+/// The menu belongs to whichever word the caret sits in � the first or the fifth �
 /// so a command can be started between words, not only at the start of a message.
 fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
     let caret = caret.min(text.len());
@@ -2448,7 +2457,7 @@ fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
 ///
 /// The daemon's table splits commands in two: the agent runs `compact`,
 /// `refine`, `goal` and `autonomous` itself, so those are sent as written. Every
-/// other builtin is a *window* action — sending `/system-prompt` down the pipe
+/// other builtin is a *window* action � sending `/system-prompt` down the pipe
 /// gave the agent a chat message that read like a command and did nothing.
 fn slash_dispatch(text: &str) -> SlashAction {
     let trimmed = text.trim();
@@ -2584,7 +2593,7 @@ fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
-        let _ = reporter.send(Msg::Error("engine stopped — reopen the window".into()));
+        let _ = reporter.send(Msg::Error("engine stopped � reopen the window".into()));
     }
 }
 
@@ -2628,7 +2637,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
         if !active.alive() {
             client = None;
             attached = None;
-            let _ = out.send(Msg::Error("daemon connection lost — reconnecting".into()));
+            let _ = out.send(Msg::Error("daemon connection lost � reconnecting".into()));
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -3089,7 +3098,7 @@ fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
 /// Scroll the transcript to the newest row, retrying while the layout settles.
 ///
 /// A single call can land before `content-height` is known, which leaves the
-/// view at the top — the exact bug that made a chat open on its oldest row.
+/// view at the top � the exact bug that made a chat open on its oldest row.
 thread_local! {
     /// One timer for every follow request. Each call restarts it, so a burst of
     /// rebuilds produces a single scroll when they stop - not one scroll per
@@ -3137,6 +3146,15 @@ fn drop_pending_prompt(
 /// Walk the open message's range back to what it looks like now: the old rows
 /// go, the new ones take their place. Called for every frame, because the range
 /// is the message - there is no second copy to keep in step.
+/// Write the open turn into the model without rebuilding its rows.
+///
+/// This used to remove every row of the live turn and insert them again on each
+/// streamed delta. Every one of those was a model mutation, and a mutation makes
+/// the list relayout � and its relayout rewrites the scroll offset from an
+/// average row height. That is what moved the view under a reader who had not
+/// scrolled. A delta now changes the text of the rows that exist; rows are only
+/// inserted when the turn actually grows a new one (a thinking row starting, a
+/// tool cell opening, a code block splitting off).
 fn sync_live(
     live: &mut Option<live::Live>,
     store: &Rc<RefCell<Vec<transcript::Row>>>,
@@ -3145,20 +3163,44 @@ fn sync_live(
     let Some(turn) = live.as_mut() else {
         return;
     };
-    let rows = turn.rows();
+    let fresh = turn.rows();
     let mut rows_store = store.borrow_mut();
-    let end = (turn.start + turn.rows).min(rows_store.len());
-    let begin = turn.start.min(end);
-    for index in (begin..end).rev() {
-        rows_store.remove(index);
-        model.remove(index);
+    let start = turn.start.min(rows_store.len());
+    let before = turn.rows.min(rows_store.len().saturating_sub(start));
+    let after = fresh.len();
+
+    // 1. the rows both sides have: change the data, not the element
+    for offset in 0..before.min(after) {
+        let index = start + offset;
+        let row = &fresh[offset];
+        if &rows_store[index] == row {
+            continue;
+        }
+        rows_store[index] = row.clone();
+        model.set_row_data(index, to_slint(row));
     }
-    for (offset, row) in rows.iter().enumerate() {
-        let index = turn.start + offset;
-        rows_store.insert(index, row.clone());
-        model.insert(index, to_slint(row));
+
+    // 2. the turn grew: append what is new, in order
+    if after > before {
+        for offset in before..after {
+            let index = start + offset;
+            let row = &fresh[offset];
+            rows_store.insert(index, row.clone());
+            model.insert(index, to_slint(row));
+        }
     }
-    turn.rows = rows.len();
+
+    // 3. the turn shrank (a partial block folded back into prose)
+    if before > after {
+        for index in (start + after..start + before).rev() {
+            if index < rows_store.len() {
+                rows_store.remove(index);
+                model.remove(index);
+            }
+        }
+    }
+
+    turn.rows = after;
 }
 
 /// Drop the open range: the store speaks for that message from here on.
@@ -3203,20 +3245,93 @@ fn trace_rows(what: &str, rows: &Rc<RefCell<Vec<transcript::Row>>>) {
 /// scrolling up to read while the agent worked was impossible: the next frame
 /// pulled the page out from under the pointer.
 fn scroll_if_parked(ui: &AppWindow) {
-    if ui.get_at_bottom() {
+    // Following is a latch the reader owns, not a measurement: a hand on the
+    // scrollbar turns it off before any token can move the view, and only
+    // arriving at the floor turns it back on.
+    if ui.get_follow_bottom() && !ui.get_scrollbar_dragging() {
         scroll_to_end_when_ready(&ui.as_weak());
     }
 }
 
+/// Whether the reader's view must be held still while rows change.
+///
+/// Two facts, and the conclusion is the opposite of "should we scroll": while
+/// following, the end of the transcript is the destination; while a hand is on
+/// the bar, that hand owns the offset.
+#[must_use]
+pub fn should_hold_offset(following: bool, dragging: bool) -> bool {
+    !following && !dragging
+}
+
+/// The reader's offset, if it is theirs to keep right now.
+fn hold_offset(ui: &AppWindow) -> Option<f32> {
+    if !should_hold_offset(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+        return None;
+    }
+    Some(ui.get_dbg_cy())
+}
+
+/// Put the offset back, if the reader is still reading.
+fn restore_offset(ui: &AppWindow, held: Option<f32>) {
+    let Some(y) = held else { return };
+    if !should_hold_offset(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+        return;
+    }
+    ui.invoke_set_scroll_y(y);
+}
+
+/// Hold the reader's place across a model mutation.
+///
+/// The list recalculates its own offset from the average height of the rows it
+/// has instantiated, so any mutation can move the view even though nobody
+/// scrolled. The offset is therefore re-asserted here and twice more while the
+/// new rows are measured and laid out.
+fn pin_offset_across_layout(_ui: &AppWindow, _held: Option<f32>) {
+    // ScrollView over VerticalLayout measures real row heights and never
+    // rewrites content-y when rows grow at the bottom. Re-setting content-y
+    // here on every streamed token only fights active wheel scrolling.
+}
+
+/// Whether the window is allowed to move the view at all right now.
+///
+/// Two facts and nothing else: does the reader want to follow, and is a hand on
+/// the bar. A timeout was tried here and it was wrong � it let the stream take
+/// the view back half a second after the reader stopped, which is exactly when
+/// they started reading.
+#[must_use]
+pub fn may_autoscroll(following: bool, dragging: bool) -> bool {
+    following && !dragging
+}
+
+/// Move to the newest row because the reader asked for it � a send, or a new
+/// chat. The latch is for corrections nobody asked for; it must never block the
+/// reader's own request.
+fn force_scroll_to_end(ui: &AppWindow) {
+    ui.set_follow_bottom(true);
+    ui.invoke_scroll_to_end();
+}
+
 fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
+    // A single guard here, rather than a rule at every call site: the tail poll,
+    // the streamed deltas and the delayed corrections all go through this, and
+    // forgetting the check in one of them is how the view ended up fighting the
+    // reader in the first place.
+    let Some(current) = ui.upgrade() else { return };
+    if !may_autoscroll(current.get_follow_bottom(), current.get_scrollbar_dragging()) {
+        return;
+    }
     FOLLOW_TIMER.with(|slot| {
         let mut slot = slot.borrow_mut();
         let timer = slot.get_or_insert_with(slint::Timer::default);
         let ui = ui.clone();
         // tall rows (a code block, a table) can settle a frame later than the
-        // model change, so one short correction follows the first
+        // model change, so a short correction follows the first - and each one
+        // re-checks, because the reader may have taken over in between
         timer.start(slint::TimerMode::SingleShot, Duration::from_millis(55), move || {
             if let Some(ui) = ui.upgrade() {
+                if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+                    return;
+                }
                 ui.invoke_scroll_to_end();
                 let late = ui.as_weak();
                 // A list view measures its rows as it creates them, so the
@@ -3224,10 +3339,16 @@ fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
                 // first correction.
                 slint::Timer::single_shot(Duration::from_millis(180), move || {
                     if let Some(ui) = late.upgrade() {
+                        if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+                            return;
+                        }
                         ui.invoke_scroll_to_end();
                         let last = ui.as_weak();
                         slint::Timer::single_shot(Duration::from_millis(300), move || {
                             if let Some(ui) = last.upgrade() {
+                                if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+                                    return;
+                                }
                                 ui.invoke_scroll_to_end();
                             }
                         });
@@ -3238,7 +3359,7 @@ fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
     });
 }
 
-/// 1234 → "1.2k", 47_011_000 → "47.0M".
+/// 1234 ? "1.2k", 47_011_000 ? "47.0M".
 fn tokens(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}M", value as f64 / 1_000_000.0)
@@ -3386,7 +3507,7 @@ fn display_name(row: &SessionRow) -> SharedString {
         text.chars().skip(count.saturating_sub(width)).collect()
     };
     if let Some(last) = row.cwd.split(['\\', '/']).filter(|part| !part.is_empty()).next_back() {
-        return format!("{last} · {}", tail(&row.id, 6)).into();
+        return format!("{last} � {}", tail(&row.id, 6)).into();
     }
     tail(&row.id, 10).into()
 }
@@ -3396,7 +3517,7 @@ fn trim_to(text: &str, width: usize) -> String {
     if cleaned.chars().count() <= width {
         return cleaned;
     }
-    cleaned.chars().take(width.saturating_sub(1)).chain(['…']).collect()
+    cleaned.chars().take(width.saturating_sub(1)).chain(['�']).collect()
 }
 
 fn age_of(stamp: &str) -> String {
@@ -3761,5 +3882,254 @@ mod row_state_tests {
         assert_eq!(row_identity(&with_id), "id:call-9");
         let plain = row("m1", transcript::KIND_CODE, "rust", "");
         assert!(row_identity(&plain).starts_with("m1#6#rust"));
+    }
+}
+
+#[cfg(test)]
+mod efficiency_probe {
+    use super::{merge_rows, to_slint, TRow};
+    use crate::transcript;
+    use serde_json::{json, Value};
+    use slint::{Model, VecModel};
+    use std::rc::Rc;
+    use std::time::Instant;
+
+    /// A session shaped like a real one: prose, code blocks, tool calls with
+    /// results, and thinking.
+    fn session(messages: usize) -> Vec<Value> {
+        let mut out = Vec::new();
+        for index in 0..messages {
+            match index % 4 {
+                0 => out.push(json!({
+                    "role": "user",
+                    "timestamp": index,
+                    "content": [{"type": "text", "text": format!("message {index}: fix the thing that broke yesterday, and keep the rest as it is")}]
+                })),
+                1 | 2 => {
+                    let call = format!("call-{index}");
+                    out.push(json!({
+                        "role": "assistant",
+                        "timestamp": index,
+                        "content": [
+                            {"type": "thinking", "thinking": "the store is the authority\nand the events are advisory\n".repeat(3)},
+                            {"type": "text", "text": format!("# heading {index}\n\nProse with `inline code` and **bold** and a [link](https://example.com).\n\n```rust\nfn work() -> u32 {{\n    // a comment\n    41 + 1\n}}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")},
+                            {"type": "toolCall", "id": call, "name": "bash", "arguments": {"command": "cargo test -p pa-ui"}}
+                        ]
+                    }));
+                    out.push(json!({
+                        "role": "toolResult",
+                        "timestamp": index,
+                        "toolCallId": call,
+                        "content": [{"text": format!("test result: ok. {index} passed\n")}],
+                        "details": {"command": "cargo test -p pa-ui", "durationMs": 1200}
+                    }));
+                }
+                _ => out.push(json!({
+                    "role": "assistant",
+                    "timestamp": index,
+                    "content": [{"type": "text", "text": "A short answer.\n\n".repeat(4)}]
+                })),
+            }
+        }
+        out
+    }
+
+    fn time<T>(label: &str, runs: usize, mut body: impl FnMut() -> T) -> T {
+        let start = Instant::now();
+        let mut out = None;
+        for _ in 0..runs {
+            out = Some(body());
+        }
+        let each = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+        eprintln!("[bench] {label:38} {each:8.3} ms/run  ({runs} runs)");
+        out.expect("a run")
+    }
+
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn how_much_a_poll_costs() {
+        let messages = session(300);
+        let (rows, _) = time("build, cold cache (300 msgs)", 3, || {
+            crate::transcript::reset_cache();
+            transcript::build(&messages, 300)
+        });
+        eprintln!("[bench] rows per page: {}", rows.len());
+
+        let (rows, _) = time("build, warm cache (300 msgs)", 20, || {
+            transcript::build(&messages, 300)
+        });
+
+        let converted = time("to_slint for every row", 20, || {
+            rows.iter().map(to_slint).collect::<Vec<TRow>>()
+        });
+        eprintln!("[bench] slint rows: {}", converted.len());
+
+        let mut store = rows.clone();
+        let model = Rc::new(VecModel::<TRow>::from(
+            store.iter().map(to_slint).collect::<Vec<_>>(),
+        ));
+        time("merge, nothing changed", 20, || {
+            merge_rows(&mut store, rows.clone(), &model);
+        });
+
+        let mut changed = rows.clone();
+        let last = changed.len() - 1;
+        changed[last].body.push_str(" and one more sentence");
+        time("merge, one message changed", 20, || {
+            merge_rows(&mut store, changed.clone(), &model);
+        });
+        assert_eq!(model.row_count(), store.len());
+    }
+}
+
+#[cfg(test)]
+mod efficiency_parts {
+    use super::to_slint;
+    use crate::transcript;
+    use serde_json::json;
+    use std::time::Instant;
+
+    fn time<T>(label: &str, runs: usize, mut body: impl FnMut() -> T) -> T {
+        let start = Instant::now();
+        let mut out = None;
+        for _ in 0..runs {
+            out = Some(body());
+        }
+        let each = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+        eprintln!("[bench] {label:38} {each:8.3} ms/run  ({runs} runs)");
+        out.expect("a run")
+    }
+
+    /// The parts the poll spends its time in, measured separately.
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn where_the_poll_goes() {
+        let message = json!({
+            "role": "assistant",
+            "timestamp": 7,
+            "content": [
+                {"type": "text", "text": "# heading\n\nProse with `inline code` and **bold**.\n\n```rust\nfn work() -> u32 { 41 + 1 }\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"},
+                {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {"command": "cargo test"}}
+            ]
+        });
+        let markup = transcript::markdown_markup("Prose with `inline code` and **bold** and a [link](https://example.com).");
+
+        time("markdown_markup, one paragraph", 2000, || {
+            transcript::markdown_markup("Prose with `inline code` and **bold** and a [link](https://example.com).")
+        });
+        time("StyledText::from_markdown, one row", 2000, || {
+            slint::StyledText::from_markdown(&markup)
+        });
+        time("message.to_string() (fingerprint input)", 2000, || message.to_string());
+        time("one message -> rows (cold rows, warm cache)", 2000, || {
+            let (rows, _) = transcript::build(std::slice::from_ref(&message), 1);
+            rows
+        });
+        let (rows, _) = transcript::build(std::slice::from_ref(&message), 1);
+        time("to_slint, that message's rows", 2000, || {
+            rows.iter().map(to_slint).collect::<Vec<_>>()
+        });
+        eprintln!("[bench] rows for that message: {}", rows.len());
+    }
+}
+
+#[cfg(test)]
+mod efficiency_stream {
+    use super::to_slint;
+    use crate::transcript;
+    use serde_json::json;
+    use std::time::Instant;
+
+    fn growing(chars: usize) -> serde_json::Value {
+        let paragraph = "The store is the authority and the events are advisory, so a poll reconciles rather than trusts. ";
+        let mut text = String::new();
+        while text.len() < chars {
+            text.push_str(paragraph);
+            if text.len() % 900 < paragraph.len() {
+                text.push_str("\n\n```rust\nfn step() -> u32 { 1 }\n```\n\n");
+            }
+        }
+        json!({"role": "assistant", "timestamp": 1, "content": [{"type": "text", "text": text}]})
+    }
+
+    /// What one streamed delta costs when the message being written is long:
+    /// the delta path rebuilds that message and converts it for the window.
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn the_cost_of_one_more_character() {
+        for chars in [2_000usize, 6_000, 20_000] {
+            let message = growing(chars);
+            let runs = 50;
+            let start = Instant::now();
+            let mut rows = 0;
+            for _ in 0..runs {
+                // a delta invalidates the message, so this is always a cold build
+                crate::transcript::reset_cache();
+                let (built, _) = transcript::build(std::slice::from_ref(&message), 1);
+                rows = built.len();
+                let _: Vec<_> = built.iter().map(to_slint).collect();
+            }
+            let each = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+            eprintln!("[bench] one delta, {chars:>6} chars -> {rows:>2} rows   {each:8.3} ms");
+        }
+    }
+}
+
+#[cfg(test)]
+mod autoscroll_guard_tests {
+    use super::may_autoscroll;
+
+    #[test]
+    fn a_hand_on_the_bar_stops_the_window_moving_the_view() {
+        assert!(!may_autoscroll(true, true));
+    }
+
+    #[test]
+    fn a_latch_that_is_off_stays_off_however_long_the_reader_pauses() {
+        // There is deliberately no time input here: a paused reader is a reader,
+        // and the version that took a duration was the bug � it re-armed itself
+        // half a second after the scrolling stopped.
+        assert!(!may_autoscroll(false, false));
+        assert!(!may_autoscroll(false, true));
+    }
+
+    #[test]
+    fn following_and_not_dragging_is_the_only_way_the_view_moves_itself() {
+        assert!(may_autoscroll(true, false));
+    }
+}
+
+#[cfg(test)]
+mod scroll_guard_tests {
+    use super::{may_autoscroll, should_hold_offset};
+
+    #[test]
+    fn the_offset_is_held_only_for_a_reader_who_is_not_following() {
+        // scrolled up and not dragging: this is the reader's view, hold it
+        assert!(should_hold_offset(false, false));
+        // following: the end is the destination, a held offset would fight it
+        assert!(!should_hold_offset(true, false));
+        // a hand on the bar owns the offset outright
+        assert!(!should_hold_offset(false, true));
+        assert!(!should_hold_offset(true, true));
+    }
+
+    #[test]
+    fn holding_and_following_are_exact_opposites_for_a_still_hand() {
+        for following in [true, false] {
+            assert_ne!(
+                should_hold_offset(following, false),
+                may_autoscroll(following, false),
+                "a mutation must not both hold the offset and scroll to the end"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hand_on_the_bar_neither_holds_nor_follows() {
+        for following in [true, false] {
+            assert!(!should_hold_offset(following, true));
+            assert!(!may_autoscroll(following, true));
+        }
     }
 }

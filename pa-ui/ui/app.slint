@@ -54,7 +54,7 @@ export struct ModelItem {
     label: string,
     // right-aligned hint: context window
     detail: string,
-    // the level this model is thinking at — only ever set on the running one,
+    // the level this model is thinking at � only ever set on the running one,
     // since a level belongs to the model that holds it
     effort: string,
     current: bool,
@@ -1293,7 +1293,7 @@ export component AppWindow inherits Window {
     // 0 while idle, 1 while a run is in flight: the one clock the send button's
     // two marks share
     // Stop is only the button's job while the composer is empty. The moment you
-    // type, the same control becomes send again — and sending while a turn runs
+    // type, the same control becomes send again � and sending while a turn runs
     // queues the message instead of interrupting it.
     in-out property <bool> composer-has-text: false;
     out property <bool> stop-mode: root.busy && !root.composer-has-text;
@@ -1304,20 +1304,61 @@ export component AppWindow inherits Window {
     out property <bool> composer-focused: draft-window.has-focus;
     callback search-edited(string);
 
-    // true while the reader is parked at the newest row; a new row then pulls
-    // the view along, and scrolling up turns it off
+    // A latch, not a measurement: while it is true a new row pulls the view
+    // along; the moment the reader touches the wheel or the bar it is false, and
+    // nothing can turn it back on except the reader arriving at the floor again.
+    // Deriving it from "how close to the bottom am I" every frame is what let a
+    // token arriving 16 ms after a drag started yank the page back down.
     in-out property <bool> follow-bottom: true;
+    // true from the moment the bar is grabbed until it is let go
+    in-out property <bool> scrollbar-dragging: false;
+    // the last offset we saw, so a step *towards the top* can be told apart from
+    // content growing at the bottom
+    in-out property <length> seen-content-y: 0px;
+    // set when the reader moves up, cleared only when they are back on the floor
+    in-out property <bool> reader-scrolled: false;
     // derived from the scroll offset, so it tracks wheel scrolling without
     // relying on change notifications from the ListView
     out property <length> dbg-cy: transcript-list.content-y;
     out property <length> dbg-ch: transcript-list.content-height;
     out property <length> dbg-h: transcript-list.height;
     out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 80px;
+    /// how far the last row is from the floor of the view, in pixels
+    out property <length> from-bottom: max(
+        0px,
+        root.scroll-range + transcript-list.content-y
+    );
 
-    // the reader's own scrolling is what turns following off; the flag is not
-    // cleared anywhere else, so it cannot go stale
-    changed at-bottom => {
-        root.follow-bottom = root.at-bottom;
+    // Following is a latch, and stopping to read is not an invitation: once the
+    // reader moves up it stays off, through any number of tokens, layout passes
+    // and pauses. Three things turn it back on, and all three are gestures: the
+    // jump-to-bottom button, sending a message, or the reader scrolling *down*
+    // onto the floor with the wheel or the bar.
+    //
+    // A measurement must never re-arm it. Content growing at the bottom rewrites
+    // the scroll offset on the list's own layout pass, and for one frame that
+    // made the distance to the floor read as zero � which is how a paused reader
+    // got yanked to the bottom.
+    // `scrolled` is the window's own "the reader did this" signal: the widget
+    // fires it only for a user drag or wheel, never for our programmatic moves
+    // and never for the list rewriting its offset while rows are measured. That
+    // distinction is the whole fix � a distance measured after a layout pass is
+    // not evidence that anybody scrolled.
+    /// Called by anything that is definitely the reader's own input.
+    public function reader-moved-up() {
+        root.reader-scrolled = true;
+        root.follow-bottom = false;
+    }
+
+    /// Called when the reader's own scrolling lands on the floor.
+    public function reader-reached-floor() {
+        // Two pixels, not eight: with eight, a four-pixel nudge up followed by a
+        // one-pixel jitter counted as "the reader came back", and the stream took
+        // the view back. Near the floor is not the floor.
+        if (!root.scrollbar-dragging && root.from-bottom <= 2px) {
+            root.reader-scrolled = false;
+            root.follow-bottom = true;
+        }
     }
 
     // ---- walking backwards -------------------------------------------------
@@ -1337,6 +1378,9 @@ export component AppWindow inherits Window {
     // tested: the window only applies it.
     public function set-scroll-y(value: length) {
         transcript-list.content-y = value;
+        // the reader's view moved by a programmatic scroll, not by a wheel: the
+        // next wheel notch must be measured from here, not from a stale offset
+        root.seen-content-y = transcript-list.content-y;
     }
 
     // ---- scrolling the transcript -----------------------------------------
@@ -1351,6 +1395,7 @@ export component AppWindow inherits Window {
 
     public function scroll-to-ratio(ratio: float) {
         transcript-list.content-y = -max(0.0, min(1.0, ratio)) * root.scroll-range;
+        root.seen-content-y = transcript-list.content-y;
     }
 
     /// Place the thumb's top edge at `y` inside the track.
@@ -1361,15 +1406,24 @@ export component AppWindow inherits Window {
 
     /// 85 % of a screen, the usual page step.
     public function page-scroll(direction: int) {
+        if (direction < 0) {
+            root.reader-moved-up();
+        }
         let step = transcript-list.height * 0.85;
         transcript-list.content-y = max(
             -root.scroll-range,
             min(0px, transcript-list.content-y - step * direction)
         );
+        root.seen-content-y = transcript-list.content-y;
+        if (direction > 0) {
+            root.reader-reached-floor();
+        }
     }
 
     public function scroll-to-top() {
+        root.reader-moved-up();
         transcript-list.content-y = 0px;
+        root.seen-content-y = 0px;
     }
 
     out property <length> thumb-height: max(
@@ -1413,6 +1467,10 @@ export component AppWindow inherits Window {
     public function scroll-to-end() {
         root.follow-bottom = true;
         transcript-list.content-y = -root.scroll-range;
+        // THE stale-offset bug: without this, the next wheel notch is compared
+        // against an offset from before the programmatic jump, reads as "moved
+        // down", and never disarms the latch
+        root.seen-content-y = transcript-list.content-y;
     }
 
     VerticalLayout {
@@ -1713,14 +1771,27 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                                                transcript-list := ListView {
-                            // A ListView, not a ScrollView: it creates only the
-                            // rows in view. The ScrollView version built every
-                            // row of a 300-message page as a live element tree,
-                            // so a long chat got slower the longer it was.
-                            // Geometry stays explicit for the same reason as
-                            // before: a view that sizes itself to its content
-                            // has no scroll range.
+                                                transcript-list := ScrollView {
+                            // A plain ScrollView over a vertical layout, not a
+                            // ListView. The list view only virtualises by
+                            // guessing: it multiplies the average height of the
+                            // rows it happens to have instantiated by the row
+                            // count, and that number is the content height. With
+                            // rows that differ wildly - a one-line notice next
+                            // to an open thinking block or a long code block -
+                            // the guess is thousands of pixels out, the scroll
+                            // range is phantom, and "scroll to the end" lands in
+                            // empty space with the real rows far above.
+                            //
+                            // A layout measures every row it holds, so the
+                            // height is real and the offset is never rewritten
+                            // from an average. The price is that every row is an
+                            // element; that is affordable because the transcript
+                            // is paged (a page is 150 messages, and the tail
+                            // window is 300) rather than a whole session.
+                            //
+                            // Geometry stays explicit: a view that sizes itself
+                            // to its content has no scroll range.
                             x: 0;
                             y: 0;
                             width: parent.width;
@@ -1728,21 +1799,35 @@ export component AppWindow inherits Window {
                             // ours is drawn below, on the right edge
                             vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                             horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                            for item[i] in root.transcript : TranscriptRow {
-                                width: transcript-list.width;
-                                data: item;
-                                toggle => {
-                                    root.model-menu = false;
-                                    root.toggle-row(i);
+                            // the reader's own scrolling, and nothing else
+                            scrolled => {
+                                if (transcript-list.content-y > root.seen-content-y || root.from-bottom > 2px) {
+                                    // Any upward movement OR any wheel tick above the floor disarms immediately
+                                    root.reader-moved-up();
+                                } else {
+                                    // Moved down right onto the floor: re-arm
+                                    root.reader-reached-floor();
                                 }
-                                reason-hover(reason, x, y) => {
-                                    root.reason-text = reason;
-                                    root.reason-x = x;
-                                    root.reason-y = y;
-                                    root.reason-open = true;
-                                }
-                                reason-leave => {
-                                    root.reason-open = false;
+                                root.seen-content-y = transcript-list.content-y;
+                            }
+                            VerticalLayout {
+                                alignment: start;
+                                spacing: 0px;
+                                for item[i] in root.transcript : TranscriptRow {
+                                    data: item;
+                                    toggle => {
+                                        root.model-menu = false;
+                                        root.toggle-row(i);
+                                    }
+                                    reason-hover(reason, x, y) => {
+                                        root.reason-text = reason;
+                                        root.reason-x = x;
+                                        root.reason-y = y;
+                                        root.reason-open = true;
+                                    }
+                                    reason-leave => {
+                                        root.reason-open = false;
+                                    }
                                 }
                             }
                         }
@@ -1785,18 +1870,34 @@ export component AppWindow inherits Window {
                                     if event.kind == PointerEventKind.down {
                                         // where inside the thumb the pull started
                                         scroll-bar.grabbed = self.mouse-y - scroll-bar.thumb-y;
+                                        // a hand on the bar stops the stream from
+                                        // moving the view, before any token lands
+                                        root.scrollbar-dragging = true;
+                                        root.reader-moved-up();
+                                    }
+                                    if event.kind == PointerEventKind.up
+                                        || event.kind == PointerEventKind.cancel
+                                    {
+                                        // letting go is not a decision: only a
+                                        // release *on the floor* re-arms
+                                        root.scrollbar-dragging = false;
+                                        root.reader-reached-floor();
                                     }
                                 }
                                 moved => {
                                     if (self.pressed) {
+                                        root.reader-moved-up();
                                         root.scroll-to-thumb(self.mouse-y - scroll-bar.grabbed);
+                                        root.reader-reached-floor();
                                     }
                                 }
                                 clicked => {
                                     // a press on the track jumps there, but only
                                     // when it was not a drag of the thumb
                                     if (scroll-bar.grabbed <= 0px) {
+                                        root.reader-moved-up();
                                         root.scroll-to-thumb(self.mouse-y);
+                                        root.reader-reached-floor();
                                     }
                                 }
                             }
@@ -1849,7 +1950,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // live status row: TUI-style — one cell size for glyph and label
+                    // live status row: TUI-style � one cell size for glyph and label
                     // always present: an `if`-created subtree got no hover tracking
 
                 composer-band := Rectangle {
@@ -2067,7 +2168,7 @@ export component AppWindow inherits Window {
                         mouse-cursor: MouseCursor.pointer;
                         clicked => { root.attachment-removed(i); }
                     }
-                    // the × only shows when the pointer is on the tile: a strip of
+                    // the � only shows when the pointer is on the tile: a strip of
                     // crosses at rest reads as a toolbar, not as your attachment
                     Rectangle {
                         x: parent.width - 17px;
@@ -2155,7 +2256,7 @@ export component AppWindow inherits Window {
                                 }
                                 // Enter sends, Alt+Enter steers into the
                                 // running turn, Shift+Enter is a newline,
-                                // Esc aborts — the TUI's bindings
+                                // Esc aborts � the TUI's bindings
                                 if event.text == Key.Return {
                                     // Ctrl+Enter (or Alt+Enter, kept from before) folds
                                     // the message into the turn that is running instead
@@ -2184,9 +2285,9 @@ export component AppWindow inherits Window {
                                 // One key for both kinds of paste: Ctrl+V attaches the
                                 // image when the clipboard holds one, and otherwise
                                 // falls through to the text input's own paste. The text
-                                // of a chorded key is not always the letter — with
+                                // of a chorded key is not always the letter � with
                                 // control it arrives as the control character, with
-                                // shift as the capital — so all three are the same key.
+                                // shift as the capital � so all three are the same key.
                                 if event.modifiers.control
                                     && (event.text == "v" || event.text == "V"
                                         || event.text == "\u{16}")
