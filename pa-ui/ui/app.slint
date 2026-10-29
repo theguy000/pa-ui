@@ -1116,6 +1116,9 @@ export component AppWindow inherits Window {
     in-out property <length> command-word-width: 0px;
     // where the caret should land once new text has arrived (byte offset)
     in-out property <int> composer-caret-request: -1;
+    // the caret is on a command token: the words are drawn in the accent until
+    // the caret moves into the argument
+    in-out property <bool> composer-is-command: false;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter
     // picks the highlighted command instead of sending half a word.
