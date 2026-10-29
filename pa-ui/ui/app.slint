@@ -2554,35 +2554,43 @@ export component AppWindow inherits Window {
                 width: slash-list.visible-width;
                 for item[index] in root.slash-items : Rectangle {
                     width: parent.width;
-                    height: 30px;
+                    height: 28px;
                     border-radius: 6px;
-                    background: index == root.slash-index ? #1f211a : transparent;
+                    // the row answers the pointer: a background under it and the
+                    // one sentence that says what the command does. At rest the
+                    // list is names only, like a menu should be.
+                    background: index == root.slash-index || slash-touch.has-hover
+                        ? #1f211a : transparent;
+                    animate background { duration: 90ms; }
 
                     HorizontalLayout {
-                        x: 8px;
+                        x: 10px;
                         y: 0;
-                        width: parent.width - 16px;
+                        width: parent.width - 20px;
                         height: 100%;
-                        spacing: 6px;
+                        spacing: 8px;
                         Text {
                             text: "/" + item.name;
                             font-size: 13px;
-                            color: index == root.slash-index ? #e7e5df : #b0b1a8;
+                            color: index == root.slash-index || slash-touch.has-hover
+                                ? #d8c06a : #b0b1a8;
                             vertical-alignment: center;
                         }
-                        if item.hint != "" : Text {
+                        if (index == root.slash-index || slash-touch.has-hover) && item.hint != "" : Text {
                             text: item.hint;
                             font-size: 11px;
-                            color: index == root.slash-index ? #8f917f : #565a4f;
+                            color: #8f917f;
                             vertical-alignment: center;
                         }
                         Text {
                             text: item.description;
                             font-size: 11px;
-                            color: index == root.slash-index ? #a9ab9d : #6b6e63;
+                            color: #6b6e63;
                             overflow: elide;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
+                            opacity: index == root.slash-index || slash-touch.has-hover ? 1 : 0;
+                            animate opacity { duration: 90ms; }
                         }
                     }
 
@@ -2593,11 +2601,6 @@ export component AppWindow inherits Window {
                         clicked => {
                             root.slash-index = index;
                             root.slash-accept();
-                        }
-                        moved => {
-                            if self.has-hover {
-                                root.slash-index = index;
-                            }
                         }
                     }
                 }
