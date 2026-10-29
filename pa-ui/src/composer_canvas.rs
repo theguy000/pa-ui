@@ -275,3 +275,40 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod canvas_probe {
+    use super::*;
+
+    /// Probe: does the canvas actually contain glyphs, and are the command ones
+    /// gold? Writes a PPM-free raw dump the caller can inspect.
+    #[test]
+    #[ignore = "writes a file"]
+    fn painted_pixels() {
+        let mut canvas = Canvas::new(13.0, 18.0);
+        let (image, caret) = canvas.render(
+            "hello /refine tighten this",
+            8,
+            400.0,
+            |name| name == "refine",
+        );
+        let buffer = image.to_rgba8().expect("rgba8");
+        let (w, h) = (buffer.width(), buffer.height());
+        let mut opaque = 0usize;
+        let mut gold = 0usize;
+        let mut bytes = Vec::with_capacity((w * h * 4) as usize);
+        for pixel in buffer.as_slice() {
+            bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+            if pixel.a > 8 {
+                opaque += 1;
+                if pixel.r > 150 && pixel.g > 120 && pixel.b < 140 {
+                    gold += 1;
+                }
+            }
+        }
+        std::fs::write(std::env::temp_dir().join("canvas.raw"), &bytes).expect("write");
+        eprintln!("canvas {w}x{h} opaque={opaque} gold={gold} caret=({},{})", caret.x, caret.y);
+        assert!(opaque > 50, "the canvas painted almost nothing");
+        assert!(gold > 5, "no gold pixels: the command is not coloured");
+    }
+}

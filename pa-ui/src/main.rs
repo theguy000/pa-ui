@@ -1,4 +1,3 @@
-mod composer_canvas;
 mod images;
 mod live;
 mod preview;
@@ -186,10 +185,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // only half of what the agent accepts
     let extra_commands: Rc<RefCell<Vec<(String, String, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    // the composer's painted canvas: shaped once per change, not per frame
-    let canvas_cell = Rc::new(RefCell::new(composer_canvas::Canvas::new(13.0, 18.0)));
-    let canvas_key: Rc<RefCell<(String, usize, i32)>> =
-        Rc::new(RefCell::new((String::new(), usize::MAX, i32::MAX)));
+    // the byte range of the `/command` token the caret is in, so taking a command
+    // can replace exactly that token and leave the words around it alone
+    let slash_token: Rc<RefCell<(usize, usize)>> = Rc::new(RefCell::new((0, 0)));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
@@ -683,13 +681,24 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = ui.as_weak();
         let extra_commands = extra_commands.clone();
-        ui.on_slash_typed(move |text| {
+        let token = slash_token.clone();
+        ui.on_slash_typed(move |text, caret| {
             let Some(ui) = weak.upgrade() else { return };
-            let Some(prefix) = slash_name_token(&text) else {
+            let (start, end) = slash_token_at(&text, usize::try_from(caret.max(0)).unwrap_or(0));
+            *token.borrow_mut() = (start, end);
+            let body = text.get(start..end).unwrap_or_default();
+            let Some(prefix) = body
+                .strip_prefix('/')
+                .filter(|name| !name.contains(char::is_whitespace) && !name.contains('/'))
+            else {
                 ui.set_slash_open(false);
                 return;
             };
-            let rows = slash_rows(&prefix, &extra_commands.borrow());
+            let rows = slash_rows(prefix, &extra_commands.borrow());
+            if rows.is_empty() {
+                ui.set_slash_open(false);
+                return;
+            }
             ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
             ui.set_slash_index(0);
             ui.set_slash_open(true);
@@ -720,6 +729,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let weak = ui.as_weak();
+        let token = slash_token.clone();
         ui.on_slash_accept(move || {
             let Some(ui) = weak.upgrade() else { return };
             let index = ui.get_slash_index().max(0) as usize;
@@ -739,16 +749,29 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_status_line("pick a model".into());
                 return;
             }
-            // The command goes into the box like text, in gold, with the caret
-            // placed after it: setting text alone leaves the caret inside the
-            // half-typed word, which is what made it feel like broken
-            // autocomplete.
-            let command = format!("/{name} ");
-            // the word goes in front of the caret; the box keeps the argument
-            ui.set_composer_command(format!("/{name}").as_str().into());
-            ui.set_composer_text("".into());
-            ui.set_composer_has_text(false);
-            ui.set_composer_caret_request(0);
+            let text = ui.get_composer_text().to_string();
+            let (start, end) = *token.borrow();
+            let (start, end) = (start.min(text.len()), end.min(text.len()));
+            if start == 0 && end == text.len() {
+                // The whole box is the command: it becomes the gold word in
+                // front of the caret, and the box is left empty for arguments.
+                ui.set_composer_command(format!("/{name}").as_str().into());
+                ui.set_composer_text("".into());
+                ui.set_composer_has_text(false);
+                ui.set_composer_caret_request(0);
+                return;
+            }
+            // Started between words: replace that token where it stands and leave
+            // the rest of the sentence exactly as it was.
+            let mut next = String::with_capacity(text.len() + name.len() + 2);
+            next.push_str(&text[..start]);
+            next.push('/');
+            next.push_str(&name);
+            next.push(' ');
+            next.push_str(&text[end..]);
+            ui.set_composer_text(next.as_str().into());
+            ui.set_composer_has_text(true);
+            ui.set_composer_caret_request(i32::try_from(start + name.len() + 2).unwrap_or(0));
         });
     }
 
@@ -1060,45 +1083,6 @@ fn main() -> Result<(), slint::PlatformError> {
             loaded = Some(selected.clone());
             ui.set_status_line("loading transcript".into());
             let _ = jobs.send(Job::Attach { session: selected });
-        }
-
-        // The canvas is the only thing that draws the message, so it is repainted
-        // whenever the words, the caret or the width change - and not otherwise.
-        {
-            let text_now = ui.get_composer_text().to_string();
-            let caret_now = usize::try_from(ui.get_composer_caret().max(0)).unwrap_or(0);
-            let width_now = ui.get_composer_width();
-            let key = (text_now.clone(), caret_now, (width_now * 10.0) as i32);
-            if *canvas_key.borrow() != key {
-                *canvas_key.borrow_mut() = key;
-                let known = extra_commands.borrow().clone();
-                let (image, caret) = canvas_cell.borrow_mut().render(
-                    &text_now,
-                    caret_now,
-                    width_now,
-                    |name| is_command_word(&known, name),
-                );
-                if std::env::var("PA_DEBUG").is_ok() {
-                    let gold = composer_canvas::spans(&text_now, |name| {
-                        is_command_word(&extra_commands.borrow(), name)
-                    })
-                    .iter()
-                    .filter(|span| span.command)
-                    .count();
-                    eprintln!(
-                        "[canvas] {} chars, {gold} command run(s), w={width_now:.0} h={:.0} caret=({:.1},{:.1})",
-                        text_now.chars().count(),
-                        caret.content_height,
-                        caret.x,
-                        caret.y
-                    );
-                }
-                ui.set_composer_canvas(image);
-                ui.set_composer_caret_x(caret.x);
-                ui.set_composer_caret_y(caret.y);
-                ui.set_composer_caret_height(caret.height);
-                ui.set_composer_canvas_height(caret.content_height);
-            }
         }
 
         while let Ok(message) = msg_rx.try_recv() {
@@ -1595,15 +1579,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Ok(opening) = std::env::var("PA_SLASH") {
                         ui.set_composer_text(opening.as_str().into());
                         ui.set_composer_has_text(!opening.is_empty());
-                        if let Some(prefix) = slash_name_token(&opening) {
-                            let rows: Vec<SlashItem> = pa_client::commands::filter(&prefix)
-                                .iter()
-                                .map(|command| SlashItem {
-                                    name: command.name.into(),
-                                    hint: command.hint.into(),
-                                    description: command.description.into(),
-                                })
-                                .collect();
+                        let opening_text = ui.get_composer_text().to_string();
+                        if let Some(name) = opening_text.trim().strip_prefix('/') {
+                            let rows = slash_rows(name, &extra_commands.borrow());
                             if !rows.is_empty() {
                                 ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
                                 ui.set_slash_open(true);
@@ -1993,20 +1971,6 @@ fn apply_queue(
 
 }
 
-/// Whether a bare word, typed after a slash, names a command this session has.
-///
-/// Builtins come from the copied table; the session's own entries may carry a
-/// `skill:` prefix while the typed word does not.
-fn is_command_word(extra: &[(String, String, String)], name: &str) -> bool {
-    if pa_client::commands::find(name).is_some() {
-        return true;
-    }
-    extra.iter().any(|(known, _, _)| {
-        let bare = known.rsplit(':').next().unwrap_or(known.as_str());
-        known == name || bare == name
-    })
-}
-
 /// The menu's rows: the builtin table first, then whatever this session adds on
 /// top of it, both narrowed by the same prefix.
 fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem> {
@@ -2033,20 +1997,24 @@ fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem
     rows
 }
 
-/// The command name being typed, or `None` when the message is not a command
-/// yet.
+/// The `/command` token under the caret, as byte range `[start, end)`.
 ///
-/// The menu belongs to the word right after the slash: once a space is typed the
-/// user is into the arguments and the list goes away, the same rule the TUI uses
-/// (only the first line, only before the first space).
-fn slash_name_token(text: &str) -> Option<String> {
-    let first = text.lines().next().unwrap_or("");
-    let body = first.strip_prefix('/')?;
-    if body.contains(char::is_whitespace) || body.contains('/') {
-        return None;
-    }
-    Some(body.to_string())
+/// The menu belongs to whichever word the caret sits in — the first or the fifth —
+/// so a command can be started between words, not only at the start of a message.
+fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
+    let caret = caret.min(text.len());
+    let start = text[..caret]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    let end = text[caret..]
+        .char_indices()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(text.len(), |(index, _)| caret + index);
+    (start, end)
 }
+
 
 /// What the window should do with a message that starts with a slash.
 ///
