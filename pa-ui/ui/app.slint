@@ -1109,9 +1109,11 @@ export component AppWindow inherits Window {
     in-out property <string> title-text: "";
     in-out property <string> draft: "";
     in-out property <string> composer-text: "";
-    // True while the box holds nothing but a command word: the text is drawn in
-    // the accent then, because it is a command and not prose.
-    in-out property <bool> composer-is-command: false;
+    // The command word, drawn in the accent in front of the caret: it stays gold
+    // while the argument is typed, which a single-colour text box cannot do for
+    // one word out of many.
+    in-out property <string> composer-command: "";
+    in-out property <length> command-word-width: 0px;
     // where the caret should land once new text has arrived (byte offset)
     in-out property <int> composer-caret-request: -1;
     // The command menu: every builtin the daemon knows, narrowed by what is
@@ -1251,6 +1253,7 @@ export component AppWindow inherits Window {
     callback slash-move(int);
     callback slash-accept();
     callback slash-dismiss();
+    callback composer-command-cleared();
     callback steer-requested(string);
     callback abort-requested();
     // images ride beside the text: the strip is the attachment list, and the
@@ -1939,79 +1942,95 @@ export component AppWindow inherits Window {
         // first line, coloured like the accent, with the caret and the text
         // starting after it. Backspace at the start of the text deletes it, the
         // way a token behaves in any chat box.
-        draft-window := DraftEditor {
+        Rectangle {
             height: root.composer-height;
-            // a message that is only a command is drawn in the accent: it is a
-            // command, and it should look like one without leaving the box
-            foreground: root.composer-is-command ? #d8c06a : #e7e5df;
-            caret-request <=> root.composer-caret-request;
-            text <=> root.composer-text;
-            font-size: 13px;
-            edited(t) => {
-                root.composer-text = t;
-                root.composer-has-text = t != "";
-                root.slash-typed(t);
+            background: transparent;
+
+            if root.composer-command != "" : Text {
+                x: 0;
+                y: 1px;
+                height: 20px;
+                text: root.composer-command;
+                color: #d8c06a;
+                font-size: 13px;
+                vertical-alignment: center;
+                init => { root.command-word-width = self.preferred-width; }
+                changed preferred-width => { root.command-word-width = self.preferred-width; }
             }
-                    key-pressed(event) => {
-                            // The command menu answers first while it is open.
-                            if root.slash-take(event) {
-                                return EventResult.accept;
-                            }
-                            // Enter sends, Alt+Enter steers into the
-                            // running turn, Shift+Enter is a newline,
-                            // Esc aborts — the TUI's bindings
-                            if event.text == Key.Return {
-                                // Ctrl+Enter (or Alt+Enter, kept from before) folds
-                                // the message into the turn that is running instead
-                                // of parking it behind
-                                if event.modifiers.control || event.modifiers.alt {
-                                    if root.composer-text != ""
-                                        || root.attachment-images.length > 0
-                                    {
-                                        root.steer-requested(root.composer-text);
-                                        root.composer-text = "";
-                                    }
+
+            draft-window := DraftEditor {
+                x: root.composer-command == "" ? 0px : root.command-word-width + 6px;
+                width: parent.width - self.x;
+                height: root.composer-height;
+                caret-request <=> root.composer-caret-request;
+                text <=> root.composer-text;
+                font-size: 13px;
+                edited(t) => {
+                    root.composer-text = t;
+                    root.composer-has-text = t != "";
+                    root.slash-typed(t);
+                }
+                        key-pressed(event) => {
+                                // The command menu answers first while it is open.
+                                if root.slash-take(event) {
                                     return EventResult.accept;
                                 }
-                                if !event.modifiers.shift {
-                                    if root.composer-text != ""
-                                        || root.attachment-images.length > 0
-                                    {
-                                        root.send-requested(root.composer-text);
-                                        root.composer-text = "";
+                                // Enter sends, Alt+Enter steers into the
+                                // running turn, Shift+Enter is a newline,
+                                // Esc aborts — the TUI's bindings
+                                if event.text == Key.Return {
+                                    // Ctrl+Enter (or Alt+Enter, kept from before) folds
+                                    // the message into the turn that is running instead
+                                    // of parking it behind
+                                    if event.modifiers.control || event.modifiers.alt {
+                                        if root.composer-text != ""
+                                            || root.attachment-images.length > 0
+                                        {
+                                            root.steer-requested(root.composer-text);
+                                            root.composer-text = "";
+                                        }
+                                        return EventResult.accept;
                                     }
+                                    if !event.modifiers.shift {
+                                        if root.composer-text != ""
+                                            || root.attachment-images.length > 0
+                                        {
+                                            root.send-requested(root.composer-text);
+                                            root.composer-text = "";
+                                        }
+                                        return EventResult.accept;
+                                    }
+                                }
+                                // Ctrl+Shift+V attaches an image from the clipboard;
+                                // plain Ctrl+V stays text paste
+                                // One key for both kinds of paste: Ctrl+V attaches the
+                                // image when the clipboard holds one, and otherwise
+                                // falls through to the text input's own paste. The text
+                                // of a chorded key is not always the letter — with
+                                // control it arrives as the control character, with
+                                // shift as the capital — so all three are the same key.
+                                if event.modifiers.control
+                                    && (event.text == "v" || event.text == "V"
+                                        || event.text == "\u{16}")
+                                {
+                                    if root.attach-pasted() {
+                                        return EventResult.accept;
+                                    }
+                                    return EventResult.reject;
+                                }
+                                if event.text == Key.Escape {
+                                    root.abort-requested();
                                     return EventResult.accept;
                                 }
-                            }
-                            // Ctrl+Shift+V attaches an image from the clipboard;
-                            // plain Ctrl+V stays text paste
-                            // One key for both kinds of paste: Ctrl+V attaches the
-                            // image when the clipboard holds one, and otherwise
-                            // falls through to the text input's own paste. The text
-                            // of a chorded key is not always the letter — with
-                            // control it arrives as the control character, with
-                            // shift as the capital — so all three are the same key.
-                            if event.modifiers.control
-                                && (event.text == "v" || event.text == "V"
-                                    || event.text == "\u{16}")
-                            {
-                                if root.attach-pasted() {
+                                if event.text == Key.End && event.modifiers.control {
+                                    root.scroll-to-end();
                                     return EventResult.accept;
                                 }
                                 return EventResult.reject;
                             }
-                            if event.text == Key.Escape {
-                                root.abort-requested();
-                                return EventResult.accept;
-                            }
-                            if event.text == Key.End && event.modifiers.control {
-                                root.scroll-to-end();
-                                return EventResult.accept;
-                            }
-                            return EventResult.reject;
-                        }
-            init => { self.grab-focus(); }
+                init => { self.grab-focus(); }
 
+            }
         }
         HorizontalLayout {
             spacing: 8px;

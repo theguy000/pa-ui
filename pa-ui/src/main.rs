@@ -251,6 +251,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
 
+            // The word in front of the caret plus whatever was typed after it.
+            let command_word = ui.get_composer_command().to_string();
+            let message = if command_word.is_empty() {
+                message
+            } else if message.trim().is_empty() {
+                command_word
+            } else {
+                format!("{command_word} {message}")
+            };
             // A command is only sent when the agent runs it. Everything else in
             // the table is a window action: it either happens here or says
             // plainly that it is not wired, but it never leaves as chat words.
@@ -259,7 +268,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 SlashAction::Model => {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
-                    ui.set_composer_is_command(false);
+                    ui.set_composer_command("".into());
                     ui.set_model_menu(true);
                     ui.set_status_line("pick a model".into());
                     return;
@@ -267,14 +276,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 SlashAction::EffortHint => {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
-                    ui.set_composer_is_command(false);
+                    ui.set_composer_command("".into());
                     ui.set_status_line("the thinking level opens from the model menu".into());
                     return;
                 }
                 SlashAction::NewChat => {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
-                    ui.set_composer_is_command(false);
+                    ui.set_composer_command("".into());
                     let _ = jobs.send(Job::NewChat);
                     return;
                 }
@@ -289,7 +298,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
-                    ui.set_composer_is_command(false);
+                    ui.set_composer_command("".into());
                     let _ = jobs.send(Job::Rename {
                         session,
                         name,
@@ -308,7 +317,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
-            ui.set_composer_is_command(false);
+            ui.set_composer_command("".into());
             {
                 let held = attachments.borrow();
                 if let Some(first) = held.first() {
@@ -657,13 +666,17 @@ fn main() -> Result<(), slint::PlatformError> {
     // have, and the descriptions are the daemon's own words.
     {
         let weak = ui.as_weak();
+        ui.on_composer_command_cleared(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_composer_command("".into());
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
         let extra_commands = extra_commands.clone();
         ui.on_slash_typed(move |text| {
             let Some(ui) = weak.upgrade() else { return };
-            // gold while what is in the box is a command and nothing else
-            let is_command = pa_client::commands::find(text.trim().trim_start_matches('/'))
-                .is_some_and(|command| text.trim() == format!("/{}", command.name));
-            ui.set_composer_is_command(is_command);
             let Some(prefix) = slash_name_token(&text) else {
                 ui.set_slash_open(false);
                 return;
@@ -723,10 +736,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // half-typed word, which is what made it feel like broken
             // autocomplete.
             let command = format!("/{name} ");
-            ui.set_composer_text(command.as_str().into());
-            ui.set_composer_has_text(true);
-            ui.set_composer_is_command(true);
-            ui.set_composer_caret_request(command.len() as i32);
+            // the word goes in front of the caret; the box keeps the argument
+            ui.set_composer_command(format!("/{name}").as_str().into());
+            ui.set_composer_text("".into());
+            ui.set_composer_has_text(false);
+            ui.set_composer_caret_request(0);
         });
     }
 
