@@ -10,6 +10,9 @@ export component DraftEditor inherits Rectangle {
     in property <brush> selection-foreground: #f2f0e8;
     in-out property <string> text <=> field.text;
     out property <bool> has-focus: field.has-focus;
+    /// Where the caret sits, in bytes: the command block in front of the text is
+    /// deleted by Backspace at the start, exactly like a chip in a chat box.
+    out property <int> caret-offset: field.cursor-position-byte-offset;
 
     callback edited(text: string);
     callback key-pressed(event: KeyEvent) -> EventResult;

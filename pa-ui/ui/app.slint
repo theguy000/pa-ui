@@ -1114,6 +1114,9 @@ export component AppWindow inherits Window {
     // arguments.
     in-out property <string> composer-command: "";
     in-out property <string> composer-command-hint: "";
+    // the block's width, measured by the text it holds: an id inside an `if` is
+    // not reachable from outside it
+    in-out property <length> command-block-width: 0px;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter
     // picks the highlighted command instead of sending half a word.
@@ -1199,11 +1202,7 @@ export component AppWindow inherits Window {
     }
     out property <length> composer-total: root.box-height + 46px + root.busy-h;
     // box chrome around the input: 10+8 padding, 10 spacing, 24 button row, 2 borders
-    // the command chip is a row of its own above the words: 24px plus the
-    // layout's 10px spacing, animated like the attachment strip
-    out property <length> command-h: root.composer-command != "" ? 34px : 0px;
-    animate command-h { duration: 150ms; easing: ease-out; }
-    out property <length> box-height: root.composer-height + 54px + root.attach-h + root.command-h;
+    out property <length> box-height: root.composer-height + 54px + root.attach-h;
     in-out property <bool> dragging: false;
     // where the handle actually sits, in window coordinates: the drag surface
     // is the whole window, so the press has to be tested against it
@@ -1873,61 +1872,6 @@ export component AppWindow inherits Window {
         padding-top: 10px;
         padding-bottom: 8px;
         spacing: 10px;
-        // the picked command, in the accent the transcript gives code: gold
-        // word, muted hint, and a small × that gives the box back to prose
-        if root.composer-command != "" : Rectangle {
-            height: 24px;
-            width: chip-row.preferred-width + 44px;
-            border-radius: 6px;
-            background: #1b1c17;
-
-            chip-row := HorizontalLayout {
-                x: 8px;
-                y: 0;
-                height: 100%;
-                spacing: 6px;
-                Text {
-                    text: root.composer-command;
-                    color: #d8c06a;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.composer-command-hint;
-                    color: #6b6e63;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-            }
-
-            chip-clear := TouchArea {
-                x: parent.width - 24px;
-                y: 0;
-                width: 20px;
-                height: 100%;
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.composer-command-cleared(); }
-            }
-            Rectangle {
-                x: parent.width - 20px;
-                y: (parent.height - 1.5px) / 2;
-                width: 7px;
-                height: 1.5px;
-                border-radius: 0.75px;
-                background: chip-clear.has-hover ? #e7e5df : #8f917f;
-                transform-rotation: 45deg;
-            }
-            Rectangle {
-                x: parent.width - 20px;
-                y: (parent.height - 1.5px) / 2;
-                width: 7px;
-                height: 1.5px;
-                border-radius: 0.75px;
-                background: chip-clear.has-hover ? #e7e5df : #8f917f;
-                transform-rotation: -45deg;
-            }
-        }
-
         // a fixed-height window over a text input that is allowed to grow:
         // pinning its bottom edge keeps the caret (newest line) in view, which
         // a fixed-height TextInput does not do on its own
@@ -1995,76 +1939,117 @@ export component AppWindow inherits Window {
             }
         }
 
-        draft-window := DraftEditor {
+        // The command lives inside the writing area: a block at the start of the
+        // first line, coloured like the accent, with the caret and the text
+        // starting after it. Backspace at the start of the text deletes it, the
+        // way a token behaves in any chat box.
+        Rectangle {
             height: root.composer-height;
-            text <=> root.composer-text;
-            font-size: 13px;
-            edited(t) => {
-                root.composer-text = t;
-                root.composer-has-text = t != "";
-                root.slash-typed(t);
+            background: transparent;
+
+            if root.composer-command != "" : Rectangle {
+                x: 0;
+                y: 1px;
+                width: root.command-block-width + 16px;
+                height: 20px;
+                border-radius: 5px;
+                background: #2a2416;
+
+                command-touch := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: MouseCursor.pointer;
+                    // clicking the block puts the caret where the words start,
+                    // so Backspace removes it straight away
+                    clicked => { draft-window.grab-focus(); }
+                }
+
+                command-text := Text {
+                    x: 8px;
+                    y: (parent.height - self.height) / 2;
+                    text: root.composer-command;
+                    color: #d8c06a;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    init => { root.command-block-width = self.preferred-width; }
+                    changed preferred-width => { root.command-block-width = self.preferred-width; }
+                }
             }
-                    key-pressed(event) => {
-                            // The command menu answers first while it is open.
-                            if root.slash-take(event) {
-                                return EventResult.accept;
-                            }
-                            // Enter sends, Alt+Enter steers into the
-                            // running turn, Shift+Enter is a newline,
-                            // Esc aborts — the TUI's bindings
-                            if event.text == Key.Return {
-                                // Ctrl+Enter (or Alt+Enter, kept from before) folds
-                                // the message into the turn that is running instead
-                                // of parking it behind
-                                if event.modifiers.control || event.modifiers.alt {
-                                    if root.composer-text != ""
-                                        || root.attachment-images.length > 0
-                                    {
-                                        root.steer-requested(root.composer-text);
-                                        root.composer-text = "";
-                                    }
+
+            draft-window := DraftEditor {
+                x: root.composer-command == "" ? 0px : 22px + root.command-block-width;
+                width: parent.width - self.x;
+
+                height: root.composer-height;
+                text <=> root.composer-text;
+                font-size: 13px;
+                edited(t) => {
+                    root.composer-text = t;
+                    root.composer-has-text = t != "";
+                    root.slash-typed(t);
+                }
+                        key-pressed(event) => {
+                                // The command menu answers first while it is open.
+                                if root.slash-take(event) {
                                     return EventResult.accept;
                                 }
-                                if !event.modifiers.shift {
-                                    if root.composer-text != ""
-                                        || root.attachment-images.length > 0
-                                    {
-                                        root.send-requested(root.composer-text);
-                                        root.composer-text = "";
+                                // Enter sends, Alt+Enter steers into the
+                                // running turn, Shift+Enter is a newline,
+                                // Esc aborts — the TUI's bindings
+                                if event.text == Key.Return {
+                                    // Ctrl+Enter (or Alt+Enter, kept from before) folds
+                                    // the message into the turn that is running instead
+                                    // of parking it behind
+                                    if event.modifiers.control || event.modifiers.alt {
+                                        if root.composer-text != ""
+                                            || root.attachment-images.length > 0
+                                        {
+                                            root.steer-requested(root.composer-text);
+                                            root.composer-text = "";
+                                        }
+                                        return EventResult.accept;
                                     }
+                                    if !event.modifiers.shift {
+                                        if root.composer-text != ""
+                                            || root.attachment-images.length > 0
+                                        {
+                                            root.send-requested(root.composer-text);
+                                            root.composer-text = "";
+                                        }
+                                        return EventResult.accept;
+                                    }
+                                }
+                                // Ctrl+Shift+V attaches an image from the clipboard;
+                                // plain Ctrl+V stays text paste
+                                // One key for both kinds of paste: Ctrl+V attaches the
+                                // image when the clipboard holds one, and otherwise
+                                // falls through to the text input's own paste. The text
+                                // of a chorded key is not always the letter — with
+                                // control it arrives as the control character, with
+                                // shift as the capital — so all three are the same key.
+                                if event.modifiers.control
+                                    && (event.text == "v" || event.text == "V"
+                                        || event.text == "\u{16}")
+                                {
+                                    if root.attach-pasted() {
+                                        return EventResult.accept;
+                                    }
+                                    return EventResult.reject;
+                                }
+                                if event.text == Key.Escape {
+                                    root.abort-requested();
                                     return EventResult.accept;
                                 }
-                            }
-                            // Ctrl+Shift+V attaches an image from the clipboard;
-                            // plain Ctrl+V stays text paste
-                            // One key for both kinds of paste: Ctrl+V attaches the
-                            // image when the clipboard holds one, and otherwise
-                            // falls through to the text input's own paste. The text
-                            // of a chorded key is not always the letter — with
-                            // control it arrives as the control character, with
-                            // shift as the capital — so all three are the same key.
-                            if event.modifiers.control
-                                && (event.text == "v" || event.text == "V"
-                                    || event.text == "\u{16}")
-                            {
-                                if root.attach-pasted() {
+                                if event.text == Key.End && event.modifiers.control {
+                                    root.scroll-to-end();
                                     return EventResult.accept;
                                 }
                                 return EventResult.reject;
                             }
-                            if event.text == Key.Escape {
-                                root.abort-requested();
-                                return EventResult.accept;
-                            }
-                            if event.text == Key.End && event.modifiers.control {
-                                root.scroll-to-end();
-                                return EventResult.accept;
-                            }
-                            return EventResult.reject;
-                        }
-            init => { self.grab-focus(); }
-        }
+                init => { self.grab-focus(); }
 
+            }
+        }
         HorizontalLayout {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; background: transparent; }
@@ -2544,7 +2529,7 @@ export component AppWindow inherits Window {
             content-height: self.visible-height;
             // the highlight must never walk off the top or bottom of the list:
             // arrowing down past the fold used to select a row nobody could see
-            viewport-y: -clamp(
+            content-y: -clamp(
                 root.slash-index * 30px - 60px,
                 0px,
                 max(0px, root.slash-items.length * 30px - self.height)
