@@ -10,9 +10,15 @@ export component DraftEditor inherits Rectangle {
     in property <brush> selection-foreground: #f2f0e8;
     in-out property <string> text <=> field.text;
     out property <bool> has-focus: field.has-focus;
-    /// Where the caret sits, in bytes: the command block in front of the text is
-    /// deleted by Backspace at the start, exactly like a chip in a chat box.
+    /// Where the caret sits, in bytes.
     out property <int> caret-offset: field.cursor-position-byte-offset;
+    /// Ask for the caret to land at a byte offset once the text has arrived.
+    /// Setting text from outside leaves the caret where it was - in the middle
+    /// of a half-typed word - so the move has to wait for the text change.
+    in-out property <int> caret-request: -1;
+    public function place-caret(offset: int) {
+        field.set-selection-offsets(offset, offset);
+    }
 
     callback edited(text: string);
     callback key-pressed(event: KeyEvent) -> EventResult;
@@ -45,6 +51,12 @@ export component DraftEditor inherits Rectangle {
             page-height: scroll.visible-height;
 
             edited => { root.edited(self.text); }
+            changed text => {
+                if root.caret-request >= 0 {
+                    root.place-caret(root.caret-request);
+                    root.caret-request = -1;
+                }
+            }
             key-pressed(e) => { root.key-pressed(e) }
 
             // the caret drives the scroll offset in both directions; the scroll

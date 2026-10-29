@@ -1109,14 +1109,11 @@ export component AppWindow inherits Window {
     in-out property <string> title-text: "";
     in-out property <string> draft: "";
     in-out property <string> composer-text: "";
-    // The command the message will run, held outside the text box: a command is
-    // a thing you picked, not a word you happened to type. The box holds its
-    // arguments.
-    in-out property <string> composer-command: "";
-    in-out property <string> composer-command-hint: "";
-    // the block's width, measured by the text it holds: an id inside an `if` is
-    // not reachable from outside it
-    in-out property <length> command-block-width: 0px;
+    // True while the box holds nothing but a command word: the text is drawn in
+    // the accent then, because it is a command and not prose.
+    in-out property <bool> composer-is-command: false;
+    // where the caret should land once new text has arrived (byte offset)
+    in-out property <int> composer-caret-request: -1;
     // The command menu: every builtin the daemon knows, narrowed by what is
     // typed after the slash. It answers keys before the composer does, so Enter
     // picks the highlighted command instead of sending half a word.
@@ -1254,7 +1251,6 @@ export component AppWindow inherits Window {
     callback slash-move(int);
     callback slash-accept();
     callback slash-dismiss();
-    callback composer-command-cleared();
     callback steer-requested(string);
     callback abort-requested();
     // images ride beside the text: the strip is the attachment list, and the
@@ -1943,112 +1939,79 @@ export component AppWindow inherits Window {
         // first line, coloured like the accent, with the caret and the text
         // starting after it. Backspace at the start of the text deletes it, the
         // way a token behaves in any chat box.
-        Rectangle {
+        draft-window := DraftEditor {
             height: root.composer-height;
-            background: transparent;
-
-            if root.composer-command != "" : Rectangle {
-                x: 0;
-                y: 1px;
-                width: root.command-block-width + 16px;
-                height: 20px;
-                border-radius: 5px;
-                background: #2a2416;
-
-                command-touch := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: MouseCursor.pointer;
-                    // clicking the block puts the caret where the words start,
-                    // so Backspace removes it straight away
-                    clicked => { draft-window.grab-focus(); }
-                }
-
-                command-text := Text {
-                    x: 8px;
-                    y: (parent.height - self.height) / 2;
-                    text: root.composer-command;
-                    color: #d8c06a;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    init => { root.command-block-width = self.preferred-width; }
-                    changed preferred-width => { root.command-block-width = self.preferred-width; }
-                }
+            // a message that is only a command is drawn in the accent: it is a
+            // command, and it should look like one without leaving the box
+            foreground: root.composer-is-command ? #d8c06a : #e7e5df;
+            caret-request <=> root.composer-caret-request;
+            text <=> root.composer-text;
+            font-size: 13px;
+            edited(t) => {
+                root.composer-text = t;
+                root.composer-has-text = t != "";
+                root.slash-typed(t);
             }
-
-            draft-window := DraftEditor {
-                x: root.composer-command == "" ? 0px : 22px + root.command-block-width;
-                width: parent.width - self.x;
-
-                height: root.composer-height;
-                text <=> root.composer-text;
-                font-size: 13px;
-                edited(t) => {
-                    root.composer-text = t;
-                    root.composer-has-text = t != "";
-                    root.slash-typed(t);
-                }
-                        key-pressed(event) => {
-                                // The command menu answers first while it is open.
-                                if root.slash-take(event) {
+                    key-pressed(event) => {
+                            // The command menu answers first while it is open.
+                            if root.slash-take(event) {
+                                return EventResult.accept;
+                            }
+                            // Enter sends, Alt+Enter steers into the
+                            // running turn, Shift+Enter is a newline,
+                            // Esc aborts — the TUI's bindings
+                            if event.text == Key.Return {
+                                // Ctrl+Enter (or Alt+Enter, kept from before) folds
+                                // the message into the turn that is running instead
+                                // of parking it behind
+                                if event.modifiers.control || event.modifiers.alt {
+                                    if root.composer-text != ""
+                                        || root.attachment-images.length > 0
+                                    {
+                                        root.steer-requested(root.composer-text);
+                                        root.composer-text = "";
+                                    }
                                     return EventResult.accept;
                                 }
-                                // Enter sends, Alt+Enter steers into the
-                                // running turn, Shift+Enter is a newline,
-                                // Esc aborts — the TUI's bindings
-                                if event.text == Key.Return {
-                                    // Ctrl+Enter (or Alt+Enter, kept from before) folds
-                                    // the message into the turn that is running instead
-                                    // of parking it behind
-                                    if event.modifiers.control || event.modifiers.alt {
-                                        if root.composer-text != ""
-                                            || root.attachment-images.length > 0
-                                        {
-                                            root.steer-requested(root.composer-text);
-                                            root.composer-text = "";
-                                        }
-                                        return EventResult.accept;
+                                if !event.modifiers.shift {
+                                    if root.composer-text != ""
+                                        || root.attachment-images.length > 0
+                                    {
+                                        root.send-requested(root.composer-text);
+                                        root.composer-text = "";
                                     }
-                                    if !event.modifiers.shift {
-                                        if root.composer-text != ""
-                                            || root.attachment-images.length > 0
-                                        {
-                                            root.send-requested(root.composer-text);
-                                            root.composer-text = "";
-                                        }
-                                        return EventResult.accept;
-                                    }
-                                }
-                                // Ctrl+Shift+V attaches an image from the clipboard;
-                                // plain Ctrl+V stays text paste
-                                // One key for both kinds of paste: Ctrl+V attaches the
-                                // image when the clipboard holds one, and otherwise
-                                // falls through to the text input's own paste. The text
-                                // of a chorded key is not always the letter — with
-                                // control it arrives as the control character, with
-                                // shift as the capital — so all three are the same key.
-                                if event.modifiers.control
-                                    && (event.text == "v" || event.text == "V"
-                                        || event.text == "\u{16}")
-                                {
-                                    if root.attach-pasted() {
-                                        return EventResult.accept;
-                                    }
-                                    return EventResult.reject;
-                                }
-                                if event.text == Key.Escape {
-                                    root.abort-requested();
                                     return EventResult.accept;
                                 }
-                                if event.text == Key.End && event.modifiers.control {
-                                    root.scroll-to-end();
+                            }
+                            // Ctrl+Shift+V attaches an image from the clipboard;
+                            // plain Ctrl+V stays text paste
+                            // One key for both kinds of paste: Ctrl+V attaches the
+                            // image when the clipboard holds one, and otherwise
+                            // falls through to the text input's own paste. The text
+                            // of a chorded key is not always the letter — with
+                            // control it arrives as the control character, with
+                            // shift as the capital — so all three are the same key.
+                            if event.modifiers.control
+                                && (event.text == "v" || event.text == "V"
+                                    || event.text == "\u{16}")
+                            {
+                                if root.attach-pasted() {
                                     return EventResult.accept;
                                 }
                                 return EventResult.reject;
                             }
-                init => { self.grab-focus(); }
+                            if event.text == Key.Escape {
+                                root.abort-requested();
+                                return EventResult.accept;
+                            }
+                            if event.text == Key.End && event.modifiers.control {
+                                root.scroll-to-end();
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
+                        }
+            init => { self.grab-focus(); }
 
-            }
         }
         HorizontalLayout {
             spacing: 8px;
