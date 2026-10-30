@@ -231,7 +231,7 @@ fn narrowing_unloads_the_history_nearest_the_newest_page() {
     let (sheet, _) = sheet();
     sheet.replace(three_messages());
 
-    let gone = sheet.narrow("m3", 1, "older history is not loaded");
+    let gone = sheet.narrow("m3", 2, "older history is not loaded");
 
     assert_eq!(gone, 2, "the newest stretch of history did not go");
     assert_eq!(messages(&sheet), ["m1", "", "m3"], "the hole is not where it was");
@@ -254,7 +254,7 @@ fn the_newest_page_is_never_unloaded() {
 fn filling_the_hole_puts_the_page_back_where_it_was() {
     let (sheet, _) = sheet();
     sheet.replace(three_messages());
-    sheet.narrow("m3", 1, "older history is not loaded");
+    sheet.narrow("m3", 2, "older history is not loaded");
 
     let put_back = sheet.fill(pair("m2", "second"));
 
@@ -268,7 +268,7 @@ fn narrowing_twice_leaves_one_notice_not_two() {
     let (sheet, _) = sheet();
     sheet.replace(three_messages());
 
-    sheet.narrow("m3", 1, "older history is not loaded");
+    sheet.narrow("m3", 2, "older history is not loaded");
     sheet.narrow("m3", 0, "older history is not loaded");
 
     assert_eq!(messages(&sheet), ["", "m3"]);
@@ -282,8 +282,28 @@ fn the_hole_costs_one_order_to_make_and_one_to_fill() {
     sheet.replace(three_messages());
     orders.borrow_mut().clear();
 
-    sheet.narrow("m3", 1, "older history is not loaded");
+    sheet.narrow("m3", 2, "older history is not loaded");
 
     // two rows out, one notice in
     assert_eq!(*orders.borrow(), vec![Order::Remove { at: 3 }, Order::Remove { at: 2 }, Order::Insert { at: 2 }]);
+}
+
+#[test]
+fn narrowing_at_scale_drops_the_whole_stretch_not_one_message() {
+    let (sheet, _) = sheet();
+    let mut rows = Vec::new();
+    for message in 0..40 {
+        rows.extend(pair(&format!("m{message}"), "history"));
+    }
+    rows.extend(pair("newest", "newest"));
+    sheet.replace(rows);
+
+    let gone = sheet.narrow("newest", 10, "older history is not loaded");
+
+    assert_eq!(
+        messages(&sheet),
+        ["m0", "m1", "m2", "m3", "m4", "", "newest"],
+        "the five messages nearest the newest page are the ones that stay"
+    );
+    assert_eq!(gone, 70, "thirty-five messages of two rows each did not go");
 }

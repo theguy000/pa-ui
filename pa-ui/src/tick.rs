@@ -15,8 +15,10 @@ pub(crate) struct Tick {
     /// the oldest message of the newest page: everything above it is history,
     /// and history is what gets unloaded
     pub tail_from: std::cell::RefCell<Option<String>>,
-    /// how many messages of history stay resident above the newest page
-    pub history_messages: usize,
+    /// how many rows of history stay resident above the newest page
+    pub history_rows: usize,
+    /// when the poll last ran: a long gap is a stall the reader felt
+    pub last_tick: std::cell::Cell<SystemTime>,
     pub sheet: Rc<sheet::Sheet>,
     pub session_filter: Rc<RefCell<String>>,
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
@@ -149,6 +151,15 @@ impl Tick {
 
     /// One pass: drain what the worker sent, then let the window catch up.
     pub fn run(&self) {
+        // The timer is 120 ms. Anything much later means the window was busy,
+        // and the gap is how long the reader waited.
+        let now = SystemTime::now();
+        if let Ok(gap) = now.duration_since(self.last_tick.get()) {
+            if gap.as_millis() > 250 && crate::env_cfg::cfg().debug {
+                eprintln!("[lag] the window was busy for {} ms", gap.as_millis());
+            }
+        }
+        self.last_tick.set(now);
         let Some(ui) = self.weak.upgrade() else { return };
         let mut l = Local::load(self);
         let jobs = &self.jobs;
@@ -556,7 +567,9 @@ impl Tick {
                         ui.set_has_older(false);
                         continue;
                     }
+                    let built_at = SystemTime::now();
                     let (older, _) = transcript::build(&messages, messages.len());
+                    let build_ms = built_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
                     if older.is_empty() {
                         has_older.set(false);
                         ui.set_has_older(false);
@@ -567,12 +580,19 @@ impl Tick {
                     let before_y = ui.get_dbg_cy() as f32;
                     let before_h = ui.get_dbg_ch() as f32;
                     let older_len = older.len();
+                    let insert_at = SystemTime::now();
                     sheet.prepend(older);
+                    let insert_ms = insert_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+                    if crate::env_cfg::cfg().debug {
+                        eprintln!(
+                            "[older] our side: build {build_ms:.1} ms, insert {insert_ms:.1} ms for {older_len} rows"
+                        );
+                    }
                     // A session of any length must not cost the window more than
                     // a window: the stretch between the reader and the newest
                     // page goes, with one notice standing in for it.
                     if let Some(newest) = tail_from.borrow().clone() {
-                        let gone = sheet.narrow(&newest, self.history_messages, HISTORY_UNLOADED);
+                        let gone = sheet.narrow(&newest, self.history_rows, HISTORY_UNLOADED);
                         if gone > 0 {
                             if crate::env_cfg::cfg().debug {
                                 eprintln!("[narrow] {gone} rows unloaded above the newest page");

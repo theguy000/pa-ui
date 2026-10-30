@@ -188,8 +188,12 @@ impl Sheet {
         inner.drawn.set(at, drawn);
     }
 
-    /// Unload the stretch of history nearest the newest page - keeping at most
-    /// keep_messages messages above it - and leave one notice row where it was.
+    /// Unload the stretch of history nearest the newest page, keeping at most
+    /// keep_rows rows above it, and leave one notice row where it was.
+    ///
+    /// The budget is rows because rows are what the window pays for: one row
+    /// measured costs about a millisecond and a half to lay out, whatever the
+    /// message it came from.
     ///
     /// A session of any length must not cost the window more than a window. The
     /// rows the reader is looking at stay; the rows between them and the newest
@@ -203,8 +207,7 @@ impl Sheet {
         // the notice is not history: it is the hole itself
         let seam = inner.gap.unwrap_or(from);
         let mut drop_from = seam;
-        let mut held = messages_in(&inner.rows[..seam]);
-        while held > keep {
+        while drop_from > keep {
             let key = inner.rows[drop_from - 1].message.clone();
             if key.is_empty() {
                 drop_from -= 1;
@@ -217,9 +220,14 @@ impl Sheet {
                 break;
             }
             drop_from = range.start;
-            held -= 1;
         }
         if drop_from == seam {
+            if crate::env_cfg::cfg().debug {
+                eprintln!(
+                    "[narrow] nothing to do: held={seam} keep={keep} rows={}",
+                    inner.rows.len()
+                );
+            }
             return 0;
         }
         let stop = if inner.gap.is_some() { seam + 1 } else { seam };
@@ -233,6 +241,13 @@ impl Sheet {
         inner.gap = Some(drop_from);
         // a hole is rare; reading the keys back is cheaper than tracking them
         inner.index = reindex(&inner.rows);
+        if crate::env_cfg::cfg().debug {
+            eprintln!(
+                "[narrow] held={seam} keep={keep} dropped {} rows; sheet now {} rows",
+                stop - drop_from,
+                inner.rows.len()
+            );
+        }
         stop - drop_from
     }
 
@@ -389,21 +404,6 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
         }
     }
     out
-}
-
-/// How many messages a run of rows holds: a message is a run of rows with one
-/// key, and only keyed rows count.
-fn messages_in(rows: &[Row]) -> usize {
-    let mut held = 0;
-    let mut seen: Option<&str> = None;
-    for row in rows {
-        if row.message.is_empty() || seen == Some(row.message.as_str()) {
-            continue;
-        }
-        held += 1;
-        seen = Some(row.message.as_str());
-    }
-    held
 }
 
 /// A row that stands for rows that are not loaded.
