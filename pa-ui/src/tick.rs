@@ -41,6 +41,71 @@ pub(crate) struct Tick {
     pub scroll_ticks: std::cell::Cell<u64>,
 }
 
+/// The state a tick carries between one call and the next.
+///
+/// It is taken out of the window's cells at the start of a tick and put back at
+/// the end, so the body below reads as it did when these were plain locals.
+pub(crate) struct Local {
+    drawn_user: Option<String>,
+    loaded: Option<String>,
+    live_state: String,
+    live_since: SystemTime,
+    busy_label: String,
+    tail_len: usize,
+    tail_sig: Option<(u64, u64)>,
+    last_seq: u64,
+    open_live: Option<live::Live>,
+    stream_started: SystemTime,
+    _stream_at: SystemTime,
+    selected_uuid: Option<String>,
+    tail_at: SystemTime,
+    queue_at: SystemTime,
+    stats_at: SystemTime,
+    scroll_ticks: u64,
+}
+
+impl Local {
+    fn load(tick: &Tick) -> Self {
+        Self {
+            drawn_user: tick.drawn_user.take(),
+            loaded: tick.loaded.take(),
+            live_state: tick.live_state.take(),
+            live_since: tick.live_since.get(),
+            busy_label: tick.busy_label.take(),
+            tail_len: tick.tail_len.get(),
+            tail_sig: tick.tail_sig.take(),
+            last_seq: tick.last_seq.get(),
+            open_live: tick.open_live.take(),
+            stream_started: tick.stream_started.get(),
+            _stream_at: tick._stream_at.get(),
+            selected_uuid: tick.selected_uuid.take(),
+            tail_at: tick.tail_at.get(),
+            queue_at: tick.queue_at.get(),
+            stats_at: tick.stats_at.get(),
+            scroll_ticks: tick.scroll_ticks.get(),
+        }
+    }
+
+    fn store(self, tick: &Tick) {
+        tick.drawn_user.set(self.drawn_user);
+        tick.loaded.set(self.loaded);
+        tick.live_state.set(self.live_state);
+        tick.live_since.set(self.live_since);
+        tick.busy_label.set(self.busy_label);
+        tick.tail_len.set(self.tail_len);
+        tick.tail_sig.set(self.tail_sig);
+        tick.last_seq.set(self.last_seq);
+        tick.open_live.set(self.open_live);
+        tick.stream_started.set(self.stream_started);
+        tick._stream_at.set(self._stream_at);
+        tick.selected_uuid.set(self.selected_uuid);
+        tick.tail_at.set(self.tail_at);
+        tick.queue_at.set(self.queue_at);
+        tick.stats_at.set(self.stats_at);
+        tick.scroll_ticks.set(self.scroll_ticks);
+    }
+}
+
 impl Tick {
     fn request_older(&self, ui: &AppWindow) {
         let state = PagerState {
@@ -72,8 +137,10 @@ impl Tick {
         });
     }
 
+    /// One pass: drain what the worker sent, then let the window catch up.
     pub fn run(&self) {
         let Some(ui) = self.weak.upgrade() else { return };
+        let mut l = Local::load(self);
         let jobs = &self.jobs;
         let msg_rx = &self.msg_rx;
         let rows_store_ui = &self.rows_store;
@@ -90,22 +157,6 @@ impl Tick {
         let catalog_loaded = &self.catalog_loaded;
         let busy_since = &self.busy_since;
         let window_rows = self.window_rows;
-        let mut drawn_user = self.drawn_user.take();
-        let mut loaded = self.loaded.take();
-        let mut live_state = self.live_state.take();
-        let mut live_since = self.live_since.get();
-        let mut busy_label = self.busy_label.take();
-        let mut tail_len = self.tail_len.get();
-        let mut tail_sig = self.tail_sig.take();
-        let mut last_seq = self.last_seq.get();
-        let mut open_live = self.open_live.take();
-        let mut stream_started = self.stream_started.get();
-        let mut _stream_at = self._stream_at.get();
-        let mut selected_uuid = self.selected_uuid.take();
-        let mut tail_at = self.tail_at.get();
-        let mut queue_at = self.queue_at.get();
-        let mut stats_at = self.stats_at.get();
-        let mut scroll_ticks = self.scroll_ticks.get();
         let oldest_cursor = &self.oldest_cursor;
         let has_older = &self.has_older;
         let loading_older = &self.loading_older;
@@ -123,8 +174,8 @@ impl Tick {
             );
             // the pager only moves on a scroll; when it does not, this says which
             // of the four conditions was false
-            scroll_ticks += 1;
-            if scroll_ticks % 15 == 0 {
+            l.scroll_ticks += 1;
+            if l.scroll_ticks % 15 == 0 {
                 eprintln!(
                     "[scroll] cy={} ch={} h={} at-bottom={} older={} ready={} loading={}",
                     ui.get_dbg_cy(),
@@ -139,24 +190,24 @@ impl Tick {
         }
 
         // right-panel telemetry
-        if !loaded.as_deref().unwrap_or("").is_empty()
-            && stats_at.elapsed().unwrap_or_default()
+        if !l.loaded.as_deref().unwrap_or("").is_empty()
+            && l.stats_at.elapsed().unwrap_or_default()
                 >= Duration::from_millis(if ui.get_busy() { 3000 } else { 15000 })
         {
-            stats_at = SystemTime::now();
-            if let Some(session) = loaded.clone() {
+            l.stats_at = SystemTime::now();
+            if let Some(session) = l.loaded.clone() {
                 let _ = jobs.send(Job::Stats { session });
             }
         }
 
         // what is stacked behind the running turn
-        if ui.get_busy() && !loaded.as_deref().unwrap_or("").is_empty()
+        if ui.get_busy() && !l.loaded.as_deref().unwrap_or("").is_empty()
             // PA_QUEUE is a design check: keep the seeded lanes on screen
             && !crate::env_cfg::cfg().queue_preset
-            && queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
+            && l.queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
         {
-            queue_at = SystemTime::now();
-            if let Some(session) = loaded.clone() {
+            l.queue_at = SystemTime::now();
+            if let Some(session) = l.loaded.clone() {
                 let _ = jobs.send(Job::Queue { session });
             }
         }
@@ -171,19 +222,19 @@ impl Tick {
         } else {
             Duration::from_millis(3000)
         };
-        if !loaded.as_deref().unwrap_or("").is_empty()
-            && tail_at.elapsed().unwrap_or_default() >= poll_every
+        if !l.loaded.as_deref().unwrap_or("").is_empty()
+            && l.tail_at.elapsed().unwrap_or_default() >= poll_every
         {
-            tail_at = SystemTime::now();
-            if let Some(session) = loaded.clone() {
+            l.tail_at = SystemTime::now();
+            if let Some(session) = l.loaded.clone() {
                 let _ = jobs.send(Job::Tail { session, fresh: false });
             }
         }
 
         // follow the selection
         let selected = ui.get_selected_id().to_string();
-        if !selected.is_empty() && loaded.as_deref() != Some(selected.as_str()) {
-            loaded = Some(selected.clone());
+        if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
+            l.loaded = Some(selected.clone());
             // a different chat starts its own walk backwards
             *oldest_cursor.borrow_mut() = None;
             has_older.set(false);
@@ -231,7 +282,7 @@ impl Tick {
                     // prompt target keep pointing at the same session.
                     let selected = ui.get_selected_id().to_string();
                     if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
-                        if let Some(uuid) = selected_uuid.as_deref() {
+                        if let Some(uuid) = l.selected_uuid.as_deref() {
                             if let Some(rebound) =
                                 rows.iter().find(|row| row.session_id == uuid).map(|row| row.id.clone())
                             {
@@ -239,18 +290,18 @@ impl Tick {
                                     eprintln!("[rebind] {selected} -> {rebound}");
                                 }
                                 ui.set_selected_id(rebound.clone().into());
-                                selected_uuid = Some(uuid.to_string());
-                                loaded = None;
-                                tail_len = 0;
-                                tail_sig = None;
-                                last_seq = 0;
-                                close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                                l.selected_uuid = Some(uuid.to_string());
+                                l.loaded = None;
+                                l.tail_len = 0;
+                                l.tail_sig = None;
+                                l.last_seq = 0;
+                                close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
                             }
                         }
                     }
                     let selected = ui.get_selected_id().to_string();
-                    if selected_uuid.is_none() {
-                        selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
+                    if l.selected_uuid.is_none() {
+                        l.selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
                     }
                     // the chip names the model this session is actually on
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
@@ -271,29 +322,29 @@ impl Tick {
                     // nothing known about this selection: nothing is running
                     if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
                         ui.set_busy(false);
-                        busy_label.clear();
+                        l.busy_label.clear();
                     }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
-                        if state != live_state {
-                            live_state = state.to_string();
-                            live_since = SystemTime::now();
+                        if state != l.live_state {
+                            l.live_state = state.to_string();
+                            l.live_since = SystemTime::now();
                         }
                         let busy_now = state != "idle" && state != "archived";
                         if !busy_now && ui.get_busy() {
                             ui.set_busy(false);
-                            busy_label.clear();
+                            l.busy_label.clear();
                             // the run just ended � grab whatever landed after the
                             // last refresh so the final tool calls are not lost
-                            if let Some(session) = loaded.clone() {
+                            if let Some(session) = l.loaded.clone() {
                                 let _ = jobs.send(Job::Tail { session, fresh: false });
                             }
                         }
                         if busy_now && !ui.get_busy() {
-                            if busy_label.is_empty() {
-                                busy_label = state.to_string();
+                            if l.busy_label.is_empty() {
+                                l.busy_label = state.to_string();
                                 busy_since.set(SystemTime::now());
-                                ui.set_busy_label(busy_label.clone().into());
+                                ui.set_busy_label(l.busy_label.clone().into());
                             }
                             ui.set_busy(true);
                         }
@@ -301,7 +352,7 @@ impl Tick {
                             let held = busy_since.get().elapsed().unwrap_or_default().as_secs();
                             ui.set_busy_elapsed(format!("{held}s").into());
                         }
-                        let held = live_since.elapsed().unwrap_or_default().as_secs();
+                        let held = l.live_since.elapsed().unwrap_or_default().as_secs();
                         let busy = state != "idle" && state != "archived";
                         ui.set_activity(state.into());
                         ui.set_activity_busy(busy);
@@ -314,10 +365,10 @@ impl Tick {
                 }
                 Msg::Sessions(Err(error)) => ui.set_status_line(format!("daemon: {error}").into()),
                 Msg::Activity { label } => {
-                    if label != busy_label {
-                        busy_label = label;
+                    if label != l.busy_label {
+                        l.busy_label = label;
                         busy_since.set(SystemTime::now());
-                        ui.set_busy_label(busy_label.clone().into());
+                        ui.set_busy_label(l.busy_label.clone().into());
                     }
                     ui.set_busy(true);
                 }
@@ -326,10 +377,10 @@ impl Tick {
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
                     });
-                    if loaded.as_deref() != Some(session.as_str()) {
+                    if l.loaded.as_deref() != Some(session.as_str()) {
                         continue; // a newer selection won
                     }
-                    tail_len = messages.len();
+                    l.tail_len = messages.len();
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
@@ -388,14 +439,14 @@ impl Tick {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
                             messages.len(),
-                            tail_len,
+                            l.tail_len,
                             messages
                                 .last()
                                 .map(|m| m.get("timestamp").and_then(serde_json::Value::as_u64).unwrap_or(0))
                                 .unwrap_or(0)
                         );
                     }
-                    if loaded.as_deref() != Some(session.as_str()) {
+                    if l.loaded.as_deref() != Some(session.as_str()) {
                         continue;
                     }
                     // An empty list usually means the id went stale (the daemon
@@ -416,7 +467,7 @@ impl Tick {
                     // one the busy path already folded in: that page was
                     // appended beside the streamed row, and the signature alone
                     // would keep both copies on screen for good.
-                    if tail_sig == Some((cursor, newest)) && !fresh {
+                    if l.tail_sig == Some((cursor, newest)) && !fresh {
                         continue;
                     }
                     // the walk backwards starts at the oldest row of the page
@@ -426,13 +477,13 @@ impl Tick {
                     }
                     has_older.set(more);
                     ui.set_has_older(more);
-                    if open_live.is_some() && !fresh {
-                        tail_len = messages.len();
-                        tail_sig = Some((cursor, newest));
+                    if l.open_live.is_some() && !fresh {
+                        l.tail_len = messages.len();
+                        l.tail_sig = Some((cursor, newest));
                         continue;
                     }
-                    tail_len = messages.len();
-                    tail_sig = Some((cursor, newest));
+                    l.tail_len = messages.len();
+                    l.tail_sig = Some((cursor, newest));
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
@@ -440,13 +491,13 @@ impl Tick {
                     if crate::env_cfg::cfg().demo_markdown {
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    let live_in_built = open_live.as_ref().is_some_and(|turn| {
+                    let live_in_built = l.open_live.as_ref().is_some_and(|turn| {
                         built.iter().any(|row| row.message == turn.message)
                     });
                     if live_in_built || (!ui.get_busy() && !in_flight.get()) {
-                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
-                    } else if open_live.is_some() {
-                        let saved = open_live.take();
+                        close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                    } else if l.open_live.is_some() {
+                        let saved = l.open_live.take();
                         if let Some(ref turn) = saved {
                             let mut temp = Some(live::Live { message: String::new(), start: turn.start, rows: turn.rows, parts: Vec::new() });
                             close_live(&mut temp, &rows_store_ui, &row_model_ui);
@@ -458,8 +509,8 @@ impl Tick {
                         if let Some(mut turn) = saved {
                             turn.start = new_start;
                             turn.rows = 0;
-                            open_live = Some(turn);
-                            sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                            l.open_live = Some(turn);
+                            sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
                         }
                         if follow {
                             scroll_to_end_when_ready(&ui.as_weak());
@@ -497,7 +548,7 @@ impl Tick {
                 } => {
                     loading_older.set(false);
                     ui.set_loading_older(false);
-                    if loaded.as_deref() != Some(session.as_str()) || messages.is_empty() {
+                    if l.loaded.as_deref() != Some(session.as_str()) || messages.is_empty() {
                         // nothing to prepend: stop asking rather than loop
                         has_older.set(false);
                         ui.set_has_older(false);
@@ -543,7 +594,7 @@ impl Tick {
                     }
                 }
                 Msg::Event { session, event } => {
-                    if loaded.as_deref() != Some(session.as_str()) {
+                    if l.loaded.as_deref() != Some(session.as_str()) {
                         continue;
                     }
                     // exact TUI vocabulary straight from the stream
@@ -556,13 +607,13 @@ impl Tick {
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
                     {
-                        if last_seq != 0 && sequence > last_seq + 1 {
+                        if l.last_seq != 0 && sequence > l.last_seq + 1 {
                             let _ = jobs.send(Job::Tail {
                                 session: session.clone(),
                                 fresh: false,
                             });
                         }
-                        last_seq = sequence.max(last_seq);
+                        l.last_seq = sequence.max(l.last_seq);
                     }
 
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
@@ -602,8 +653,8 @@ impl Tick {
                         // The live rows stay, carrying the message they belong
                         // to: the store's copy of that message replaces them
                         // when it arrives, in place.
-                        open_live = None;
-                        _stream_at = SystemTime::now() - Duration::from_secs(60);
+                        l.open_live = None;
+                        l._stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -619,7 +670,7 @@ impl Tick {
                         if call_id.is_empty() {
                             continue;
                         }
-                        let Some(turn) = open_live.as_mut() else {
+                        let Some(turn) = l.open_live.as_mut() else {
                             // no message is open: the turn's own frames are the
                             // only thing that may draw a cell, and the store
                             // will carry it when the turn closes
@@ -648,10 +699,10 @@ impl Tick {
                             turn.finish_tool(&call_id, output, failed, bash, taken);
                         }
                         let held = hold_offset(&ui);
-                        sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
                         pin_offset_across_layout(&ui, held);
                         scroll_if_parked(&ui);
-                        _stream_at = SystemTime::now();
+                        l._stream_at = SystemTime::now();
                         continue;
                     }
                     let Some(message) = event.get("message") else {
@@ -676,8 +727,8 @@ impl Tick {
                             text.chars().count(),
                             text.chars().take(40).collect::<String>()
                         );
-                        if drawn_user.as_deref() != Some(key.as_str()) {
-                            drawn_user = Some(key);
+                        if l.drawn_user.as_deref() != Some(key.as_str()) {
+                            l.drawn_user = Some(key);
                             let _ = jobs.send(Job::Tail {
                                 session: session.clone(),
                                 fresh: false,
@@ -701,23 +752,23 @@ impl Tick {
                         .unwrap_or_default();
                     if kind == Some("message_start") || delta_kind == "start" {
                         let key = transcript::message_key(message);
-                        if open_live.as_ref().is_some_and(|turn| turn.message == key) {
+                        if l.open_live.as_ref().is_some_and(|turn| turn.message == key) {
                             continue;
                         }
-                        open_live = None;
+                        l.open_live = None;
                         let start = rows_store_ui.borrow().len();
-                        open_live = Some(live::Live::new(start, key));
-                        stream_started = SystemTime::now();
+                        l.open_live = Some(live::Live::new(start, key));
+                        l.stream_started = SystemTime::now();
                         trace_rows("live row opened", &rows_store_ui);
                         continue;
                     }
-                    if open_live.is_none() && kind == Some("message_update") {
+                    if l.open_live.is_none() && kind == Some("message_update") {
                         let key = transcript::message_key(message);
                         let start = rows_store_ui.borrow().len();
-                        open_live = Some(live::Live::new(start, key));
-                        stream_started = SystemTime::now();
+                        l.open_live = Some(live::Live::new(start, key));
+                        l.stream_started = SystemTime::now();
                     }
-                    let Some(turn) = open_live.as_mut() else {
+                    let Some(turn) = l.open_live.as_mut() else {
                         continue;
                     };
                     // Ignore toolcall JSON deltas and *_end markers that don't change visible prose/thinking
@@ -735,15 +786,15 @@ impl Tick {
                         }
                     }
                                         let held = hold_offset(&ui);
-                    sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                    sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
                     pin_offset_across_layout(&ui, held);
                     scroll_if_parked(&ui);
-                    _stream_at = SystemTime::now();
+                    l._stream_at = SystemTime::now();
                     if crate::env_cfg::cfg().debug && kind == Some("message_update") {
                         eprintln!(
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
-                            stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
-                            open_live.as_ref().map_or(0, |turn| turn.rows),
+                            l.stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
+                            l.open_live.as_ref().map_or(0, |turn| turn.rows),
                             0usize,
                             delta_kind
                         );
@@ -828,7 +879,7 @@ impl Tick {
                     }
                 }
                 Msg::Stats { session, stats } => {
-                    if loaded.as_deref() != Some(session.as_str()) {
+                    if l.loaded.as_deref() != Some(session.as_str()) {
                         continue;
                     }
                     let fill = if stats.context_window > 0 {
@@ -895,7 +946,7 @@ impl Tick {
                     ui.set_cost_family_on(has_children);
                 }
                 Msg::State { session, state } => {
-                    if loaded.as_deref() != Some(session.as_str()) {
+                    if l.loaded.as_deref() != Some(session.as_str()) {
                         continue;
                     }
                     ui.set_current_effort(thinking_level_label(&state.thinking_level).into());
@@ -921,10 +972,10 @@ impl Tick {
                     refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
                 }
                 Msg::Reconnected => {
-                    loaded = None;
-                    close_live(&mut open_live, &rows_store_ui, &row_model_ui);
-                    tail_sig = None;
-                    last_seq = 0;
+                    l.loaded = None;
+                    close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                    l.tail_sig = None;
+                    l.last_seq = 0;
                     ui.set_status_line("reconnecting".into());
                 }
                 Msg::PromptRejected { text } => {
@@ -952,21 +1003,6 @@ impl Tick {
             }
         }
 
-        self.drawn_user.set(drawn_user);
-        self.loaded.set(loaded);
-        self.live_state.set(live_state);
-        self.live_since.set(live_since);
-        self.busy_label.set(busy_label);
-        self.tail_len.set(tail_len);
-        self.tail_sig.set(tail_sig);
-        self.last_seq.set(last_seq);
-        self.open_live.set(open_live);
-        self.stream_started.set(stream_started);
-        self._stream_at.set(_stream_at);
-        self.selected_uuid.set(selected_uuid);
-        self.tail_at.set(tail_at);
-        self.queue_at.set(queue_at);
-        self.stats_at.set(stats_at);
-        self.scroll_ticks.set(scroll_ticks);
+        l.store(self);
     }
 }
