@@ -128,13 +128,6 @@ enum Msg {
     Error(String),
 }
 
-fn flog(msg: &str) {
-    use std::io::Write;
-    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1_000_000).unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"C:\Users\Istiak Mahmud\git\prime-agent-app\pa-scroll-trace.log") {
-        let _ = writeln!(f, "[{ms:06}] {msg}");
-    }
-}
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
@@ -1093,7 +1086,6 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let rows = rows_store.clone();
         let model = row_model.clone();
-        ui.on_scroll_trace(move |msg| { flog(&format!("SLINT: {msg}")); });
         ui.on_toggle_row(move |index| {
             let index = index as usize;
             let mut rows = rows.borrow_mut();
