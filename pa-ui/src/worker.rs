@@ -4,7 +4,7 @@ use crate::*;
 
 pub(crate) enum Job {
     Rename { session: String, name: String },
-    Attach { session: String },
+    Attach { session: String, generation: u64 },
     Tail { session: String, fresh: bool },
     /// the page before the one already loaded, walked from a row id
     LoadOlder {
@@ -103,6 +103,42 @@ pub(crate) enum Msg {
 
 
 
+/// The worker's outbox. Every reply carries the generation it was produced
+/// under, so the window can tell an answer it is still waiting for from an
+/// answer to a question it has already given up on.
+pub(crate) struct Out {
+    tx: Sender<(u64, Msg)>,
+    generation: u64,
+}
+
+impl Out {
+    fn send(&self, message: Msg) {
+        let _ = self.tx.send((self.generation, message));
+    }
+}
+
+impl Msg {
+    /// Whether this reply is about one chat's contents. Such a reply is only an
+    /// answer while the window is still attached to the chat that asked; what
+    /// comes back after the reader has left is noise, and a session id cannot
+    /// tell it apart from a reply sent before a re-attach of the same chat.
+    #[must_use]
+    pub(crate) fn is_session_scoped(&self) -> bool {
+        matches!(
+            self,
+            Msg::Transcript { .. }
+                | Msg::Tail { .. }
+                | Msg::Older { .. }
+                | Msg::Event { .. }
+                | Msg::Stats { .. }
+                | Msg::State { .. }
+                | Msg::ModelCatalog(_)
+                | Msg::ExtraCommands(_)
+                | Msg::Queue { .. }
+        )
+    }
+}
+
 /// A stable number for a page cursor, so the poll can tell "same page" quickly.
 pub(crate) fn page_cursor(last_entry: &str) -> u64 {
     last_entry
@@ -114,19 +150,23 @@ pub(crate) fn page_cursor(last_entry: &str) -> u64 {
 /// A worker that panics used to vanish without a word: no events, no replies,
 /// no poll - a window that keeps painting a transcript nobody is updating. The
 /// work happens behind a catch so a panic in one frame is loud.
-pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
+pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<(u64, Msg)>, client_id: String) {
     let reporter = out.clone();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         worker_inner(jobs, out, client_id);
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
-        let _ = reporter.send(Msg::Error("engine stopped � reopen the window".into()));
+        let _ = reporter.send((0, Msg::Error("engine stopped � reopen the window".into())));
     }
 }
 
 
-pub(crate) fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: String) {
+pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_id: String) {
+    let mut out = Out {
+        tx,
+        generation: 0,
+    };
     let mut client: Option<Client> = None;
 
     // Reads go over a connection that never attaches: once a connection is
@@ -180,15 +220,24 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: Str
                     );
                     last_list = SystemTime::now() - Duration::from_secs(60);
                 }
-                Job::Attach { session } => match attach_as(active, &session, Some(&client_id), resume.clone()) {
-                    Ok(messages) => {
-                        attached = Some(session.clone());
-                        let _ = out.send(Msg::Transcript { session, messages });
+                Job::Attach {
+                    session,
+                    generation,
+                } => {
+                    // Every reply after this carries the window's generation,
+                    // so an answer to a question the window no longer has can
+                    // be dropped before it reaches any state.
+                    out.generation = generation;
+                    match attach_as(active, &session, Some(&client_id), resume.clone()) {
+                        Ok(messages) => {
+                            attached = Some(session.clone());
+                            let _ = out.send(Msg::Transcript { session, messages });
+                        }
+                        Err(error) => {
+                            let _ = out.send(Msg::Error(error.to_string()));
+                        }
                     }
-                    Err(error) => {
-                        let _ = out.send(Msg::Error(error.to_string()));
-                    }
-                },
+                }
                 Job::SetModel {
                     session,
                     provider,
@@ -621,5 +670,63 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: Str
             last_list = SystemTime::now();
         }
         std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Msg;
+
+    fn tail() -> Msg {
+        Msg::Tail {
+            session: String::new(),
+            messages: Vec::new(),
+            last_entry: String::new(),
+            first_entry: String::new(),
+            more: false,
+            fresh: false,
+        }
+    }
+
+    #[test]
+    fn the_fence_covers_the_replies_about_one_chat() {
+        // every kind of read a chat answers
+        assert!(tail().is_session_scoped());
+        assert!(Msg::Transcript { session: String::new(), messages: Vec::new() }.is_session_scoped());
+        assert!(Msg::Older {
+            session: String::new(),
+            messages: Vec::new(),
+            first_entry: String::new(),
+            more: false,
+        }
+        .is_session_scoped());
+        assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null }.is_session_scoped());
+        assert!(Msg::ExtraCommands(Vec::new()).is_session_scoped());
+        assert!(Msg::ModelCatalog(Vec::new()).is_session_scoped());
+        assert!(Msg::Stats {
+            session: String::new(),
+            stats: pa_client::SessionStats::default(),
+        }
+        .is_session_scoped());
+        assert!(Msg::State {
+            session: String::new(),
+            state: pa_client::SessionState::default(),
+        }
+        .is_session_scoped());
+    }
+
+    #[test]
+    fn the_fence_never_swallows_what_belongs_to_the_composer() {
+        // these are about the words on screen, not about a chat's contents: a
+        // reader who switches chats still needs the refusal of their own
+        // prompt, the reconnection notice, and the fresh chat's id
+        assert!(!Msg::Reconnected.is_session_scoped());
+        assert!(!Msg::PromptResult { error: None }.is_session_scoped());
+        assert!(!Msg::PromptRejected { text: String::new() }.is_session_scoped());
+        assert!(!Msg::NewChat(String::new()).is_session_scoped());
+        assert!(!Msg::QueueEdit { text: String::new() }.is_session_scoped());
+        assert!(!Msg::Sessions(Ok(Vec::new())).is_session_scoped());
+        assert!(!Msg::Error(String::new()).is_session_scoped());
+        assert!(!Msg::Activity { label: String::new() }.is_session_scoped());
     }
 }

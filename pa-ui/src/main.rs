@@ -106,7 +106,7 @@ fn main() -> Result<(), slint::PlatformError> {
     );
 
     let (job_tx, job_rx) = channel::<Job>();
-    let (msg_tx, msg_rx) = channel::<Msg>();
+    let (msg_tx, msg_rx) = channel::<(u64, Msg)>();
     let worker_client_id = client_id.clone();
     std::thread::spawn(move || worker(job_rx, msg_tx, worker_client_id));
 
@@ -288,6 +288,7 @@ fn main() -> Result<(), slint::PlatformError> {
         weak: ui.as_weak(),
         jobs: job_tx.clone(),
         msg_rx,
+        attach_generation: std::cell::Cell::new(0),
         sheet: sheet.clone(),
         session_filter: session_filter.clone(),
         sessions_cache: sessions_cache.clone(),

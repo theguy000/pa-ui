@@ -5,7 +5,10 @@ use crate::*;
 pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
-    pub msg_rx: Receiver<Msg>,
+    pub msg_rx: Receiver<(u64, Msg)>,
+    /// which attach the window is waiting on: a reply that carries an older
+    /// number is an answer to a question it has given up on
+    pub attach_generation: std::cell::Cell<u64>,
     pub sheet: Rc<sheet::Sheet>,
     pub session_filter: Rc<RefCell<String>>,
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
@@ -241,7 +244,12 @@ impl Tick {
             ui.set_loading_older(false);
             ui.set_pager_ready(false);
             ui.set_status_line("loading transcript".into());
-            let _ = jobs.send(Job::Attach { session: selected });
+            let generation = self.attach_generation.get() + 1;
+            self.attach_generation.set(generation);
+            let _ = jobs.send(Job::Attach {
+                session: selected,
+                generation,
+            });
         }
 
         // reaching the top pulls in the page before this one
@@ -253,7 +261,15 @@ impl Tick {
             paint(&ui);
         }
 
-        while let Ok(message) = msg_rx.try_recv() {
+        while let Ok((generation, message)) = msg_rx.try_recv() {
+            // One rule for every session-scoped reply: if the window has
+            // attached since this request was issued, the answer belongs to a
+            // chat the reader has left. It is dropped here, before any state
+            // can see it. A session id could not tell this apart from a reply
+            // sent before a re-attach of the same chat.
+            if message.is_session_scoped() && generation != self.attach_generation.get() {
+                continue;
+            }
             match message {
                 Msg::Sessions(Ok(rows)) => {
                     // kept so a keystroke can re-filter without waiting for the
@@ -376,9 +392,6 @@ impl Tick {
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
                     });
-                    if l.loaded.as_deref() != Some(session.as_str()) {
-                        continue; // a newer selection won
-                    }
                     l.tail_len = messages.len();
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if crate::env_cfg::cfg().debug {
@@ -442,9 +455,6 @@ impl Tick {
                                 .map(|m| m.get("timestamp").and_then(serde_json::Value::as_u64).unwrap_or(0))
                                 .unwrap_or(0)
                         );
-                    }
-                    if l.loaded.as_deref() != Some(session.as_str()) {
-                        continue;
                     }
                     // An empty list usually means the id went stale (the daemon
                     // restarted and re-keyed its sessions). Never let that blank
@@ -522,14 +532,14 @@ impl Tick {
                     }
                 }
                 Msg::Older {
-                    session,
                     messages,
                     first_entry,
                     more,
+                    ..
                 } => {
                     loading_older.set(false);
                     ui.set_loading_older(false);
-                    if l.loaded.as_deref() != Some(session.as_str()) || messages.is_empty() {
+                    if messages.is_empty() {
                         // nothing to prepend: stop asking rather than loop
                         has_older.set(false);
                         ui.set_has_older(false);
@@ -576,9 +586,6 @@ impl Tick {
                     }
                 }
                 Msg::Event { session, event } => {
-                    if l.loaded.as_deref() != Some(session.as_str()) {
-                        continue;
-                    }
                     // exact TUI vocabulary straight from the stream
                     if let Some(label) = pa_client::activity_label(&event) {
                         ui.set_busy_label(label.into());
@@ -865,9 +872,6 @@ impl Tick {
                     }
                 }
                 Msg::Stats { session, stats } => {
-                    if l.loaded.as_deref() != Some(session.as_str()) {
-                        continue;
-                    }
                     let fill = if stats.context_window > 0 {
                         (stats.context_tokens as f64 / stats.context_window as f64) as f32
                     } else {
@@ -931,10 +935,7 @@ impl Tick {
                     );
                     ui.set_cost_family_on(has_children);
                 }
-                Msg::State { session, state } => {
-                    if l.loaded.as_deref() != Some(session.as_str()) {
-                        continue;
-                    }
+                Msg::State { state, .. } => {
                     ui.set_current_effort(thinking_level_label(&state.thinking_level).into());
                     ui.set_current_level(state.thinking_level.clone().into());
                     // the daemon is the truth about which model runs; the chip
