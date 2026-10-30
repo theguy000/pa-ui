@@ -63,6 +63,8 @@ struct Inner {
     index: std::collections::HashMap<String, std::ops::Range<usize>>,
     /// the message whose rows are still being written, if any
     open: Option<String>,
+    /// where the notice sits while a stretch of history is unloaded
+    gap: Option<usize>,
     drawn: Box<dyn Redraw>,
 }
 
@@ -76,6 +78,7 @@ impl Sheet {
                 rows: Vec::new(),
                 index: std::collections::HashMap::new(),
                 open: None,
+                gap: None,
                 drawn: Box::new(SlintRows(model.clone())),
             }),
         };
@@ -94,6 +97,7 @@ impl Sheet {
         let mut inner = self.inner.borrow_mut();
         inner.index.clear();
         inner.open = None;
+        inner.gap = None;
         for (offset, row) in rows.iter().enumerate() {
             let key = row.message.clone();
             if key.is_empty() {
@@ -182,6 +186,70 @@ impl Sheet {
         row.expanded = !row.expanded;
         let drawn = to_slint(row);
         inner.drawn.set(at, drawn);
+    }
+
+    /// Unload the stretch of history nearest the newest page, leaving one
+    /// notice row where it was.
+    ///
+    /// A session of any length must not cost the window more than a window. The
+    /// rows the reader is looking at stay; the rows between them and the newest
+    /// page - which nobody is reading - go, and the notice stands for them until
+    /// a page fills the hole. Returns the rows that went.
+    pub fn narrow(&self, newest_page: &str, keep: usize, note: &str) -> usize {
+        let mut inner = self.inner.borrow_mut();
+        let Some(from) = inner.index.get(newest_page).map(|range| range.start) else {
+            return 0;
+        };
+        // the notice is not history: it is the hole itself
+        let seam = inner.gap.unwrap_or(from);
+        let mut drop_from = seam;
+        while drop_from > keep {
+            let key = inner.rows[drop_from - 1].message.clone();
+            if key.is_empty() {
+                drop_from -= 1;
+                continue;
+            }
+            let Some(range) = inner.index.get(&key).cloned() else {
+                break;
+            };
+            if range.end != drop_from {
+                break;
+            }
+            drop_from = range.start;
+        }
+        if drop_from == seam {
+            return 0;
+        }
+        let stop = if inner.gap.is_some() { seam + 1 } else { seam };
+        for at in (drop_from..stop).rev() {
+            inner.rows.remove(at);
+            inner.drawn.remove(at);
+        }
+        let row = notice(note);
+        inner.rows.insert(drop_from, row.clone());
+        inner.drawn.insert(drop_from, to_slint(&row));
+        inner.gap = Some(drop_from);
+        // a hole is rare; reading the keys back is cheaper than tracking them
+        inner.index = reindex(&inner.rows);
+        stop - drop_from
+    }
+
+    /// Put a page back where the notice stands, and retire the notice.
+    pub fn fill(&self, rows: Vec<Row>) -> usize {
+        let mut inner = self.inner.borrow_mut();
+        let Some(at) = inner.gap else {
+            return 0;
+        };
+        inner.rows.remove(at);
+        inner.drawn.remove(at);
+        let held = rows.len();
+        for (offset, row) in rows.iter().enumerate() {
+            inner.rows.insert(at + offset, row.clone());
+            inner.drawn.insert(at + offset, to_slint(row));
+        }
+        inner.gap = None;
+        inner.index = reindex(&inner.rows);
+        held
     }
 
     /// The daemon refused the prompt: the row drawn for it goes back out.
@@ -316,6 +384,48 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
         match out.last_mut() {
             Some((key, range)) if *key == row.message => range.end = index + 1,
             _ => out.push((row.message.clone(), index..index + 1)),
+        }
+    }
+    out
+}
+
+/// A row that stands for rows that are not loaded.
+fn notice(note: &str) -> Row {
+    let mut row = Row {
+        kind: transcript::KIND_NOTICE,
+        id: String::new(),
+        title: String::new(),
+        meta: String::new(),
+        body: note.to_string(),
+        code: String::new(),
+        output: String::new(),
+        has_code: false,
+        has_output: false,
+        expanded: false,
+        failed: false,
+        reason: String::new(),
+        image: String::new(),
+        mime: String::new(),
+        elapsed: String::new(),
+        message: String::new(),
+    };
+    row.expanded = false;
+    row
+}
+
+/// Every message key and the rows it holds, read off a finished row list.
+fn reindex(rows: &[Row]) -> std::collections::HashMap<String, std::ops::Range<usize>> {
+    let mut out: std::collections::HashMap<String, std::ops::Range<usize>> =
+        std::collections::HashMap::new();
+    for (offset, row) in rows.iter().enumerate() {
+        if row.message.is_empty() {
+            continue;
+        }
+        match out.get_mut(&row.message) {
+            Some(range) => range.end = offset + 1,
+            None => {
+                out.insert(row.message.clone(), offset..offset + 1);
+            }
         }
     }
     out
