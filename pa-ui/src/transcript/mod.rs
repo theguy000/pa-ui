@@ -7,7 +7,9 @@
 //!   {customType, content, display}
 
 
+#[allow(unused_imports)]
 use serde_json::Value;
+#[allow(unused_imports)]
 use slint::{Model, SharedString, StyledText};
 
 mod cache;

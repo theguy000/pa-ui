@@ -184,7 +184,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let (attach_tx, attach_rx) = std::sync::mpsc::channel::<Vec<images::Attachment>>();
     let attach_rx = Rc::new(attach_rx);
     interactive::attachments::pick(&ui, &attach_tx, &attachment_model, &attachments);
-    interactive::attachments::drain(&ui, &attach_rx, &attachment_model, &attachments);
+    interactive::attachments::drain(&attach_rx, &attachment_model, &attachments);
 
     interactive::menu::picked(&ui, &catalog, &collapsed, &job_tx);
 
@@ -213,14 +213,14 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Painting on the keystroke, not on the poll tick: a letter that waits for a
     // timer is a letter that arrives late, and holding a key shows it plainly.
-    let repaint_canvas = interactive::canvas::painter(&canvas_cell, &canvas_key, &extra_commands);
+    let repaint_canvas = interactive::canvas::painter(&canvas_cell, &canvas_key, &extra_commands, true);
 
     interactive::slash::typed(&ui, &extra_commands, &repaint_canvas, &slash_token);
 
     *repaint_slot.borrow_mut() = Some(repaint_canvas.clone());
 
     let repaint_canvas_for_accept =
-        interactive::canvas::painter_for_accept(&canvas_cell, &canvas_key, &extra_commands);
+        interactive::canvas::painter(&canvas_cell, &canvas_key, &extra_commands, false);
 
     interactive::slash::step(&ui);
 

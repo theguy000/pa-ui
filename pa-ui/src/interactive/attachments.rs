@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use crate::*;
 
-pub(crate) fn drain(ui: &AppWindow, attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>) {
+pub(crate) fn drain(attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>) {
     let attach_rx = attach_rx.clone();
     let attachments = attachments.clone();
     let model = attachment_model.clone();
