@@ -12,22 +12,21 @@ pub(crate) fn drain(attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachmen
         while let Ok(found) = attach_rx.try_recv() {
             let mut held = attachments.borrow_mut();
             for attachment in found {
-                match slint::Image::load_from_path(&attachment.path) {
-                    Ok(thumb) => {
-                        if crate::env_cfg::cfg().debug {
-                            eprintln!(
-                                "[attach] {} ({} base64 chars) {}x{}",
-                                attachment.mime,
-                                attachment.base64.len(),
-                                thumb.size().width,
-                                thumb.size().height
-                            );
-                        }
-                        held.push(attachment);
-                        model.push(thumb);
+                let thumb = images::from_wire(&attachment.base64, &attachment.mime);
+                if thumb.size().width > 0 && thumb.size().height > 0 {
+                    if crate::env_cfg::cfg().debug {
+                        eprintln!(
+                            "[attach] {} ({} base64 chars) {}x{}",
+                            attachment.mime,
+                            attachment.base64.len(),
+                            thumb.size().width,
+                            thumb.size().height
+                        );
                     }
-                    // sendable without a preview; a blank tile is worse than none
-                    Err(error) => eprintln!("[attach] no thumbnail: {error}"),
+                    held.push(attachment);
+                    model.push(thumb);
+                } else {
+                    eprintln!("[attach] no thumbnail: decode failed");
                 }
             }
         }

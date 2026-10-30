@@ -112,7 +112,7 @@ pub(crate) fn trim_to(text: &str, width: usize) -> String {
     if cleaned.chars().count() <= width {
         return cleaned;
     }
-    cleaned.chars().take(width.saturating_sub(1)).chain(['�']).collect()
+    cleaned.chars().take(width.saturating_sub(1)).chain(['\u{2026}']).collect()
 }
 
 

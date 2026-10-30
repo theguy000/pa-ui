@@ -85,7 +85,7 @@ pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(Str
         ui.set_effort_open(false);
         *hover_current.borrow_mut() = None;
         ui.set_status_line(
-            format!("{model} � {}", thinking_level_label(&level)).into(),
+            format!("{model} \u{00b7} {}", thinking_level_label(&level)).into(),
         );
         let _ = jobs.send(Job::SetLevel {
             session,

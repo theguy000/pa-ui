@@ -58,9 +58,11 @@ pub(crate) enum Job {
 
 pub(crate) enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
-    Transcript { session: String, messages: Vec<serde_json::Value> },
+    Transcript { session: String, rows: Vec<crate::transcript::Row>, skipped: usize, messages: Vec<serde_json::Value> },
     Tail {
         session: String,
+        rows: Vec<crate::transcript::Row>,
+        skipped: usize,
         messages: Vec<serde_json::Value>,
         last_entry: String,
         /// id of the oldest row in this page: where a walk backwards starts
@@ -158,7 +160,7 @@ pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<(u64, Msg)>, client_id: St
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
-        let _ = reporter.send((0, Msg::Error("engine stopped ÃƒÂ¯Ã‚Â¿Ã‚Â½ reopen the window".into())));
+        let _ = reporter.send((0, Msg::Error("engine stopped \u{2014} reopen the window".into())));
     }
 }
 
@@ -182,6 +184,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut resume: Option<(String, u64)> = None;
+    let window_rows: usize = std::env::var("PA_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(WINDOW_ROWS);
 
     loop {
         if client.is_none() {
@@ -207,7 +210,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         if !active.alive() {
             client = None;
             attached = None;
-            let _ = out.send(Msg::Error("daemon connection lost ÃƒÂ¯Ã‚Â¿Ã‚Â½ reconnecting".into()));
+            let _ = out.send(Msg::Error("daemon connection lost \u{2014} reconnecting".into()));
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -229,10 +232,14 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // so an answer to a question the window no longer has can
                     // be dropped before it reaches any state.
                     out.generation = generation;
+                    if attached.as_deref() != Some(session.as_str()) {
+                        resume = None;
+                    }
                     match attach_as(active, &session, Some(&client_id), resume.clone()) {
                         Ok(messages) => {
                             attached = Some(session.clone());
-                            let _ = out.send(Msg::Transcript { session, messages });
+                            let (rows, skipped) = crate::transcript::build(&messages, window_rows);
+                            let _ = out.send(Msg::Transcript { session, rows, skipped, messages });
                         }
                         Err(error) => {
                             let _ = out.send(Msg::Error(error.to_string()));
@@ -463,11 +470,15 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // attached to is how a message can be accepted and then go
                     // nowhere. The TUI does the same rebind-and-send.
                     if attached.as_deref() != Some(session.as_str()) {
-                        match attach_as(active, &session, Some(&client_id), resume.clone()) {
+                        resume = None;
+                        match attach_as(active, &session, Some(&client_id), None) {
                             Ok(messages) => {
                                 attached = Some(session.clone());
+                                let (rows, skipped) = crate::transcript::build(&messages, window_rows);
                                 let _ = out.send(Msg::Transcript {
                                     session: session.clone(),
+                                    rows,
+                                    skipped,
                                     messages,
                                 });
                             }
@@ -572,8 +583,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     let read = pa_client::get_page(active, &session, None, WINDOW_ROWS);
                     match read {
                     Ok(page) => {
+                        let (rows, skipped) = crate::transcript::build(&page.messages, window_rows);
                         let _ = out.send(Msg::Tail {
                             session,
+                            rows,
+                            skipped,
                             messages: page.messages,
                             last_entry: page.last_entry,
                             first_entry: page.first_entry,
@@ -684,6 +698,8 @@ mod tests {
     fn tail() -> Msg {
         Msg::Tail {
             session: String::new(),
+            rows: Vec::new(),
+            skipped: 0,
             messages: Vec::new(),
             last_entry: String::new(),
             first_entry: String::new(),
@@ -696,7 +712,7 @@ mod tests {
     fn the_fence_covers_the_replies_about_one_chat() {
         // every kind of read a chat answers
         assert!(tail().is_session_scoped());
-        assert!(Msg::Transcript { session: String::new(), messages: Vec::new() }.is_session_scoped());
+        assert!(Msg::Transcript { session: String::new(), rows: Vec::new(), skipped: 0, messages: Vec::new() }.is_session_scoped());
         assert!(Msg::Older {
             session: String::new(),
             rows: Vec::new(),

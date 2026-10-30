@@ -450,14 +450,15 @@ impl Tick {
                     }
                     ui.set_busy(true);
                 }
-                Msg::Transcript { session, messages } => {
+                Msg::Transcript { session, rows, skipped, messages } => {
                     // the session's own commands arrive with the session
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
                     });
                     l.tail_len = messages.len();
                     *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
-                    let (mut built, skipped) = transcript::build(&messages, window_rows);
+                    let _ = window_rows;
+                    let mut built = rows;
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[attach] {} msgs -> {} rows (skipped {skipped})",
@@ -502,6 +503,8 @@ impl Tick {
                 }
                 Msg::Tail {
                     session,
+                    rows,
+                    skipped,
                     messages,
                     last_entry,
                     first_entry,
@@ -569,7 +572,8 @@ impl Tick {
                     l.tail_len = messages.len();
                     l.tail_sig = Some((cursor, newest));
                     *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
-                    let (mut built, skipped) = transcript::build(&messages, window_rows);
+                    let _ = window_rows;
+                    let mut built = rows;
                     if built.is_empty() && !messages.is_empty() {
                         continue;
                     }
@@ -1059,7 +1063,7 @@ impl Tick {
                     }
                     pending_user.borrow_mut().take();
                     sheet.take_back_prompt(&text);
-                    ui.set_status_line("prompt not accepted � text restored".into());
+                    ui.set_status_line("prompt not accepted \u{2014} text restored".into());
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {

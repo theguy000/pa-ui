@@ -67,7 +67,7 @@ pub(crate) fn display_name(row: &SessionRow) -> SharedString {
         text.chars().skip(count.saturating_sub(width)).collect()
     };
     if let Some(last) = row.cwd.split(['\\', '/']).filter(|part| !part.is_empty()).next_back() {
-        return format!("{last} � {}", tail(&row.id, 6)).into();
+        return format!("{last} \u{00b7} {}", tail(&row.id, 6)).into();
     }
     tail(&row.id, 10).into()
 }

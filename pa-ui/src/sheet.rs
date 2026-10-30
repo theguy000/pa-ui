@@ -98,6 +98,7 @@ struct VirtualSlintRows {
     last_scroll_y: f32,
     last_viewport_h: f32,
     in_slint_call: bool,
+    content_dirty: bool,
 }
 
 impl VirtualSlintRows {
@@ -113,6 +114,7 @@ impl VirtualSlintRows {
             last_scroll_y: 0.0,
             last_viewport_h: 800.0,
             in_slint_call: false,
+            content_dirty: false,
         }
     }
 
@@ -216,7 +218,10 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
 
         let old_start = vs.win_start;
         let old_end = vs.win_end;
+        let dirty = vs.content_dirty;
+        vs.content_dirty = false;
         let need_shift = force
+            || dirty
             || old_end <= old_start
             || old_end > total
             || target_start.abs_diff(old_start) >= SHIFT_STEP
@@ -227,6 +232,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         let patch = if !need_shift {
             ModelPatch::None
         } else if !force
+            && !dirty
             && old_end > old_start
             && old_end <= total
             && vs.model.row_count() == (old_end - old_start)
@@ -245,6 +251,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
                 prepend_rows,
             }
         } else if !force
+            && !dirty
             && old_end > old_start
             && old_end <= total
             && vs.model.row_count() == (old_end - old_start)
@@ -880,6 +887,7 @@ impl Redraw for SharedVirtualAdapter {
     fn reset(&mut self, rows: Vec<TRow>) {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             vs.all_rows = rows;
+            vs.content_dirty = true;
             vs.win_start = 0;
             vs.win_end = 0;
         }
@@ -902,12 +910,14 @@ impl Redraw for SharedVirtualAdapter {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             let pos = at.min(vs.all_rows.len());
             vs.all_rows.insert(pos, row);
+            vs.content_dirty = true;
         }
     }
     fn remove(&mut self, at: usize) {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             if at < vs.all_rows.len() {
                 vs.all_rows.remove(at);
+                vs.content_dirty = true;
             }
         }
     }

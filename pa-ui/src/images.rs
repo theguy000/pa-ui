@@ -16,6 +16,7 @@ const SUPPORTED: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gi
 /// One image ready to send: the payload, its type, and a file on disk for the
 /// thumbnail the composer draws.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Attachment {
     pub mime: String,
     pub base64: String,
@@ -53,6 +54,7 @@ pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+#[allow(dead_code)]
 fn extension_for(mime: &str) -> &'static str {
     match mime {
         "image/jpeg" => "jpg",
@@ -83,20 +85,10 @@ pub fn base64(bytes: &[u8]) -> String {
 /// `.png` that is really a JPEG is a trap for whoever looks at the temp directory.
 fn attach(bytes: Vec<u8>) -> Option<Attachment> {
     let mime = sniff(&bytes)?;
-    let path = std::env::temp_dir().join(format!(
-        "pa-attach-{}-{}.{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default(),
-        extension_for(mime)
-    ));
-    std::fs::write(&path, &bytes).ok()?;
     Some(Attachment {
         mime: mime.to_string(),
         base64: base64(&bytes),
-        path,
+        path: PathBuf::new(),
     })
 }
 
@@ -259,11 +251,49 @@ pub fn decode_base64(input: &str) -> Vec<u8> {
     out
 }
 
+const MAX_IMAGE_CACHE: usize = 64;
+
+struct ImageCache {
+    map: std::collections::HashMap<u64, slint::Image>,
+    order: std::collections::VecDeque<u64>,
+}
+
+impl ImageCache {
+    fn new() -> Self {
+        Self {
+            map: std::collections::HashMap::new(),
+            order: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: u64) -> Option<slint::Image> {
+        let img = self.map.get(&key)?.clone();
+        if let Some(pos) = self.order.iter().position(|&k| k == key) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(key);
+        Some(img)
+    }
+
+    fn insert(&mut self, key: u64, image: slint::Image) {
+        if self.map.contains_key(&key) {
+            if let Some(pos) = self.order.iter().position(|&k| k == key) {
+                self.order.remove(pos);
+            }
+        } else if self.map.len() >= MAX_IMAGE_CACHE {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+        self.order.push_back(key);
+        self.map.insert(key, image);
+    }
+}
+
 thread_local! {
-    /// Decoded once per payload. The transcript rebuilds on every poll, and
-    /// writing and reading a file per row per poll would be absurd.
-    static CACHE: std::cell::RefCell<std::collections::HashMap<u64, slint::Image>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Decoded once per payload, bounded by LRU so long sessions stay lean.
+    static CACHE: std::cell::RefCell<ImageCache> =
+        std::cell::RefCell::new(ImageCache::new());
 }
 
 /// A base64 payload as something Slint can draw, cached by content.
@@ -290,7 +320,7 @@ pub fn from_wire_sized(base64: &str, mime: &str, max_w: u32, max_h: u32) -> slin
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(&(base64, max_w, max_h), &mut hasher);
     let key = std::hash::Hasher::finish(&hasher);
-    if let Some(image) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+    if let Some(image) = CACHE.with(|cache| cache.borrow_mut().get(key)) {
         return image;
     }
     let bytes = decode_base64(base64);

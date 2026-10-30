@@ -170,7 +170,8 @@ pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>
         {
             let held = attachments.borrow();
             if let Some(first) = held.first() {
-                if let Ok(thumb) = slint::Image::load_from_path(&first.path) {
+                let thumb = images::from_wire(&first.base64, &first.mime);
+                if thumb.size().width > 0 {
                     let mut thumbs = sent_thumbs.borrow_mut();
                     thumbs.push((message.clone(), thumb));
                     while thumbs.len() > 8 {
