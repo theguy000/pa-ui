@@ -128,6 +128,14 @@ enum Msg {
     Error(String),
 }
 
+fn flog(msg: &str) {
+    use std::io::Write;
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1_000_000).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"C:\Users\Istiak Mahmud\git\prime-agent-app\pa-scroll-trace.log") {
+        let _ = writeln!(f, "[{ms:06}] {msg}");
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.window().set_size(slint::PhysicalSize::new(1200, 830));
@@ -1085,6 +1093,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let rows = rows_store.clone();
         let model = row_model.clone();
+        ui.on_scroll_trace(move |msg| { flog(&format!("SLINT: {msg}")); });
         ui.on_toggle_row(move |index| {
             let index = index as usize;
             let mut rows = rows.borrow_mut();
@@ -1519,79 +1528,56 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     has_older.set(more);
                     ui.set_has_older(more);
-                    // a quiet live row is replaced by the store's copy
-                    close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                    if open_live.is_some() && !fresh {
+                        tail_len = messages.len();
+                        tail_sig = Some((cursor, newest));
+                        continue;
+                    }
                     tail_len = messages.len();
                     tail_sig = Some((cursor, newest));
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
                     }
-                    // While a turn runs, the store's copy of it is still growing:
-                    // its rows change shape from poll to poll (a thinking row
-                    // becomes a tool cell, a cell becomes a code block), and
-                    // replacing the model on each one made the transcript jump up
-                    // and down as it settled. So the live view is only ever
-                    // APPENDED to while busy - nothing already on screen is
-                    // rewritten - and the single reconcile happens at turn end.
-                    // A turn is live if the daemon says so OR if a message is
-                    // still being written into the view: the busy flag flickers
-                    // between tool calls, and a rebuild taken on the flicker
-                    // replaces rows the store has not persisted yet, which tears
-                    // a dozen rows off the transcript and puts them back.
-                    // A message that is still open owns its rows for as long as
-                    // it is open: a rebuild that lands during a long tool call
-                    // (no deltas, so the quiet timer expires) would otherwise
-                    // replace rows the store has not written yet and tear the
-                    // transcript down by however many rows that turn had.
-                    // While this client is drawing the open turn � a live row,
-                    // or cells keyed by call id � the store's copy of that same
-                    // turn is not a second opinion worth having. Appending the
-                    // rows the store had written so far is what put the previous
-                    // answer back on screen for a few seconds after a send and
-                    // then drew the same code block twice: `built` is a rebuilt,
-                    // windowed list, so its index range stops lining up with the
-                    // rows already shown the moment the store reshapes one row or
-                    // the window slides. Nothing is appended now; the store only
-                    // speaks when nothing is open, or when a turn closes.
-                    let open = open_live.is_some();
-                    if open && !fresh {
-                        tail_len = messages.len();
-                        tail_sig = Some((cursor, newest));
-                        continue;
-                    }
-                    if open {
-                        // a turn just closed: give whatever we drew a moment to
-                        // find its way into the store, so the transcript never
-                        // shrinks under the reader's eyes
-                    }
-                    // the same hold on every poll, or the prompt we drew
-                    // vanishes on the first rebuild and the transcript jumps
                     if crate::env_cfg::cfg().demo_markdown {
-                        // the demo rides every rebuild, or the next poll wipes it
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    // Merged per message, not replaced wholesale: a message the
-                    // store sends replaces its own rows, a message it does not
-                    // mention is left exactly as drawn, and a message it has
-                    // never sent is appended. Nothing here compares sizes, so a
-                    // store that is one message behind cannot shrink or blank
-                    // anything.
-                    let held = hold_offset(&ui);
+                    let live_in_built = open_live.as_ref().is_some_and(|turn| {
+                        built.iter().any(|row| row.message == turn.message)
+                    });
+                    if live_in_built || (!ui.get_busy() && !in_flight.get()) {
+                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                    } else if open_live.is_some() {
+                        let saved = open_live.take();
+                        if let Some(ref turn) = saved {
+                            let mut temp = Some(live::Live { message: String::new(), start: turn.start, rows: turn.rows, parts: Vec::new() });
+                            close_live(&mut temp, &rows_store_ui, &row_model_ui);
+                        }
+                        let mut store = rows_store_ui.borrow_mut();
+                        merge_rows(&mut store, built, &row_model_ui);
+                        let new_start = store.len();
+                        drop(store);
+                        if let Some(mut turn) = saved {
+                            turn.start = new_start;
+                            turn.rows = 0;
+                            open_live = Some(turn);
+                            sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        }
+                        if follow {
+                            scroll_to_end_when_ready(&ui.as_weak());
+                        }
+                        continue;
+                    }
                     let mut store = rows_store_ui.borrow_mut();
                     merge_rows(&mut store, built, &row_model_ui);
                     let count = store.len();
                     drop(store);
-                    pin_offset_across_layout(&ui, held);
                     if crate::env_cfg::cfg().dump.is_some() {
                         dump_rows(&rows_store_ui.borrow());
                     }
                     trace_rows("tail rebuild", &rows_store_ui);
                     if crate::env_cfg::cfg().debug {
-                        eprintln!(
-                            "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
-                            messages.len()
-                        );
+                        eprintln!("[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})", messages.len());
                     }
                     if follow {
                         scroll_to_end_when_ready(&ui.as_weak());
@@ -1816,39 +1802,41 @@ fn main() -> Result<(), slint::PlatformError> {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or_default();
                     if kind == Some("message_start") || delta_kind == "start" {
-                        // A message that opens takes a range of its own, after
-                        // whatever the last one owned. The previous range has to
-                        // be dropped first: two ranges for one answer is exactly
-                        // the double that kept coming back.
-                        close_live(&mut open_live, &rows_store_ui, &row_model_ui);
+                        let key = transcript::message_key(message);
+                        if open_live.as_ref().is_some_and(|turn| turn.message == key) {
+                            continue;
+                        }
+                        open_live = None;
                         let start = rows_store_ui.borrow().len();
-                        open_live = Some(live::Live::new(start, transcript::message_key(message)));
+                        open_live = Some(live::Live::new(start, key));
                         stream_started = SystemTime::now();
                         trace_rows("live row opened", &rows_store_ui);
                         continue;
                     }
+                    if open_live.is_none() && kind == Some("message_update") {
+                        let key = transcript::message_key(message);
+                        let start = rows_store_ui.borrow().len();
+                        open_live = Some(live::Live::new(start, key));
+                        stream_started = SystemTime::now();
+                    }
                     let Some(turn) = open_live.as_mut() else {
-                        // a delta with no open message is the tail of something
-                        // already reconciled; the store has it
                         continue;
                     };
+                    // Ignore toolcall JSON deltas and *_end markers that don't change visible prose/thinking
+                    if !delta_kind.is_empty() && !delta_kind.starts_with("text_delta") && !delta_kind.starts_with("thinking_delta") {
+                        continue;
+                    }
+                    if kind == Some("message_end") {
+                        continue;
+                    }
                     if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
-                        // Only the prose belongs in the body. A tool call also
-                        // streams deltas, and they are the call's JSON: feeding
-                        // them in printed the code as text, then the real cell
-                        // arrived and it looked like the code had moved.
                         if delta_kind.starts_with("text") {
                             turn.push_text(delta);
                         } else if delta_kind.starts_with("thinking") {
                             turn.push_thinking(delta);
                         }
                     }
-                    // the frame's own copy of the message wins over the deltas
-                    let whole = message_text(message);
-                    if !whole.is_empty() {
-                        turn.set_text(&whole);
-                    }
-                    let held = hold_offset(&ui);
+                                        let held = hold_offset(&ui);
                     sync_live(&mut open_live, &rows_store_ui, &row_model_ui);
                     pin_offset_across_layout(&ui, held);
                     scroll_if_parked(&ui);
@@ -1858,7 +1846,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
                             stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
                             open_live.as_ref().map_or(0, |turn| turn.rows),
-                            whole.chars().count(),
+                            0usize,
                             delta_kind
                         );
                     }
@@ -3308,55 +3296,15 @@ pub fn may_autoscroll(following: bool, dragging: bool) -> bool {
 /// reader's own request.
 fn force_scroll_to_end(ui: &AppWindow) {
     ui.set_follow_bottom(true);
-    ui.invoke_scroll_to_end();
+    ui.invoke_force_scroll_to_end();
 }
 
 fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
-    // A single guard here, rather than a rule at every call site: the tail poll,
-    // the streamed deltas and the delayed corrections all go through this, and
-    // forgetting the check in one of them is how the view ended up fighting the
-    // reader in the first place.
     let Some(current) = ui.upgrade() else { return };
     if !may_autoscroll(current.get_follow_bottom(), current.get_scrollbar_dragging()) {
         return;
     }
-    FOLLOW_TIMER.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let timer = slot.get_or_insert_with(slint::Timer::default);
-        let ui = ui.clone();
-        // tall rows (a code block, a table) can settle a frame later than the
-        // model change, so a short correction follows the first - and each one
-        // re-checks, because the reader may have taken over in between
-        timer.start(slint::TimerMode::SingleShot, Duration::from_millis(55), move || {
-            if let Some(ui) = ui.upgrade() {
-                if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
-                    return;
-                }
-                ui.invoke_scroll_to_end();
-                let late = ui.as_weak();
-                // A list view measures its rows as it creates them, so the
-                // content height - and therefore the end - moves twice after the
-                // first correction.
-                slint::Timer::single_shot(Duration::from_millis(180), move || {
-                    if let Some(ui) = late.upgrade() {
-                        if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
-                            return;
-                        }
-                        ui.invoke_scroll_to_end();
-                        let last = ui.as_weak();
-                        slint::Timer::single_shot(Duration::from_millis(300), move || {
-                            if let Some(ui) = last.upgrade() {
-                                if !may_autoscroll(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
-                                    return;
-                                }
-                                ui.invoke_scroll_to_end();
-                            }
-                        });
-                    }
-                });
-            }
-        });
-    });
+    current.invoke_scroll_to_end();
 }
 
 /// 1234 ? "1.2k", 47_011_000 ? "47.0M".

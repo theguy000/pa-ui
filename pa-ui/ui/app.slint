@@ -1285,6 +1285,7 @@ export component AppWindow inherits Window {
     callback provider-toggled(string);
     callback rename-requested(string, string);
     callback toggle-row(int);
+    callback scroll-trace(string);
     callback queue-act(string, int, string);
     callback queue-clear();
     callback new-chat();
@@ -1350,61 +1351,75 @@ export component AppWindow inherits Window {
         root.follow-bottom = false;
     }
 
-    /// Called when the reader's own scrolling lands on the floor.
     public function reader-reached-floor() {
-        // Two pixels, not eight: with eight, a four-pixel nudge up followed by a
-        // one-pixel jitter counted as "the reader came back", and the stream took
-        // the view back. Near the floor is not the floor.
-        if (!root.scrollbar-dragging && root.from-bottom <= 2px) {
+        if (!root.scrollbar-dragging && root.from-bottom <= 24px) {
             root.reader-scrolled = false;
             root.follow-bottom = true;
+            root.seen-content-y = transcript-list.content-y;
         }
     }
 
-    // ---- walking backwards -------------------------------------------------
-    // Older history is fetched a page at a time when the reader reaches the top.
-    // The window asks; Rust answers by prepending rows and calling
-    // `restore-anchor`, so what is on screen does not move.
     in property <bool> has-older: false;
     in property <bool> loading-older: false;
-    // Rust raises this once the transcript has settled at its newest row: until
-    // then the list is at offset zero, which looks exactly like "the reader
-    // scrolled to the top" and would fetch history on every launch.
     in property <bool> pager-ready: false;
-    // `pager-ready` is raised by Rust once the transcript has settled at its
-    // newest row; the decision itself lives in Rust, where it can be tested.
 
-    // The offset is worked out in Rust (`anchor_after_prepend`), where it can be
-    // tested: the window only applies it.
     public function set-scroll-y(value: length) {
         transcript-list.content-y = value;
-        // the reader's view moved by a programmatic scroll, not by a wheel: the
-        // next wheel notch must be measured from here, not from a stale offset
         root.seen-content-y = transcript-list.content-y;
     }
 
-    // ---- scrolling the transcript -----------------------------------------
-    // The list's own scrollbar is off: it is drawn by the widget library and
-    // dragged through the same offset a ListView rewrites on every layout, so a
-    // drag fights the list and the thumb barely moves. This one drives the
-    // offset directly, and the offset is what the reader sees.
+    in-out property <length> prev-scroll-range: 0px;
     out property <length> scroll-range: max(
         0px,
         transcript-list.content-height - transcript-list.height
     );
+
+    changed scroll-range => {
+        if (root.follow-bottom && !root.scrollbar-dragging && root.scroll-range >= root.prev-scroll-range && transcript-list.content-y > root.seen-content-y + 1px) {
+            root.reader-moved-up();
+        }
+        // If the scroll range shrank (e.g. busy bar closing) while parked, keep seen-content-y in sync
+        if (root.scroll-range < root.prev-scroll-range && root.follow-bottom && !root.scrollbar-dragging) {
+            transcript-list.content-y = -root.scroll-range;
+            root.seen-content-y = transcript-list.content-y;
+        }
+        root.prev-scroll-range = root.scroll-range;
+    }
+
+    // Smooth 60fps glide toward the floor while follow-bottom is latched
+    smooth-follow := Timer {
+        interval: 16ms;
+        running: root.follow-bottom && !root.scrollbar-dragging && root.from-bottom > 0.5px;
+        triggered => {
+            if (transcript-list.content-y > root.seen-content-y + 1px && root.from-bottom > 2px) {
+                root.reader-moved-up();
+                root.seen-content-y = transcript-list.content-y;
+                return;
+            }
+            let target = -root.scroll-range;
+            let gap = transcript-list.content-y - target;
+            if (gap <= 1.5px) {
+                transcript-list.content-y = target;
+            } else if (gap > 600px) {
+                // On initial session attach or huge jump, close most of the gap and glide the last 140px
+                transcript-list.content-y = target + 140px;
+            } else {
+                transcript-list.content-y = transcript-list.content-y - max(1.5px, gap * 0.28);
+            }
+            root.seen-content-y = transcript-list.content-y;
+        }
+    }
 
     public function scroll-to-ratio(ratio: float) {
         transcript-list.content-y = -max(0.0, min(1.0, ratio)) * root.scroll-range;
         root.seen-content-y = transcript-list.content-y;
     }
 
-    /// Place the thumb's top edge at `y` inside the track.
     public function scroll-to-thumb(y: length) {
         let travel = max(1px, transcript-area.height - root.thumb-height);
         root.scroll-to-ratio(y / travel);
     }
 
-    /// 85 % of a screen, the usual page step.
     public function page-scroll(direction: int) {
         if (direction < 0) {
             root.reader-moved-up();
@@ -1435,9 +1450,6 @@ export component AppWindow inherits Window {
         )
     );
 
-    // Page keys only reach whatever holds the keyboard, and most of the time
-    // that is the composer. This scope is what a click inside the transcript
-    // hands focus to, so the same keys work there too.
     transcript-scope := FocusScope {
         x: 0;
         y: 0;
@@ -1457,20 +1469,25 @@ export component AppWindow inherits Window {
                 return EventResult.accept;
             }
             if event.text == Key.End && event.modifiers.control {
-                root.scroll-to-end();
+                root.force-scroll-to-end();
                 return EventResult.accept;
             }
             return EventResult.reject;
         }
     }
 
-    public function scroll-to-end() {
+    public function force-scroll-to-end() {
+        root.reader-scrolled = false;
         root.follow-bottom = true;
-        transcript-list.content-y = -root.scroll-range;
-        // THE stale-offset bug: without this, the next wheel notch is compared
-        // against an offset from before the programmatic jump, reads as "moved
-        // down", and never disarms the latch
         root.seen-content-y = transcript-list.content-y;
+    }
+
+    public function scroll-to-end() {
+        if (transcript-list.content-y > root.seen-content-y + 1px && root.from-bottom > 2px) {
+            root.reader-moved-up();
+            root.seen-content-y = transcript-list.content-y;
+            return;
+        }
     }
 
     VerticalLayout {
@@ -1801,19 +1818,19 @@ export component AppWindow inherits Window {
                             horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
                             // the reader's own scrolling, and nothing else
                             scrolled => {
-                                if (transcript-list.content-y > root.seen-content-y || root.from-bottom > 2px) {
-                                    // Any upward movement OR any wheel tick above the floor disarms immediately
+                                if (transcript-list.content-y > root.seen-content-y + 0.5px && root.from-bottom > 2px) {
                                     root.reader-moved-up();
-                                } else {
-                                    // Moved down right onto the floor: re-arm
+                                } else if (transcript-list.content-y < root.seen-content-y - 0.5px && root.from-bottom <= 24px) {
                                     root.reader-reached-floor();
                                 }
                                 root.seen-content-y = transcript-list.content-y;
                             }
                             VerticalLayout {
+                                width: transcript-list.width;
                                 alignment: start;
                                 spacing: 0px;
                                 for item[i] in root.transcript : TranscriptRow {
+                                    width: transcript-list.width;
                                     data: item;
                                     toggle => {
                                         root.model-menu = false;
@@ -1852,6 +1869,7 @@ export component AppWindow inherits Window {
                                 )
                             );
                             property <length> grabbed: 0px;
+                            property <bool> dragged: false;
 
                             Rectangle {
                                 x: 2px;
@@ -1868,35 +1886,33 @@ export component AppWindow inherits Window {
                                 height: 100%;
                                 pointer-event(event) => {
                                     if event.kind == PointerEventKind.down {
-                                        // where inside the thumb the pull started
+                                        scroll-bar.dragged = false;
                                         scroll-bar.grabbed = self.mouse-y - scroll-bar.thumb-y;
-                                        // a hand on the bar stops the stream from
-                                        // moving the view, before any token lands
                                         root.scrollbar-dragging = true;
                                         root.reader-moved-up();
                                     }
                                     if event.kind == PointerEventKind.up
                                         || event.kind == PointerEventKind.cancel
                                     {
-                                        // letting go is not a decision: only a
-                                        // release *on the floor* re-arms
                                         root.scrollbar-dragging = false;
                                         root.reader-reached-floor();
                                     }
                                 }
                                 moved => {
                                     if (self.pressed) {
+                                        scroll-bar.dragged = true;
                                         root.reader-moved-up();
-                                        root.scroll-to-thumb(self.mouse-y - scroll-bar.grabbed);
-                                        root.reader-reached-floor();
+                                        if (scroll-bar.grabbed >= 0px && scroll-bar.grabbed <= root.thumb-height) {
+                                            root.scroll-to-thumb(self.mouse-y - scroll-bar.grabbed);
+                                        } else {
+                                            root.scroll-to-thumb(self.mouse-y - root.thumb-height / 2);
+                                        }
                                     }
                                 }
                                 clicked => {
-                                    // a press on the track jumps there, but only
-                                    // when it was not a drag of the thumb
-                                    if (scroll-bar.grabbed <= 0px) {
+                                    if (!scroll-bar.dragged && (scroll-bar.grabbed < 0px || scroll-bar.grabbed > root.thumb-height)) {
                                         root.reader-moved-up();
-                                        root.scroll-to-thumb(self.mouse-y);
+                                        root.scroll-to-thumb(self.mouse-y - root.thumb-height / 2);
                                         root.reader-reached-floor();
                                     }
                                 }
@@ -1919,7 +1935,7 @@ export component AppWindow inherits Window {
                             y: (parent.height - self.height) / 2;
                         }
                         jump-touch := TouchArea {
-                            clicked => { root.scroll-to-end(); }
+                            clicked => { root.force-scroll-to-end(); }
                             mouse-cursor: pointer;
                         }
                     }

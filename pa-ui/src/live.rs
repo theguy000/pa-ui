@@ -171,6 +171,7 @@ fn block_rows(kind: &str, text: &str) -> Vec<Row> {
         return Vec::new();
     }
     let message = serde_json::json!({
+        "id": format!("live:{kind}"),
         "role": "assistant",
         "content": [{ "type": kind, kind: text }],
     });
