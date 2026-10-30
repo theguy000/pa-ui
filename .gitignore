@@ -7,3 +7,6 @@ dbg*.log
 
 /target-alt/
 rows-live.txt
+
+# Engineer scratch notes: kept on disk, never part of the product
+/docs/handover/
