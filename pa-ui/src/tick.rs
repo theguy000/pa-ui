@@ -3,6 +3,7 @@
 use crate::*;
 
 /// What the notice row says where history was unloaded.
+#[allow(dead_code)]
 const HISTORY_UNLOADED: &str = "Some history here was unloaded to keep the window fast.";
 
 pub(crate) struct Tick {
@@ -15,6 +16,9 @@ pub(crate) struct Tick {
     /// the oldest message of the newest page: everything above it is history,
     /// and history is what gets unloaded
     pub tail_from: std::cell::RefCell<Option<String>>,
+    pub tail_cursor: std::cell::RefCell<Option<String>>,
+    pub tail_more: std::cell::Cell<bool>,
+    pub floor_since: std::cell::Cell<Option<SystemTime>>,
     /// how many rows of history stay resident above the newest page
     pub history_rows: usize,
     /// when the poll last ran: a long gap is a stall the reader felt
@@ -256,8 +260,13 @@ impl Tick {
         let selected = ui.get_selected_id().to_string();
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
+            l.tail_sig = None;
+            l.tail_len = 0;
             // a different chat starts its own walk backwards
             *oldest_cursor.borrow_mut() = None;
+            *self.tail_cursor.borrow_mut() = None;
+            self.tail_more.set(false);
+            self.floor_since.set(None);
             has_older.set(false);
             loading_older.set(false);
             ui.set_has_older(false);
@@ -274,6 +283,40 @@ impl Tick {
 
         // reaching the top pulls in the page before this one
         self.request_older(&ui);
+
+        let at_floor = ui.get_follow_bottom()
+            && !ui.get_scrollbar_dragging()
+            && ui.get_at_bottom()
+            && !loading_older.get();
+        if at_floor {
+            let since = match self.floor_since.get() {
+                Some(t) => t,
+                None => {
+                    self.floor_since.set(Some(now));
+                    now
+                }
+            };
+            if sheet.rows().len() > self.history_rows
+                && now.duration_since(since).unwrap_or_default() >= Duration::from_secs(60)
+            {
+                if let Some(newest) = tail_from.borrow().clone() {
+                    let gone = sheet.trim_to_tail(&newest);
+                    if gone > 0 {
+                        *oldest_cursor.borrow_mut() = self.tail_cursor.borrow().clone();
+                        let more = self.tail_more.get() && oldest_cursor.borrow().is_some();
+                        has_older.set(more);
+                        ui.set_has_older(more);
+                        scroll_to_end_when_ready(&ui.as_weak());
+                        if crate::env_cfg::cfg().debug {
+                            eprintln!("[trim] idle floor trim unloaded {gone} rows above tail");
+                        }
+                    }
+                }
+                self.floor_since.set(Some(now));
+            }
+        } else {
+            self.floor_since.set(None);
+        }
 
         // caret and selection moves arrive here (arrow keys, clicks); keystrokes
         // paint themselves
@@ -450,6 +493,10 @@ impl Tick {
                         format!("{count} rows")
                     };
                     ui.set_status_line(note.into());
+                    let _ = jobs.send(Job::Tail {
+                        session: session.clone(),
+                        fresh: true,
+                    });
                     // land on the newest turn, like every chat
                     scroll_to_end_when_ready(&ui.as_weak());
                 }
@@ -500,11 +547,20 @@ impl Tick {
                     }
                     // the walk backwards starts at the oldest row of the page
                     // being shown; a fresh page re-anchors it
-                    if !first_entry.is_empty() {
-                        *oldest_cursor.borrow_mut() = Some(first_entry.clone());
+                    let next_tail_cursor = (!first_entry.is_empty()).then(|| first_entry.clone());
+                    *self.tail_cursor.borrow_mut() = next_tail_cursor.clone();
+                    self.tail_more.set(more);
+                    let has_prepended = tail_from
+                        .borrow()
+                        .as_deref()
+                        .is_some_and(|key| sheet.has_rows_above(key));
+                    if !has_prepended {
+                        if let Some(c) = next_tail_cursor {
+                            *oldest_cursor.borrow_mut() = Some(c);
+                        }
+                        has_older.set(more);
+                        ui.set_has_older(more);
                     }
-                    has_older.set(more);
-                    ui.set_has_older(more);
                     if l.open_live.is_some() && !fresh {
                         l.tail_len = messages.len();
                         l.tail_sig = Some((cursor, newest));
@@ -554,6 +610,7 @@ impl Tick {
                     }
                 }
                 Msg::Older {
+                    rows,
                     messages,
                     first_entry,
                     more,
@@ -568,7 +625,7 @@ impl Tick {
                         continue;
                     }
                     let built_at = SystemTime::now();
-                    let (older, _) = transcript::build(&messages, messages.len());
+                    let older = rows;
                     let build_ms = built_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
                     if older.is_empty() {
                         has_older.set(false);
@@ -588,17 +645,7 @@ impl Tick {
                             "[older] our side: build {build_ms:.1} ms, insert {insert_ms:.1} ms for {older_len} rows"
                         );
                     }
-                    // A session of any length must not cost the window more than
-                    // a window: the stretch between the reader and the newest
-                    // page goes, with one notice standing in for it.
-                    if let Some(newest) = tail_from.borrow().clone() {
-                        let gone = sheet.narrow(&newest, self.history_rows, HISTORY_UNLOADED);
-                        if gone > 0 {
-                            if crate::env_cfg::cfg().debug {
-                                eprintln!("[narrow] {gone} rows unloaded above the newest page");
-                            }
-                        }
-                    }
+
                     *oldest_cursor.borrow_mut() = if first_entry.is_empty() {
                         None
                     } else {
@@ -606,17 +653,10 @@ impl Tick {
                     };
                     has_older.set(more && oldest_cursor.borrow().is_some());
                     ui.set_has_older(has_older.get());
-                    // a list view measures the new rows a frame or two later, so
-                    // the correction is applied again once they have heights
-                    for delay in [30u64, 200] {
-                        let weak = ui.as_weak();
-                        slint::Timer::single_shot(Duration::from_millis(delay), move || {
-                            if let Some(ui) = weak.upgrade() {
-                                let after = ui.get_dbg_ch() as f32;
-                                let y = anchor_after_prepend(before_y, before_h, after);
-                                ui.invoke_set_scroll_y(y as f32);
-                            }
-                        });
+                    // Synchronously shift scroll offset by the exact top-pad height added
+                    let added_h = sheet.last_prepend_height();
+                    if added_h > 0.0 {
+                        ui.invoke_set_scroll_y(before_y - added_h);
                     }
                     if crate::env_cfg::cfg().debug {
                         eprintln!(

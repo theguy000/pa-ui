@@ -28,7 +28,7 @@ pub struct PagerState {
 
 
 /// How close to the top counts as "the reader reached the top".
-pub(crate) const TOP_SLACK: f32 = 90.0;
+pub(crate) const TOP_SLACK: f32 = 2200.0;
 
 
 /// Where the list must be scrolled after a page of older rows went in above the
@@ -75,7 +75,7 @@ mod pager_tests {
             ready: true,
             loading: false,
             has_older: true,
-            content_y: -900.0,
+            content_y: -3000.0,
             content_height: 2000.0,
             height: 600.0,
         }
@@ -85,9 +85,9 @@ mod pager_tests {
     fn a_page_is_fetched_only_at_the_top() {
         let mut state = settled();
         assert!(!should_load_older(state), "mid-transcript must not fetch");
-        state.content_y = -120.0;
+        state.content_y = -2500.0;
         assert!(!should_load_older(state), "still below the slack band");
-        state.content_y = -90.0;
+        state.content_y = -2200.0;
         assert!(should_load_older(state), "at the top: fetch");
         state.content_y = 0.0;
         assert!(should_load_older(state), "clamped at the very top");

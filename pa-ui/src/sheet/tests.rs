@@ -29,11 +29,16 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
     let sheet = Sheet {
         inner: RefCell::new(Inner {
             rows: Vec::new(),
+                heights: Vec::new(),
+                measured: Vec::new(),
+                last_prepend_px: 0.0,
             index: std::collections::HashMap::new(),
             open: None,
             gap: None,
-            drawn: Box::new(Recording(orders.clone())),
+            virtual_state: None,
+                drawn: Box::new(Recording(orders.clone())),
         }),
+        vstate: Rc::new(RefCell::new(VirtualSlintRows::new(Rc::new(slint::VecModel::default())))),
     };
     (sheet, orders)
 }

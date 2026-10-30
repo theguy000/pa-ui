@@ -73,6 +73,7 @@ pub(crate) enum Msg {
     /// an older page, to be put above what is already shown
     Older {
         session: String,
+        rows: Vec<crate::transcript::Row>,
         messages: Vec<serde_json::Value>,
         first_entry: String,
         more: bool,
@@ -157,7 +158,7 @@ pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<(u64, Msg)>, client_id: St
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
-        let _ = reporter.send((0, Msg::Error("engine stopped � reopen the window".into())));
+        let _ = reporter.send((0, Msg::Error("engine stopped ÃƒÂ¯Ã‚Â¿Ã‚Â½ reopen the window".into())));
     }
 }
 
@@ -206,7 +207,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         if !active.alive() {
             client = None;
             attached = None;
-            let _ = out.send(Msg::Error("daemon connection lost � reconnecting".into()));
+            let _ = out.send(Msg::Error("daemon connection lost ÃƒÂ¯Ã‚Â¿Ã‚Â½ reconnecting".into()));
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -521,8 +522,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 } => {
                     match pa_client::get_page(active, &session, Some(&before), limit) {
                         Ok(page) => {
+                            let rows = crate::transcript::build(&page.messages, page.messages.len()).0;
                             let _ = out.send(Msg::Older {
                                 session,
+                                rows,
                                 messages: page.messages,
                                 first_entry: page.first_entry,
                                 more: page.more,
@@ -536,6 +539,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             // will never arrive
                             let _ = out.send(Msg::Older {
                                 session: session.clone(),
+                                rows: Vec::new(),
                                 messages: Vec::new(),
                                 first_entry: String::new(),
                                 more: false,
@@ -695,6 +699,7 @@ mod tests {
         assert!(Msg::Transcript { session: String::new(), messages: Vec::new() }.is_session_scoped());
         assert!(Msg::Older {
             session: String::new(),
+            rows: Vec::new(),
             messages: Vec::new(),
             first_entry: String::new(),
             more: false,

@@ -1322,6 +1322,9 @@ export component AppWindow inherits Window {
     out property <length> dbg-cy: transcript-list.content-y;
     out property <length> dbg-ch: transcript-list.content-height;
     out property <length> dbg-h: transcript-list.height;
+    changed dbg-cy => {
+        root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
+    }
     out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 80px;
     /// how far the last row is from the floor of the view, in pixels
     out property <length> from-bottom: max(
@@ -1351,20 +1354,36 @@ export component AppWindow inherits Window {
     }
 
     public function reader-reached-floor() {
-        if (!root.scrollbar-dragging && root.from-bottom <= 24px) {
+        if (!root.scrollbar-dragging && root.from-bottom <= 12px && root.bottom-pad <= 1px) {
             root.reader-scrolled = false;
             root.follow-bottom = true;
             root.seen-content-y = transcript-list.content-y;
         }
     }
 
+    in-out property <length> top-pad: 0px;
+    in-out property <length> bottom-pad: 0px;
+    in-out property <int> window-start: 0;
+    callback viewport-scrolled(length, length);
+    callback row-measured(int, length);
     in property <bool> has-older: false;
     in property <bool> loading-older: false;
     in property <bool> pager-ready: false;
 
+    in-out property <length> live-vel: 0px;
+    in-out property <bool> programmatic-scroll: false;
+
     public function set-scroll-y(value: length) {
-        transcript-list.content-y = value;
+        let preserved-vel = abs(root.flick-vel) > abs(root.live-vel) ? root.flick-vel : root.live-vel;
+        root.programmatic-scroll = true;
+        transcript-list.content-y = max(-root.scroll-range, min(0px, value));
         root.seen-content-y = transcript-list.content-y;
+        root.programmatic-scroll = false;
+        if (abs(preserved-vel) > 1.0px && !root.follow-bottom && !root.scrollbar-dragging) {
+            root.flick-vel = clamp(preserved-vel, -240px, 240px);
+            root.live-vel = root.flick-vel;
+        }
+        root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
     }
 
     in-out property <length> prev-scroll-range: 0px;
@@ -1412,6 +1431,7 @@ export component AppWindow inherits Window {
     public function scroll-to-ratio(ratio: float) {
         transcript-list.content-y = -max(0.0, min(1.0, ratio)) * root.scroll-range;
         root.seen-content-y = transcript-list.content-y;
+        root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
     }
 
     public function scroll-to-thumb(y: length) {
@@ -1419,25 +1439,66 @@ export component AppWindow inherits Window {
         root.scroll-to-ratio(y / travel);
     }
 
+    in-out property <length> flick-vel: 0px;
+
+    // 60fps inertial momentum timer (Flickable-style deceleration)
+    flick-timer := Timer {
+        interval: 16ms;
+        running: abs(root.flick-vel) > 0.8px && !root.scrollbar-dragging && !root.follow-bottom;
+        triggered => {
+            let next-y = max(
+                -root.scroll-range,
+                min(0px, transcript-list.content-y + root.flick-vel)
+            );
+            root.programmatic-scroll = true;
+            transcript-list.content-y = next-y;
+            root.seen-content-y = next-y;
+            root.programmatic-scroll = false;
+            root.flick-vel = root.flick-vel * 0.91;
+            root.live-vel = root.flick-vel;
+            if (abs(root.flick-vel) <= 0.8px || (next-y == 0px && !root.has-older) || next-y == -root.scroll-range) {
+                root.flick-vel = 0px;
+                root.live-vel = 0px;
+            }
+            if (root.flick-vel < 0px) {
+                root.reader-reached-floor();
+            }
+            root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
+        }
+    }
+
     public function page-scroll(direction: int) {
         if (direction < 0) {
             root.reader-moved-up();
         }
-        let step = transcript-list.height * 0.85;
-        transcript-list.content-y = max(
-            -root.scroll-range,
-            min(0px, transcript-list.content-y - step * direction)
-        );
+        let step = transcript-list.height * 0.82;
+        // Impulse into flick velocity for butter-smooth inertial glide
+        root.flick-vel = clamp(root.flick-vel - (step * direction) * 0.24, -220px, 220px);
+        let immediate = transcript-list.content-y - (step * direction) * 0.18;
+        transcript-list.content-y = max(-root.scroll-range, min(0px, immediate));
         root.seen-content-y = transcript-list.content-y;
+        if (direction > 0) {
+            root.reader-reached-floor();
+        }
+        root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
+    }
+
+    public function step-scroll(direction: int) {
+        if (direction < 0) {
+            root.reader-moved-up();
+        }
+        root.flick-vel = clamp(root.flick-vel - (36px * direction), -140px, 140px);
         if (direction > 0) {
             root.reader-reached-floor();
         }
     }
 
     public function scroll-to-top() {
+        root.flick-vel = 0px;
         root.reader-moved-up();
         transcript-list.content-y = 0px;
         root.seen-content-y = 0px;
+        root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
     }
 
     out property <length> thumb-height: max(
@@ -1461,6 +1522,14 @@ export component AppWindow inherits Window {
             }
             if event.text == Key.PageDown {
                 root.page-scroll(1);
+                return EventResult.accept;
+            }
+            if event.text == Key.UpArrow {
+                root.step-scroll(-1);
+                return EventResult.accept;
+            }
+            if event.text == Key.DownArrow {
+                root.step-scroll(1);
                 return EventResult.accept;
             }
             if event.text == Key.Home && event.modifiers.control {
@@ -1787,53 +1856,56 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                                                transcript-list := ScrollView {
-                            // A plain ScrollView over a vertical layout, not a
-                            // ListView. The list view only virtualises by
-                            // guessing: it multiplies the average height of the
-                            // rows it happens to have instantiated by the row
-                            // count, and that number is the content height. With
-                            // rows that differ wildly - a one-line notice next
-                            // to an open thinking block or a long code block -
-                            // the guess is thousands of pixels out, the scroll
-                            // range is phantom, and "scroll to the end" lands in
-                            // empty space with the real rows far above.
-                            //
-                            // A layout measures every row it holds, so the
-                            // height is real and the offset is never rewritten
-                            // from an average. The price is that every row is an
-                            // element; that is affordable because the transcript
-                            // is paged (a page is 150 messages, and the tail
-                            // window is 300) rather than a whole session.
-                            //
-                            // Geometry stays explicit: a view that sizes itself
-                            // to its content has no scroll range.
+                                                transcript-list := Flickable {
                             x: 0;
                             y: 0;
                             width: parent.width;
                             height: parent.height;
-                            // ours is drawn below, on the right edge
-                            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
-                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                            // the reader's own scrolling, and nothing else
-                            scrolled => {
-                                if (transcript-list.content-y > root.seen-content-y + 0.5px && root.from-bottom > 2px) {
+                            interactive: true;
+                            flicked => {
+                                if (root.programmatic-scroll) {
+                                    return;
+                                }
+                                let delta = transcript-list.content-y - root.seen-content-y;
+                                if (abs(delta) > 0.5px) {
+                                    root.live-vel = clamp(delta, -220px, 220px);
+                                }
+                                if (delta > 0.5px && root.from-bottom > 2px) {
                                     root.reader-moved-up();
-                                } else if (transcript-list.content-y < root.seen-content-y - 0.5px && root.from-bottom <= 24px) {
+                                } else if (delta < -0.5px && root.from-bottom <= 12px && root.bottom-pad <= 1px) {
                                     root.reader-reached-floor();
                                 }
+                                // Smoothly boost wheel impulses into inertial coasting
+                                if (!root.scrollbar-dragging && abs(delta) >= 20px && abs(delta) <= 300px) {
+                                    root.programmatic-scroll = true;
+                                    transcript-list.content-y = root.seen-content-y + delta * 0.45;
+                                    root.programmatic-scroll = false;
+                                    root.flick-vel = clamp(root.flick-vel + delta * 0.32, -240px, 240px);
+                                    root.live-vel = root.flick-vel;
+                                }
                                 root.seen-content-y = transcript-list.content-y;
+                                root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
                             }
                             VerticalLayout {
                                 width: transcript-list.width;
                                 alignment: start;
                                 spacing: 0px;
+                                Rectangle {
+                                    width: 1px;
+                                    height: root.top-pad;
+                                }
                                 for item[i] in root.transcript : TranscriptRow {
                                     width: transcript-list.width;
                                     data: item;
+                                    init => {
+                                        root.row-measured(root.window-start + i, self.height);
+                                    }
+                                    changed height => {
+                                        root.row-measured(root.window-start + i, self.height);
+                                    }
                                     toggle => {
                                         root.model-menu = false;
-                                        root.toggle-row(i);
+                                        root.toggle-row(root.window-start + i);
                                     }
                                     reason-hover(reason, x, y) => {
                                         root.reason-text = reason;
@@ -1844,6 +1916,10 @@ export component AppWindow inherits Window {
                                     reason-leave => {
                                         root.reason-open = false;
                                     }
+                                }
+                                Rectangle {
+                                    width: 1px;
+                                    height: root.bottom-pad;
                                 }
                             }
                         }

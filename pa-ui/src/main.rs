@@ -53,7 +53,7 @@ const WINDOW_ROWS: usize = 300;
 
 /// How much history one scroll-to-the-top pulls in. The TUI pages by the same
 /// order of magnitude; a page costs the page, not the session.
-const OLDER_PAGE: usize = 150;
+const OLDER_PAGE: usize = 80;
 
 /// The TUI's loader frames (pa-tui `LOADER_FRAMES`), advanced every poll tick.
 const SPINNER_FRAMES: [&str; 10] = [
@@ -119,6 +119,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // hands it rows; nothing else keeps the two in step.
     let (sheet, transcript) = sheet::Sheet::new();
     let sheet = Rc::new(sheet);
+    sheet.bind_ui(&ui);
     ui.set_transcript(transcript);
     if std::env::var("PA_HOVER").is_ok() {
         ui.set_ctx_hover(true);
@@ -262,7 +263,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let history_rows: usize = std::env::var("PA_HISTORY")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(600);
+        .unwrap_or(1500);
     let window_rows: usize = std::env::var("PA_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -296,6 +297,9 @@ fn main() -> Result<(), slint::PlatformError> {
         msg_rx,
         attach_generation: std::cell::Cell::new(0),
         tail_from: std::cell::RefCell::new(None),
+        tail_cursor: std::cell::RefCell::new(None),
+        tail_more: std::cell::Cell::new(false),
+        floor_since: std::cell::Cell::new(None),
         history_rows,
         last_tick: std::cell::Cell::new(SystemTime::now()),
         sheet: sheet.clone(),
