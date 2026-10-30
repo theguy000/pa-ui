@@ -66,36 +66,7 @@ pub fn should_load_older(state: PagerState) -> bool {
 
 #[cfg(test)]
 mod pager_tests {
-    use super::{anchor_after_prepend, prepend_rows, should_load_older, to_slint, PagerState, TRow};
-    use crate::transcript::{self, Row};
-    use slint::{Model, VecModel};
-    use std::rc::Rc;
-
-    fn row(message: &str, body: &str) -> Row {
-        // the struct's fields are all public, and `Row::new` is the crate's own
-        // constructor - a test only needs a key and a body
-        let mut row = transcript::Row {
-            kind: transcript::KIND_AGENT,
-            id: String::new(),
-            title: String::new(),
-            meta: String::new(),
-            body: String::new(),
-            code: String::new(),
-            output: String::new(),
-            has_code: false,
-            has_output: false,
-            expanded: false,
-            failed: false,
-            reason: String::new(),
-            image: String::new(),
-            mime: String::new(),
-            elapsed: String::new(),
-            message: String::new(),
-        };
-        row.message = message.to_string();
-        row.body = body.to_string();
-        row
-    }
+    use super::{anchor_after_prepend, should_load_older, PagerState};
 
     /// A reader parked at the newest row has nothing above them to fetch.
     fn settled() -> PagerState {
@@ -158,48 +129,5 @@ mod pager_tests {
         assert_eq!(anchor_after_prepend(-900.0, 2000.0, 2000.0), -900.0);
         // a height that has not been re-measured yet must not jump the wrong way
         assert_eq!(anchor_after_prepend(-900.0, 2000.0, 1500.0), -900.0);
-    }
-
-    #[test]
-    fn older_rows_go_above_and_the_model_follows() {
-        let mut store = vec![row("m2", "second"), row("m3", "third")];
-        let model = Rc::new(VecModel::<TRow>::from(
-            store.iter().map(to_slint).collect::<Vec<_>>(),
-        ));
-        let older = vec![row("m0", "first"), row("m1", "middle")];
-        prepend_rows(&mut store, &older, &model);
-
-        let order: Vec<String> = store.iter().map(|row| row.message.clone()).collect();
-        assert_eq!(order, ["m0", "m1", "m2", "m3"]);
-        assert_eq!(model.row_count(), 4);
-        assert_eq!(model.row_data(0).unwrap().kind, transcript::KIND_AGENT);
-    }
-
-    #[test]
-    fn a_page_that_arrives_after_the_merge_still_keeps_its_rows() {
-        // the poll runs while a page is in flight: the prepend must survive a
-        // rebuild that does not mention the older messages
-        let mut store = vec![row("m2", "second")];
-        let model = Rc::new(VecModel::<TRow>::from(
-            store.iter().map(to_slint).collect::<Vec<_>>(),
-        ));
-        prepend_rows(&mut store, &[row("m1", "first")], &model);
-        super::merge_rows(&mut store, vec![row("m2", "second, edited")], &model);
-
-        let order: Vec<String> = store.iter().map(|row| row.message.clone()).collect();
-        assert_eq!(order, ["m1", "m2"], "the older page was dropped by the merge");
-        assert_eq!(store[1].body, "second, edited");
-        assert_eq!(model.row_count(), 2);
-    }
-
-    #[test]
-    fn an_empty_page_changes_nothing() {
-        let mut store = vec![row("m1", "one")];
-        let model = Rc::new(VecModel::<TRow>::from(
-            store.iter().map(to_slint).collect::<Vec<_>>(),
-        ));
-        prepend_rows(&mut store, &[], &model);
-        assert_eq!(store.len(), 1);
-        assert_eq!(model.row_count(), 1);
     }
 }

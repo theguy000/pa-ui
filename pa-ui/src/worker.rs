@@ -623,33 +623,3 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, out: Sender<Msg>, client_id: Str
         std::thread::sleep(Duration::from_millis(150));
     }
 }
-
-/// The prompt we drew the moment it was sent, put back on top of a rebuild that
-/// predates the daemon's echo. Without it the row disappears for a poll and
-/// reappears, which reads as the transcript jumping under the pointer.
-pub(crate) fn drop_pending_prompt(
-    rows: &Rc<RefCell<Vec<transcript::Row>>>,
-    model: &slint::VecModel<TRow>,
-    text: &str,
-) {
-    if text.is_empty() {
-        return;
-    }
-    let echo = serde_json::json!({
-        "role": "user",
-        "content": [{ "type": "text", "text": text }],
-    });
-    let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1).0.into_iter().next()
-    else {
-        return;
-    };
-    let mut store = rows.borrow_mut();
-    let Some(last) = store.last() else { return };
-    if last.kind != candidate.kind || last.body != candidate.body {
-        return;
-    }
-    store.pop();
-    let index = store.len();
-    drop(store);
-    model.remove(index);
-}

@@ -1,15 +1,10 @@
-//! Probes: ignored measurements. Run with `--ignored`; they report numbers and assert nothing.
-
-#[allow(unused_imports)]
-use crate::*;
+//! Probes: ignored measurements. Run with --ignored; they report numbers and assert nothing.
 
 #[cfg(test)]
 mod efficiency_probe {
-    use super::{merge_rows, to_slint, TRow};
+    use crate::sheet::Sheet;
     use crate::transcript;
     use serde_json::{json, Value};
-    use slint::{Model, VecModel};
-    use std::rc::Rc;
     use std::time::Instant;
 
     /// A session shaped like a real one: prose, code blocks, tool calls with
@@ -30,7 +25,7 @@ mod efficiency_probe {
                         "timestamp": index,
                         "content": [
                             {"type": "thinking", "thinking": "the store is the authority\nand the events are advisory\n".repeat(3)},
-                            {"type": "text", "text": format!("# heading {index}\n\nProse with `inline code` and **bold** and a [link](https://example.com).\n\n```rust\nfn work() -> u32 {{\n    // a comment\n    41 + 1\n}}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")},
+                            {"type": "text", "text": format!("# heading {index}\n\nProse with some inline code and bold and a link.\n\n```rust\nfn work() -> u32 {{\n    // a comment\n    41 + 1\n}}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")},
                             {"type": "toolCall", "id": call, "name": "bash", "arguments": {"command": "cargo test -p pa-ui"}}
                         ]
                     }));
@@ -59,7 +54,7 @@ mod efficiency_probe {
             out = Some(body());
         }
         let each = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
-        eprintln!("[bench] {label:38} {each:8.3} ms/run  ({runs} runs)");
+        eprintln!("[bench] {label:44} {each:8.3} ms/run  ({runs} runs)");
         out.expect("a run")
     }
 
@@ -77,33 +72,29 @@ mod efficiency_probe {
             transcript::build(&messages, 300)
         });
 
-        let converted = time("to_slint for every row", 20, || {
-            rows.iter().map(to_slint).collect::<Vec<TRow>>()
-        });
-        eprintln!("[bench] slint rows: {}", converted.len());
+        let (sheet, _list) = Sheet::new();
+        sheet.replace(rows.clone());
+        eprintln!("[bench] rows on the sheet: {}", sheet.rows().len());
 
-        let mut store = rows.clone();
-        let model = Rc::new(VecModel::<TRow>::from(
-            store.iter().map(to_slint).collect::<Vec<_>>(),
-        ));
-        time("merge, nothing changed", 20, || {
-            merge_rows(&mut store, rows.clone(), &model);
-        });
+        let unchanged = rows.clone();
+        time("a poll where nothing changed", 20, || sheet.merge(unchanged.clone()));
 
         let mut changed = rows.clone();
         let last = changed.len() - 1;
         changed[last].body.push_str(" and one more sentence");
-        time("merge, one message changed", 20, || {
-            merge_rows(&mut store, changed.clone(), &model);
+        time("a poll where one message changed", 20, || sheet.merge(changed.clone()));
+
+        let older: Vec<_> = rows.iter().take(60).cloned().collect();
+        time("a page of older rows", 20, || {
+            sheet.replace(rows.clone());
+            sheet.prepend(older.clone());
         });
-        assert_eq!(model.row_count(), store.len());
     }
 }
 
-
 #[cfg(test)]
 mod efficiency_parts {
-    use super::to_slint;
+    use crate::sheet::to_slint;
     use crate::transcript;
     use serde_json::json;
     use std::time::Instant;
@@ -115,7 +106,7 @@ mod efficiency_parts {
             out = Some(body());
         }
         let each = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
-        eprintln!("[bench] {label:38} {each:8.3} ms/run  ({runs} runs)");
+        eprintln!("[bench] {label:44} {each:8.3} ms/run  ({runs} runs)");
         out.expect("a run")
     }
 
@@ -127,14 +118,14 @@ mod efficiency_parts {
             "role": "assistant",
             "timestamp": 7,
             "content": [
-                {"type": "text", "text": "# heading\n\nProse with `inline code` and **bold**.\n\n```rust\nfn work() -> u32 { 41 + 1 }\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"},
+                {"type": "text", "text": "# heading\n\nProse with some inline code and bold.\n\n```rust\nfn work() -> u32 { 41 + 1 }\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"},
                 {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {"command": "cargo test"}}
             ]
         });
-        let markup = transcript::markdown_markup("Prose with `inline code` and **bold** and a [link](https://example.com).");
+        let markup = transcript::markdown_markup("Prose with some inline code and bold and a link.");
 
         time("markdown_markup, one paragraph", 2000, || {
-            transcript::markdown_markup("Prose with `inline code` and **bold** and a [link](https://example.com).")
+            transcript::markdown_markup("Prose with some inline code and bold and a link.")
         });
         time("StyledText::from_markdown, one row", 2000, || {
             slint::StyledText::from_markdown(&markup)
@@ -152,10 +143,9 @@ mod efficiency_parts {
     }
 }
 
-
 #[cfg(test)]
 mod efficiency_stream {
-    use super::to_slint;
+    use crate::sheet::to_slint;
     use crate::transcript;
     use serde_json::json;
     use std::time::Instant;
@@ -172,8 +162,7 @@ mod efficiency_stream {
         json!({"role": "assistant", "timestamp": 1, "content": [{"type": "text", "text": text}]})
     }
 
-    /// What one streamed delta costs when the message being written is long:
-    /// the delta path rebuilds that message and converts it for the window.
+    /// What one streamed delta costs when the message being written is long.
     #[test]
     #[ignore = "a measurement, not an assertion"]
     fn the_cost_of_one_more_character() {

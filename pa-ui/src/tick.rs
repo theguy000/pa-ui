@@ -6,8 +6,7 @@ pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
     pub msg_rx: Receiver<Msg>,
-    pub rows_store: Rc<RefCell<Vec<Row>>>,
-    pub row_model: Rc<slint::VecModel<TRow>>,
+    pub sheet: Rc<sheet::Sheet>,
     pub session_filter: Rc<RefCell<String>>,
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
     pub in_flight: Rc<std::cell::Cell<bool>>,
@@ -143,8 +142,7 @@ impl Tick {
         let mut l = Local::load(self);
         let jobs = &self.jobs;
         let msg_rx = &self.msg_rx;
-        let rows_store_ui = &self.rows_store;
-        let row_model_ui = &self.row_model;
+        let sheet = &self.sheet;
         let session_filter = &self.session_filter;
         let sessions_cache = &self.sessions_cache;
         let in_flight = &self.in_flight;
@@ -295,7 +293,8 @@ impl Tick {
                                 l.tail_len = 0;
                                 l.tail_sig = None;
                                 l.last_seq = 0;
-                                close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                                l.open_live = None;
+                                sheet.answer_ended();
                             }
                         }
                     }
@@ -398,11 +397,9 @@ impl Tick {
                     // a prompt sent while this snapshot was in flight: the
                     // store predates it, so the row we drew has to survive the
                     // rebuild
-                    dump_rows(&built);
-                    let slint_rows: Vec<TRow> = built.iter().map(to_slint).collect();
-                    let count = slint_rows.len();
-                    *rows_store_ui.borrow_mut() = built;
-                    row_model_ui.set_vec(slint_rows);
+                    sheet.replace(built);
+                    let count = sheet.rows().len();
+                    sheet::dump(&sheet.rows());
                     // which model is running, and at what effort: the chip and
                     // the menu's ladder both read from this
                     let _ = jobs.send(Job::SessionState {
@@ -491,40 +488,24 @@ impl Tick {
                     if crate::env_cfg::cfg().demo_markdown {
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    let live_in_built = l.open_live.as_ref().is_some_and(|turn| {
-                        built.iter().any(|row| row.message == turn.message)
-                    });
+                    // The store now carries the message being written: its copy
+                    // replaces the streamed rows where they stand. Taking the
+                    // turn out and putting it back - the fake Live this arm used
+                    // to build - existed only because the range lived out here.
+                    let live_in_built = l
+                        .open_live
+                        .as_ref()
+                        .is_some_and(|turn| built.iter().any(|row| row.message == turn.message));
                     if live_in_built || (!ui.get_busy() && !in_flight.get()) {
-                        close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
-                    } else if l.open_live.is_some() {
-                        let saved = l.open_live.take();
-                        if let Some(ref turn) = saved {
-                            let mut temp = Some(live::Live { message: String::new(), start: turn.start, rows: turn.rows, parts: Vec::new() });
-                            close_live(&mut temp, &rows_store_ui, &row_model_ui);
-                        }
-                        let mut store = rows_store_ui.borrow_mut();
-                        merge_rows(&mut store, built, &row_model_ui);
-                        let new_start = store.len();
-                        drop(store);
-                        if let Some(mut turn) = saved {
-                            turn.start = new_start;
-                            turn.rows = 0;
-                            l.open_live = Some(turn);
-                            sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
-                        }
-                        if follow {
-                            scroll_to_end_when_ready(&ui.as_weak());
-                        }
-                        continue;
+                        l.open_live = None;
+                        sheet.answer_ended();
                     }
-                    let mut store = rows_store_ui.borrow_mut();
-                    merge_rows(&mut store, built, &row_model_ui);
-                    let count = store.len();
-                    drop(store);
+                    sheet.merge(built);
+                    let count = sheet.rows().len();
                     if crate::env_cfg::cfg().dump.is_some() {
-                        dump_rows(&rows_store_ui.borrow());
+                        sheet::dump(&sheet.rows());
                     }
-                    trace_rows("tail rebuild", &rows_store_ui);
+                    sheet::trace("tail merge", &sheet.rows());
                     if crate::env_cfg::cfg().debug {
                         eprintln!("[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})", messages.len());
                     }
@@ -564,7 +545,8 @@ impl Tick {
                     // the page goes in. Both are read from the list itself.
                     let before_y = ui.get_dbg_cy() as f32;
                     let before_h = ui.get_dbg_ch() as f32;
-                    prepend_rows(&mut rows_store_ui.borrow_mut(), &older, &row_model_ui);
+                    let older_len = older.len();
+                    sheet.prepend(older);
                     *oldest_cursor.borrow_mut() = if first_entry.is_empty() {
                         None
                     } else {
@@ -588,7 +570,7 @@ impl Tick {
                         eprintln!(
                             "[older] {} msgs -> {} rows, more={more} after={:?}",
                             messages.len(),
-                            older.len(),
+                            older_len,
                             oldest_cursor.borrow()
                         );
                     }
@@ -645,6 +627,7 @@ impl Tick {
                     // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
                         in_flight.set(false);
+                        sheet.answer_ended();
                         // The answer stays exactly where it is. Dropping it and
                         // rebuilding from a store that is still one message
                         // behind is what made it collapse to a line and then
@@ -699,7 +682,9 @@ impl Tick {
                             turn.finish_tool(&call_id, output, failed, bash, taken);
                         }
                         let held = hold_offset(&ui);
-                        sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                        if let Some(turn) = l.open_live.as_ref() {
+                            sheet.merge(turn.rows());
+                        }
                         pin_offset_across_layout(&ui, held);
                         scroll_if_parked(&ui);
                         l._stream_at = SystemTime::now();
@@ -755,17 +740,16 @@ impl Tick {
                         if l.open_live.as_ref().is_some_and(|turn| turn.message == key) {
                             continue;
                         }
-                        l.open_live = None;
-                        let start = rows_store_ui.borrow().len();
-                        l.open_live = Some(live::Live::new(start, key));
+                        l.open_live = Some(live::Live::new(key.clone()));
+                        sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
-                        trace_rows("live row opened", &rows_store_ui);
+                        sheet::trace("live rows opened", &sheet.rows());
                         continue;
                     }
                     if l.open_live.is_none() && kind == Some("message_update") {
                         let key = transcript::message_key(message);
-                        let start = rows_store_ui.borrow().len();
-                        l.open_live = Some(live::Live::new(start, key));
+                        l.open_live = Some(live::Live::new(key.clone()));
+                        sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
                     }
                     let Some(turn) = l.open_live.as_mut() else {
@@ -786,7 +770,9 @@ impl Tick {
                         }
                     }
                                         let held = hold_offset(&ui);
-                    sync_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                    if let Some(turn) = l.open_live.as_ref() {
+                        sheet.merge(turn.rows());
+                    }
                     pin_offset_across_layout(&ui, held);
                     scroll_if_parked(&ui);
                     l._stream_at = SystemTime::now();
@@ -794,7 +780,7 @@ impl Tick {
                         eprintln!(
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
                             l.stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
-                            l.open_live.as_ref().map_or(0, |turn| turn.rows),
+                            l.open_live.as_ref().map_or(0, |turn| turn.rows().len()),
                             0usize,
                             delta_kind
                         );
@@ -973,7 +959,8 @@ impl Tick {
                 }
                 Msg::Reconnected => {
                     l.loaded = None;
-                    close_live(&mut l.open_live, &rows_store_ui, &row_model_ui);
+                    l.open_live = None;
+                    sheet.answer_ended();
                     l.tail_sig = None;
                     l.last_seq = 0;
                     ui.set_status_line("reconnecting".into());
@@ -988,13 +975,13 @@ impl Tick {
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     }
                     pending_user.borrow_mut().take();
-                    drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
+                    sheet.take_back_prompt(&text);
                     ui.set_status_line("prompt not accepted � text restored".into());
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
                         let text = pending_user.borrow_mut().take().unwrap_or_default();
-                        drop_pending_prompt(&rows_store_ui, &row_model_ui, &text);
+                        sheet.take_back_prompt(&text);
                         ui.set_status_line(format!("prompt failed: {error}").into());
                     }
                     None => ui.set_status_line("working".into()),

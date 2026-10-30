@@ -31,20 +31,14 @@ pub enum Part {
 pub struct Live {
     /// which message these rows are: the store's copy of it replaces them
     pub message: String,
-    /// where the message's rows begin in the store
-    pub start: usize,
-    /// how many rows it owns right now
-    pub rows: usize,
     pub parts: Vec<Part>,
 }
 
 impl Live {
     #[must_use]
-    pub fn new(start: usize, message: String) -> Self {
+    pub fn new(message: String) -> Self {
         Self {
             message,
-            start,
-            rows: 0,
             parts: Vec::new(),
         }
     }

@@ -51,11 +51,9 @@ pub(crate) fn abort(ui: &AppWindow, job_tx: &Sender<Job>) {
     });
 }
 
-pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, editing: &Rc<RefCell<Option<(String, usize, String)>>>, in_flight: &Rc<std::cell::Cell<bool>>, job_tx: &Sender<Job>, pending_user: &Rc<RefCell<Option<String>>>, row_model: &Rc<VecModel<TRow>>, rows_store: &Rc<RefCell<Vec<Row>>>, sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>) {
+pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, editing: &Rc<RefCell<Option<(String, usize, String)>>>, in_flight: &Rc<std::cell::Cell<bool>>, job_tx: &Sender<Job>, pending_user: &Rc<RefCell<Option<String>>>, sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>) {
     let weak = ui.as_weak();
     let jobs = job_tx.clone();
-    let rows = rows_store.clone();
-    let model = row_model.clone();
     let pending_user = pending_user.clone();
     let attachments = attachments.clone();
     let attachment_model = attachment_model.clone();
@@ -80,12 +78,12 @@ pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>
         // cannot see images drops the whole turn, and an image sent into a
         // running turn arrives with the picture missing.
         if !attachments.borrow().is_empty() {
-            let model = ui.get_model_id().to_string();
+            let model_id = ui.get_model_id().to_string();
             let provider = ui.get_model_provider().to_string();
             let capable = catalog_for_send
                 .borrow()
                 .iter()
-                .find(|entry| entry.id == model && entry.provider == provider)
+                .find(|entry| entry.id == model_id && entry.provider == provider)
                 .is_none_or(|entry| entry.supports_images);
             let in_flight_now = ui.get_busy() || in_flight_for_send.get();
             if let Some(reason) = image_send_blocker(true, capable, in_flight_now) {

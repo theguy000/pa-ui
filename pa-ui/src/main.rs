@@ -10,8 +10,8 @@ mod pager;
 mod preview;
 mod probes;
 mod queue;
-mod rows;
 mod scroll;
+mod sheet;
 mod send;
 mod sessions;
 mod slash;
@@ -27,7 +27,6 @@ pub(crate) use pager::*;
 #[allow(unused_imports)]
 pub(crate) use probes::*;
 pub(crate) use queue::*;
-pub(crate) use rows::*;
 pub(crate) use scroll::*;
 pub(crate) use send::*;
 pub(crate) use sessions::*;
@@ -116,9 +115,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // the cache instead of waiting for the next poll
     let session_filter: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
     let sessions_cache: Rc<RefCell<Vec<SessionRow>>> = Rc::new(RefCell::new(Vec::new()));
-    let rows_store: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(Vec::new()));
-    let row_model: Rc<VecModel<TRow>> = Rc::new(VecModel::default());
-    ui.set_transcript(ModelRc::from(row_model.clone()));
+    // The sheet owns the rows and the list the window draws. Everything below
+    // hands it rows; nothing else keeps the two in step.
+    let (sheet, transcript) = sheet::Sheet::new();
+    let sheet = Rc::new(sheet);
+    ui.set_transcript(transcript);
     if std::env::var("PA_HOVER").is_ok() {
         ui.set_ctx_hover(true);
     }
@@ -173,7 +174,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let hovered: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
 
 
-    interactive::send::send(&ui, &attachment_model, &attachments, &catalog, &editing, &in_flight, &job_tx, &pending_user, &row_model, &rows_store, &sent_thumbs);
+    interactive::send::send(&ui, &attachment_model, &attachments, &catalog, &editing, &in_flight, &job_tx, &pending_user, &sent_thumbs);
 
     // Attachments: the bytes live here, the model holds the thumbnails. The
     // readers shell out, so they run off the event loop and come back through
@@ -244,7 +245,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::rail::rename(&ui, &job_tx);
 
-    interactive::rows::toggle(&ui, &row_model, &rows_store);
+    interactive::rows::toggle(&ui, &sheet);
 
     let oldest_cursor: Rc<std::cell::RefCell<Option<String>>> =
         Rc::new(std::cell::RefCell::new(None));
@@ -287,8 +288,7 @@ fn main() -> Result<(), slint::PlatformError> {
         weak: ui.as_weak(),
         jobs: job_tx.clone(),
         msg_rx,
-        rows_store: rows_store.clone(),
-        row_model: row_model.clone(),
+        sheet: sheet.clone(),
         session_filter: session_filter.clone(),
         sessions_cache: sessions_cache.clone(),
         in_flight: in_flight.clone(),
