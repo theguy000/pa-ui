@@ -2,6 +2,9 @@
 
 use crate::*;
 
+/// What the notice row says where history was unloaded.
+const HISTORY_UNLOADED: &str = "Some history here was unloaded to keep the window fast.";
+
 pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
@@ -9,6 +12,11 @@ pub(crate) struct Tick {
     /// which attach the window is waiting on: a reply that carries an older
     /// number is an answer to a question it has given up on
     pub attach_generation: std::cell::Cell<u64>,
+    /// the oldest message of the newest page: everything above it is history,
+    /// and history is what gets unloaded
+    pub tail_from: std::cell::RefCell<Option<String>>,
+    /// how many messages of history stay resident above the newest page
+    pub history_messages: usize,
     pub sheet: Rc<sheet::Sheet>,
     pub session_filter: Rc<RefCell<String>>,
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
@@ -146,6 +154,7 @@ impl Tick {
         let jobs = &self.jobs;
         let msg_rx = &self.msg_rx;
         let sheet = &self.sheet;
+        let tail_from = &self.tail_from;
         let session_filter = &self.session_filter;
         let sessions_cache = &self.sessions_cache;
         let in_flight = &self.in_flight;
@@ -393,6 +402,7 @@ impl Tick {
                         session: session.clone(),
                     });
                     l.tail_len = messages.len();
+                    *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
@@ -491,6 +501,7 @@ impl Tick {
                     }
                     l.tail_len = messages.len();
                     l.tail_sig = Some((cursor, newest));
+                    *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
                     let (mut built, skipped) = transcript::build(&messages, window_rows);
                     if built.is_empty() && !messages.is_empty() {
                         continue;
@@ -557,6 +568,17 @@ impl Tick {
                     let before_h = ui.get_dbg_ch() as f32;
                     let older_len = older.len();
                     sheet.prepend(older);
+                    // A session of any length must not cost the window more than
+                    // a window: the stretch between the reader and the newest
+                    // page goes, with one notice standing in for it.
+                    if let Some(newest) = tail_from.borrow().clone() {
+                        let gone = sheet.narrow(&newest, self.history_messages, HISTORY_UNLOADED);
+                        if gone > 0 {
+                            if crate::env_cfg::cfg().debug {
+                                eprintln!("[narrow] {gone} rows unloaded above the newest page");
+                            }
+                        }
+                    }
                     *oldest_cursor.borrow_mut() = if first_entry.is_empty() {
                         None
                     } else {

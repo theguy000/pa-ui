@@ -188,8 +188,8 @@ impl Sheet {
         inner.drawn.set(at, drawn);
     }
 
-    /// Unload the stretch of history nearest the newest page, leaving one
-    /// notice row where it was.
+    /// Unload the stretch of history nearest the newest page - keeping at most
+    /// keep_messages messages above it - and leave one notice row where it was.
     ///
     /// A session of any length must not cost the window more than a window. The
     /// rows the reader is looking at stay; the rows between them and the newest
@@ -203,7 +203,8 @@ impl Sheet {
         // the notice is not history: it is the hole itself
         let seam = inner.gap.unwrap_or(from);
         let mut drop_from = seam;
-        while drop_from > keep {
+        let mut held = messages_in(&inner.rows[..seam]);
+        while held > keep {
             let key = inner.rows[drop_from - 1].message.clone();
             if key.is_empty() {
                 drop_from -= 1;
@@ -216,6 +217,7 @@ impl Sheet {
                 break;
             }
             drop_from = range.start;
+            held -= 1;
         }
         if drop_from == seam {
             return 0;
@@ -387,6 +389,21 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
         }
     }
     out
+}
+
+/// How many messages a run of rows holds: a message is a run of rows with one
+/// key, and only keyed rows count.
+fn messages_in(rows: &[Row]) -> usize {
+    let mut held = 0;
+    let mut seen: Option<&str> = None;
+    for row in rows {
+        if row.message.is_empty() || seen == Some(row.message.as_str()) {
+            continue;
+        }
+        held += 1;
+        seen = Some(row.message.as_str());
+    }
+    held
 }
 
 /// A row that stands for rows that are not loaded.

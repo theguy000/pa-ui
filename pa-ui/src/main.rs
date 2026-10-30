@@ -257,6 +257,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // content-height, height); the decision is a plain function, so it can be
     // tested without a window.
     let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
+    // how much history stays on the sheet above the newest page
+    let history_messages: usize = std::env::var("PA_HISTORY")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(8 * OLDER_PAGE);
     let window_rows: usize = std::env::var("PA_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -289,6 +294,8 @@ fn main() -> Result<(), slint::PlatformError> {
         jobs: job_tx.clone(),
         msg_rx,
         attach_generation: std::cell::Cell::new(0),
+        tail_from: std::cell::RefCell::new(None),
+        history_messages,
         sheet: sheet.clone(),
         session_filter: session_filter.clone(),
         sessions_cache: sessions_cache.clone(),
