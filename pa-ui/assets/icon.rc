@@ -1,0 +1,4 @@
+// Win32 resources for pa-ui.exe: the app icon, used by Explorer, the taskbar,
+// Alt-Tab and the window's small icon. Geometry and palettes live in
+// design/logo-designer.html.
+1 ICON "icon.ico"

@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<!--
+  pa-ui — logo designer. Lives at pa-ui/design/logo-designer.html.
+  This file is the SOURCE OF TRUTH for the app icon geometry and palette.
+  Nothing in pa-ui/design is built or bundled; open this in a browser.
+
+  Shipped logo (pa-ui/assets/icon.ico, linked into pa-ui.exe by build.rs):
+    palette  = PALETTES.dark   (tile #141417->#09090b, blade #ffffff,
+                                wing #acaeb8, stem #62626e)
+    stemExt  = 0.100           (the "Stem Drop" slider, +10.0%)
+    weight   = 0.160           (the "Weight" slider)
+
+  To change the icon: move the sliders, then "Download .ICO (7 sizes)" and save
+  the result over pa-ui/assets/icon.ico (and .PNG over icon.png). cargo build
+  then re-embeds it — see build.rs::window_icon. Both cards render the same
+  geometry with PALETTES.dark / PALETTES.white, so a new theme is a palette
+  entry, not new drawing code.
+
+  Originally generated in Google AI Studio as a single self-contained page; it
+  has no external dependencies and runs offline.
+-->
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pa-ui — Final Icon #1 (Extended P-Stem)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #09090b;
+    color: #fafafa;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    padding: 36px 32px;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    max-width: 980px;
+    margin: 0 auto 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #27272a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+  .sub { font-size: 12px; color: #71717a; margin-top: 3px; }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: #111113;
+    border: 1px solid #27272a;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #a1a1aa;
+    flex-wrap: wrap;
+  }
+  .ctrl { display: flex; align-items: center; gap: 8px; }
+  .controls input[type="range"] {
+    width: 96px;
+    accent-color: #fafafa;
+    cursor: pointer;
+  }
+  .val {
+    font-family: ui-monospace, monospace;
+    color: #fafafa;
+    min-width: 38px;
+  }
+  .grid {
+    max-width: 980px;
+    margin: 0 auto 32px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #111113;
+    border: 1px solid #27272a;
+    border-radius: 10px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .title { font-size: 14px; font-weight: 600; color: #f4f4f5; }
+  .num { font-size: 11px; color: #71717a; font-family: ui-monospace, monospace; }
+  .desc { font-size: 12px; color: #a1a1aa; line-height: 1.45; }
+  .stage {
+    background: #09090b;
+    border: 1px solid #1f1f22;
+    border-radius: 8px;
+    padding: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .stage canvas {
+    width: 184px;
+    height: 184px;
+  }
+  .scales {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    background: #0c0c0e;
+    border: 1px solid #1f1f22;
+    border-radius: 6px;
+    padding: 10px 14px;
+  }
+  .scale-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .scale-item span {
+    font-size: 10px;
+    color: #52525b;
+    font-family: ui-monospace, monospace;
+  }
+  .actions { display: flex; gap: 8px; }
+  button.dl {
+    flex: 1;
+    background: #18181b;
+    color: #e4e4e7;
+    border: 1px solid #27272a;
+    padding: 9px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  button.dl:hover { background: #27272a; }
+  button.dl.primary {
+    background: #fafafa;
+    color: #09090b;
+    border-color: #fafafa;
+    font-weight: 600;
+  }
+  button.dl.primary:hover { background: #d4d4d8; }
+  .taskbars {
+    max-width: 980px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .tb-wrap {
+    background: #111113;
+    border: 1px solid #27272a;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .tb-title {
+    font-size: 11px;
+    color: #71717a;
+    font-family: ui-monospace, monospace;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .tb-strip {
+    height: 48px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 28px;
+  }
+  .tb-dark { background: #18181b; border: 1px solid #27272a; }
+  .tb-light { background: #f4f4f5; border: 1px solid #d4d4d8; }
+  .tb-pair { display: flex; align-items: center; gap: 10px; }
+  .tb-lbl { font-size: 11px; font-family: ui-monospace, monospace; opacity: 0.6; }
+  .tb-dark .tb-lbl { color: #e4e4e7; }
+  .tb-light .tb-lbl { color: #18181b; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Icon #1 — Straight Fold Line + Parallel Wing (Extended P-Stem)</h1>
+    <div class="sub">Longer bottom-left P stem drop for instant legibility at 32px, 24px, and 16px on the taskbar.</div>
+  </div>
+  <div class="controls">
+    <div class="ctrl">
+      <span>Stem Drop:</span>
+      <input type="range" id="ext-slider" min="0.000" max="0.110" step="0.005" value="0.100">
+      <span class="val" id="ext-val">+10.0%</span>
+    </div>
+    <div class="ctrl">
+      <span>Weight:</span>
+      <input type="range" id="th-slider" min="0.138" max="0.160" step="0.002" value="0.160">
+      <span class="val" id="th-val">0.160</span>
+    </div>
+  </div>
+</header>
+
+<div class="grid" id="grid"></div>
+
+<div class="taskbars">
+  <div class="tb-wrap">
+    <div class="tb-title"><span>DARK TASKBAR (32PX / 24PX / 16PX)</span><span>#18181B</span></div>
+    <div class="tb-strip tb-dark" id="tb-dark"></div>
+  </div>
+  <div class="tb-wrap">
+    <div class="tb-title"><span>LIGHT TASKBAR (32PX / 24PX / 16PX)</span><span>#F4F4F5</span></div>
+    <div class="tb-strip tb-light" id="tb-light"></div>
+  </div>
+</div>
+
+<script>
+const SIZES = [256, 128, 64, 48, 32, 24, 16];
+const PREVIEW_SIZES = [64, 48, 32, 24, 16];
+
+let stemExt = 0.100;
+let weight = 0.160;
+
+const PALETTES = {
+  dark: {
+    id: 'pa-ui-dark',
+    num: '01 — DARK TILE',
+    title: 'Icon #1 — Dark Monochrome Tile',
+    desc: 'Pure white top blade (#FFFFFF), silver parallel wing (#ACAEB8), and graphite extended stem (#62626E).',
+    tileTop: '#141417',
+    tileBot: '#09090b',
+    borderTop: '#3f3f46',
+    borderBot: '#18181b',
+    f1: '#ffffff',
+    f3: '#acaeb8',
+    f4: '#62626e',
+    sh: 'rgba(0,0,0,0.48)',
+    shWing: 'rgba(0,0,0,0.26)'
+  },
+  white: {
+    id: 'pa-ui-white',
+    num: '02 — WHITE TILE',
+    title: 'Icon #1 — Inverted Stark White Tile',
+    desc: 'Obsidian top blade (#09090B), slate parallel wing (#71717A), and dark charcoal extended stem (#27272A).',
+    tileTop: '#ffffff',
+    tileBot: '#e4e4e7',
+    borderTop: '#ffffff',
+    borderBot: '#a1a1aa',
+    f1: '#09090b',
+    f3: '#71717a',
+    f4: '#27272a',
+    sh: 'rgba(0,0,0,0.22)',
+    shWing: 'rgba(0,0,0,0.14)'
+  }
+};
+
+function poly(ctx, pts, fill) {
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawIcon1(ctx, W, p) {
+  const cx = W * 0.48;
+  const cy = W * 0.49;
+  const th = W * weight;
+
+  const stemX = cx - W * 0.20;
+  const topY = cy - W * (0.29 + stemExt * 0.35);
+  const noseX = cx + W * 0.25;
+  const noseY = cy - W * (0.03 + stemExt * 0.45);
+  const wingEndX = stemX + th;
+  const wingEndY = cy + W * (0.18 - stemExt * 0.55);
+
+  // Exact slope of lower wing & bottom-left stem cut angle
+  const slopeLow = (wingEndY - noseY) / (noseX - wingEndX);
+  const angLow = Math.atan(slopeLow);
+  const wingVy = th / Math.cos(angLow);
+
+  const botY = cy + W * (0.34 + stemExt * 0.65);
+  const footRightY = botY - th * slopeLow;
+
+  const bLeft = [stemX, topY + th * 1.10];
+  const bRight = [noseX, noseY];
+  const topCornerX = cx + W * 0.02;
+
+  // Exact intersection where the parallel inner edge of the lower wing meets the straight bottom line of the top blade
+  const slopeTopBot = (bRight[1] - bLeft[1]) / (bRight[0] - bLeft[0]);
+  const y1AtWing = wingEndY - wingVy;
+  const y2AtWing = bLeft[1] + slopeTopBot * (wingEndX - stemX);
+  const ix = wingEndX + (y1AtWing - y2AtWing) / (slopeTopBot + slopeLow);
+  const iy = y1AtWing - slopeLow * (ix - wingEndX);
+
+  // 1. Lower wing on offscreen canvas for clipped stem-shadow
+  const wingCan = document.createElement('canvas');
+  wingCan.width = W;
+  wingCan.height = W;
+  const wCtx = wingCan.getContext('2d');
+  poly(wCtx, [
+    bRight,
+    [wingEndX, wingEndY],
+    [wingEndX, wingEndY - wingVy],
+    [ix, iy]
+  ], p.f3);
+
+  wCtx.globalCompositeOperation = 'source-atop';
+  poly(wCtx, [
+    [wingEndX, topY],
+    [wingEndX + W * 0.022, topY],
+    [wingEndX + W * 0.022, botY],
+    [wingEndX, botY]
+  ], p.shWing);
+
+  // 2. Under-layer (wing + extended vertical stem) for clipped top-blade shadow
+  const underCan = document.createElement('canvas');
+  underCan.width = W;
+  underCan.height = W;
+  const uCtx = underCan.getContext('2d');
+
+  uCtx.drawImage(wingCan, 0, 0);
+  poly(uCtx, [
+    [stemX, topY],
+    [stemX + th, topY + th * 0.7],
+    [stemX + th, footRightY],
+    [stemX, botY]
+  ], p.f4);
+
+  const shOff = W * 0.028;
+  uCtx.globalCompositeOperation = 'source-atop';
+  poly(uCtx, [
+    bLeft,
+    bRight,
+    [bRight[0], bRight[1] + shOff],
+    [bLeft[0], bLeft[1] + shOff]
+  ], p.sh);
+
+  ctx.drawImage(underCan, 0, 0);
+
+  // 3. Top blade (straight unkinked bottom line from bLeft to bRight)
+  poly(ctx, [
+    [stemX, topY],
+    [topCornerX, topY],
+    bRight,
+    bLeft
+  ], p.f1);
+}
+
+function renderIcon(p, size) {
+  const SS = 4;
+  const W = size * SS;
+
+  const markCan = document.createElement('canvas');
+  markCan.width = W;
+  markCan.height = W;
+  const mCtx = markCan.getContext('2d');
+  drawIcon1(mCtx, W, p);
+
+  const data = mCtx.getImageData(0, 0, W, W).data;
+  let minX = W, minY = W, maxX = 0, maxY = 0;
+  for (let y = 0; y < W; y++) {
+    for (let x = 0; x < W; x++) {
+      if (data[(y * W + x) * 4 + 3] > 20) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  const comp = document.createElement('canvas');
+  comp.width = W;
+  comp.height = W;
+  const cCtx = comp.getContext('2d');
+
+  const pad = SS * 0.5;
+  const tw = W - pad * 2;
+  const rad = W * 0.225;
+  const stroke = Math.max(SS, W * 0.022);
+
+  const bgGrad = cCtx.createLinearGradient(0, 0, 0, W);
+  bgGrad.addColorStop(0, p.tileTop);
+  bgGrad.addColorStop(1, p.tileBot);
+  cCtx.fillStyle = bgGrad;
+  cCtx.beginPath();
+  cCtx.roundRect(pad, pad, tw, tw, rad);
+  cCtx.fill();
+
+  const bGrad = cCtx.createLinearGradient(0, 0, 0, W);
+  bGrad.addColorStop(0, p.borderTop);
+  bGrad.addColorStop(1, p.borderBot);
+  cCtx.strokeStyle = bGrad;
+  cCtx.lineWidth = stroke;
+  cCtx.beginPath();
+  cCtx.roundRect(pad + stroke / 2, pad + stroke / 2, tw - stroke, tw - stroke, rad - stroke / 2);
+  cCtx.stroke();
+
+  if (maxX >= minX && maxY >= minY) {
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    const dx = Math.round((W - bw) / 2) - minX;
+    const dy = Math.round((W - bh) / 2) - minY;
+    cCtx.drawImage(markCan, dx, dy);
+  }
+
+  const out = document.createElement('canvas');
+  out.width = size;
+  out.height = size;
+  const oCtx = out.getContext('2d');
+  oCtx.imageSmoothingEnabled = true;
+  oCtx.imageSmoothingQuality = 'high';
+  oCtx.drawImage(comp, 0, 0, size, size);
+  return out;
+}
+
+async function buildIcoBlob(canvases) {
+  const pngBuffers = await Promise.all(canvases.map(c =>
+    new Promise(res => c.toBlob(b => b.arrayBuffer().then(res), 'image/png'))
+  ));
+  const count = canvases.length;
+  const headerSize = 6 + count * 16;
+  const totalSize = headerSize + pngBuffers.reduce((acc, b) => acc + b.byteLength, 0);
+  const ico = new Uint8Array(totalSize);
+  const view = new DataView(ico.buffer);
+
+  view.setUint16(0, 0, true);
+  view.setUint16(2, 1, true);
+  view.setUint16(4, count, true);
+
+  let offset = headerSize;
+  for (let i = 0; i < count; i++) {
+    const sz = canvases[i].width;
+    const bytes = new Uint8Array(pngBuffers[i]);
+    const dirOffset = 6 + i * 16;
+    ico[dirOffset + 0] = sz >= 256 ? 0 : sz;
+    ico[dirOffset + 1] = sz >= 256 ? 0 : sz;
+    ico[dirOffset + 2] = 0;
+    ico[dirOffset + 3] = 0;
+    view.setUint16(dirOffset + 4, 1, true);
+    view.setUint16(dirOffset + 6, 32, true);
+    view.setUint32(dirOffset + 8, bytes.byteLength, true);
+    view.setUint32(dirOffset + 12, offset, true);
+    ico.set(bytes, offset);
+    offset += bytes.byteLength;
+  }
+  return new Blob([ico], { type: 'image/x-icon' });
+}
+
+function downloadBlob(blob, name) {
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = u;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+
+function renderAll() {
+  const grid = document.getElementById('grid');
+  const tbDark = document.getElementById('tb-dark');
+  const tbLight = document.getElementById('tb-light');
+  grid.innerHTML = '';
+  tbDark.innerHTML = '';
+  tbLight.innerHTML = '';
+
+  [PALETTES.dark, PALETTES.white].forEach((p, idx) => {
+    const map = {};
+    SIZES.forEach(s => map[s] = renderIcon(p, s));
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="title">${p.title}</div>
+        <div class="num">${p.num}</div>
+      </div>
+      <div class="desc">${p.desc}</div>
+      <div class="stage" id="st-${idx}"></div>
+      <div class="scales" id="sc-${idx}"></div>
+      <div class="actions">
+        <button class="dl" id="png-${idx}">Download .PNG (256)</button>
+        <button class="dl primary" id="ico-${idx}">Download .ICO (7 sizes)</button>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    document.getElementById(`st-${idx}`).appendChild(map[256]);
+
+    const sc = document.getElementById(`sc-${idx}`);
+    PREVIEW_SIZES.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'scale-item';
+      const clone = map[s].cloneNode();
+      clone.getContext('2d').drawImage(map[s], 0, 0);
+      item.appendChild(clone);
+      const sp = document.createElement('span');
+      sp.textContent = s;
+      item.appendChild(sp);
+      sc.appendChild(item);
+    });
+
+    [tbDark, tbLight].forEach(tb => {
+      const pair = document.createElement('div');
+      pair.className = 'tb-pair';
+      [32, 24, 16].forEach(s => {
+        const clone = map[s].cloneNode();
+        clone.getContext('2d').drawImage(map[s], 0, 0);
+        pair.appendChild(clone);
+      });
+      const lbl = document.createElement('span');
+      lbl.className = 'tb-lbl';
+      lbl.textContent = idx === 0 ? 'Dark' : 'White';
+      pair.appendChild(lbl);
+      tb.appendChild(pair);
+    });
+
+    document.getElementById(`png-${idx}`).onclick = () => {
+      map[256].toBlob(b => downloadBlob(b, `${p.id}.png`), 'image/png');
+    };
+    document.getElementById(`ico-${idx}`).onclick = async () => {
+      const blob = await buildIcoBlob(SIZES.map(s => map[s]));
+      downloadBlob(blob, `${p.id}.ico`);
+    };
+  });
+}
+
+document.getElementById('ext-slider').oninput = (e) => {
+  stemExt = parseFloat(e.target.value);
+  document.getElementById('ext-val').textContent = `+${(stemExt * 100).toFixed(1)}%`;
+  renderAll();
+};
+
+document.getElementById('th-slider').oninput = (e) => {
+  weight = parseFloat(e.target.value);
+  document.getElementById('th-val').textContent = weight.toFixed(3);
+  renderAll();
+};
+
+renderAll();
+</script>
+</body>
+</html>
