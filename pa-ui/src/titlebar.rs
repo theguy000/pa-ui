@@ -22,6 +22,13 @@ pub const HEIGHT: i32 = 32;
 pub const BUTTON: i32 = 46;
 /// How many caption buttons sit at the right edge.
 const BUTTONS: i32 = 3;
+/// Logical geometry of the right column's fold mark, which is drawn in this strip
+/// and is a Slint button: measured from the window's right edge to its left side,
+/// and its width. These must agree with the TitleBar in `ui/app.slint` - a mark
+/// left inside HTCAPTION is a window drag, and its click never arrives.
+const FOLD_INSET: i32 = 172;
+const FOLD: i32 = 26;
+
 /// Width of the clickable icon block at the left of the bar. Without this the icon
 /// would fall inside HTCAPTION, Windows would treat the press as a window drag, and
 /// the click would never reach Slint to open the system menu.
@@ -315,6 +322,14 @@ mod imp {
             if y >= inset_y && y < caption {
                 if x < inset_x + (super::ICON as f64 * scale).round() as i32 {
                     return HTCLIENT; // the icon is a button in Slint
+                }
+                // The right column's fold sits further along the same strip and is
+                // also Slint's to answer; without this carve-out the press is taken
+                // as a caption drag and the mark never fires.
+                let fold_w = (super::FOLD as f64 * scale).round() as i32;
+                let fold_left = width - inset_x - (super::FOLD_INSET as f64 * scale).round() as i32;
+                if x >= fold_left && x < fold_left + fold_w {
+                    return HTCLIENT;
                 }
                 let button = (super::BUTTON as f64 * scale).round() as i32;
                 let buttons_left = width - inset_x - button * super::BUTTONS;

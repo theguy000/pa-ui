@@ -1,16 +1,16 @@
 // One line of text, and the room to travel when it does not fit.
 //
 // Two places need this and need it the same way: a conversation's name in the
-// rail, which runs past the rail, and a failed cell's reason, which is an
-// exception message and runs past any tooltip worth drawing. The rail used to
-// work the shift out in Rust — 6.6px a character against 178px of rail — which
+// sidebar, which runs past the sidebar, and a failed cell's reason, which is an
+// exception message and runs past any tooltip worth drawing. The sidebar used to
+// work the shift out in Rust — 6.6px a character against 178px of sidebar — which
 // is a guess about a font and could only be right at one size. The measurement
 // lives here instead, beside a probe `Text` drawn in the string's own font.
 //
 // The component owns the travel; the caller owns *when*. Set `active` while the
-// reader should be able to see the rest of the string: the rail sets it on row
+// reader should be able to see the rest of the string: the sidebar sets it on row
 // hover, a failed cell while its reason is open. `loop` decides what happens at
-// the end of a leg — the rail holds the tail, because letting go of the row
+// the end of a leg — the sidebar holds the tail, because letting go of the row
 // sends the name back to the start; a reason comes back by itself, because a
 // popup has nowhere else to send the reader.
 export component MarqueeText inherits Rectangle {
@@ -23,7 +23,7 @@ export component MarqueeText inherits Rectangle {
     // come back at the end of a leg instead of holding the tail
     in property <bool> loop: false;
 
-    // The parent decides the width — a stretched rail row, a capped popup — and
+    // The parent decides the width — a stretched sidebar row, a capped popup — and
     // what gets to be too long is the text, never the box: the size this
     // reports is the string's own, so a caller can ask for it (and cap it),
     // and the label travelling past the edge cannot resize the thing that

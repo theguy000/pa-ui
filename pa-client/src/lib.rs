@@ -224,7 +224,7 @@ fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
     }
 }
 
-/// The session rows the left rail renders.
+/// The session rows the left sidebar renders.
 #[derive(Debug, Clone, Default)]
 pub struct SessionRow {
     pub id: String,

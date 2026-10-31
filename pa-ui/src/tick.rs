@@ -20,7 +20,6 @@ pub(crate) struct Tick {
     /// when the poll last ran: a long gap is a stall the reader felt
     pub last_tick: std::cell::Cell<SystemTime>,
     pub sheet: Rc<sheet::Sheet>,
-    pub session_filter: Rc<RefCell<String>>,
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
     pub in_flight: Rc<std::cell::Cell<bool>>,
     pub pending_user: Rc<RefCell<Option<String>>>,
@@ -166,7 +165,6 @@ impl Tick {
         let msg_rx = &self.msg_rx;
         let sheet = &self.sheet;
         let tail_from = &self.tail_from;
-        let session_filter = &self.session_filter;
         let sessions_cache = &self.sessions_cache;
         let in_flight = &self.in_flight;
         let pending_user = &self.pending_user;
@@ -331,11 +329,10 @@ impl Tick {
             }
             match message {
                 Msg::Sessions(Ok(rows)) => {
-                    // kept so a keystroke can re-filter without waiting for the
-                    // next poll
+                    // kept because the cost family walks every session here
+                    // rather than asking the daemon again
                     *sessions_cache.borrow_mut() = rows.clone();
-                    let items: Vec<SessionItem> =
-                        session_items(&rows, &session_filter.borrow());
+                    let items: Vec<SessionItem> = session_items(&rows);
                     let live = rows.iter().filter(|row| row.lifecycle == "live").count();
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     ui.set_status_line(format!("{live} live of {} known", rows.len()).into());
