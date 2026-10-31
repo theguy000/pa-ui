@@ -26,17 +26,17 @@ const SHIFT_STEP: usize = 6;
 /// Accurate height estimator matched to `TranscriptRow` in `app.slint`.
 fn estimate_row_height(row: &Row) -> f32 {
     match row.kind {
-        // User bubble: padding 6px top + 6px bottom + inner 8px top + 8px bottom + 13px font (~18px line)
+        // User bubble: padding 6px top + 6px bottom + inner 8px top + 8px bottom + 15px font (~21.5px line)
         0 => {
             let lines = row
                 .body
                 .lines()
-                .map(|l| (l.chars().count() / 62) + 1)
+                .map(|l| (l.chars().count() / 54) + 1)
                 .sum::<usize>()
                 .max(1);
-            (lines as f32 * 18.5) + 28.0
+            (lines as f32 * 21.5) + 28.0
         }
-        // Assistant prose: 12px padding + 13px StyledText (~19.5px per line + paragraph spacing)
+        // Assistant prose: 12px padding + 15px StyledText (~22.5px per line + paragraph spacing)
         1 => {
             let lines = row
                 .body
@@ -45,12 +45,12 @@ fn estimate_row_height(row: &Row) -> f32 {
                     if l.trim().is_empty() {
                         1
                     } else {
-                        (l.chars().count() / 82) + 1
+                        (l.chars().count() / 71) + 1
                     }
                 })
                 .sum::<usize>()
                 .max(1);
-            (lines as f32 * 19.5) + 12.0
+            (lines as f32 * 22.5) + 12.0
         }
         // Thinking block: 24px bar + 8px padding
         2 => {

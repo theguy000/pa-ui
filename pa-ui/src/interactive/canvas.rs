@@ -34,7 +34,7 @@ pub(crate) fn painter(
         *canvas_key.borrow_mut() = key;
         let known = extra_commands.borrow().clone();
         let mut slot = canvas_cell.borrow_mut();
-        let canvas = slot.get_or_insert_with(|| composer_canvas::Canvas::new(13.0, 18.0));
+        let canvas = slot.get_or_insert_with(|| composer_canvas::Canvas::new(15.0, 20.0));
         let (image, caret) = canvas.render(
             &text_now,
             caret_now,

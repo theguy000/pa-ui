@@ -2,6 +2,13 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MatEdit, MatDelete, MatDeleteForever, LucidePencil, LucideTrash2, LucideSquarePen, MatClose, SimpleBin, CrossEven, CrossHeavy, LucideCross, IMDeleteoutline, IMHighlightoff, IMIndeterminatecheckbox, ILCircleX } from "icons-real.slint";
 
+// The reading size. The DeepSeek Harness sets its conversation text at 14px on
+// a 24px line; this toolkit gives no control over that line, so the size carries
+// the difference instead: one point up, on the spacing the font chooses.
+export global Type {
+    out property <length> body: 15px;
+}
+
 export struct TRow {
     kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 notice
     title: string,
@@ -575,7 +582,7 @@ component TranscriptRow inherits VerticalLayout {
                 StyledText {
                     text: data.body;
                     default-color: #e7e5df;
-                    default-font-size: 13px;
+                    default-font-size: Type.body;
                     link-color: #a18e41;
                 }
             }
@@ -590,7 +597,7 @@ component TranscriptRow inherits VerticalLayout {
             width: parent.width - 48px;
             text: data.body;
             default-color: #d2d1ca;
-            default-font-size: 13px;
+            default-font-size: Type.body;
             link-color: #a18e41;
         }
     }
@@ -2322,7 +2329,7 @@ export component AppWindow inherits Window {
                 height: root.composer-height;
                 caret-request <=> root.composer-caret-request;
                 text <=> root.composer-text;
-                font-size: 13px;
+                font-size: Type.body;
                 edited(t) => {
                     root.composer-text = t;
                     root.composer-has-text = t != "";
