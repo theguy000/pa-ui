@@ -28,6 +28,10 @@ _Avoid_: cache, database, history, backend
 The column of sessions down the window's left: where the reader picks a session or starts one. It folds to a strip of controls and unfolds again.
 _Avoid_: rail, side panel, nav
 
+**Composer**:
+The strip along the window's foot where the reader writes: the draft, whatever the draft is carrying, and the control that sends it — or stops the turn instead. It is never a message; a message is what the composer produces.
+_Avoid_: input box, text area, prompt box, message box
+
 **Reader**:
 The person looking at the window. They own the scroll position and whatever they have opened.
 _Avoid_: user (that is the role a message carries, or the person the agent serves)

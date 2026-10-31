@@ -1,0 +1,147 @@
+// The status strip: a rounded top tucked behind the composer, holding the spinner,
+// the turn's label and elapsed time on the left and the queue pill on the right.
+// The corner of the strip is the one that grows, so while a turn runs you see two
+// rounded tops - a small one above the input's.
+
+export component BusyStrip inherits Rectangle {
+    in property <length> strip-x;
+    in property <length> box-y;
+    in property <length> strip-w;
+    in property <length> strip-h;
+    in property <float> fade;
+    in property <string> spinner;
+    in property <string> label;
+    in property <string> elapsed;
+    in property <int> queued;
+    in-out property <bool> queue-open;
+
+    x: root.strip-x;
+    y: root.box-y - root.strip-h;
+    width: root.strip-w;
+    height: root.strip-h + 12px;
+    opacity: root.fade;
+    // No background on this rectangle at all: its own rounded corner would
+    // draw a second edge a pixel off the stroke. The fill is a child, inset
+    // by exactly the stroke width.
+
+    // The outline: a border-coloured rounded rect with a fill-coloured one
+    // inset by a pixel, both clipped at the strip's *visible* height. The
+    // clip cuts away the bottom edge, so what is left is a rounded top and
+    // two straight sides - the curvature is the rectangle's own, which is
+    // the only way to get it the right way round without stroked paths.
+    // The fill reaches 12px past the junction and is square by then, so it
+    // wraps the box's rounded corner instead of leaving bare background in
+    // the wedge between the two outlines. The box paints over the rest.
+    Rectangle {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    clip: true;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height + 24px;
+        background: #2c2f26;
+        border-radius: 12px;
+    }
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height + 24px;
+        background: #191a14;
+        border-radius: 11px;
+    }
+    }
+
+    // the visible half of the strip: everything above the box's top edge
+    Rectangle {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: root.strip-h;
+
+                    spin := Text {
+                        x: 14px;
+                        visible: root.strip-h > 1px;
+                        text: root.spinner;
+                        color: #c9a86a;
+                        font-family: "Cascadia Code";
+                        font-size: 19px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                    }
+
+                    lbl := Text {
+                        x: spin.x + spin.width + 4px;
+                        visible: root.strip-h > 1px;
+                        text: root.label;
+                        color: #c9a86a;
+                        font-family: "Cascadia Code";
+                        font-size: 11px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        x: lbl.x + lbl.width + 8px;
+                        visible: root.strip-h > 1px;
+                        text: root.elapsed;
+                        color: #565a4f;
+                        font-family: "Cascadia Code";
+                        font-size: 11px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                    }
+
+                    // The queue lives on the strip itself: the lanes
+                    // named the way the panel names them, right-aligned
+                    // against the strip's padding so it balances the
+                    // spinner on the left. The pill only appears under
+                    // the pointer - at rest it is part of the strip.
+                    if root.queued > 0 : Rectangle {
+                        x: parent.width - self.width - 14px;
+                        y: (parent.height - self.height) / 2;
+                        width: lane-row.preferred-width + 16px;
+                        height: 18px;
+                        border-radius: 6px;
+                        background: lane-touch.has-hover || root.queue-open ? #1f211a : transparent;
+
+                        lane-row := HorizontalLayout {
+                            // full width with centred alignment: the
+                            // contents are centred in the pill by the
+                            // layout itself, not by arithmetic on a
+                            // guessed preferred width
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: parent.height;
+                            spacing: 4px;
+                            alignment: center;
+                            Text {
+                                text: root.queued;
+                                color: lane-touch.has-hover ? #e7e5df : #b0b1a8;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "queued";
+                                color: lane-touch.has-hover ? #b0b1a8 : #6b6e63;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        lane-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.queue-open = !root.queue-open;
+                            }
+                        }
+                    }
+
+                    }
+}

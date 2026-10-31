@@ -53,7 +53,7 @@ pub(crate) fn pin_offset_across_layout(_ui: &AppWindow, _held: Option<f32>) {
 /// Whether the window is allowed to move the view at all right now.
 ///
 /// Two facts and nothing else: does the reader want to follow, and is a hand on
-/// the bar. A timeout was tried here and it was wrong � it let the stream take
+/// the bar. A timeout was tried here and it was wrong: it let the stream take
 /// the view back half a second after the reader stopped, which is exactly when
 /// they started reading.
 #[must_use]
@@ -62,7 +62,7 @@ pub fn may_autoscroll(following: bool, dragging: bool) -> bool {
 }
 
 
-/// Move to the newest row because the reader asked for it � a send, or a new
+/// Move to the newest row because the reader asked for it: a send, or a new
 /// chat. The latch is for corrections nobody asked for; it must never block the
 /// reader's own request.
 pub(crate) fn force_scroll_to_end(ui: &AppWindow) {
@@ -92,7 +92,7 @@ mod autoscroll_guard_tests {
     #[test]
     fn a_latch_that_is_off_stays_off_however_long_the_reader_pauses() {
         // There is deliberately no time input here: a paused reader is a reader,
-        // and the version that took a duration was the bug � it re-armed itself
+        // and the version that took a duration was the bug: it re-armed itself
         // half a second after the scrolling stopped.
         assert!(!may_autoscroll(false, false));
         assert!(!may_autoscroll(false, true));

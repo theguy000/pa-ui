@@ -83,9 +83,6 @@ pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(Str
             && ui.get_model_provider() == provider);
         ui.set_effort_open(false);
         *hover_current.borrow_mut() = None;
-        ui.set_status_line(
-            format!("{model} \u{00b7} {}", thinking_level_label(&level)).into(),
-        );
         let _ = jobs.send(Job::SetLevel {
             session,
             provider,
@@ -140,7 +137,7 @@ pub(crate) fn hover(
             return;
         }
         // Switching keeps the level and clamps it to the new model's own
-        // ladder, so the rung that would apply is the clamped one � the
+        // ladder, so the rung that would apply is the clamped one, the
         // submenu shows where this model would land, not a guess.
         let landed = clamp_level(&entry.thinking_levels, &ui.get_current_level());
         let items: Vec<EffortItem> = entry
@@ -207,7 +204,7 @@ pub(crate) fn picked(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEn
         }
         if provider.trim().is_empty() {
             // no provider known for this entry: say so instead of guessing
-            ui.set_status_line(format!("{model}: provider unknown, not switching").into());
+            status::trouble(&ui, format!("{model}: provider unknown, not switching"));
             return;
         }
         // the chip follows the click; the daemon's own state lands on the
@@ -220,7 +217,6 @@ pub(crate) fn picked(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEn
         ui.set_model_id(model.clone());
         ui.set_model_provider(provider.clone());
         refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
-        ui.set_status_line(format!("switching to {model}").into());
         let _ = jobs.send(Job::SetModel {
             session: session.clone(),
             provider: provider.to_string(),

@@ -11,7 +11,6 @@ pub(crate) fn clear(ui: &AppWindow, job_tx: &Sender<Job>) {
         if session.is_empty() {
             return;
         }
-        ui.set_status_line("clearing the queue".into());
         let _ = jobs.send(Job::QueueAct {
             session,
             lane: String::new(),
@@ -48,14 +47,13 @@ pub(crate) fn act(ui: &AppWindow, editing: &Editing, job_tx: &Sender<Job>) {
         };
         let Some(text) = text else { return };
         if action == "edit" {
-            // The row stays where it is: it is being changed, not withdrawn.
+            // The row stays where it is: its text comes back to the composer,
+            // and the row stays visible because it is being changed, not
+            // withdrawn.
             *editing.borrow_mut() = Some((lane.to_string(), slot.max(0) as usize, text.clone()));
             let _ = jobs.send(Job::Queue { session });
-            // the row's text comes back to the composer, and the row stays
-            // visible: it is being edited, not withdrawn
             ui.set_composer_text(text.as_str().into());
             ui.set_composer_has_text(!text.is_empty());
-            ui.set_status_line("editing the parked message".into());
             return;
         }
         let _ = jobs.send(Job::QueueAct {

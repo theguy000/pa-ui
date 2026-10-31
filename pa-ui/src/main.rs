@@ -16,6 +16,7 @@ mod sheet;
 mod send;
 mod sessions;
 mod slash;
+mod status;
 mod text;
 mod tick;
 mod transcript;
@@ -99,7 +100,6 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let mid = count.div_euclid(2).max(1);
             ui.set_queued_count(count);
-            ui.set_queued_preview("queued message 1".into());
             ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(build(1, mid)))));
             ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(if count > mid {
                 build(mid + 1, count)
@@ -291,7 +291,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(WINDOW_ROWS);
-    // the spinner runs on its own clock � 10 frames at 80 ms is one 0.8 s turn,
+    // the spinner runs on its own clock: 10 frames at 80 ms is one 0.8 s turn,
     // independent of how often the daemon happens to send status
     let spin_weak = ui.as_weak();
     let spin_index = std::cell::Cell::new(0usize);
@@ -395,12 +395,12 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         move || {
             if let Some(ui) = ui.upgrade() {
-                let _ = ui.window().set_minimized(true);
+                ui.window().set_minimized(true);
             }
         }
     });
-    ui.on_titlebar_close(|| titlebar::close());
-    ui.on_titlebar_menu(|| titlebar::show_system_menu());
+    ui.on_titlebar_close(titlebar::close);
+    ui.on_titlebar_menu(titlebar::show_system_menu);
 
     let bar_timer = std::rc::Rc::new(slint::Timer::default());
     {

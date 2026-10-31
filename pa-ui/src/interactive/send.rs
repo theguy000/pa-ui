@@ -33,7 +33,6 @@ pub(crate) fn steer(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>
             attachment_model.remove(attachment_model.row_count() - 1);
         }
         *pending_user.borrow_mut() = None;
-        ui.set_status_line("steered".into());
         let _ = jobs.send(Job::Steer { session, message, images: blocks });
     });
 }
@@ -47,7 +46,6 @@ pub(crate) fn abort(ui: &AppWindow, job_tx: &Sender<Job>) {
         if session.is_empty() {
             return;
         }
-        ui.set_status_line("aborting".into());
         let _ = jobs.send(Job::Abort { session });
     });
 }
@@ -108,13 +106,13 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
                 if crate::env_cfg::cfg().debug {
                     eprintln!("[send] held: {reason}");
                 }
-                ui.set_status_line(reason.into());
+                status::trouble(&ui, reason);
                 return;
             }
         }
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
-            ui.set_status_line("no session selected".into());
+            status::trouble(&ui, "no session selected");
             return;
         }
         // A command is only sent when the agent runs it. Everything else in
@@ -127,14 +125,14 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
                 ui.set_composer_has_text(false);
                 ui.set_composer_command("".into());
                 ui.set_model_menu(true);
-                ui.set_status_line("pick a model".into());
+                status::trouble(&ui, "pick a model");
                 return;
             }
             SlashAction::EffortHint => {
                 ui.set_composer_text("".into());
                 ui.set_composer_has_text(false);
                 ui.set_composer_command("".into());
-                ui.set_status_line("the thinking level opens from the model menu".into());
+                status::trouble(&ui, "the thinking level opens from the model menu");
                 return;
             }
             SlashAction::NewChat => {
@@ -150,7 +148,7 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
             }
             SlashAction::Rename(name) => {
                 if name.is_empty() {
-                    ui.set_status_line("give the chat a name: /name <name>".into());
+                    status::trouble(&ui, "give the chat a name: /name <name>");
                     return;
                 }
                 ui.set_composer_text("".into());
@@ -165,9 +163,9 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
             SlashAction::NotWired(name) => {
                 // the text stays where it is: nothing is lost, and nothing
                 // pretends to have happened
-                ui.set_status_line(
-                    format!("/{name} belongs to the terminal app and isn't wired here yet")
-                        .into(),
+                status::trouble(
+                    &ui,
+                    format!("/{name} belongs to the terminal app and isn't wired here yet"),
                 );
                 return;
             }
@@ -201,7 +199,6 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
         // out and sending it again put it at the back of the queue, which is
         // not what editing means.
         if let Some((lane, slot, expected)) = editing_to_send.borrow_mut().take() {
-            ui.set_status_line("parked message updated".into());
             let _ = jobs.send(Job::QueueEdit {
                 session,
                 lane,
@@ -229,9 +226,7 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
             ui.set_busy_label("Waiting".into());
             ui.set_busy(true);
         }
-        if let Some(ui) = weak.upgrade() {
-            ui.set_status_line("sent".into());
-        }
+        status::clear(&ui);
         in_flight_for_send.set(true);
         let _ = jobs.send(Job::Prompt { session, message, images: blocks });
     });
