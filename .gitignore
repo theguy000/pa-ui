@@ -1,12 +1,14 @@
 /target
+/target-alt/
+
+# Runs and session dumps: the window writes these on demand, they are never
+# part of the product.
 *.log
 *.png.tmp
-previews/shot.png
-
-dbg*.log
-
-/target-alt/
 rows-live.txt
+tick_rows.txt
+
+previews/shot.png
 
 # Engineer scratch notes: kept on disk, never part of the product
 /docs/handover/

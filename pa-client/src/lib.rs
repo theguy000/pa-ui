@@ -47,8 +47,7 @@ impl Client {
     ///
     /// # Errors
     /// Fails when the daemon cannot be reached or refuses the handshake.
-
-pub fn connect() -> std::io::Result<Self> {
+    pub fn connect() -> std::io::Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -1426,7 +1425,7 @@ mod queue_trace_probe {
         eprintln!("admission: {id}");
         for step in 0..6 {
             std::thread::sleep(std::time::Duration::from_secs(5));
-            let q = get_queue(&client, &session).map(|(s, f)| (s, f));
+            let q = get_queue(&client, &session);
             match q {
                 Ok((steering, follow_up)) => eprintln!("t+{}s steering={steering:?} follow_up={follow_up:?}", (step + 1) * 5),
                 Err(error) => eprintln!("t+{}s queue error {error}", (step + 1) * 5),
@@ -1525,12 +1524,12 @@ mod image_response_probe {
         }
         eprintln!(
             "queue after send: {:?}",
-            get_queue(&client, &session).map(|(s, f)| (s, f))
+            get_queue(&client, &session)
         );
         std::thread::sleep(std::time::Duration::from_secs(25));
         eprintln!(
             "queue after settle: {:?}",
-            get_queue(&client, &session).map(|(s, f)| (s, f))
+            get_queue(&client, &session)
         );
     }
 }

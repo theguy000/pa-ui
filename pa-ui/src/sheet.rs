@@ -361,7 +361,6 @@ struct Inner {
     last_prepend_px: f32,
     index: std::collections::HashMap<String, std::ops::Range<usize>>,
     open: Option<String>,
-    gap: Option<usize>,
     drawn: Box<dyn Redraw>,
     virtual_state: Option<Rc<RefCell<VirtualSlintRows>>>,
 }
@@ -378,7 +377,6 @@ impl Sheet {
                 last_prepend_px: 0.0,
                 index: std::collections::HashMap::new(),
                 open: None,
-                gap: None,
                 drawn: Box::new(SharedVirtualAdapter(vstate.clone())),
                 virtual_state: Some(vstate.clone()),
             }),
@@ -499,7 +497,6 @@ impl Sheet {
             let mut inner = self.inner.borrow_mut();
             inner.index.clear();
             inner.open = None;
-            inner.gap = None;
             inner.last_prepend_px = 0.0;
             for (offset, row) in rows.iter().enumerate() {
                 let key = row.message.clone();
@@ -596,12 +593,12 @@ impl Sheet {
 
             inner.rows.splice(0..0, new_rows);
             inner.heights.splice(0..0, new_heights.clone());
-            inner.measured.splice(0..0, std::iter::repeat(false).take(total));
+            inner.measured.splice(0..0, std::iter::repeat_n(false, total));
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     vs.heights.splice(0..0, new_heights);
-                    vs.measured.splice(0..0, std::iter::repeat(false).take(total));
+                    vs.measured.splice(0..0, std::iter::repeat_n(false, total));
                     vs.all_rows.splice(0..0, new_trows);
                     vs.win_start += total;
                     vs.win_end += total;
@@ -688,7 +685,6 @@ impl Sheet {
             inner.heights.drain(0..h_end);
             let m_end = from.min(inner.measured.len());
             inner.measured.drain(0..m_end);
-            inner.gap = None;
             inner.index = reindex(&inner.rows);
 
             if let Some(vs_rc) = &inner.virtual_state {
@@ -713,114 +709,6 @@ impl Sheet {
             apply_virtual_update(&vs, true);
         }
         dropped
-    }
-
-    pub fn narrow(&self, newest_page: &str, keep: usize, note: &str) -> usize {
-        let (dropped, vstate) = {
-            let mut inner = self.inner.borrow_mut();
-            let Some(from) = inner.index.get(newest_page).map(|range| range.start) else {
-                return 0;
-            };
-            let seam = inner.gap.unwrap_or(from);
-            let mut drop_from = seam;
-            while drop_from > keep {
-                let key = inner.rows[drop_from - 1].message.clone();
-                if key.is_empty() {
-                    drop_from -= 1;
-                    continue;
-                }
-                let Some(range) = inner.index.get(&key).cloned() else {
-                    break;
-                };
-                if range.end != drop_from {
-                    break;
-                }
-                drop_from = range.start;
-            }
-            if drop_from == seam {
-                return 0;
-            }
-            let stop = if inner.gap.is_some() { seam + 1 } else { seam };
-            for at in (drop_from..stop).rev() {
-                inner.rows.remove(at);
-                if at < inner.heights.len() {
-                    inner.heights.remove(at);
-                    inner.measured.remove(at);
-                }
-                if let Some(vs_rc) = &inner.virtual_state {
-                    if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                        if at < vs.heights.len() {
-                            vs.heights.remove(at);
-                            vs.measured.remove(at);
-                        }
-                    }
-                }
-                inner.drawn.remove(at);
-            }
-            let row = notice(note);
-            let est = estimate_row_height(&row);
-            inner.rows.insert(drop_from, row.clone());
-            inner.heights.insert(drop_from, est);
-            inner.measured.insert(drop_from, false);
-            if let Some(vs_rc) = &inner.virtual_state {
-                if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                    vs.heights.insert(drop_from, est);
-                    let mlen = vs.measured.len(); vs.measured.insert(at_or_end(drop_from, mlen), false);
-                }
-            }
-            inner.drawn.insert(drop_from, to_slint(&row));
-            inner.gap = Some(drop_from);
-            inner.index = reindex(&inner.rows);
-            (stop - drop_from, inner.virtual_state.clone())
-        };
-        if let Some(vs) = vstate {
-            apply_virtual_update(&vs, true);
-        }
-        dropped
-    }
-
-    pub fn fill(&self, rows: Vec<Row>) -> usize {
-        let (held, vstate) = {
-            let mut inner = self.inner.borrow_mut();
-            let Some(at) = inner.gap else {
-                return 0;
-            };
-            inner.rows.remove(at);
-            if at < inner.heights.len() {
-                inner.heights.remove(at);
-                inner.measured.remove(at);
-            }
-            if let Some(vs_rc) = &inner.virtual_state {
-                if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                    if at < vs.heights.len() {
-                        vs.heights.remove(at);
-                        vs.measured.remove(at);
-                    }
-                }
-            }
-            inner.drawn.remove(at);
-            let held = rows.len();
-            for (offset, row) in rows.iter().enumerate() {
-                let est = estimate_row_height(row);
-                inner.rows.insert(at + offset, row.clone());
-                inner.heights.insert(at + offset, est);
-                inner.measured.insert(at + offset, false);
-                if let Some(vs_rc) = &inner.virtual_state {
-                    if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                        vs.heights.insert(at + offset, est);
-                        vs.measured.insert(at + offset, false);
-                    }
-                }
-                inner.drawn.insert(at + offset, to_slint(row));
-            }
-            inner.gap = None;
-            inner.index = reindex(&inner.rows);
-            (held, inner.virtual_state.clone())
-        };
-        if let Some(vs) = vstate {
-            apply_virtual_update(&vs, true);
-        }
-        held
     }
 
     pub fn take_back_prompt(&self, text: &str) {
@@ -875,10 +763,6 @@ impl Sheet {
             apply_virtual_update(&vs, true);
         }
     }
-}
-
-fn at_or_end(idx: usize, len: usize) -> usize {
-    idx.min(len)
 }
 
 struct SharedVirtualAdapter(Rc<RefCell<VirtualSlintRows>>);
@@ -990,13 +874,13 @@ impl Inner {
         let start = current.start;
         let had = current.len();
         let common = had.min(adjusted.len());
-        for offset in 0..common {
+        for (offset, row) in adjusted.iter().enumerate().take(common) {
             let at = start + offset;
-            if self.rows[at] == adjusted[offset] {
+            if self.rows[at] == *row {
                 continue;
             }
-            let est = estimate_row_height(&adjusted[offset]);
-            self.rows[at] = adjusted[offset].clone();
+            let est = estimate_row_height(row);
+            self.rows[at] = row.clone();
             if at < self.heights.len() && !self.measured[at] {
                 self.heights[at] = est;
                 if let Some(vs_rc) = &self.virtual_state {
@@ -1007,7 +891,7 @@ impl Inner {
                     }
                 }
             }
-            self.drawn.set(at, to_slint(&adjusted[offset]));
+            self.drawn.set(at, to_slint(row));
         }
         if adjusted.len() > had {
             self.insert_rows(start + had, &adjusted[had..]);
@@ -1047,29 +931,6 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
     out
 }
 
-fn notice(note: &str) -> Row {
-    let mut row = Row {
-        kind: transcript::KIND_NOTICE,
-        id: String::new(),
-        title: String::new(),
-        meta: String::new(),
-        body: note.to_string(),
-        code: String::new(),
-        output: String::new(),
-        has_code: false,
-        has_output: false,
-        expanded: false,
-        failed: false,
-        reason: String::new(),
-        image: String::new(),
-        mime: String::new(),
-        elapsed: String::new(),
-        message: String::new(),
-    };
-    row.expanded = false;
-    row
-}
-
 fn reindex(rows: &[Row]) -> std::collections::HashMap<String, std::ops::Range<usize>> {
     let mut out: std::collections::HashMap<String, std::ops::Range<usize>> =
         std::collections::HashMap::new();
@@ -1107,7 +968,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         expanded: row.expanded,
         failed: row.failed,
         reason: transcript::plain(&row.reason).into(),
-        image: images::from_wire(&row.image, &row.mime),
+        image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
     }
 }

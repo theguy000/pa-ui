@@ -6,21 +6,14 @@
 //! that is the reader here: one process per paste, and the bytes are sniffed before
 //! they are trusted.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-/// The image types the daemon accepts. Anything else is refused at the door rather
-/// than sent and dropped later.
-const SUPPORTED: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-
-/// One image ready to send: the payload, its type, and a file on disk for the
-/// thumbnail the composer draws.
+/// One image ready to send: the payload and the type it was sniffed as.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Attachment {
     pub mime: String,
     pub base64: String,
-    pub path: PathBuf,
 }
 
 impl Attachment {
@@ -54,16 +47,6 @@ pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-#[allow(dead_code)]
-fn extension_for(mime: &str) -> &'static str {
-    match mime {
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        _ => "png",
-    }
-}
-
 /// Base64, standard alphabet with padding — what every image block on this wire uses.
 #[must_use]
 pub fn base64(bytes: &[u8]) -> String {
@@ -88,7 +71,6 @@ fn attach(bytes: Vec<u8>) -> Option<Attachment> {
     Some(Attachment {
         mime: mime.to_string(),
         base64: base64(&bytes),
-        path: PathBuf::new(),
     })
 }
 
@@ -219,7 +201,6 @@ mod tests {
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"hello world"), "aGVsbG8gd29ybGQ=");
-        assert_eq!(SUPPORTED.len(), 4);
     }
 }
 
@@ -302,8 +283,8 @@ thread_local! {
 /// screenshot is 1.6 MB of RGBA at full size and is shown in a 220 × 150 box, so
 /// the full bitmap is never worth holding — and the poll rebuilds the row.
 #[must_use]
-pub fn from_wire(base64: &str, mime: &str) -> slint::Image {
-    from_wire_sized(base64, mime, THUMB_W, THUMB_H)
+pub fn from_wire(base64: &str) -> slint::Image {
+    from_wire_sized(base64, THUMB_W, THUMB_H)
 }
 
 /// Transcript images are drawn at this size with `image-fit: contain`.
@@ -313,7 +294,7 @@ pub const THUMB_H: u32 = 300;
 /// The same decode, at an explicit bound (2× the drawn box, so a high-DPI
 /// screen still has pixels to spare).
 #[must_use]
-pub fn from_wire_sized(base64: &str, mime: &str, max_w: u32, max_h: u32) -> slint::Image {
+pub fn from_wire_sized(base64: &str, max_w: u32, max_h: u32) -> slint::Image {
     if base64.is_empty() {
         return slint::Image::default();
     }
@@ -348,9 +329,7 @@ fn decode_thumbnail(bytes: &[u8], max_w: u32, max_h: u32) -> Option<slint::Image
     // Triangle is the cheap filter that still looks clean at half size; Lanczos3
     // doubles the decode cost for a difference nobody sees in a 220 px box.
     let scale = (f64::from(max_w) / f64::from(width)).min(f64::from(max_h) / f64::from(height));
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let target_w = ((f64::from(width) * scale).round() as u32).max(1);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let target_h = ((f64::from(height) * scale).round() as u32).max(1);
     let thumb = decoded.resize_exact(target_w, target_h, FilterType::Triangle);
     let rgba = thumb.to_rgba8();
@@ -378,7 +357,7 @@ mod decode_tests {
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
         let payload = base64(png.get_ref());
-        let drawn = from_wire_sized(&payload, "image/png", 440, 300);
+        let drawn = from_wire_sized(&payload, 440, 300);
         let size = drawn.size();
         assert!(size.width <= 440 && size.height <= 300, "got {size:?}");
         // and the aspect ratio is kept: 800x600 -> 400x300

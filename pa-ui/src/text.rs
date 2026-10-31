@@ -98,15 +98,6 @@ pub(crate) fn marquee_shift(name: &str) -> f32 {
 }
 
 
-pub(crate) fn menu_width(models: &[ModelItem]) -> f32 {
-    let widest = models
-        .iter()
-        .map(|model| model.label.chars().count() as f32 * 6.9)
-        .fold(0.0f32, f32::max);
-    (widest + 44.0).clamp(120.0, 220.0)
-}
-
-
 pub(crate) fn trim_to(text: &str, width: usize) -> String {
     let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if cleaned.chars().count() <= width {

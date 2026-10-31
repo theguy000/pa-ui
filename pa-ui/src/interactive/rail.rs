@@ -1,6 +1,5 @@
 //! The rail: filtering sessions, starting a new chat, renaming one.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn rename(ui: &AppWindow, job_tx: &Sender<Job>) {
@@ -39,8 +38,6 @@ pub(crate) fn search(ui: &AppWindow, session_filter: &Rc<RefCell<String>>, sessi
         *filter.borrow_mut() = query.clone();
         let rows = cache.borrow().clone();
         let items = session_items(&rows, &query);
-        if let Some(ui) = weak.upgrade() {
-            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
-        }
+        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
     });
 }

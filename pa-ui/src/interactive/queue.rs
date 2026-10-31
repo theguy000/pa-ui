@@ -1,6 +1,5 @@
 //! The queued lanes' buttons: promote, edit, remove, clear.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn clear(ui: &AppWindow, job_tx: &Sender<Job>) {
@@ -23,12 +22,11 @@ pub(crate) fn clear(ui: &AppWindow, job_tx: &Sender<Job>) {
     });
 }
 
-pub(crate) fn act(ui: &AppWindow, editing: &Rc<RefCell<Option<(String, usize, String)>>>, job_tx: &Sender<Job>) {
+pub(crate) fn act(ui: &AppWindow, editing: &Editing, job_tx: &Sender<Job>) {
     let weak = ui.as_weak();
     let editing = editing.clone();
     let jobs = job_tx.clone();
     ui.on_queue_act(move |lane, slot, action| {
-        let Some(ui) = weak.upgrade() else { return };
         if crate::env_cfg::cfg().debug {
             eprintln!("[queue] act {action} {lane}[{slot}]");
         }

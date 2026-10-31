@@ -4,9 +4,6 @@
 //! takes exactly the handles its callbacks need, so a callback cannot reach into
 //! something it was not given - the parameter list is the dependency list.
 
-#[allow(unused_imports)]
-use crate::*;
-
 pub(crate) mod attachments;
 pub(crate) mod canvas;
 pub(crate) mod menu;

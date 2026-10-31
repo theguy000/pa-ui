@@ -1,8 +1,5 @@
 //! Backward paging: when to ask for the page above, and where the reader's place goes after one arrives.
 
-#[allow(unused_imports)]
-use crate::*;
-
 /// Why the window would (or would not) ask for older history.
 ///
 /// Kept as a value so the rule can be tested: the pager used to be a Slint
@@ -31,19 +28,6 @@ pub struct PagerState {
 pub(crate) const TOP_SLACK: f32 = 2200.0;
 
 
-/// Where the list must be scrolled after a page of older rows went in above the
-/// viewport: the same rows stay under the reader's eye, no jump.
-///
-/// `anchor-y` is the offset before the page, and the two heights are the
-/// content height before and after. Prepend only ever grows the content upwards,
-/// so a shrink is treated as "nothing happened" rather than a jump.
-#[must_use]
-pub fn anchor_after_prepend(anchor_y: f32, height_before: f32, height_after: f32) -> f32 {
-    let grown = (height_after - height_before).max(0.0);
-    anchor_y - grown
-}
-
-
 #[must_use]
 pub fn should_load_older(state: PagerState) -> bool {
     // nothing is above the newest row, so being at the bottom means nothing to do
@@ -66,7 +50,7 @@ pub fn should_load_older(state: PagerState) -> bool {
 
 #[cfg(test)]
 mod pager_tests {
-    use super::{anchor_after_prepend, should_load_older, PagerState};
+    use super::{should_load_older, PagerState};
 
     /// A reader parked at the newest row has nothing above them to fetch.
     fn settled() -> PagerState {
@@ -116,18 +100,5 @@ mod pager_tests {
         state.ready = true;
         state.content_height = 400.0;
         assert!(!should_load_older(state));
-    }
-
-    #[test]
-    fn the_reader_stays_on_the_row_they_were_reading() {
-        // at the very top, a 1500 px page goes in above: the viewport follows it
-        // down by 1500 px, so the words that were on screen are still on screen
-        assert_eq!(anchor_after_prepend(0.0, 2000.0, 3500.0), -1500.0);
-        // half way up: same rule, the anchor is simply deeper already
-        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 3500.0), -2400.0);
-        // nothing grew (a page that carried no visible rows)
-        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 2000.0), -900.0);
-        // a height that has not been re-measured yet must not jump the wrong way
-        assert_eq!(anchor_after_prepend(-900.0, 2000.0, 1500.0), -900.0);
     }
 }

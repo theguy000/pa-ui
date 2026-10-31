@@ -2349,11 +2349,16 @@ export component AppWindow inherits Window {
                                 // running turn, Shift+Enter is a newline,
                                 // Esc aborts � the TUI's bindings
                                 if event.text == Key.Return {
+                                    // A command word in front of the caret is half of
+                                    // the message: the box is empty when a command was
+                                    // taken from the menu, and that is still something
+                                    // to send, not a dead key.
                                     // Ctrl+Enter (or Alt+Enter, kept from before) folds
                                     // the message into the turn that is running instead
                                     // of parking it behind
                                     if event.modifiers.control || event.modifiers.alt {
                                         if root.composer-text != ""
+                                            || root.composer-command != ""
                                             || root.attachment-images.length > 0
                                         {
                                             root.steer-requested(root.composer-text);
@@ -2363,6 +2368,7 @@ export component AppWindow inherits Window {
                                     }
                                     if !event.modifiers.shift {
                                         if root.composer-text != ""
+                                            || root.composer-command != ""
                                             || root.attachment-images.length > 0
                                         {
                                             root.send-requested(root.composer-text);

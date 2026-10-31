@@ -1,6 +1,5 @@
 //! Sending, steering and stopping: what the composer does with Enter, Ctrl+Enter and the button.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn steer(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>, job_tx: &Sender<Job>, pending_user: &Rc<RefCell<Option<String>>>) {
@@ -11,17 +10,19 @@ pub(crate) fn steer(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>
     let attachment_model = attachment_model.clone();
     ui.on_steer_requested(move |text| {
         let Some(ui) = weak.upgrade() else { return };
-        let message = text.trim().to_string();
+        // The gold word in front of the caret is half the message: a command
+        // steered into the running turn has to carry it or it steers nothing.
+        let message = compose_message(&ui.get_composer_command(), &text);
         if message.is_empty() {
             return;
         }
-        let Some(ui) = weak.upgrade() else { return };
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
             return;
         }
         ui.set_composer_text("".into());
         ui.set_composer_has_text(false);
+        ui.set_composer_command("".into());
         let blocks: Vec<serde_json::Value> = {
             let mut held = attachments.borrow_mut();
             let blocks = held.iter().map(images::Attachment::block).collect();
@@ -51,26 +52,43 @@ pub(crate) fn abort(ui: &AppWindow, job_tx: &Sender<Job>) {
     });
 }
 
-pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, editing: &Rc<RefCell<Option<(String, usize, String)>>>, in_flight: &Rc<std::cell::Cell<bool>>, job_tx: &Sender<Job>, pending_user: &Rc<RefCell<Option<String>>>, sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>) {
+/// Everything a send needs a handle to. A struct rather than a parameter list
+/// nine names long, but still the dependency list: nothing reaches the window
+/// that is not named here.
+pub(crate) struct Handles<'a> {
+    pub attachment_model: &'a Rc<VecModel<slint::Image>>,
+    pub attachments: &'a Rc<RefCell<Vec<images::Attachment>>>,
+    pub catalog: &'a Rc<RefCell<Vec<pa_client::ModelEntry>>>,
+    pub editing: &'a Editing,
+    pub in_flight: &'a Rc<std::cell::Cell<bool>>,
+    pub job_tx: &'a Sender<Job>,
+    pub pending_user: &'a Rc<RefCell<Option<String>>>,
+    pub sent_thumbs: &'a SentThumbs,
+}
+
+pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
     let weak = ui.as_weak();
-    let jobs = job_tx.clone();
-    let pending_user = pending_user.clone();
-    let attachments = attachments.clone();
-    let attachment_model = attachment_model.clone();
-    let catalog_for_send = catalog.clone();
-    let in_flight_for_send = in_flight.clone();
-    let sent_thumbs = sent_thumbs.clone();
-    let editing_to_send = editing.clone();
+    let jobs = handles.job_tx.clone();
+    let pending_user = handles.pending_user.clone();
+    let attachments = handles.attachments.clone();
+    let attachment_model = handles.attachment_model.clone();
+    let catalog_for_send = handles.catalog.clone();
+    let in_flight_for_send = handles.in_flight.clone();
+    let sent_thumbs = handles.sent_thumbs.clone();
+    let editing_to_send = handles.editing.clone();
     ui.on_send_requested(move |text| {
         let Some(ui) = weak.upgrade() else { return };
         if crate::env_cfg::cfg().debug {
             eprintln!("[send] callback fired with {text:?}");
         }
-        let message = text.trim().to_string();
+        // The command word in front of the caret and whatever was typed after
+        // it are one message, so the guard has to read both: a bare
+        // `/compact` leaves the box empty and was dropped here before the word
+        // was ever looked at, from Enter and from the Send button alike.
+        let message = compose_message(&ui.get_composer_command(), &text);
         if message.is_empty() && attachments.borrow().is_empty() {
             return;
         }
-        let Some(ui) = weak.upgrade() else { return };
         // Sending is the reader saying "show me the answer": follow again,
         // even if they had scrolled up to read something first
         force_scroll_to_end(&ui);
@@ -99,16 +117,6 @@ pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>
             ui.set_status_line("no session selected".into());
             return;
         }
-
-        // The word in front of the caret plus whatever was typed after it.
-        let command_word = ui.get_composer_command().to_string();
-        let message = if command_word.is_empty() {
-            message
-        } else if message.trim().is_empty() {
-            command_word
-        } else {
-            format!("{command_word} {message}")
-        };
         // A command is only sent when the agent runs it. Everything else in
         // the table is a window action: it either happens here or says
         // plainly that it is not wired, but it never leaves as chat words.
@@ -170,7 +178,7 @@ pub(crate) fn send(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>
         {
             let held = attachments.borrow();
             if let Some(first) = held.first() {
-                let thumb = images::from_wire(&first.base64, &first.mime);
+                let thumb = images::from_wire(&first.base64);
                 if thumb.size().width > 0 {
                     let mut thumbs = sent_thumbs.borrow_mut();
                     thumbs.push((message.clone(), thumb));

@@ -6,7 +6,7 @@ pub(crate) fn apply_queue(
     ui: &AppWindow,
     steering: &[String],
     follow_up: &[String],
-    sent_thumbs: &Rc<RefCell<Vec<(String, slint::Image)>>>,
+    sent_thumbs: &SentThumbs,
 ) {
     if crate::env_cfg::cfg().debug {
         eprintln!(
@@ -52,10 +52,10 @@ pub(crate) fn apply_queue(
                         .collect()
                 };
                 ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(lane_items(
-                    &steering,
+                    steering,
                 )))));
                 ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(
-                    &follow_up,
+                    follow_up,
                 )))));
 
 }

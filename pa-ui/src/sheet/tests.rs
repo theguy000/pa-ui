@@ -34,7 +34,6 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
                 last_prepend_px: 0.0,
             index: std::collections::HashMap::new(),
             open: None,
-            gap: None,
             virtual_state: None,
                 drawn: Box::new(Recording(orders.clone())),
         }),
@@ -58,7 +57,6 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         failed: false,
         reason: String::new(),
         image: String::new(),
-        mime: String::new(),
         message: message.to_string(),
         elapsed: String::new(),
     }
@@ -202,113 +200,4 @@ fn rows_that_arrive_while_an_answer_is_open_land_above_it() {
     sheet.merge(vec![row("m2", transcript::KIND_AGENT, "", "", "older news")]);
 
     assert_eq!(messages(&sheet), ["m1", "m2", "live"], "the answer drifted above newer rows");
-}
-
-fn pair(message: &str, title: &str) -> Vec<Row> {
-    vec![
-        row(message, transcript::KIND_AGENT, title, "", &format!("{title} one")),
-        row(message, transcript::KIND_AGENT, title, "", &format!("{title} two")),
-    ]
-}
-
-fn three_messages() -> Vec<Row> {
-    let mut rows = pair("m1", "first");
-    rows.extend(pair("m2", "second"));
-    rows.extend(pair("m3", "newest"));
-    rows
-}
-
-#[test]
-fn a_sheet_inside_its_budget_keeps_everything() {
-    let (sheet, _) = sheet();
-    sheet.replace(three_messages());
-    let before = sheet.rows().len();
-
-    let gone = sheet.narrow("m3", 10, "older history is not loaded");
-
-    assert_eq!(gone, 0);
-    assert_eq!(sheet.rows().len(), before);
-    assert_eq!(messages(&sheet), ["m1", "m2", "m3"]);
-}
-
-#[test]
-fn narrowing_unloads_the_history_nearest_the_newest_page() {
-    let (sheet, _) = sheet();
-    sheet.replace(three_messages());
-
-    let gone = sheet.narrow("m3", 2, "older history is not loaded");
-
-    assert_eq!(gone, 2, "the newest stretch of history did not go");
-    assert_eq!(messages(&sheet), ["m1", "", "m3"], "the hole is not where it was");
-    assert_eq!(sheet.rows()[2].body, "older history is not loaded");
-    assert_eq!(sheet.rows()[3].message, "m3", "the newest page moved");
-}
-
-#[test]
-fn the_newest_page_is_never_unloaded() {
-    let (sheet, _) = sheet();
-    sheet.replace(three_messages());
-
-    sheet.narrow("m3", 0, "older history is not loaded");
-
-    assert_eq!(messages(&sheet), ["", "m3"]);
-    assert_eq!(sheet.rows().len(), 3);
-}
-
-#[test]
-fn filling_the_hole_puts_the_page_back_where_it_was() {
-    let (sheet, _) = sheet();
-    sheet.replace(three_messages());
-    sheet.narrow("m3", 2, "older history is not loaded");
-
-    let put_back = sheet.fill(pair("m2", "second"));
-
-    assert_eq!(put_back, 2);
-    assert_eq!(messages(&sheet), ["m1", "m2", "m3"], "the page did not go back in the hole");
-    assert!(!sheet.rows().iter().any(|row| row.body == "older history is not loaded"));
-}
-
-#[test]
-fn narrowing_twice_leaves_one_notice_not_two() {
-    let (sheet, _) = sheet();
-    sheet.replace(three_messages());
-
-    sheet.narrow("m3", 2, "older history is not loaded");
-    sheet.narrow("m3", 0, "older history is not loaded");
-
-    assert_eq!(messages(&sheet), ["", "m3"]);
-    let notices = sheet.rows().iter().filter(|row| row.body == "older history is not loaded").count();
-    assert_eq!(notices, 1, "a second notice stacked on the first");
-}
-
-#[test]
-fn the_hole_costs_one_order_to_make_and_one_to_fill() {
-    let (sheet, orders) = sheet();
-    sheet.replace(three_messages());
-    orders.borrow_mut().clear();
-
-    sheet.narrow("m3", 2, "older history is not loaded");
-
-    // two rows out, one notice in
-    assert_eq!(*orders.borrow(), vec![Order::Remove { at: 3 }, Order::Remove { at: 2 }, Order::Insert { at: 2 }]);
-}
-
-#[test]
-fn narrowing_at_scale_drops_the_whole_stretch_not_one_message() {
-    let (sheet, _) = sheet();
-    let mut rows = Vec::new();
-    for message in 0..40 {
-        rows.extend(pair(&format!("m{message}"), "history"));
-    }
-    rows.extend(pair("newest", "newest"));
-    sheet.replace(rows);
-
-    let gone = sheet.narrow("newest", 10, "older history is not loaded");
-
-    assert_eq!(
-        messages(&sheet),
-        ["m0", "m1", "m2", "m3", "m4", "", "newest"],
-        "the five messages nearest the newest page are the ones that stay"
-    );
-    assert_eq!(gone, 70, "thirty-five messages of two rows each did not go");
 }

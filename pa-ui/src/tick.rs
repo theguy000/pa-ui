@@ -2,10 +2,6 @@
 
 use crate::*;
 
-/// What the notice row says where history was unloaded.
-#[allow(dead_code)]
-const HISTORY_UNLOADED: &str = "Some history here was unloaded to keep the window fast.";
-
 pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
@@ -28,9 +24,9 @@ pub(crate) struct Tick {
     pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
     pub in_flight: Rc<std::cell::Cell<bool>>,
     pub pending_user: Rc<RefCell<Option<String>>>,
-    pub extra_commands: Rc<RefCell<Vec<(String, String, String)>>>,
-    pub repaint_slot: Rc<RefCell<Option<Rc<dyn Fn(&AppWindow)>>>>,
-    pub sent_thumbs: Rc<RefCell<Vec<(String, slint::Image)>>>,
+    pub extra_commands: SlashCommands,
+    pub repaint_slot: RepaintSlot,
+    pub sent_thumbs: SentThumbs,
     pub catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>>,
     pub collapsed: Rc<RefCell<std::collections::HashSet<String>>>,
     pub catalog_loaded: Rc<std::cell::Cell<bool>>,
@@ -129,9 +125,9 @@ impl Tick {
             ready: ui.get_pager_ready(),
             loading: self.loading_older.get(),
             has_older: self.has_older.get(),
-            content_y: ui.get_dbg_cy() as f32,
-            content_height: ui.get_dbg_ch() as f32,
-            height: ui.get_dbg_h() as f32,
+            content_y: ui.get_dbg_cy(),
+            content_height: ui.get_dbg_ch(),
+            height: ui.get_dbg_h(),
         };
         if !should_load_older(state) {
             return;
@@ -200,7 +196,7 @@ impl Tick {
             // the pager only moves on a scroll; when it does not, this says which
             // of the four conditions was false
             l.scroll_ticks += 1;
-            if l.scroll_ticks % 15 == 0 {
+            if l.scroll_ticks.is_multiple_of(15) {
                 eprintln!(
                     "[scroll] cy={} ch={} h={} at-bottom={} older={} ready={} loading={}",
                     ui.get_dbg_cy(),
@@ -638,8 +634,7 @@ impl Tick {
                     }
                     // Where the reader was, and how tall the content was, before
                     // the page goes in. Both are read from the list itself.
-                    let before_y = ui.get_dbg_cy() as f32;
-                    let before_h = ui.get_dbg_ch() as f32;
+                    let before_y = ui.get_dbg_cy();
                     let older_len = older.len();
                     let insert_at = SystemTime::now();
                     sheet.prepend(older);
@@ -711,7 +706,7 @@ impl Tick {
                                 })
                                 .unwrap_or_default()
                         };
-                        apply_queue(&ui, &lane("steering"), &lane("followUps"), &sent_thumbs);
+                        apply_queue(&ui, &lane("steering"), &lane("followUps"), sent_thumbs);
                         continue;
                     }
                     // A closed turn is reconciled from the store: the live row
@@ -753,15 +748,11 @@ impl Tick {
                             continue;
                         };
                         if kind == Some("tool_execution_start") {
-                            let tool_name = event
-                                .get("toolName")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("tool");
                             let args = event
                                 .get("args")
                                 .cloned()
                                 .unwrap_or(serde_json::Value::Null);
-                            turn.start_tool(&call_id, tool_name, args);
+                            turn.start_tool(&call_id, args);
                         } else {
                             let output = tool_output_text(event.get("result"));
                             let failed = event
@@ -880,7 +871,7 @@ impl Tick {
                     }
                 }
                 Msg::Queue { steering, follow_up } => {
-                    apply_queue(&ui, &steering, &follow_up, &sent_thumbs);
+                    apply_queue(&ui, &steering, &follow_up, sent_thumbs);
                 }
                 Msg::Prompt { session, message, images } => {
                     in_flight.set(true);
@@ -1027,8 +1018,8 @@ impl Tick {
                     // the daemon is the truth about which model runs; the chip
                     // follows it rather than the last thing clicked
                     if !state.model_id.is_empty()
-                        && (state.model_id != ui.get_model_id().to_string()
-                            || state.provider != ui.get_model_provider().to_string())
+                        && (ui.get_model_id() != state.model_id
+                            || ui.get_model_provider() != state.provider)
                     {
                         let label = catalog
                             .borrow()

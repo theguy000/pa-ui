@@ -7,10 +7,8 @@
 //!   {customType, content, display}
 
 
-#[allow(unused_imports)]
 use serde_json::Value;
-#[allow(unused_imports)]
-use slint::{Model, SharedString, StyledText};
+use slint::StyledText;
 
 mod cache;
 mod cells;
@@ -21,7 +19,6 @@ mod tests;
 
 // The subjects below are one thing each, re-exported here so a call site keeps
 // saying `transcript::markdown_markup` and never has to know the file it lives in.
-#[allow(unused_imports)]
 pub(crate) use cache::*;
 pub(crate) use cells::*;
 pub(crate) use demo::*;
@@ -64,7 +61,6 @@ pub struct Row {
     pub reason: String,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
-    pub mime: String,
     /// which message this row belongs to: the daemon's id when it has one, a
     /// role+timestamp key when it does not. Rows are merged per message, so a
     /// rebuild can replace one message without touching the rest.
@@ -90,7 +86,6 @@ impl Row {
             failed: false,
             reason: String::new(),
             image: String::new(),
-            mime: String::new(),
             elapsed: String::new(),
             message: String::new(),
         }
@@ -141,11 +136,6 @@ fn build_message(
                 }
                 let mut row = Row::new(KIND_IMAGE);
                 row.image = data.to_string();
-                row.mime = block
-                    .get("mimeType")
-                    .and_then(Value::as_str)
-                    .unwrap_or("image/png")
-                    .to_string();
                 rows.push(row);
             }
             "text" => {
@@ -191,16 +181,12 @@ fn build_message(
             }
             "toolCall" => {
                 let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
-                let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
                 let code = block
                     .pointer("/arguments/code")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 let mut row = Row::new(KIND_CELL);
                 row.id = id.to_string();
-                let fallback = block.get("arguments").map(ToString::to_string).unwrap_or_default();
-                let summary = summary_line(if code.is_empty() { &fallback } else { code });
-                row.title = format!("{} · {}", short_tool(name), summary);
                 row.code = highlight_python(code);
                 row.has_code = !code.is_empty();
                 if let Some((output, failed)) = outputs.get(id) {

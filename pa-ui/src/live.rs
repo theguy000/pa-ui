@@ -17,7 +17,6 @@ pub enum Part {
     Text(String),
     Tool {
         id: String,
-        name: String,
         args: Value,
         output: Option<String>,
         failed: bool,
@@ -57,23 +56,7 @@ impl Live {
         }
     }
 
-    /// The frame's own copy of the prose wins when it carries one: a delta can
-    /// be missed, the message cannot.
-    pub fn set_text(&mut self, text: &str) {
-        match self
-            .parts
-            .iter_mut()
-            .rev()
-            .find_map(|part| match part {
-                Part::Text(existing) => Some(existing),
-                _ => None,
-            }) {
-            Some(existing) => *existing = text.to_string(),
-            None => self.parts.push(Part::Text(text.to_string())),
-        }
-    }
-
-    pub fn start_tool(&mut self, id: &str, name: &str, args: Value) {
+    pub fn start_tool(&mut self, id: &str, args: Value) {
         if self
             .parts
             .iter()
@@ -83,7 +66,6 @@ impl Live {
         }
         self.parts.push(Part::Tool {
             id: id.to_string(),
-            name: name.to_string(),
             args,
             output: None,
             failed: false,
@@ -132,14 +114,13 @@ impl Live {
                 Part::Text(text) => out.extend(block_rows("text", text)),
                 Part::Tool {
                     id,
-                    name,
                     args,
                     output,
                     failed,
                     bash,
                     duration,
                 } => {
-                    let mut row = transcript::tool_cell(name, id, args);
+                    let mut row = transcript::tool_cell(id, args);
                     if let Some(output) = output {
                         transcript::finish_cell(&mut row, output, *failed);
                     }

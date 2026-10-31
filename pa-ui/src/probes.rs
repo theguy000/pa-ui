@@ -127,7 +127,7 @@ mod efficiency_parts {
         time("markdown_markup, one paragraph", 2000, || {
             transcript::markdown_markup("Prose with some inline code and bold and a link.")
         });
-        time("StyledText::from_markdown, one row", 2000, || {
+        let _ = time("StyledText::from_markdown, one row", 2000, || {
             slint::StyledText::from_markdown(&markup)
         });
         time("message.to_string() (fingerprint input)", 2000, || message.to_string());

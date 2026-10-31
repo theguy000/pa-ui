@@ -13,7 +13,6 @@ pub struct Config {
     pub demo_markdown: bool,
     pub queue_preset: bool,
     pub menu: bool,
-    pub hover: bool,
     pub canvas: bool,
 }
 
@@ -27,7 +26,6 @@ pub fn cfg() -> &'static Config {
         demo_markdown: std::env::var("PA_DEMO").as_deref() == Ok("markdown"),
         queue_preset: std::env::var("PA_QUEUE").is_ok(),
         menu: std::env::var("PA_MENU").is_ok(),
-        hover: std::env::var("PA_HOVER").is_ok(),
         canvas: std::env::var("PA_CANVAS").is_ok(),
     })
 }

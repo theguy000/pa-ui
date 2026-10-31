@@ -22,7 +22,6 @@ const COLOR_NORMAL: Color = Color::rgb(0xe7, 0xe5, 0xdf);
 const COLOR_COMMAND: Color = Color::rgb(0xd8, 0xc0, 0x6a);
 /// Behind a selection, and the glyphs inside one.
 const COLOR_SELECTION: Color = Color::rgba(0x2b, 0x45, 0x62, 0xc0);
-const COLOR_SELECTED_TEXT: Color = Color::rgb(0xff, 0xff, 0xff);
 
 /// The family the rest of the window uses. Asking for the generic sans gets
 /// Arial, which is a different width and a different weight.
@@ -138,21 +137,47 @@ fn over(frame: &mut [Rgba8Pixel], index: usize, color: Color, coverage: u8) {
         r: mix(u32::from(color.r()), under.r),
         g: mix(u32::from(color.g()), under.g),
         b: mix(u32::from(color.b()), under.b),
-        a: ((coverage + (u32::from(under.a) * inverse) / 255) as u8).min(255),
+        a: ((coverage + (u32::from(under.a) * inverse) / 255) as u8),
     };
 }
 
+/// A rectangle in the canvas' own pixels.
+struct Rect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
 /// A flat rectangle of colour, premultiplied.
-fn fill(frame: &mut [Rgba8Pixel], stride: usize, width: u32, height: u32, x: f32, y: f32, run_width: f32, line_height: f32, color: Color) {
-    let x0 = x.floor().max(0.0) as u32;
-    let x1 = ((x + run_width).ceil().max(0.0) as u32).min(width);
-    let y0 = y.floor().max(0.0) as u32;
-    let y1 = ((y + line_height).ceil().max(0.0) as u32).min(height);
+fn fill(frame: &mut [Rgba8Pixel], stride: usize, width: u32, height: u32, rect: Rect, color: Color) {
+    let x0 = rect.x.floor().max(0.0) as u32;
+    let x1 = ((rect.x + rect.width).ceil().max(0.0) as u32).min(width);
+    let y0 = rect.y.floor().max(0.0) as u32;
+    let y1 = ((rect.y + rect.height).ceil().max(0.0) as u32).min(height);
     for py in y0..y1 {
         for px in x0..x1 {
             over(frame, py as usize * stride + px as usize, color, 255);
         }
     }
+}
+
+/// A whole-document byte offset, as the line it falls on and the offset inside
+/// that line.
+///
+/// cosmic-text numbers a line's text, and every glyph in it, from the start of
+/// that line - a document-wide offset can never be compared with a glyph's.
+fn split_at_line(text: &str, byte: usize) -> (usize, usize) {
+    // the caret can arrive one keystroke behind the text it belongs to, and a
+    // half-a-character offset cannot be sliced out of a string
+    let mut byte = byte.min(text.len());
+    while !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    let before = &text[..byte];
+    let line = before.matches('\n').count();
+    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    (line, byte - line_start)
 }
 
 /// The shaped, coloured message.
@@ -216,10 +241,15 @@ impl Canvas {
             let (a, b) = selection;
             (a.min(text.len()).min(b), b.min(text.len()).max(a.min(text.len())))
         };
+        let (caret_line, caret_index) = split_at_line(text, caret_byte);
+        let select_from = split_at_line(text, select_start);
+        let select_to = split_at_line(text, select_end);
 
         let line_height = self.metrics.line_height;
         let mut lines = 0usize;
         let mut caret = None;
+        // where the caret goes when it sits past the last glyph of its own line
+        let mut caret_at_line_end = None;
         let mut last_x = 0.0f32;
         let mut last_line = 0.0f32;
         // selection rectangles first: the glyphs are painted over them
@@ -227,16 +257,33 @@ impl Canvas {
         for run in self.buffer.layout_runs() {
             lines += 1;
             last_line = run.line_top;
+            // the slice of the selection this visual run carries, clamped to
+            // the run's own numbering: a selection that spans lines is one
+            // rectangle per line, not one rectangle per document
+            let selected = if select_start < select_end
+                && run.line_i >= select_from.0
+                && run.line_i <= select_to.0
+            {
+                let from = if run.line_i == select_from.0 { select_from.1 } else { 0 };
+                let to = if run.line_i == select_to.0 { select_to.1 } else { run.text.len() };
+                (from, to.max(from))
+            } else {
+                (0, 0)
+            };
             let mut run_start: Option<f32> = None;
             let mut run_end = 0.0f32;
             for glyph in run.glyphs.iter() {
                 last_x = glyph.x + glyph.w;
-                if caret.is_none() && glyph.start <= caret_byte && caret_byte < glyph.end {
+                if caret.is_none()
+                    && run.line_i == caret_line
+                    && glyph.start <= caret_index
+                    && caret_index < glyph.end
+                {
                     caret = Some((glyph.x, run.line_top));
                 }
-                if select_start < select_end
-                    && glyph.start < select_end
-                    && glyph.end > select_start
+                if selected.0 < selected.1
+                    && glyph.start < selected.1
+                    && glyph.end > selected.0
                 {
                     run_start = Some(run_start.map_or(glyph.x, |x: f32| x.min(glyph.x)));
                     run_end = run_end.max(glyph.x + glyph.w);
@@ -245,12 +292,16 @@ impl Canvas {
             if let Some(start) = run_start {
                 selections.push((start, (run_end - start).max(1.0), run.line_top));
             }
-            if caret.is_none() && caret_byte == run.text.len() {
-                caret = Some((last_x, run.line_top));
+            // The caret at the end of a line is past its last glyph, and every
+            // wrapped run of that line answers to the same line index: the one
+            // seen last - the bottom of the paragraph - is the one it belongs
+            // to, so each run overwrites the answer.
+            if run.line_i == caret_line {
+                caret_at_line_end = Some((last_x, run.line_top));
             }
         }
         let content_height = (lines.max(1) as f32 * line_height).ceil();
-        let (caret_x, caret_y) = caret.unwrap_or((last_x, last_line));
+        let (caret_x, caret_y) = caret.or(caret_at_line_end).unwrap_or((last_x, last_line));
 
         let image_w = width.ceil().max(1.0) as u32;
         let image_h = content_height.max(1.0) as u32;
@@ -259,9 +310,9 @@ impl Canvas {
         {
             let frame = pixels.make_mut_slice();
             for (x, run_width, y) in &selections {
-                fill(frame, stride, image_w, image_h, *x, *y, *run_width, line_height, COLOR_SELECTION);
+                let selected = Rect { x: *x, y: *y, width: *run_width, height: line_height };
+                fill(frame, stride, image_w, image_h, selected, COLOR_SELECTION);
             }
-            let selected = select_start < select_end;
             self.buffer.draw(
                 &mut self.fonts,
                 &mut self.cache,
@@ -347,5 +398,86 @@ mod tests {
         for pair in found.windows(2) {
             assert_eq!(pair[0].end, pair[1].start, "a gap between {pair:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::{split_at_line, Canvas};
+
+    #[test]
+    fn the_first_line_is_numbered_from_the_top() {
+        assert_eq!(split_at_line("abc", 0), (0, 0));
+        assert_eq!(split_at_line("abc", 3), (0, 3));
+    }
+
+    #[test]
+    fn a_newline_restarts_the_count() {
+        let text = "abc\ndef";
+        assert_eq!(split_at_line(text, 3), (0, 3), "end of the first line");
+        assert_eq!(split_at_line(text, 4), (1, 0), "start of the second");
+        assert_eq!(split_at_line(text, 7), (1, 3), "end of the second");
+    }
+
+    #[test]
+    fn empty_lines_are_lines_too() {
+        let text = "a\n\nb";
+        assert_eq!(split_at_line(text, 2), (1, 0));
+        assert_eq!(split_at_line(text, 3), (2, 0));
+    }
+
+    #[test]
+    fn an_offset_past_the_end_clamps() {
+        assert_eq!(split_at_line("ab", 99), (0, 2));
+        assert_eq!(split_at_line("", 5), (0, 0));
+    }
+
+    #[test]
+    fn a_stale_offset_never_lands_inside_a_character() {
+        // the "e" with an acute is two bytes and one character: a caret left
+        // at byte 1 by an earlier edit must not panic the painter
+        let text = "\u{e9}x\ny";
+        assert_eq!(split_at_line(text, 1), (0, 0), "snapped back to the character start");
+        assert_eq!(split_at_line(text, 2), (0, 2));
+        assert_eq!(split_at_line(text, 4), (1, 0), "after the newline");
+    }
+
+    /// The caret used to be matched against glyph offsets as if they were
+    /// document-wide, so on every line but the first it fell back to the end of
+    /// the document: a paste put the caret somewhere the writer never clicked.
+    #[test]
+    fn a_caret_on_a_later_line_lands_between_its_own_glyphs() {
+        let mut canvas = Canvas::new(13.0, 18.0);
+        let text = "abc\ndefgh";
+        let at = |canvas: &mut Canvas, byte: usize| {
+            let (_, caret) = canvas.render(text, byte, (byte, byte), 400.0, |_| false);
+            (caret.x, caret.y)
+        };
+        let (start_of_second, y_start) = at(&mut canvas, 5);
+        let (inside_second, y_inside) = at(&mut canvas, 6);
+        let (end_of_document, y_end) = at(&mut canvas, 9);
+        assert_eq!((y_start, y_inside, y_end), (18.0, 18.0, 18.0), "all three are on the second line");
+        assert!(
+            start_of_second < inside_second && inside_second < end_of_document,
+            "the caret inside the line sits between the line's own glyphs: {start_of_second} < {inside_second} < {end_of_document}"
+        );
+    }
+
+    /// The same fallback put the caret on the first wrapped run of a paragraph
+    /// instead of the last one.
+    #[test]
+    fn the_end_of_a_wrapped_line_belongs_to_its_bottom_run() {
+        let mut canvas = Canvas::new(13.0, 18.0);
+        let text = "one two three four five six seven eight nine ten eleven twelve";
+        let (_, caret) = canvas.render(text, text.len(), (0, 0), 60.0, |_| false);
+        assert!(
+            caret.content_height > 18.0,
+            "the text has to wrap for this to mean anything"
+        );
+        assert_eq!(
+            caret.y,
+            caret.content_height - 18.0,
+            "the caret is on the last wrapped run, not the first"
+        );
     }
 }

@@ -587,7 +587,7 @@ pub fn highlight_python(code: &str) -> String {
     let mut out = String::with_capacity(code.len() * 2);
     let mut chars = code.chars().peekable();
     let mut word = String::new();
-    let mut flush_word = |word: &mut String, out: &mut String| {
+    let flush_word = |word: &mut String, out: &mut String| {
         if word.is_empty() {
             return;
         }
@@ -617,7 +617,7 @@ pub fn highlight_python(code: &str) -> String {
                     literal.push(quote);
                     literal.push(quote);
                     let mut run = 0;
-                    while let Some(next) = chars.next() {
+                    for next in chars.by_ref() {
                         literal.push(next);
                         if next == quote {
                             run += 1;

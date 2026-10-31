@@ -37,16 +37,6 @@ pub(crate) fn hold_offset(ui: &AppWindow) -> Option<f32> {
 }
 
 
-/// Put the offset back, if the reader is still reading.
-pub(crate) fn restore_offset(ui: &AppWindow, held: Option<f32>) {
-    let Some(y) = held else { return };
-    if !should_hold_offset(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
-        return;
-    }
-    ui.invoke_set_scroll_y(y);
-}
-
-
 /// Hold the reader's place across a model mutation.
 ///
 /// The list recalculates its own offset from the average height of the rows it

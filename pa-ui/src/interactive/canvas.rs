@@ -4,13 +4,12 @@
 //! taken so the gold word is replaced in the same frame. The second call used to
 //! be a copy of this one; it differs only in not repeating the debug line.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn painter(
     canvas_cell: &Rc<RefCell<Option<composer_canvas::Canvas>>>,
     canvas_key: &Rc<RefCell<(String, usize, i32)>>,
-    extra_commands: &Rc<RefCell<Vec<(String, String, String)>>>,
+    extra_commands: &SlashCommands,
     trace: bool,
 ) -> Rc<dyn Fn(&AppWindow)> {
     let canvas_cell = canvas_cell.clone();

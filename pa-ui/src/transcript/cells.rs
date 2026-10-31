@@ -124,19 +124,11 @@ pub fn apply_header(
 }
 
 
-/// The part of a shell line worth reading in a title: exactly what the TUI
-/// computes, because this shell has to read the same as that one.
-#[must_use]
-pub fn bash_preview(command: &str) -> String {
-    crate::preview::preview_bash_command(command).text
-}
-
-
 /// A cell row for a tool call that has just started, shaped exactly like the one
 /// the store will produce for it so the reconcile at turn end changes nothing
 /// on screen.
 #[must_use]
-pub fn tool_cell(tool_name: &str, call_id: &str, args: &Value) -> Row {
+pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
     let mut row = Row::new(KIND_CELL);
     row.id = call_id.to_string();
@@ -182,22 +174,6 @@ pub(crate) fn failure_reason(output: &str, failed: bool) -> String {
         .find(|line| !line.is_empty())
         .unwrap_or("failed");
     line.chars().take(160).collect()
-}
-
-
-pub(crate) fn short_tool(name: &str) -> &str {
-    match name {
-        "python_repl" => "python",
-        other => other,
-    }
-}
-
-
-/// What a python cell is about, in one line: the TUI's own statement scorer,
-/// ported from its source rather than approximated.
-#[must_use]
-pub fn python_preview(code: &str) -> String {
-    crate::preview::preview_ipython_code(code).text
 }
 
 

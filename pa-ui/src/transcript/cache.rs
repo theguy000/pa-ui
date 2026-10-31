@@ -69,6 +69,7 @@ pub(crate) fn cache_put(owner: &str, fingerprint: u64, rows: &[Row]) {
 
 /// Empty the per-message cache. Only a measurement needs this: the cache is
 /// bounded on its own and follows the messages it is keyed by.
+#[cfg(test)]
 pub fn reset_cache() {
     MESSAGE_CACHE.with(|cache| cache.borrow_mut().clear());
 }

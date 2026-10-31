@@ -1,6 +1,5 @@
 //! Attachments: picking a file, pasting one, removing one, and the thumbnails.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn drain(attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>) {
@@ -12,7 +11,7 @@ pub(crate) fn drain(attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachmen
         while let Ok(found) = attach_rx.try_recv() {
             let mut held = attachments.borrow_mut();
             for attachment in found {
-                let thumb = images::from_wire(&attachment.base64, &attachment.mime);
+                let thumb = images::from_wire(&attachment.base64);
                 if thumb.size().width > 0 && thumb.size().height > 0 {
                     if crate::env_cfg::cfg().debug {
                         eprintln!(

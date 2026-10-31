@@ -24,7 +24,7 @@ pub(crate) fn refresh_model_groups(
     let mut out: Vec<ModelGroup> = Vec::with_capacity(groups.len());
     let mut height = 12f32;
     for ((_, provider), mut entries) in groups {
-        entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        entries.sort_by_key(|a| a.name.to_lowercase());
         let open = !collapsed.contains(&provider);
         let configured = entries.first().is_some_and(|entry| entry.configured);
         let count = entries.len() as i32;

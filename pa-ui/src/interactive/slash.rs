@@ -1,6 +1,5 @@
 //! The command menu: the token under the caret, what it offers, and what accepting one does.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn accept(ui: &AppWindow, repaint_canvas_for_accept: &Rc<dyn Fn(&AppWindow)>, slash_token: &Rc<RefCell<(usize, usize)>>) {
@@ -77,7 +76,7 @@ pub(crate) fn step(ui: &AppWindow) {
     });
 }
 
-pub(crate) fn typed(ui: &AppWindow, extra_commands: &Rc<RefCell<Vec<(String, String, String)>>>, repaint_canvas: &Rc<dyn Fn(&AppWindow)>, slash_token: &Rc<RefCell<(usize, usize)>>) {
+pub(crate) fn typed(ui: &AppWindow, extra_commands: &SlashCommands, repaint_canvas: &Repaint, slash_token: &Rc<RefCell<(usize, usize)>>) {
     let weak = ui.as_weak();
     let extra_commands = extra_commands.clone();
     let token = slash_token.clone();

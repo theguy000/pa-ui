@@ -1,6 +1,5 @@
 //! The model menu: picking a model, folding a provider, hovering a row to offer an effort.
 
-#[allow(unused_imports)]
 use crate::*;
 
 pub(crate) fn provider_toggled(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, collapsed: &Rc<RefCell<std::collections::HashSet<String>>>) {
@@ -80,8 +79,8 @@ pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(Str
                     .and_then(|index| entry.thinking_levels.get(index).cloned())
             });
         let Some(level) = level else { return };
-        let switch = !(model == ui.get_model_id().to_string()
-            && provider == ui.get_model_provider().to_string());
+        let switch = !(ui.get_model_id() == model
+            && ui.get_model_provider() == provider);
         ui.set_effort_open(false);
         *hover_current.borrow_mut() = None;
         ui.set_status_line(

@@ -8,6 +8,7 @@ mod live;
 mod models;
 mod pager;
 mod preview;
+#[cfg(test)]
 mod probes;
 mod queue;
 mod scroll;
@@ -24,8 +25,6 @@ mod worker;
 // have to know which module a helper ended up in.
 pub(crate) use models::*;
 pub(crate) use pager::*;
-#[allow(unused_imports)]
-pub(crate) use probes::*;
 pub(crate) use queue::*;
 pub(crate) use scroll::*;
 pub(crate) use send::*;
@@ -37,8 +36,23 @@ pub(crate) use worker::*;
 
 slint::include_modules!();
 
+// The handles below are threaded through most of the callbacks, and their shape
+// repeated in every signature that takes one. Naming the shape once keeps a
+// signature about what it depends on rather than about the wrapping.
+
+/// The session's own slash commands: (name, description, source).
+pub(crate) type SlashCommands = Rc<RefCell<Vec<(String, String, String)>>>;
+/// The queued row being edited: (lane, slot, text).
+pub(crate) type Editing = Rc<RefCell<Option<(String, usize, String)>>>;
+/// Pictures this window sent, keyed by the text that went with them.
+pub(crate) type SentThumbs = Rc<RefCell<Vec<(String, slint::Image)>>>;
+/// The painter the callbacks install and the poll tick calls through.
+pub(crate) type Repaint = Rc<dyn Fn(&AppWindow)>;
+/// Where the tick finds that painter, once the callbacks exist.
+pub(crate) type RepaintSlot = Rc<RefCell<Option<Repaint>>>;
+
 use pa_client::{
-    attach_as, clear_queue, create_session, get_queue, get_tail, list_sessions, model_catalog,
+    attach_as, clear_queue, create_session, get_queue, list_sessions, model_catalog,
     clamp_level, get_commands, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
     set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
@@ -137,10 +151,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // The parked row currently held in the composer, if any: (lane, slot,
     // expected text). Sending while this is set replaces that row instead of
     // appending a new message to the back of the queue.
-    let editing: Rc<RefCell<Option<(String, usize, String)>>> = Rc::new(RefCell::new(None));
+    let editing: Editing = Rc::new(RefCell::new(None));
     // the session's own commands (templates and skills): the builtin table is
     // only half of what the agent accepts
-    let extra_commands: Rc<RefCell<Vec<(String, String, String)>>> =
+    let extra_commands: SlashCommands =
         Rc::new(RefCell::new(Vec::new()));
     // the byte range of the `/command` token the caret is in, so taking a command
     // can replace exactly that token and leave the words around it alone
@@ -154,12 +168,11 @@ fn main() -> Result<(), slint::PlatformError> {
         Rc::new(RefCell::new((String::new(), usize::MAX, i32::MIN)));
     // the painter is defined with the callbacks, but caret moves arrive on the poll
     // tick, which is set up earlier: one slot the tick can call through
-    let repaint_slot: Rc<RefCell<Option<Rc<dyn Fn(&AppWindow)>>>> =
-        Rc::new(RefCell::new(None));
+    let repaint_slot: RepaintSlot = Rc::new(RefCell::new(None));
     // Pictures this window sent, by the text they went with: the queue
     // projection names text only, so this is the only source for a thumbnail on
     // a waiting row.
-    let sent_thumbs: Rc<RefCell<Vec<(String, slint::Image)>>> = Rc::new(RefCell::new(Vec::new()));
+    let sent_thumbs: SentThumbs = Rc::new(RefCell::new(Vec::new()));
     let attachments: Rc<RefCell<Vec<images::Attachment>>> = Rc::new(RefCell::new(Vec::new()));
     let attachment_model = Rc::new(VecModel::<slint::Image>::from(Vec::new()));
     ui.set_attachment_images(ModelRc::from(attachment_model.clone()));
@@ -175,7 +188,19 @@ fn main() -> Result<(), slint::PlatformError> {
     let hovered: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
 
 
-    interactive::send::send(&ui, &attachment_model, &attachments, &catalog, &editing, &in_flight, &job_tx, &pending_user, &sent_thumbs);
+    interactive::send::send(
+        &ui,
+        &interactive::send::Handles {
+            attachment_model: &attachment_model,
+            attachments: &attachments,
+            catalog: &catalog,
+            editing: &editing,
+            in_flight: &in_flight,
+            job_tx: &job_tx,
+            pending_user: &pending_user,
+            sent_thumbs: &sent_thumbs,
+        },
+    );
 
     // Attachments: the bytes live here, the model holds the thumbnails. The
     // readers shell out, so they run off the event loop and come back through
@@ -289,8 +314,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    let poll = Timer::default();
-
     let tick = Rc::new(Tick {
         weak: ui.as_weak(),
         jobs: job_tx.clone(),
@@ -343,7 +366,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // A look at the command menu in a session of its own: the flag opens a fresh
     // chat first, so the draft in the user's own session is never touched.
-    if let Ok(opening) = std::env::var("PA_SLASH") {
+    if std::env::var("PA_SLASH").is_ok() {
         let _ = job_tx.send(Job::NewChat);
     }
 

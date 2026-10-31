@@ -74,7 +74,6 @@ pub(crate) enum Msg {
     },
     /// an older page, to be put above what is already shown
     Older {
-        session: String,
         rows: Vec<crate::transcript::Row>,
         messages: Vec<serde_json::Value>,
         first_entry: String,
@@ -99,7 +98,7 @@ pub(crate) enum Msg {
     /// a `create` came back: the id of the brand new session
     NewChat(String),
     Stats { session: String, stats: pa_client::SessionStats },
-    State { session: String, state: pa_client::SessionState },
+    State { state: pa_client::SessionState },
     Activity { label: String },
     Error(String),
 }
@@ -195,10 +194,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // with the resume cursor so the daemon replays the gap
                     attached = None;
                     resume = None;
-                    let _ = out.send(Msg::Reconnected);
+                    out.send(Msg::Reconnected);
                 }
                 Err(error) => {
-                    let _ = out.send(Msg::Error(error.to_string()));
+                    out.send(Msg::Error(error.to_string()));
                     std::thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -210,7 +209,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         if !active.alive() {
             client = None;
             attached = None;
-            let _ = out.send(Msg::Error("daemon connection lost \u{2014} reconnecting".into()));
+            out.send(Msg::Error("daemon connection lost \u{2014} reconnecting".into()));
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -239,10 +238,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         Ok(messages) => {
                             attached = Some(session.clone());
                             let (rows, skipped) = crate::transcript::build(&messages, window_rows);
-                            let _ = out.send(Msg::Transcript { session, rows, skipped, messages });
+                            out.send(Msg::Transcript { session, rows, skipped, messages });
                         }
                         Err(error) => {
-                            let _ = out.send(Msg::Error(error.to_string()));
+                            out.send(Msg::Error(error.to_string()));
                         }
                     }
                 }
@@ -258,7 +257,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // a provider that is not signed in fails here: say so rather
                     // than leaving the chip naming a model the session is not on
                     if let Err(error) = outcome {
-                        let _ = out.send(Msg::Activity {
+                        out.send(Msg::Activity {
                             label: format!("{provider}/{model}: {error}"),
                         });
                     }
@@ -268,10 +267,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         if crate::env_cfg::cfg().debug {
                             eprintln!("[new] created {id}");
                         }
-                        let _ = out.send(Msg::NewChat(id));
+                        out.send(Msg::NewChat(id));
                     }
                     Err(error) => {
-                        let _ = out.send(Msg::Activity {
+                        out.send(Msg::Activity {
                             label: format!("new chat: {error}"),
                         });
                     }
@@ -296,7 +295,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         eprintln!("[queue] replace {lane}[{slot}] -> {outcome:?}");
                     }
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        let _ = out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue { steering, follow_up });
                     }
                     match outcome {
                         Ok(status) if status == "applied" => {}
@@ -306,7 +305,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             if crate::env_cfg::cfg().debug {
                                 eprintln!("[queue] replace rejected ({other:?}); sending as new");
                             }
-                            let _ = out.send(Msg::Prompt { session, message: text, images });
+                            out.send(Msg::Prompt { session, message: text, images });
                         }
                     }
                 }
@@ -315,11 +314,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     if crate::env_cfg::cfg().debug {
                         eprintln!("[commands] {} extra command(s)", rows.len());
                     }
-                    let _ = out.send(Msg::ExtraCommands(rows));
+                    out.send(Msg::ExtraCommands(rows));
                 }
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
-                        let _ = out.send(Msg::Stats { session, stats });
+                        out.send(Msg::Stats { session, stats });
                     }
                 }
                 Job::SessionState { session } => {
@@ -330,7 +329,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 state.provider, state.model_id, state.thinking_level
                             );
                         }
-                        let _ = out.send(Msg::State { session, state });
+                        out.send(Msg::State { state });
                     }
                 }
                 Job::SetLevel {
@@ -348,7 +347,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         Ok(String::new())
                     };
                     if let Err(error) = switched {
-                        let _ = out.send(Msg::Activity {
+                        out.send(Msg::Activity {
                             label: format!("{provider}/{model}: {error}"),
                         });
                         continue;
@@ -359,11 +358,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 eprintln!("[model] {provider}/{model} effort -> {level}");
                             }
                             if let Ok(state) = session_state(active, &session) {
-                                let _ = out.send(Msg::State { session, state });
+                                out.send(Msg::State { state });
                             }
                         }
                         Err(error) => {
-                            let _ = out.send(Msg::Activity {
+                            out.send(Msg::Activity {
                                 label: format!("effort {level}: {error}"),
                             });
                         }
@@ -375,10 +374,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             if crate::env_cfg::cfg().debug {
                                 eprintln!("[models] {} entries", catalog.len());
                             }
-                            let _ = out.send(Msg::ModelCatalog(catalog));
+                            out.send(Msg::ModelCatalog(catalog));
                         }
                         Err(error) => {
-                            let _ = out.send(Msg::Activity {
+                            out.send(Msg::Activity {
                                 label: format!("model catalog: {error}"),
                             });
                         }
@@ -386,7 +385,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 }
                 Job::Queue { session } => {
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        let _ = out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue { steering, follow_up });
                     }
                 }
                 Job::QueueAct {
@@ -403,7 +402,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             eprintln!("[queue] clear -> {outcome:?}");
                         }
                         if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                            let _ = out.send(Msg::Queue { steering, follow_up });
+                            out.send(Msg::Queue { steering, follow_up });
                         }
                         continue;
                     }
@@ -427,20 +426,20 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     match outcome {
                         Ok(status) if status == "applied" => {
                             if action == "edit" {
-                                let _ = out.send(Msg::QueueEdit { text: text.clone() });
+                                out.send(Msg::QueueEdit { text: text.clone() });
                             }
                             // the lanes as the daemon now has them
                             if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                                let _ = out.send(Msg::Queue { steering, follow_up });
+                                out.send(Msg::Queue { steering, follow_up });
                             }
                         }
                         Ok(_) => {
-                            let _ = out.send(Msg::Activity {
+                            out.send(Msg::Activity {
                                 label: "that queue row changed already".into(),
                             });
                         }
                         Err(error) => {
-                            let _ = out.send(Msg::Activity { label: error.to_string() });
+                            out.send(Msg::Activity { label: error.to_string() });
                         }
                     }
                 }
@@ -448,7 +447,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // `stop` = abort_and_send_queued when the daemon has it, so the
                     // queue keeps flowing behind the stopped run
                     if let Err(error) = stop(active, &session) {
-                        let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                        out.send(Msg::PromptResult { error: Some(error.to_string()) });
                     }
                 }
                 Job::Steer { session, message, images } => {
@@ -460,7 +459,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         );
                     }
                     if let Err(error) = outcome {
-                        let _ = out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                        out.send(Msg::PromptResult { error: Some(error.to_string()) });
                     }
                 }
                 Job::Prompt { session, message, images } => {
@@ -475,7 +474,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             Ok(messages) => {
                                 attached = Some(session.clone());
                                 let (rows, skipped) = crate::transcript::build(&messages, window_rows);
-                                let _ = out.send(Msg::Transcript {
+                                out.send(Msg::Transcript {
                                     session: session.clone(),
                                     rows,
                                     skipped,
@@ -486,8 +485,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 if crate::env_cfg::cfg().debug {
                                     eprintln!("[prompt] bind before send failed: {error}");
                                 }
-                                let _ = out.send(Msg::PromptRejected { text: message });
-                                let _ = out.send(Msg::PromptResult {
+                                out.send(Msg::PromptRejected { text: message });
+                                out.send(Msg::PromptResult {
                                     error: Some(format!(
                                         "the window could not reach this chat: {error}"
                                     )),
@@ -510,17 +509,17 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // source for those lanes: the window may guess that a turn
                     // is running, but it may not guess that a message is waiting.
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        let _ = out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue { steering, follow_up });
                     }
                     match outcome {
                         Ok(()) => {
-                            let _ = out.send(Msg::PromptResult { error: None });
+                            out.send(Msg::PromptResult { error: None });
                         }
                         Err(reason) => {
                             // The text goes back to the composer and the reason
                             // is said plainly, instead of the message vanishing.
-                            let _ = out.send(Msg::PromptRejected { text: message });
-                            let _ = out.send(Msg::PromptResult {
+                            out.send(Msg::PromptRejected { text: message });
+                            out.send(Msg::PromptResult {
                                 error: Some(reason),
                             });
                         }
@@ -534,8 +533,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     match pa_client::get_page(active, &session, Some(&before), limit) {
                         Ok(page) => {
                             let rows = crate::transcript::build(&page.messages, page.messages.len()).0;
-                            let _ = out.send(Msg::Older {
-                                session,
+                            out.send(Msg::Older {
                                 rows,
                                 messages: page.messages,
                                 first_entry: page.first_entry,
@@ -548,8 +546,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                             // the reader must not be left waiting on a page that
                             // will never arrive
-                            let _ = out.send(Msg::Older {
-                                session: session.clone(),
+                            out.send(Msg::Older {
                                 rows: Vec::new(),
                                 messages: Vec::new(),
                                 first_entry: String::new(),
@@ -584,7 +581,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     match read {
                     Ok(page) => {
                         let (rows, skipped) = crate::transcript::build(&page.messages, window_rows);
-                        let _ = out.send(Msg::Tail {
+                        out.send(Msg::Tail {
                             session,
                             rows,
                             skipped,
@@ -638,8 +635,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 .get("error")
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or("rejected by the daemon");
-                            let _ = out.send(Msg::PromptRejected { text });
-                            let _ = out.send(Msg::Error(reason.to_string()));
+                            out.send(Msg::PromptRejected { text });
+                            out.send(Msg::Error(reason.to_string()));
                         }
                     }
                     continue;
@@ -668,12 +665,12 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     }
                 }
                 if let Some(event) = frame.get("event") {
-                    let _ = out.send(Msg::Event {
+                    out.send(Msg::Event {
                         session: session.to_string(),
                         event: event.clone(),
                     });
                     if let Some(label) = pa_client::activity_label(event) {
-                        let _ = out.send(Msg::Activity { label: label.to_string() });
+                        out.send(Msg::Activity { label: label.to_string() });
                     }
                 }
             }
@@ -684,7 +681,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             if result.is_err() {
                 client = None;
             }
-            let _ = out.send(Msg::Sessions(result.map_err(|error| error.to_string())));
+            out.send(Msg::Sessions(result.map_err(|error| error.to_string())));
             last_list = SystemTime::now();
         }
         std::thread::sleep(Duration::from_millis(150));
@@ -714,7 +711,6 @@ mod tests {
         assert!(tail().is_session_scoped());
         assert!(Msg::Transcript { session: String::new(), rows: Vec::new(), skipped: 0, messages: Vec::new() }.is_session_scoped());
         assert!(Msg::Older {
-            session: String::new(),
             rows: Vec::new(),
             messages: Vec::new(),
             first_entry: String::new(),
@@ -730,7 +726,6 @@ mod tests {
         }
         .is_session_scoped());
         assert!(Msg::State {
-            session: String::new(),
             state: pa_client::SessionState::default(),
         }
         .is_session_scoped());

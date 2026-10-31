@@ -1,9 +1,7 @@
-#![allow(unused_imports)]
 
 use super::*;
 
-#[cfg(test)]
-mod tests {
+mod build_tests {
     use super::*;
     use serde_json::json;
 
@@ -176,7 +174,6 @@ mod image_tests {
         assert_eq!(rows[0].kind, KIND_USER);
         assert_eq!(rows[1].kind, KIND_IMAGE);
         assert_eq!(rows[1].image, "QUJD");
-        assert_eq!(rows[1].mime, "image/png");
     }
 
     #[test]
@@ -241,11 +238,11 @@ mod golden_preview_tests {
     #[test]
     fn titles_are_the_label_and_the_preview() {
         let args = serde_json::json!({ "code": "cd '/repo' && npm run test -- --watch" });
-        let row = crate::transcript::tool_cell("python_repl", "call_0_x", &args);
+        let row = crate::transcript::tool_cell("call_0_x", &args);
         assert_eq!(row.title, "python \u{00b7} cd '/repo' && npm run test -- --watch");
 
         let args = serde_json::json!({ "code": "out = '/repo/out.txt'\nout.write_text('hello')" });
-        let row = crate::transcript::tool_cell("python_repl", "call_0_x", &args);
+        let row = crate::transcript::tool_cell("call_0_x", &args);
         assert_eq!(row.title, "python \u{00b7} write /repo/out.txt");
     }
 }
@@ -269,7 +266,7 @@ mod duration_tests {
     fn the_timing_trails_the_line_count() {
         let code = "r = await sh(\"ls\")";
         let args = serde_json::json!({ "code": code });
-        let mut row = tool_cell("python_repl", "call_0_x", &args);
+        let mut row = tool_cell("call_0_x", &args);
         apply_header(&mut row, code, None, Some(2));
         assert_eq!(row.meta, "1 line");
         assert_eq!(row.elapsed, "2ms");
@@ -292,7 +289,7 @@ mod header_parity_tests {
 
     fn title(code: &str, details: Option<serde_json::Value>) -> String {
         let args = serde_json::json!({ "code": code });
-        let mut row = tool_cell("python_repl", "call_0_x", &args);
+        let mut row = tool_cell("call_0_x", &args);
         let info = bash_commands(details.as_ref());
         apply_header(&mut row, code, info.as_ref(), None);
         row.title
