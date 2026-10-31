@@ -10,7 +10,7 @@
 // The minimise, maximise and close marks. A base, not a glyph: the three call
 // sites supply their own `commands` on a 10x10 viewbox.
 export component CaptionGlyph inherits Path {
-    in property <color> tint: #d7d7d1;
+    in property <color> tint: #d7d7d7;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -28,7 +28,7 @@ export component PanelIcon inherits Path {
     in property <bool> folded-edge-right: false;
     in property <bool> arrow: false;
     in property <bool> point-left: false;
-    in property <color> tint: #b0b1a8;
+    in property <color> tint: #b0b0b0;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -57,7 +57,7 @@ export component PrimeAgentMark inherits Rectangle {
     height: 18px;
     background: transparent;
 
-    // Lower parallel wing (#acaeb8) with wingVy = th / cos(angLow) = 18.31
+    // Lower parallel wing (#aeaeae) with wingVy = th / cos(angLow) = 18.31
     Path {
         width: 100%;
         height: 100%;
@@ -65,12 +65,12 @@ export component PrimeAgentMark inherits Rectangle {
         viewbox-y: 16.0;
         viewbox-width: 74;
         viewbox-height: 74;
-        fill: #acaeb8;
+        fill: #aeaeae;
         stroke: transparent;
         commands: "M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z";
     }
 
-    // Wing's inner stem-shadow (#82838c), clipped to x = 43.2..45.4
+    // Wing's inner stem-shadow (#838383), clipped to x = 43.2..45.4
     Path {
         width: 100%;
         height: 100%;
@@ -78,12 +78,12 @@ export component PrimeAgentMark inherits Rectangle {
         viewbox-y: 16.0;
         viewbox-width: 74;
         viewbox-height: 74;
-        fill: #82838c;
+        fill: #838383;
         stroke: transparent;
         commands: "M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z";
     }
 
-    // Top-blade shadow clipped to lower wing (#595a60)
+    // Top-blade shadow clipped to lower wing (#5a5a5a)
     Path {
         width: 100%;
         height: 100%;
@@ -91,12 +91,12 @@ export component PrimeAgentMark inherits Rectangle {
         viewbox-y: 16.0;
         viewbox-width: 74;
         viewbox-height: 74;
-        fill: #595a60;
+        fill: #5a5a5a;
         stroke: transparent;
         commands: "M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z";
     }
 
-    // Extended vertical P-stem (#62626e)
+    // Extended vertical P-stem (#636363)
     Path {
         width: 100%;
         height: 100%;
@@ -104,12 +104,12 @@ export component PrimeAgentMark inherits Rectangle {
         viewbox-y: 16.0;
         viewbox-width: 74;
         viewbox-height: 74;
-        fill: #62626e;
+        fill: #636363;
         stroke: transparent;
         commands: "M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z";
     }
 
-    // Top-blade shadow clipped to P-stem (#333339)
+    // Top-blade shadow clipped to P-stem (#333333)
     Path {
         width: 100%;
         height: 100%;
@@ -117,7 +117,7 @@ export component PrimeAgentMark inherits Rectangle {
         viewbox-y: 16.0;
         viewbox-width: 74;
         viewbox-height: 74;
-        fill: #333339;
+        fill: #333333;
         stroke: transparent;
         commands: "M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z";
     }
@@ -142,7 +142,7 @@ export component PrimeAgentMark inherits Rectangle {
 // share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
 // that drawing's rounded rect carried through its own -45 degree turn.
 export component IconNewChat inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint: #b0b0b0;
     width: 18px;
     height: 18px;
     viewbox-width: 24;
@@ -164,7 +164,7 @@ export component IconNewChat inherits Path {
 // use for search: the mark is drawn and inert until search exists, and a control
 // that cannot be clicked should not look like one.
 export component IconSearch inherits Path {
-    in property <color> tint: #8b8c85;
+    in property <color> tint: #8b8b8b;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -182,7 +182,7 @@ export component IconSearch inherits Path {
 
 // The pencil that names a session's rename, and the one a queued row offers.
 export component IconPencil inherits Path {
-    in property <color> tint: #8b8c85;
+    in property <color> tint: #8b8b8b;
     width: 11px;
     height: 11px;
     viewbox-width: 12;
@@ -195,7 +195,7 @@ export component IconPencil inherits Path {
 
 // A solid pencil: the rename action on a session row.
 export component IconEdit inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint: #b0b0b0;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -207,7 +207,7 @@ export component IconEdit inherits Path {
 
 // A bin with its lid left on: delete, without the promise of permanence.
 export component IconTrash inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint: #b0b0b0;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -221,7 +221,7 @@ export component IconTrash inherits Path {
 
 export component IconCaret inherits Path {
     in property <bool> up;
-    in property <color> tint: #7a7c72;
+    in property <color> tint: #7b7b7b;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -235,7 +235,7 @@ export component IconCaret inherits Path {
 // The jump-back-to-newest mark that rides above the composer while the reader is
 // scrolled away from the floor.
 export component IconToTop inherits Path {
-    in property <color> tint: #a18e41;
+    in property <color> tint: #8f8f8f;
     width: 16px;
     height: 16px;
     viewbox-width: 14;
@@ -261,7 +261,7 @@ export component IconAlert inherits Path {
 // composer
 
 export component IconSend inherits Path {
-    in property <color> tint: #12130f;
+    in property <color> tint: #131313;
     width: 12px;
     height: 12px;
     viewbox-width: 12;
@@ -274,7 +274,7 @@ export component IconSend inherits Path {
 
 // The attach control: two 8px arms, centred on its box, with rounded ends.
 export component IconPlus inherits Path {
-    in property <color> tint: #8a8d82;
+    in property <color> tint: #8c8c8c;
     width: 12px;
     height: 12px;
     viewbox-width: 12;
@@ -302,7 +302,7 @@ export component IconCheck inherits Path {
 }
 
 export component IconChevronDown inherits Path {
-    in property <color> tint: #b6b2a4;
+    in property <color> tint: #b2b2b2;
     width: 10px;
     height: 10px;
     viewbox-width: 10;

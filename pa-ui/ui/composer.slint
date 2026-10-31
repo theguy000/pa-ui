@@ -8,14 +8,14 @@ import { IconCaret } from "icons.slint";
 export component Ledger inherits Rectangle {
     in property <string> label;
     in property <string> value;
-    in property <color> ink: #b0b1a8;
+    in property <color> ink: #b0b0b0;
     height: 16px;
     background: transparent;
     HorizontalLayout {
         spacing: 8px;
         Text {
             text: root.label;
-            color: #6b6e63;
+            color: #6d6d6d;
             font-size: 10px;
             vertical-alignment: center;
         }
@@ -54,14 +54,14 @@ export component ContextCard inherits Rectangle {
             spacing: 6px;
             Text {
                 text: "context";
-                color: #6b6e63;
+                color: #6d6d6d;
                 font-size: 10px;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             Text {
                 text: root.percent;
-                color: #e7e5df;
+                color: #e5e5e5;
                 font-size: 12px;
                 vertical-alignment: center;
             }
@@ -70,22 +70,22 @@ export component ContextCard inherits Rectangle {
         Rectangle {
             height: 3px;
             border-radius: 1.5px;
-            background: #23251f;
+            background: #242424;
             Rectangle {
                 x: 0;
                 y: 0;
                 height: parent.height;
                 width: parent.width * root.fill;
                 border-radius: 1.5px;
-                background: #a18e41;
+                background: #8f8f8f;
             }
         }
         Text {
             text: root.used;
-            color: #8b8c85;
+            color: #8b8b8b;
             font-size: 10px;
         }
-        Rectangle { height: 1px; background: #1c1e19; }
+        Rectangle { height: 1px; background: #1d1d1d; }
         VerticalLayout {
             vertical-stretch: 0;
             spacing: 1px;
@@ -95,15 +95,15 @@ export component ContextCard inherits Rectangle {
             Ledger { label: "out"; value: root.output; }
             Ledger { label: "cached"; value: root.cached; }
         }
-        Rectangle { height: 1px; background: #1c1e19; }
+        Rectangle { height: 1px; background: #1d1d1d; }
         VerticalLayout {
             vertical-stretch: 0;
             spacing: 1px;
-            Ledger { label: "cost"; value: root.cost; ink: #d9d7cd; }
+            Ledger { label: "cost"; value: root.cost; ink: #d7d7d7; }
             if root.cost-family-on : Ledger {
                 label: "with subagents";
                 value: root.cost-family;
-                ink: #d9d7cd;
+                ink: #d7d7d7;
             }
         }
     }
@@ -119,15 +119,15 @@ export component Chip inherits Rectangle {
     border-width: 1px;
     // The resting state is what the old hover state was: a chip that only
     // appears under the pointer reads as decoration, not as a control.
-    background: ct.has-hover || open ? #23251f : #1a1b16;
-    border-color: ct.has-hover || open ? #33362d : #23251f;
+    background: ct.has-hover || open ? #242424 : #1a1a1a;
+    border-color: ct.has-hover || open ? #353535 : #242424;
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 6px;
         Text {
             text: root.label;
-            color: ct.has-hover || open ? #e7e5df : #b0b1a8;
+            color: ct.has-hover || open ? #e5e5e5 : #b0b0b0;
             font-size: 10px;
             vertical-alignment: center;
         }
@@ -187,7 +187,7 @@ global Ticks {
 export component ContextRing inherits Rectangle {
     in property <float> fill: 0.0;
     in property <color> lit: #c9a86a;
-    in property <color> unlit: #33362d;
+    in property <color> unlit: #353535;
 
     width: 20px;
     height: 20px;

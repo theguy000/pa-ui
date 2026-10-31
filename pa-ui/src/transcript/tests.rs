@@ -153,7 +153,7 @@ mod strong_tests {
         // balanced markers and must not add any
         assert_eq!(
             markdown_markup("# Title"),
-            "<font color=\"#c8b158\">**Title**</font>"
+            "<font color=\"#b2b2b2\">**Title**</font>"
         );
     }
 }

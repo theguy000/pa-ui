@@ -23,8 +23,8 @@ export component SlashMenu inherits Rectangle {
     width: min(460px, root.anchor-w - 24px);
     // ten rows at a time; the list scrolls and the highlight pulls it along
     height: min(312px, 12px + root.items.length * 30px);
-    background: #171814;
-    border-color: #2c2f26;
+    background: #181818;
+    border-color: #2e2e2e;
     border-width: 1px;
     border-radius: 10px;
     drop-shadow-blur: 12px;
@@ -57,7 +57,7 @@ export component SlashMenu inherits Rectangle {
                 // one sentence that says what the command does. At rest the
                 // list is names only, like a menu should be.
                 background: index == root.index || slash-touch.has-hover
-                    ? #1f211a : transparent;
+                    ? #202020 : transparent;
                 animate background { duration: 90ms; }
 
                 HorizontalLayout {
@@ -70,19 +70,19 @@ export component SlashMenu inherits Rectangle {
                         text: "/" + item.name;
                         font-size: 13px;
                         color: index == root.index || slash-touch.has-hover
-                            ? #d8c06a : #b0b1a8;
+                            ? #c1c1c1 : #b0b0b0;
                         vertical-alignment: center;
                     }
                     if (index == root.index || slash-touch.has-hover) && item.hint != "" : Text {
                         text: item.hint;
                         font-size: 11px;
-                        color: #8f917f;
+                        color: #8f8f8f;
                         vertical-alignment: center;
                     }
                     Text {
                         text: item.description;
                         font-size: 11px;
-                        color: #6b6e63;
+                        color: #6d6d6d;
                         overflow: elide;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
@@ -123,8 +123,8 @@ export component ModelMenu inherits Rectangle {
     y: root.anchor-y - self.height - 6px;
     width: 300px;
     height: max(64px, min(340px, root.measured-height));
-    background: #171814;
-    border-color: #2c2f26;
+    background: #181818;
+    border-color: #2e2e2e;
     border-width: 1px;
     border-radius: 10px;
     drop-shadow-blur: 12px;
@@ -187,7 +187,7 @@ export component ModelMenu inherits Rectangle {
                     width: parent.width - 80px;
                     height: 26px;
                     text: group.label;
-                    color: group.configured ? #d9d8d1 : #6b6f62;
+                    color: group.configured ? #d8d8d8 : #6d6d6d;
                     font-size: 11px;
                     vertical-alignment: center;
                     wrap: no-wrap;
@@ -199,7 +199,7 @@ export component ModelMenu inherits Rectangle {
                     width: 52px;
                     height: 26px;
                     text: group.configured ? group.count : "not signed in";
-                    color: #565a4f;
+                    color: #585858;
                     font-size: 9px;
                     horizontal-alignment: right;
                     vertical-alignment: center;
@@ -213,8 +213,8 @@ export component ModelMenu inherits Rectangle {
                     width: 100%;
                     height: 24px;
                     border-radius: 5px;
-                    background: model.current ? #23251f
-                        : (model-touch.has-hover ? #1f211a : transparent);
+                    background: model.current ? #242424
+                        : (model-touch.has-hover ? #202020 : transparent);
 
                     model-touch := TouchArea {
                         x: 0;
@@ -250,7 +250,7 @@ export component ModelMenu inherits Rectangle {
                         width: parent.width - 108px;
                         height: 100%;
                         text: model.label;
-                        color: model.current ? #e7e5df : #b0b1a8;
+                        color: model.current ? #e5e5e5 : #b0b0b0;
                         font-size: 11px;
                         vertical-alignment: center;
                         wrap: no-wrap;
@@ -264,7 +264,7 @@ export component ModelMenu inherits Rectangle {
                         width: 74px;
                         height: 100%;
                         text: model.effort != "" ? model.effort : model.detail;
-                        color: model.effort != "" ? #a18e41 : #565a4f;
+                        color: model.effort != "" ? #a18e41 : #585858;
                         font-size: 9px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -306,8 +306,8 @@ export component EffortLadder inherits Rectangle {
     );
     width: 132px;
     height: 10px + root.items.length * 26px;
-    background: #171814;
-    border-color: #2c2f26;
+    background: #181818;
+    border-color: #2e2e2e;
     border-width: 1px;
     border-radius: 8px;
     drop-shadow-blur: 10px;
@@ -333,7 +333,7 @@ export component EffortLadder inherits Rectangle {
         width: 100%;
         height: 26px;
         border-radius: 5px;
-        background: item-touch.has-hover ? #1f211a : transparent;
+        background: item-touch.has-hover ? #202020 : transparent;
 
         item-touch := TouchArea {
             x: 0;
@@ -355,7 +355,7 @@ export component EffortLadder inherits Rectangle {
             width: parent.width - 40px;
             height: 100%;
             text: item.label;
-            color: item.current ? #e7e5df : #b0b1a8;
+            color: item.current ? #e5e5e5 : #b0b0b0;
             font-size: 11px;
             vertical-alignment: center;
             wrap: no-wrap;

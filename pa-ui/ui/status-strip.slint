@@ -44,7 +44,7 @@ export component BusyStrip inherits Rectangle {
         y: 0;
         width: parent.width;
         height: parent.height + 24px;
-        background: #2c2f26;
+        background: #2e2e2e;
         border-radius: 12px;
     }
     Rectangle {
@@ -52,7 +52,7 @@ export component BusyStrip inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: parent.height + 24px;
-        background: #191a14;
+        background: #191919;
         border-radius: 11px;
     }
     }
@@ -90,7 +90,7 @@ export component BusyStrip inherits Rectangle {
                         x: lbl.x + lbl.width + 8px;
                         visible: root.strip-h > 1px;
                         text: root.elapsed;
-                        color: #565a4f;
+                        color: #585858;
                         font-family: "Cascadia Code";
                         font-size: 11px;
                         height: parent.height;
@@ -108,7 +108,7 @@ export component BusyStrip inherits Rectangle {
                         width: lane-row.preferred-width + 16px;
                         height: 18px;
                         border-radius: 6px;
-                        background: lane-touch.has-hover || root.queue-open ? #1f211a : transparent;
+                        background: lane-touch.has-hover || root.queue-open ? #202020 : transparent;
 
                         lane-row := HorizontalLayout {
                             // full width with centred alignment: the
@@ -123,13 +123,13 @@ export component BusyStrip inherits Rectangle {
                             alignment: center;
                             Text {
                                 text: root.queued;
-                                color: lane-touch.has-hover ? #e7e5df : #b0b1a8;
+                                color: lane-touch.has-hover ? #e5e5e5 : #b0b0b0;
                                 font-size: 10px;
                                 vertical-alignment: center;
                             }
                             Text {
                                 text: "queued";
-                                color: lane-touch.has-hover ? #b0b1a8 : #6b6e63;
+                                color: lane-touch.has-hover ? #b0b0b0 : #6d6d6d;
                                 font-size: 10px;
                                 vertical-alignment: center;
                             }

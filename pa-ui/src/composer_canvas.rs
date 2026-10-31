@@ -17,11 +17,11 @@ use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Sw
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 /// Prose.
-const COLOR_NORMAL: Color = Color::rgb(0xe7, 0xe5, 0xdf);
+const COLOR_NORMAL: Color = Color::rgb(0xe5, 0xe5, 0xe5);
 /// A command the agent or the window will run.
-const COLOR_COMMAND: Color = Color::rgb(0xd8, 0xc0, 0x6a);
+const COLOR_COMMAND: Color = Color::rgb(0xc1, 0xc1, 0xc1);
 /// Behind a selection, and the glyphs inside one.
-const COLOR_SELECTION: Color = Color::rgba(0x2b, 0x45, 0x62, 0xc0);
+const COLOR_SELECTION: Color = Color::rgba(0x43, 0x43, 0x43, 0xc0);
 
 /// The family the rest of the window uses. Asking for the generic sans gets
 /// Arial, which is a different width and a different weight.
