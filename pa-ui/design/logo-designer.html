@@ -8,7 +8,7 @@
     palette  = PALETTES.dark   (tile #141417->#09090b, blade #ffffff,
                                 wing #acaeb8, stem #62626e)
     stemExt  = 0.100           (the "Stem Drop" slider, +10.0%)
-    weight   = 0.160           (the "Weight" slider)
+    weight   = 0.152           (the "Weight" slider)
 
   To change the icon: move the sliders, then "Download .ICO (7 sizes)" and save
   the result over pa-ui/assets/icon.ico (and .PNG over icon.png). cargo build
@@ -201,8 +201,8 @@
     </div>
     <div class="ctrl">
       <span>Weight:</span>
-      <input type="range" id="th-slider" min="0.138" max="0.160" step="0.002" value="0.160">
-      <span class="val" id="th-val">0.160</span>
+      <input type="range" id="th-slider" min="0.138" max="0.160" step="0.002" value="0.152">
+      <span class="val" id="th-val">0.152</span>
     </div>
   </div>
 </header>
@@ -225,7 +225,7 @@ const SIZES = [256, 128, 64, 48, 32, 24, 16];
 const PREVIEW_SIZES = [64, 48, 32, 24, 16];
 
 let stemExt = 0.100;
-let weight = 0.160;
+let weight = 0.152;
 
 const PALETTES = {
   dark: {

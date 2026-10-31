@@ -10,7 +10,7 @@ Nothing here is compiled, embedded or shipped. This folder *produces* what
   `pa-ui/assets/icon.ico` and `pa-ui/assets/icon.png`, then `cargo build`.
 - **`candidates/`** — earlier explorations, raster only, superseded. Kept for history.
 
-Shipped settings: `PALETTES.dark`, `stemExt = 0.100` (+10.0%), `weight = 0.160`.
+Shipped settings: `PALETTES.dark`, `stemExt = 0.100` (+10.0%), `weight = 0.152`.
 
 The rule: **`assets/` is build input, `design/` is authoring source.** A new file
 belongs in `design/` unless `build.rs` or the app reads it at build time.

@@ -319,8 +319,15 @@ mod imp {
 
             let caption = inset_y + (super::HEIGHT as f64 * scale).round() as i32;
             if y >= inset_y && y < caption {
-                if x < inset_x + (super::ICON as f64 * scale).round() as i32 {
-                    return HTCLIENT; // the icon is a button in Slint
+                // Collapsed sidebar expand button (left 48px) and expanded sidebar
+                // collapse button (194..228px) live in the top strip and are Slint controls.
+                if x < inset_x + (48.0 * scale).round() as i32 {
+                    return HTCLIENT;
+                }
+                let sb_fold_left = inset_x + (194.0 * scale).round() as i32;
+                let sb_fold_right = inset_x + (228.0 * scale).round() as i32;
+                if x >= sb_fold_left && x < sb_fold_right {
+                    return HTCLIENT;
                 }
                 // The right column's fold sits further along the same strip and is
                 // also Slint's to answer; without this carve-out the press is taken

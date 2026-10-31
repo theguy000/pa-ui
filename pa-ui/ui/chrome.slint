@@ -23,35 +23,7 @@ export component TitleBar inherits Rectangle {
 
     height: 32px;
     width: 100%;
-    background: #10110e;
-
-    Image {
-        x: 12px;
-        y: (parent.height - self.height) / 2;
-        width: 16px;
-        height: 16px;
-        source: @image-url("../assets/icon-tile-32.png");
-    }
-
-    // the icon is a button: left-click drops the system menu, like the native caption
-    icon-touch := TouchArea {
-        x: 6px;
-        y: 0;
-        width: 28px;
-        height: 100%;
-        clicked => { root.menu(); }
-    }
-
-    Text {
-        x: 36px;
-        // Windows sits caption ink about a pixel below the bar's centre (asymmetric
-        // font ascent/descent); match that instead of centring the box exactly.
-        y: (parent.height - self.height) / 2 - 1px;
-        text: root.caption;
-        color: #b9bab2;
-        font-size: 12px;
-        vertical-alignment: center;
-    }
+    background: transparent;
 
     // The right column's fold lives in the chrome, not in the column: the column is
     // blank, so a mark inside it would have nothing to sit on.
