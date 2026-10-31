@@ -130,7 +130,6 @@ mod imp {
     }
 
     /// POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize
-
     #[repr(C)]
     #[derive(Default, Clone, Copy)]
     struct NcCalcSizeParams {

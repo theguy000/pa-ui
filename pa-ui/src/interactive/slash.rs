@@ -22,7 +22,7 @@ pub(crate) fn accept(ui: &AppWindow, repaint_canvas_for_accept: &Rc<dyn Fn(&AppW
             ui.set_composer_text("".into());
             ui.set_composer_has_text(false);
             ui.set_model_menu(true);
-            ui.set_status_line("pick a model".into());
+            status::trouble(&ui, "pick a model");
             return;
         }
         let text = ui.get_composer_text().to_string();

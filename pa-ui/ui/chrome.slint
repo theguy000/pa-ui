@@ -1,0 +1,118 @@
+// The window's caption, drawn here because the native one cannot follow the app
+// theme. Geometry must agree with HEIGHT and BUTTON in src/titlebar.rs.
+
+import { CaptionGlyph, PanelIcon } from "icons.slint";
+
+export component CaptionButton inherits Rectangle {
+    in property <bool> hover;
+    in property <color> hover-fill: #ffffff12;
+    width: 46px;
+    height: 100%;
+    background: hover ? hover-fill : transparent;
+}
+
+export component TitleBar inherits Rectangle {
+    in property <bool> right-open: false;
+    callback toggle-right();
+    in property <bool> maximized: false;
+    in property <bool> max-hover: false;
+    in property <string> caption: "Prime Agent Desktop";
+    callback minimize();
+    callback close();
+    callback menu();
+
+    height: 32px;
+    width: 100%;
+    background: #0c0d0a;
+
+    Image {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: @image-url("../assets/icon-tile-32.png");
+    }
+
+    // the icon is a button: left-click drops the system menu, like the native caption
+    icon-touch := TouchArea {
+        x: 6px;
+        y: 0;
+        width: 28px;
+        height: 100%;
+        clicked => { root.menu(); }
+    }
+
+    Text {
+        x: 36px;
+        // Windows sits caption ink about a pixel below the bar's centre (asymmetric
+        // font ascent/descent); match that instead of centring the box exactly.
+        y: (parent.height - self.height) / 2 - 1px;
+        text: root.caption;
+        color: #b9bab2;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+
+    // The right column's fold lives in the chrome, not in the column: the column is
+    // blank, so a mark inside it would have nothing to sit on.
+    right-toggle := Rectangle {
+        x: parent.width - 172px;
+        y: (parent.height - 26px) / 2;
+        width: 26px;
+        height: 26px;
+        border-radius: 13px;
+        background: right-touch.has-hover ? #2a2c24 : transparent;
+        PanelIcon {
+            x: 5px;
+            y: 5px;
+            folded-edge-right: true;
+            arrow: right-touch.has-hover;
+            point-left: !root.right-open;
+            tint: right-touch.has-hover ? #e7e5df : #6d7066;
+        }
+        right-touch := TouchArea {
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: "Toggle the right column";
+            clicked => { root.toggle-right(); }
+        }
+    }
+
+    // minimise and close are ours; maximise belongs to Windows for Snap Layouts
+    min-button := CaptionButton {
+        x: parent.width - 138px;
+        hover: min-touch.has-hover;
+        min-touch := TouchArea { clicked => { root.minimize(); } }
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2; commands: "M 0.5 5.5 L 9.5 5.5"; }
+    }
+
+    max-button := CaptionButton {
+        x: parent.width - 92px;
+        hover: root.max-hover;
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            commands: root.maximized
+                ? "M 2.5 0.5 L 9.5 0.5 L 9.5 7.5 M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z"
+                : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
+        }
+    }
+
+    close-button := CaptionButton {
+        x: parent.width - 46px;
+        hover: close-touch.has-hover;
+        hover-fill: #c42b1c;
+        close-touch := TouchArea { clicked => { root.close(); } }
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close-touch.has-hover ? #ffffff : #d7d7d1;
+            commands: "M 0.5 0.5 L 9.5 9.5 M 9.5 0.5 L 0.5 9.5";
+        }
+    }
+
+    // no rule under the caption: the bar and the body meet in one flat field,
+    // because the frame around them draws nothing to stop against
+}

@@ -181,15 +181,12 @@ impl Tick {
         let loading_older = &self.loading_older;
 
         if crate::env_cfg::cfg().debug {
-            ui.set_status_line(
-                format!(
-                    "cy={} ch={} h={} at-bottom={}",
-                    ui.get_dbg_cy(),
-                    ui.get_dbg_ch(),
-                    ui.get_dbg_h(),
-                    ui.get_at_bottom()
-                )
-                .into(),
+            eprintln!(
+                "[scroll] cy={} ch={} h={} at-bottom={}",
+                ui.get_dbg_cy(),
+                ui.get_dbg_ch(),
+                ui.get_dbg_h(),
+                ui.get_at_bottom()
             );
             // the pager only moves on a scroll; when it does not, this says which
             // of the four conditions was false
@@ -232,7 +229,7 @@ impl Tick {
         }
 
         // while the agent works, keep pulling the tail of the transcript so
-        // completed tool calls show up as rows � the snapshot alone never updates
+        // completed tool calls show up as rows; the snapshot alone never updates
         // Poll while a turn runs, and slowly the rest of the time. Gating this
         // on `busy` alone meant one missed `message_end` froze the transcript
         // for good: nothing would ever ask the store again.
@@ -266,7 +263,6 @@ impl Tick {
             ui.set_has_older(false);
             ui.set_loading_older(false);
             ui.set_pager_ready(false);
-            ui.set_status_line("loading transcript".into());
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
             let _ = jobs.send(Job::Attach {
@@ -333,9 +329,7 @@ impl Tick {
                     // rather than asking the daemon again
                     *sessions_cache.borrow_mut() = rows.clone();
                     let items: Vec<SessionItem> = session_items(&rows);
-                    let live = rows.iter().filter(|row| row.lifecycle == "live").count();
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
-                    ui.set_status_line(format!("{live} live of {} known", rows.len()).into());
                     if ui.get_selected_id().is_empty() {
                         let preferred = std::env::var("PA_SELECT").ok();
                         let chosen = preferred
@@ -405,7 +399,7 @@ impl Tick {
                         if !busy_now && ui.get_busy() {
                             ui.set_busy(false);
                             l.busy_label.clear();
-                            // the run just ended � grab whatever landed after the
+                            // the run just ended: grab whatever landed after the
                             // last refresh so the final tool calls are not lost
                             if let Some(session) = l.loaded.clone() {
                                 let _ = jobs.send(Job::Tail { session, fresh: false });
@@ -423,18 +417,9 @@ impl Tick {
                             let held = busy_since.get().elapsed().unwrap_or_default().as_secs();
                             ui.set_busy_elapsed(format!("{held}s").into());
                         }
-                        let held = l.live_since.elapsed().unwrap_or_default().as_secs();
-                        let busy = state != "idle" && state != "archived";
-                        ui.set_activity(state.into());
-                        ui.set_activity_busy(busy);
-                        ui.set_activity_elapsed(if busy && held > 0 {
-                            format!("{held}s").into()
-                        } else {
-                            SharedString::default()
-                        });
                     }
                 }
-                Msg::Sessions(Err(error)) => ui.set_status_line(format!("daemon: {error}").into()),
+                Msg::Sessions(Err(error)) => status::trouble(&ui, format!("daemon: {error}")),
                 Msg::Activity { label } => {
                     if label != l.busy_label {
                         l.busy_label = label;
@@ -469,7 +454,6 @@ impl Tick {
                     // store predates it, so the row we drew has to survive the
                     // rebuild
                     sheet.replace(built);
-                    let count = sheet.rows().len();
                     sheet::dump(&sheet.rows());
                     // which model is running, and at what effort: the chip and
                     // the menu's ladder both read from this
@@ -481,12 +465,6 @@ impl Tick {
                             session: session.clone(),
                         });
                     }
-                    let note = if skipped > 0 {
-                        format!("{count} rows (newest {window_rows} of {})", messages.len())
-                    } else {
-                        format!("{count} rows")
-                    };
-                    ui.set_status_line(note.into());
                     let _ = jobs.send(Job::Tail {
                         session: session.clone(),
                         fresh: true,
@@ -669,7 +647,7 @@ impl Tick {
                         ui.set_busy_label(label.into());
                     }
                     // gap detection: a skipped sequence means we missed frames
-                    // (daemon restart, a stalled pipe) � backfill from the store
+                    // (daemon restart, a stalled pipe): backfill from the store
                     if let Some(sequence) = event
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
@@ -850,7 +828,7 @@ impl Tick {
                             turn.push_thinking(delta);
                         }
                     }
-                                        let held = hold_offset(&ui);
+                    let held = hold_offset(&ui);
                     if let Some(turn) = l.open_live.as_ref() {
                         sheet.merge(turn.rows());
                     }
@@ -900,8 +878,7 @@ impl Tick {
                     ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
                     ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
                     ui.set_busy(false);
-                    ui.set_title_text("".into());
-                    ui.set_status_line("new chat".into());
+                    status::clear(&ui);
                     ui.set_selected_id(id.clone().into());
                     if crate::env_cfg::cfg().debug {
                         eprintln!("[new] selected {id}");
@@ -912,7 +889,7 @@ impl Tick {
                     // it came from, so the next Enter decides the lane again
                     ui.set_composer_text(text.into());
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
-                    ui.set_status_line("back in the composer".into());
+                    status::clear(&ui);
                 }
                 Msg::ExtraCommands(rows) => {
                     *extra_commands.borrow_mut() = rows;
@@ -1038,7 +1015,7 @@ impl Tick {
                     sheet.answer_ended();
                     l.tail_sig = None;
                     l.last_seq = 0;
-                    ui.set_status_line("reconnecting".into());
+                    status::say(&ui, "reconnecting");
                 }
                 Msg::PromptRejected { text } => {
                     // the daemon refused the prompt (usually a stale session id):
@@ -1051,17 +1028,17 @@ impl Tick {
                     }
                     pending_user.borrow_mut().take();
                     sheet.take_back_prompt(&text);
-                    ui.set_status_line("prompt not accepted \u{2014} text restored".into());
+                    status::trouble(&ui, "prompt not accepted \u{2014} text restored");
                 }
                 Msg::PromptResult { error } => match error {
                     Some(error) => {
                         let text = pending_user.borrow_mut().take().unwrap_or_default();
                         sheet.take_back_prompt(&text);
-                        ui.set_status_line(format!("prompt failed: {error}").into());
+                        status::trouble(&ui, format!("prompt failed: {error}"));
                     }
-                    None => ui.set_status_line("working".into()),
+                    None => status::clear(&ui),
                 },
-                Msg::Error(error) => ui.set_status_line(format!("error: {error}").into()),
+                Msg::Error(error) => status::trouble(&ui, format!("error: {error}")),
             }
         }
 

@@ -1,0 +1,87 @@
+// The window's shared vocabulary: the sizes it sets type at, and the shape of
+// every record a model or a callback carries across the Slint/Rust seam.
+
+// The reading size. The DeepSeek Harness sets its conversation text at 14px on
+// a 24px line; this toolkit gives no control over that line, so the size carries
+// the difference instead: one point up, on the spacing the font chooses.
+export global Type {
+    out property <length> body: 15px;
+    // The sidebar: the harness sets its list of conversations at 13px, one step
+    // under the conversation itself.
+    out property <length> item: 13px;
+}
+
+export struct TRow {
+    kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 notice
+    title: string,
+    meta: string,
+    body: styled-text,
+    code: styled-text,
+    output: styled-text,
+    has-code: bool,
+    has-output: bool,
+    expanded: bool,
+    failed: bool,
+    reason: string,
+    image: image,
+    elapsed: string,
+}
+
+export struct SessionItem {
+    id: string,
+    uuid: string,
+    name: string,
+    age: string,
+    full: string,
+    tip: string,
+    status: string,
+}
+
+// one waiting message, addressed by its lane and its position in that lane
+// One row of the command menu: the word after the slash, the argument hint the
+// command takes, and what it does.
+export struct SlashItem {
+    name: string,
+    hint: string,
+    description: string,
+}
+
+export struct QueueItem {
+    // what the row shows: one line, elided
+    text: string,
+    // what the daemon addressed it by, untouched
+    raw: string,
+    slot: int,
+    // the picture this message carries, if any: the queue projection names text
+    // only, so the window supplies the thumbnail it sent
+    thumb: image,
+}
+
+export struct ModelItem {
+    id: string,
+    label: string,
+    // right-aligned hint: context window
+    detail: string,
+    // the level this model is thinking at: only ever set on the running one,
+    // since a level belongs to the model that holds it
+    effort: string,
+    current: bool,
+}
+
+// one rung of a model's thinking ladder, in the submenu that drops off its row
+export struct EffortItem {
+    level: string,
+    label: string,
+    current: bool,
+}
+
+// one provider's models; `models` is empty while the group is collapsed, so a
+// thousand-entry catalog never becomes a thousand elements
+export struct ModelGroup {
+    provider: string,
+    label: string,
+    count: int,
+    open: bool,
+    configured: bool,
+    models: [ModelItem],
+}

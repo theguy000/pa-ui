@@ -78,7 +78,7 @@ mod imp {
 
             // MAKEINTRESOURCE(1): the RT_GROUP_ICON that assets/icon.rc embeds.
             let module = GetModuleHandleW(ptr::null());
-            let tile = 1usize as *const u16;
+            let tile = ptr::dangling::<u16>();
             let small = LoadImageW(
                 module, tile, IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0,

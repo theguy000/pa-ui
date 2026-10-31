@@ -46,7 +46,7 @@ pub(crate) fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Ve
 
 /// The `/command` token under the caret, as byte range `[start, end)`.
 ///
-/// The menu belongs to whichever word the caret sits in � the first or the fifth �
+/// The menu belongs to whichever word the caret sits in: the first or the fifth;
 /// so a command can be started between words, not only at the start of a message.
 pub(crate) fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
     let caret = caret.min(text.len());
@@ -68,7 +68,7 @@ pub(crate) fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
 ///
 /// The daemon's table splits commands in two: the agent runs `compact`,
 /// `refine`, `goal` and `autonomous` itself, so those are sent as written. Every
-/// other builtin is a *window* action � sending `/system-prompt` down the pipe
+/// other builtin is a *window* action: sending `/system-prompt` down the pipe
 /// gave the agent a chat message that read like a command and did nothing.
 pub(crate) fn slash_dispatch(text: &str) -> SlashAction {
     let trimmed = text.trim();

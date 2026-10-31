@@ -1,0 +1,577 @@
+// The transcript's rows: a tool cell, and the pane of prose, code and output a
+// message opens into. Both are driven by TRow and carry no state of their own.
+
+import { ScrollView } from "std-widgets.slint";
+import { TRow, Type } from "types.slint";
+import { MarqueeText } from "marquee-text.slint";
+import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash } from "icons.slint";
+
+// One waiting message in the steering lane: already inside this turn, so the
+// only action is delete. Two row components instead of one with a conditional
+// button: a button made conditional does not take clicks here, even though it
+// paints.
+export component QueueRow inherits Rectangle {
+    in property <string> text;
+    in property <string> lane;
+    in property <int> slot;
+    in property <image> thumb;
+    callback act(string, int, string);
+
+    // Two lines, fixed height: the panel stacks rows by arithmetic, so a row
+    // that grew with its text would overlap the next one. Wrapped and elided,
+    // a long message shows its beginning and where it was cut.
+    height: 34px;
+    border-radius: 6px;
+    background: row-touch.has-hover ? #1f211a : transparent;
+
+    // the text is the edit affordance; it stops short of the button
+    row-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 64px;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.act(root.lane, root.slot, "edit"); }
+    }
+
+    if root.thumb.width > 0 : Rectangle {
+        x: 6px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        clip: true;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.thumb;
+            image-fit: cover;
+        }
+    }
+
+    Text {
+        x: root.thumb.width > 0 ? 34px : 6px;
+        y: 0;
+        width: parent.width - (root.thumb.width > 0 ? 100px : 72px);
+        height: 100%;
+        text: root.text;
+        color: #d9d8d1;
+        font-size: 11px;
+        // centred: a one-line message sat against the top of a 34px row
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    // editing is a button, not a lucky click on the text: a row whose only way
+    // to change is an invisible target looks uneditable
+    Rectangle {
+        x: parent.width - 56px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: edit.has-hover ? #383c30 : #2c2f26;
+        edit := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "edit"); }
+        }
+        IconEdit {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+        }
+    }
+
+    // a resting surface, not a hover-only one: an action that looks like empty
+    // space until the pointer finds it is a hidden control
+    Rectangle {
+        x: parent.width - 28px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        // colour alone, no outline: the fill sits a clear step above both the
+        // panel and the row's hover, which is what keeps the button a button
+        background: del.has-hover ? #383c30 : #2c2f26;
+        del := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "delete"); }
+        }
+        IconTrash {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+        }
+    }
+}
+
+// A follow-up row: the same row plus the up arrow that pulls the message into
+// the turn that is already running.
+export component QueueRowUp inherits Rectangle {
+    in property <string> text;
+    in property <string> lane;
+    in property <int> slot;
+    in property <image> thumb;
+    callback act(string, int, string);
+
+    height: 34px;
+    border-radius: 6px;
+    background: row-touch.has-hover ? #1f211a : transparent;
+
+    row-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 92px;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.act(root.lane, root.slot, "edit"); }
+    }
+
+    if root.thumb.width > 0 : Rectangle {
+        x: 6px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        clip: true;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.thumb;
+            image-fit: cover;
+        }
+    }
+
+    Text {
+        x: root.thumb.width > 0 ? 34px : 6px;
+        y: 0;
+        width: parent.width - (root.thumb.width > 0 ? 128px : 100px);
+        height: 100%;
+        text: root.text;
+        color: #d9d8d1;
+        font-size: 11px;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: parent.width - 84px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: edit.has-hover ? #383c30 : #2c2f26;
+        edit := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "edit"); }
+        }
+        IconEdit {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 56px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: up.has-hover ? #383c30 : #2c2f26;
+        up := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "promote"); }
+        }
+        IconToTop {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: up.has-hover ? #e0cd7c : #a18e41;
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 28px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        // colour alone, no outline: the fill sits a clear step above both the
+        // panel and the row's hover, which is what keeps the button a button
+        background: del.has-hover ? #383c30 : #2c2f26;
+        del := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.act(root.lane, root.slot, "delete"); }
+        }
+        IconTrash {
+            width: 12px;
+            height: 12px;
+            x: 6px;
+            y: 6px;
+            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+        }
+    }
+}
+
+export component TranscriptRow inherits VerticalLayout {
+    spacing: 0px;
+    property <bool> err-hover: false;
+
+    in property <TRow> data;
+    callback toggle();
+    // where the failure reason should be drawn: at the window's root, not in
+    // this row, or the row beneath paints over it
+    callback reason-hover(string, length, length);
+    callback reason-leave();
+
+    if data.kind == 0 : HorizontalLayout {
+        alignment: end;
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        Rectangle {
+            background: #2e2916;
+            border-radius: 10px;
+            width: min(self.preferred-width, 560px);
+            height: self.preferred-height;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                StyledText {
+                    text: data.body;
+                    default-color: #e7e5df;
+                    default-font-size: Type.body;
+                    link-color: #a18e41;
+                }
+            }
+        }
+    }
+
+    if data.kind == 1 : Rectangle {
+        height: agent-text.preferred-height + 12px;
+        agent-text := StyledText {
+            x: 24px;
+            y: 6px;
+            width: parent.width - 48px;
+            text: data.body;
+            default-color: #d2d1ca;
+            default-font-size: Type.body;
+            link-color: #a18e41;
+        }
+    }
+
+    if data.kind == 2 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
+
+        Rectangle {
+            width: self.preferred-width;
+            height: 24px;
+            border-radius: 6px;
+            background: think-touch.has-hover ? #1a1b17 : transparent;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 6px;
+                Text { text: "thinking"; color: #6b6c65; font-size: 10px; vertical-alignment: center; }
+                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+
+                Rectangle {
+                    width: 10px;
+                    height: 24px;
+                    IconCaret {
+                        y: (parent.height - self.height) / 2;
+                        up: data.expanded;
+                    }
+                }
+            }
+            think-touch := TouchArea { clicked => { root.toggle(); } }
+        }
+
+        if data.expanded : Rectangle {
+            background: #0f100d;
+            border-color: #1e201a;
+            border-width: 1px;
+            border-radius: 8px;
+            height: min(think-text.preferred-height + 24px, 6 * think-probe.preferred-height + 24px);
+            think-probe := Text {
+                x: -200px;
+                y: 0px;
+                text: "x";
+                font-family: "Cascadia Code";
+                font-size: 11px;
+                opacity: 0;
+            }
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    think-text := StyledText {
+                        text: data.body;
+                        default-color: #7e8076;
+                        default-font-family: "Cascadia Code";
+                        default-font-size: 11px;
+                    }
+                }
+            }
+        }
+    }
+
+    if data.kind == 3 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
+
+        Rectangle {
+            height: 26px;
+            border-radius: 6px;
+            background: data.failed
+                ? (cell-hot ? #241713 : #1d1412)
+                : (cell-hot ? #181a14 : #14160f);
+
+            property <bool> cell-hot: cell-touch.has-hover || root.err-hover;
+
+            cell-touch := TouchArea {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 100%;
+                clicked => { root.toggle(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 8px;
+
+                Rectangle {
+                    width: 10px;
+                    height: 26px;
+                    IconCaret {
+                        y: (parent.height - self.height) / 2;
+                        up: data.expanded;
+                    }
+                }
+
+                Text {
+                    text: data.title;
+                    color: data.failed ? #c98a7f : #8b8c85;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+                // the separator is full white so the run reads as two parts
+                // instead of a sentence ending in a full stop
+                Text {
+                    text: "\u{00b7}";
+                    color: #ffffff;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    visible: data.elapsed != "";
+                }
+                Text {
+                    text: data.elapsed;
+                    color: #4a4d44;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    visible: data.elapsed != "";
+                }
+
+                if data.failed : Rectangle {
+                    width: 14px;
+                    height: 26px;
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - self.height) / 2;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: err-touch.has-hover ? #8d4235 : #6b342b;
+                        // the glyph is drawn in the badge's own box: at its
+                        // default 16px it overhangs a 14px ring, and its stroke
+                        // lands a pixel right and a pixel down of the centre
+                        IconAlert {
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                        err-touch := TouchArea {
+                            x: 0;
+                            y: 0;
+                            width: 100%;
+                            height: 100%;
+                            changed has-hover => {
+                                root.err-hover = self.has-hover;
+                                if self.has-hover {
+                                    root.reason-hover(
+                                        data.reason,
+                                        self.absolute-position.x,
+                                        self.absolute-position.y + self.height,
+                                    );
+                                } else {
+                                    root.reason-leave();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+
+        }
+
+        if data.expanded : Rectangle {
+            background: #0f100d;
+            border-color: #23251f;
+            border-width: 1px;
+            border-radius: 8px;
+            height: self.preferred-height;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                spacing: 8px;
+                StyledText {
+                    text: data.code;
+                    default-color: #cfd3c8;
+                    default-font-family: "Cascadia Code";
+                    default-font-size: 12px;
+                }
+                if data.has-output : Rectangle {
+                    height: 1px;
+                    background: #1e201a;
+                }
+                if data.has-output : StyledText {
+                    text: data.output;
+                    default-color: data.failed ? #c98a7f : #8f9187;
+                    default-font-family: "Cascadia Code";
+                    default-font-size: 11px;
+                }
+            }
+        }
+    }
+
+    if data.kind == 5 : HorizontalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        Text {
+            text: data.title;
+            color: #4a4d44;
+            font-size: 10px;
+        }
+    }
+
+    // A fenced block: its own surface, mono, the language named in the corner
+    // the way a code card names it. The colours are the TUI's mdCodeBlock (a
+    // sage) and its syntax palette, warmed to sit in this theme.
+    if data.kind == 6 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        Rectangle {
+            height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
+            background: #0d0e0b;
+            border-radius: 8px;
+
+            Text {
+                x: 12px;
+                y: 9px;
+                text: data.meta;
+                color: #565a4f;
+                font-size: 9px;
+                visible: data.meta != "";
+            }
+            code-text := StyledText {
+                x: 12px;
+                y: 12px + (data.meta == "" ? 0px : 15px);
+                width: parent.width - 24px;
+                text: data.code;
+                default-color: #b3bb9e;
+                default-font-size: 11.5px;
+                default-font-family: "Cascadia Code";
+            }
+        }
+    }
+
+    // A table, box-drawn as text: it stays copyable and needs no cell model.
+    if data.kind == 7 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        table-text := StyledText {
+            text: data.body;
+            default-color: #a9ab9d;
+            default-font-size: 11px;
+            default-font-family: "Cascadia Code";
+        }
+    }
+    // an image the user sent: the picture itself, thumbnailed, on the same edge
+    // as the bubble so the sent turn reads as one thing
+    if data.kind == 8 : HorizontalLayout {
+        alignment: end;
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        Rectangle {
+            width: 220px;
+            height: 150px;
+            background: #1a1c16;
+            border-radius: 10px;
+            clip: true;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: data.image;
+                image-fit: contain;
+            }
+        }
+    }
+}

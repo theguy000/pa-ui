@@ -1,0 +1,226 @@
+// Every glyph the window draws, in the order the window reads: chrome, sidebar,
+// transcript, composer, menus. Each is a Path over a 24- or 12-unit viewbox, sized
+// in px here, so a call site sets a tint and a position and nothing else.
+//
+// Outlines stroke `tint` and fill nothing; solids fill `tint` and stroke nothing.
+// Material Symbols (filled) is Apache-2.0; Lucide is ISC.
+
+// window chrome
+
+// The minimise, maximise and close marks. A base, not a glyph: the three call
+// sites supply their own `commands` on a 10x10 viewbox.
+export component CaptionGlyph inherits Path {
+    in property <color> tint: #d7d7d1;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    stroke: tint;
+    stroke-width: 1px;
+    fill: transparent;
+}
+
+// A frame, its folded edge, and - once the pointer is on it - the direction the
+// column will travel. Resting it is only a frame, so the hover is what tells you
+// what the click is going to do.
+export component PanelIcon inherits Path {
+    // the folded edge sits on the right for the right-hand column
+    in property <bool> folded-edge-right: false;
+    in property <bool> arrow: false;
+    in property <bool> point-left: false;
+    in property <color> tint: #b0b1a8;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.5px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 7 3 L 17 3 A 4 4 0 0 1 21 7 L 21 17 A 4 4 0 0 1 17 21 L 7 21 A 4 4 0 0 1 3 17 L 3 7 A 4 4 0 0 1 7 3 Z"
+        + (folded-edge-right ? " M 16 8 L 16 16" : " M 8 8 L 8 16")
+        + (arrow
+            ? (folded-edge-right
+                ? (point-left ? " M 11.5 9.5 L 8.5 12 L 11.5 14.5" : " M 9 9.5 L 12 12 L 9 14.5")
+                : (point-left ? " M 15 9.5 L 12 12 L 15 14.5" : " M 12.5 9.5 L 15.5 12 L 12.5 14.5"))
+            : "");
+}
+
+// sidebar
+
+// The new-session mark: a ring left open at its top right, with the pen that
+// opened it still crossing the gap. Both shapes are stroked outlines, so they
+// share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
+// that drawing's rounded rect carried through its own -45 degree turn.
+export component IconNewChat inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    // the mark's own 2.1 on a 24 viewbox, at the size it is drawn here
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 10.5 5 C 6 5 4 7.2 4 12.5 C 4 17.8 6.2 20 11.8 20 C 17.4 20 19.5 17.8 19.5 13 "
+        + "M 9.36 10.93 L 15.73 4.56 A 1.8 1.8 0 0 1 18.27 4.56 L 18.84 5.13 "
+        + "A 1.8 1.8 0 0 1 18.84 7.67 L 12.47 14.04 A 1.8 1.8 0 0 1 9.93 14.04 "
+        + "L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z";
+}
+
+// The magnifier: a lens that fills most of its box and a handle cut short, so
+// the pair still reads at 16px. Its tint stays the dim one both columns already
+// use for search: the mark is drawn and inert until search exists, and a control
+// that cannot be clicked should not look like one.
+export component IconSearch inherits Path {
+    in property <color> tint: #8b8c85;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    // the mark's own 2.3 on a 24 viewbox, at the size it is drawn here
+    stroke-width: 1.5px;
+    stroke-line-cap: butt;
+    // the circle is four quarter arcs: no half-turn flag to get wrong
+    commands: "M 11 3.5 A 7.5 7.5 0 0 1 18.5 11 A 7.5 7.5 0 0 1 11 18.5 "
+        + "A 7.5 7.5 0 0 1 3.5 11 A 7.5 7.5 0 0 1 11 3.5 Z "
+        + "M 16.3 16.3 L 20.2 20.2";
+}
+
+// The pencil that names a session's rename, and the one a queued row offers.
+export component IconPencil inherits Path {
+    in property <color> tint: #8b8c85;
+    width: 11px;
+    height: 11px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 2 8.2 L 2 10 L 3.8 10 L 10 3.8 L 8.2 2 Z";
+    stroke: tint;
+    stroke-width: 1.1px;
+    fill: transparent;
+}
+
+// A solid pencil: the rename action on a session row.
+export component IconEdit inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
+    fill: tint;
+    stroke: transparent;
+}
+
+// A bin with its lid left on: delete, without the promise of permanence.
+export component IconTrash inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z";
+    fill: tint;
+    stroke: transparent;
+}
+
+// transcript
+
+export component IconCaret inherits Path {
+    in property <bool> up;
+    in property <color> tint: #7a7c72;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    commands: up ? "M 2 6.5 L 5 3.5 L 8 6.5" : "M 2 3.5 L 5 6.5 L 8 3.5";
+    stroke: tint;
+    stroke-width: 1.3px;
+    fill: transparent;
+}
+
+// The jump-back-to-newest mark that rides above the composer while the reader is
+// scrolled away from the floor.
+export component IconToTop inherits Path {
+    in property <color> tint: #a18e41;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 14;
+    viewbox-height: 14;
+    commands: "M 3.2 2.9 L 10.8 2.9 M 7 11.6 L 7 5.3 M 4.4 7.9 L 7 5.3 L 9.6 7.9";
+    stroke: tint;
+    stroke-width: 1.3px;
+    fill: transparent;
+}
+
+export component IconAlert inherits Path {
+    in property <color> tint: #f3ded8;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 14;
+    viewbox-height: 14;
+    commands: "M 7 3.5 L 7 8.0 M 7 9.5 L 7 10.5";
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+}
+
+// composer
+
+export component IconSend inherits Path {
+    in property <color> tint: #12130f;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 6 10.5 L 6 2 M 2.2 5.8 L 6 2 L 9.8 5.8";
+    stroke: tint;
+    stroke-width: 1.6px;
+    fill: transparent;
+}
+
+// The attach control: two 8px arms, centred on its box, with rounded ends.
+export component IconPlus inherits Path {
+    in property <color> tint: #8a8d82;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 6 2 L 6 10 M 2 6 L 10 6";
+    stroke: tint;
+    stroke-width: 1.5px;
+    stroke-line-cap: round;
+    fill: transparent;
+}
+
+// menus
+
+// The "this is the one running" tick, beside the current model or level.
+export component IconCheck inherits Path {
+    in property <color> tint: #a18e41;
+    width: 11px;
+    height: 11px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    commands: "M 1 6.4 L 4.4 9.8 L 11 2.2";
+    stroke: tint;
+    stroke-width: 1.5px;
+    fill: transparent;
+}
+
+export component IconChevronDown inherits Path {
+    in property <color> tint: #b6b2a4;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    commands: "M 2 3.5 L 5 6.5 L 8 3.5";
+    stroke: tint;
+    stroke-width: 1.6px;
+    fill: transparent;
+}

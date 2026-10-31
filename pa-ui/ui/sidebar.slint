@@ -1,0 +1,147 @@
+// The sessions column: one session's row, and the dot that says what it is doing.
+
+import { SessionItem, Type } from "types.slint";
+import { MarqueeText } from "marquee-text.slint";
+import { IconPencil } from "icons.slint";
+
+export component StatusDot inherits Rectangle {
+    in property <string> status;
+    width: 5px;
+    height: 5px;
+    border-radius: 2.5px;
+    background: status == "working" ? #a18e41 : status == "parked" ? #4a4d44 : #6f9f5f;
+}
+
+export component SessionRow inherits Rectangle {
+    in property <SessionItem> item;
+    in property <bool> selected;
+    in property <bool> editing;
+    in-out property <string> draft;
+    callback picked(string);
+    // the row's own window position rides along, so the card can sit beside it
+    callback hovered(string, length);
+    callback edit(string);
+    callback commit(string, string);
+    // the row's own pointer state, so the component can watch it change: a
+    // `changed` block only takes an identifier, and `ta.has-hover` is not one
+    out property <bool> hot: ta.has-hover;
+
+    height: 32px;
+    border-radius: 6px;
+    background: selected ? #1d1e19 : (ta.has-hover ? #171814 : transparent);
+
+    ta := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width - 30px;
+        height: 100%;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.picked(root.item.id); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.move {
+                root.hovered(root.item.tip, self.absolute-position.y);
+            }
+        }
+    }
+
+    // Leaving the row is the half `move` cannot report: walking up into the
+    // blank band above the list produces no further move inside the row, so the
+    // card used to sit there until the timer gave up. The `changed` block lives
+    // on the row rather than inside the TouchArea - inside it, a has-hover
+    // change eats the click that follows.
+    changed hot => {
+        if !hot {
+            root.hovered("", 0px);
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 9px;
+        spacing: 6px;
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 32px;
+            clip: true;
+
+            // a name longer than the sidebar travels while the row is hovered;
+            // left alone the row is clipped where it lies, as it always was
+            if !root.editing : MarqueeText {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: parent.width;
+                text: root.item.name;
+                text-color: root.selected ? #e7e5df : #b0b1a8;
+                font-size: Type.item;
+                active: ta.has-hover;
+            }
+
+            if root.editing : input := TextInput {
+                text: root.draft;
+                y: (parent.height - self.height) / 2;
+                width: parent.width;
+                color: #e7e5df;
+                font-size: Type.item;
+                single-line: true;
+                edited => { root.draft = self.text; }
+                accepted => { root.commit(root.item.id, root.draft); }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        root.commit(root.item.id, root.item.full);
+                        return EventResult.accept;
+                    }
+                    return EventResult.reject;
+                }
+                init => { self.focus(); }
+            }
+        }
+
+        Rectangle {
+            width: 18px;
+            height: 32px;
+            Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                background: edit-touch.has-hover ? #2a2c24 : #1d1e19;
+                visible: !root.editing;
+                opacity: ta.has-hover || edit-touch.has-hover ? 1 : 0;
+                animate opacity { duration: 100ms; }
+                IconPencil {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                edit-touch := TouchArea {
+                    enabled: !root.editing;
+                    clicked => { root.edit(root.item.id); }
+                }
+            }
+        }
+
+        Rectangle {
+            width: age-text.preferred-width;
+            height: 32px;
+            age-text := Text {
+                text: root.item.age;
+                color: #565a4f;
+                font-size: 10px;
+                height: parent.height;
+                vertical-alignment: center;
+                opacity: root.editing ? 0 : 1;
+            }
+        }
+
+        Rectangle {
+            width: 5px;
+            height: 32px;
+            StatusDot {
+                y: (parent.height - self.height) / 2;
+                status: root.item.status;
+                opacity: root.editing ? 0 : 1;
+            }
+        }
+    }
+}
