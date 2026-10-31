@@ -626,6 +626,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    Rectangle { vertical-stretch: 1; }
                 }
             }
         
@@ -762,6 +763,8 @@ export component AppWindow inherits Window {
             // children in Slint, so a layout here always under-measured the
             // composer and let it spill past the window
             center-column := Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
 
                     transcript-area := Rectangle {
                         x: 0;
