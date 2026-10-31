@@ -22,7 +22,7 @@ export component QueueRow inherits Rectangle {
     // a long message shows its beginning and where it was cut.
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #1f211a : transparent;
+    background: row-touch.has-hover ? #202020 : transparent;
 
     // the text is the edit affordance; it stops short of the button
     row-touch := TouchArea {
@@ -55,7 +55,7 @@ export component QueueRow inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 100px : 72px);
         height: 100%;
         text: root.text;
-        color: #d9d8d1;
+        color: #d8d8d8;
         font-size: 11px;
         // centred: a one-line message sat against the top of a 34px row
         vertical-alignment: center;
@@ -71,7 +71,7 @@ export component QueueRow inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #383c30 : #2c2f26;
+        background: edit.has-hover ? #3a3a3a : #2e2e2e;
         edit := TouchArea {
             x: 0;
             y: 0;
@@ -85,7 +85,7 @@ export component QueueRow inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+            tint: edit.has-hover ? #e5e5e5 : #b0b0b0;
         }
     }
 
@@ -99,7 +99,7 @@ export component QueueRow inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #383c30 : #2c2f26;
+        background: del.has-hover ? #3a3a3a : #2e2e2e;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -113,7 +113,7 @@ export component QueueRow inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+            tint: del.has-hover ? #f3ded8 : #b0b0b0;
         }
     }
 }
@@ -129,7 +129,7 @@ export component QueueRowUp inherits Rectangle {
 
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #1f211a : transparent;
+    background: row-touch.has-hover ? #202020 : transparent;
 
     row-touch := TouchArea {
         x: 0;
@@ -161,7 +161,7 @@ export component QueueRowUp inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 128px : 100px);
         height: 100%;
         text: root.text;
-        color: #d9d8d1;
+        color: #d8d8d8;
         font-size: 11px;
         vertical-alignment: center;
         wrap: word-wrap;
@@ -174,7 +174,7 @@ export component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #383c30 : #2c2f26;
+        background: edit.has-hover ? #3a3a3a : #2e2e2e;
         edit := TouchArea {
             x: 0;
             y: 0;
@@ -188,7 +188,7 @@ export component QueueRowUp inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+            tint: edit.has-hover ? #e5e5e5 : #b0b0b0;
         }
     }
 
@@ -198,7 +198,7 @@ export component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: up.has-hover ? #383c30 : #2c2f26;
+        background: up.has-hover ? #3a3a3a : #2e2e2e;
         up := TouchArea {
             x: 0;
             y: 0;
@@ -210,7 +210,7 @@ export component QueueRowUp inherits Rectangle {
         IconToTop {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: up.has-hover ? #e0cd7c : #a18e41;
+            tint: up.has-hover ? #cdcdcd : #8f8f8f;
         }
     }
 
@@ -222,7 +222,7 @@ export component QueueRowUp inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #383c30 : #2c2f26;
+        background: del.has-hover ? #3a3a3a : #2e2e2e;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -236,7 +236,7 @@ export component QueueRowUp inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+            tint: del.has-hover ? #f3ded8 : #b0b0b0;
         }
     }
 }
@@ -259,7 +259,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-top: 6px;
         padding-bottom: 6px;
         Rectangle {
-            background: #2e2916;
+            background: #292929;
             border-radius: 10px;
             width: min(self.preferred-width, 560px);
             height: self.preferred-height;
@@ -270,9 +270,9 @@ export component TranscriptRow inherits VerticalLayout {
                 padding-bottom: 8px;
                 StyledText {
                     text: data.body;
-                    default-color: #e7e5df;
+                    default-color: #e5e5e5;
                     default-font-size: Type.body;
-                    link-color: #a18e41;
+                    link-color: #8f8f8f;
                 }
             }
         }
@@ -285,9 +285,9 @@ export component TranscriptRow inherits VerticalLayout {
             y: 6px;
             width: parent.width - 48px;
             text: data.body;
-            default-color: #d2d1ca;
+            default-color: #d1d1d1;
             default-font-size: Type.body;
-            link-color: #a18e41;
+            link-color: #8f8f8f;
         }
     }
 
@@ -302,13 +302,13 @@ export component TranscriptRow inherits VerticalLayout {
             width: self.preferred-width;
             height: 24px;
             border-radius: 6px;
-            background: think-touch.has-hover ? #1a1b17 : transparent;
+            background: think-touch.has-hover ? #1b1b1b : transparent;
             HorizontalLayout {
                 padding-left: 8px;
                 padding-right: 8px;
                 spacing: 6px;
-                Text { text: "thinking"; color: #6b6c65; font-size: 10px; vertical-alignment: center; }
-                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+                Text { text: "thinking"; color: #6b6b6b; font-size: 10px; vertical-alignment: center; }
+                Text { text: data.meta; color: #4c4c4c; font-size: 10px; vertical-alignment: center; }
 
                 Rectangle {
                     width: 10px;
@@ -323,8 +323,8 @@ export component TranscriptRow inherits VerticalLayout {
         }
 
         if data.expanded : Rectangle {
-            background: #0f100d;
-            border-color: #1e201a;
+            background: #101010;
+            border-color: #1f1f1f;
             border-width: 1px;
             border-radius: 8px;
             height: min(think-text.preferred-height + 24px, 6 * think-probe.preferred-height + 24px);
@@ -346,7 +346,7 @@ export component TranscriptRow inherits VerticalLayout {
                     padding-bottom: 12px;
                     think-text := StyledText {
                         text: data.body;
-                        default-color: #7e8076;
+                        default-color: #7f7f7f;
                         default-font-family: "Cascadia Code";
                         default-font-size: 11px;
                     }
@@ -367,7 +367,7 @@ export component TranscriptRow inherits VerticalLayout {
             border-radius: 6px;
             background: data.failed
                 ? (cell-hot ? #241713 : #1d1412)
-                : (cell-hot ? #181a14 : #14160f);
+                : (cell-hot ? #191919 : #151515);
 
             property <bool> cell-hot: cell-touch.has-hover || root.err-hover;
 
@@ -395,14 +395,14 @@ export component TranscriptRow inherits VerticalLayout {
 
                 Text {
                     text: data.title;
-                    color: data.failed ? #c98a7f : #8b8c85;
+                    color: data.failed ? #c98a7f : #8b8b8b;
                     font-size: 11px;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
 
-                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+                Text { text: data.meta; color: #4c4c4c; font-size: 10px; vertical-alignment: center; }
                 // the separator is full white so the run reads as two parts
                 // instead of a sentence ending in a full stop
                 Text {
@@ -414,7 +414,7 @@ export component TranscriptRow inherits VerticalLayout {
                 }
                 Text {
                     text: data.elapsed;
-                    color: #4a4d44;
+                    color: #4c4c4c;
                     font-size: 10px;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
@@ -463,8 +463,8 @@ export component TranscriptRow inherits VerticalLayout {
         }
 
         if data.expanded : Rectangle {
-            background: #0f100d;
-            border-color: #23251f;
+            background: #101010;
+            border-color: #242424;
             border-width: 1px;
             border-radius: 8px;
             height: self.preferred-height;
@@ -476,17 +476,17 @@ export component TranscriptRow inherits VerticalLayout {
                 spacing: 8px;
                 StyledText {
                     text: data.code;
-                    default-color: #cfd3c8;
+                    default-color: #d1d1d1;
                     default-font-family: "Cascadia Code";
                     default-font-size: 12px;
                 }
                 if data.has-output : Rectangle {
                     height: 1px;
-                    background: #1e201a;
+                    background: #1f1f1f;
                 }
                 if data.has-output : StyledText {
                     text: data.output;
-                    default-color: data.failed ? #c98a7f : #8f9187;
+                    default-color: data.failed ? #c98a7f : #909090;
                     default-font-family: "Cascadia Code";
                     default-font-size: 11px;
                 }
@@ -501,7 +501,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 2px;
         Text {
             text: data.title;
-            color: #4a4d44;
+            color: #4c4c4c;
             font-size: 10px;
         }
     }
@@ -516,14 +516,14 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 5px;
         Rectangle {
             height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
-            background: #0d0e0b;
+            background: #0e0e0e;
             border-radius: 8px;
 
             Text {
                 x: 12px;
                 y: 9px;
                 text: data.meta;
-                color: #565a4f;
+                color: #585858;
                 font-size: 9px;
                 visible: data.meta != "";
             }
@@ -532,7 +532,7 @@ export component TranscriptRow inherits VerticalLayout {
                 y: 12px + (data.meta == "" ? 0px : 15px);
                 width: parent.width - 24px;
                 text: data.code;
-                default-color: #b3bb9e;
+                default-color: #b7b7b7;
                 default-font-size: 11.5px;
                 default-font-family: "Cascadia Code";
             }
@@ -547,7 +547,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 5px;
         table-text := StyledText {
             text: data.body;
-            default-color: #a9ab9d;
+            default-color: #aaaaaa;
             default-font-size: 11px;
             default-font-family: "Cascadia Code";
         }
@@ -563,7 +563,7 @@ export component TranscriptRow inherits VerticalLayout {
         Rectangle {
             width: 220px;
             height: 150px;
-            background: #1a1c16;
+            background: #1b1b1b;
             border-radius: 10px;
             clip: true;
             Image {

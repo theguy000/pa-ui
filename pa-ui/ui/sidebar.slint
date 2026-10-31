@@ -28,7 +28,7 @@ export component SessionRow inherits Rectangle {
 
     height: 32px;
     border-radius: 6px;
-    background: selected ? #1d1e19 : (ta.has-hover ? #171814 : transparent);
+    background: selected ? #1d1d1d : (ta.has-hover ? #181818 : transparent);
 
     ta := TouchArea {
         x: 0;
@@ -72,7 +72,7 @@ export component SessionRow inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
                 text: root.item.name;
-                text-color: root.selected ? #e7e5df : #b0b1a8;
+                text-color: root.selected ? #e5e5e5 : #b0b0b0;
                 font-size: Type.item;
                 active: ta.has-hover;
             }
@@ -81,7 +81,7 @@ export component SessionRow inherits Rectangle {
                 text: root.draft;
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
-                color: #e7e5df;
+                color: #e5e5e5;
                 font-size: Type.item;
                 single-line: true;
                 edited => { root.draft = self.text; }
@@ -106,7 +106,7 @@ export component SessionRow inherits Rectangle {
                 width: 18px;
                 height: 18px;
                 border-radius: 4px;
-                background: edit-touch.has-hover ? #2a2c24 : #1d1e19;
+                background: edit-touch.has-hover ? #2b2b2b : #1d1d1d;
                 visible: !root.editing;
                 opacity: ta.has-hover || edit-touch.has-hover ? 1 : 0;
                 animate opacity { duration: 100ms; }
@@ -126,7 +126,7 @@ export component SessionRow inherits Rectangle {
             height: 32px;
             age-text := Text {
                 text: root.item.age;
-                color: #565a4f;
+                color: #585858;
                 font-size: 10px;
                 height: parent.height;
                 vertical-alignment: center;

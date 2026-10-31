@@ -236,7 +236,7 @@ pub fn markdown_markup(text: &str) -> String {
             // headings carry the accent, the way the TUI colours mdHeading, and
             // bold, because there is no size step inside one text run
             let body = trimmed.trim_start_matches('#').trim_start();
-            out.push_str("<font color=\"#c8b158\">**");
+            out.push_str("<font color=\"#b2b2b2\">**");
             out.push_str(body);
             out.push_str("**</font>");
         } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
@@ -297,11 +297,11 @@ pub(crate) fn highlight_inline_code(text: &str) -> String {
             // already bold (a heading, or prose wrapped in `**`).
             let bold_already = out.matches("**").count() % 2 == 1;
             if bold_already {
-                out.push_str("<font color=\"#a18e41\">");
+                out.push_str("<font color=\"#8f8f8f\">");
                 out.push_str(body.trim());
                 out.push_str("</font>");
             } else {
-                out.push_str("**<font color=\"#a18e41\">");
+                out.push_str("**<font color=\"#8f8f8f\">");
                 out.push_str(body.trim());
                 out.push_str("</font>**");
             }
@@ -579,10 +579,10 @@ pub(crate) fn wrap(color: &str, text: &str, out: &mut String) {
 pub fn highlight_python(code: &str) -> String {
     let decoded = decode_entities(code);
     let code = decoded.as_str();
-    const KEY: &str = "#c9a86a";
-    const STR: &str = "#8fb573";
-    const COM: &str = "#5f6159";
-    const NUM: &str = "#d0a75c";
+    const KEY: &str = "#acacac";
+    const STR: &str = "#aaaaaa";
+    const COM: &str = "#606060";
+    const NUM: &str = "#adadad";
 
     let mut out = String::with_capacity(code.len() * 2);
     let mut chars = code.chars().peekable();

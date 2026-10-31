@@ -74,7 +74,7 @@ export component AppWindow inherits Window {
     min-height: 560px;
     preferred-width: 1180px;
     preferred-height: 820px;
-    background: #10110e;
+    background: #111111;
     default-font-family: "Segoe UI";
 
     in property <[SessionItem]> sessions;
@@ -551,7 +551,7 @@ export component AppWindow inherits Window {
             // the mark, so drawing it again 30px lower would say the same thing twice.
             if !root.sidebar-open : Rectangle {
                 width: 48px;
-                background: #10110e;
+                background: #111111;
         
                 VerticalLayout {
                     padding-top: 4px;
@@ -565,7 +565,7 @@ export component AppWindow inherits Window {
                                 width: 32px;
                                 height: 32px;
                                 border-radius: 16px;
-                                background: strip-panel-touch.has-hover ? #2a2c24 : transparent;
+                                background: strip-panel-touch.has-hover ? #2b2b2b : transparent;
                                 animate background { duration: 120ms; }
                                 if !strip-panel-touch.has-hover : PrimeAgentMark {
                                     x: (parent.width - self.width) / 2;
@@ -576,7 +576,7 @@ export component AppWindow inherits Window {
                                     y: (parent.height - self.height) / 2;
                                     arrow: true;
                                     point-left: false;
-                                    tint: #e7e5df;
+                                    tint: #e5e5e5;
                                 }
                                 strip-panel-touch := TouchArea {
                                     changed has-hover => { root.open-sidebar-tip = self.has-hover; }
@@ -598,11 +598,11 @@ export component AppWindow inherits Window {
                                 width: 32px;
                                 height: 32px;
                                 border-radius: 16px;
-                                background: strip-new-touch.has-hover ? #2a2c24 : transparent;
+                                background: strip-new-touch.has-hover ? #2b2b2b : transparent;
                                 IconNewChat {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
-                                    tint: strip-new-touch.has-hover ? #e7e5df : #d7d7d1;
+                                    tint: strip-new-touch.has-hover ? #e5e5e5 : #d7d7d7;
                                 }
                                 strip-new-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -627,7 +627,7 @@ export component AppWindow inherits Window {
                                 IconSearch {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
-                                    tint: #b0b1a8;
+                                    tint: #b0b0b0;
                                 }
                             }
                         }
@@ -638,7 +638,7 @@ export component AppWindow inherits Window {
         
             if root.sidebar-open : Rectangle {
                 width: 232px;
-                background: #10110e;
+                background: #111111;
                 VerticalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
@@ -658,7 +658,7 @@ export component AppWindow inherits Window {
                             x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "Prime Agent";
-                            color: #e7e5df;
+                            color: #e5e5e5;
                             font-size: 14px;
                             font-weight: 600;
                         }
@@ -674,7 +674,7 @@ export component AppWindow inherits Window {
                             IconSearch {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
-                                tint: #b0b1a8;
+                                tint: #b0b0b0;
                             }
                         }
 
@@ -686,13 +686,13 @@ export component AppWindow inherits Window {
                             width: 30px;
                             height: 30px;
                             border-radius: 15px;
-                            background: panel-touch.has-hover ? #2a2c24 : transparent;
+                            background: panel-touch.has-hover ? #2b2b2b : transparent;
                             PanelIcon {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 arrow: panel-touch.has-hover;
                                 point-left: root.sidebar-open;
-                                tint: panel-touch.has-hover ? #e7e5df : #b0b1a8;
+                                tint: panel-touch.has-hover ? #e5e5e5 : #b0b0b0;
                             }
                             panel-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -709,19 +709,19 @@ export component AppWindow inherits Window {
                     Rectangle {
                         height: 36px;
                         border-radius: 10px;
-                        background: new-session-touch.has-hover ? #23251f : #1a1b16;
+                        background: new-session-touch.has-hover ? #242424 : #1a1a1a;
 
                         IconNewChat {
                             x: 9px;
                             y: (parent.height - self.height) / 2;
-                            tint: new-session-touch.has-hover ? #e7e5df : #b0b1a8;
+                            tint: new-session-touch.has-hover ? #e5e5e5 : #b0b0b0;
                         }
 
                         Text {
                             x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "New Session";
-                            color: new-session-touch.has-hover ? #ffffff : #e7e5df;
+                            color: new-session-touch.has-hover ? #ffffff : #e5e5e5;
                             font-size: 12px;
                         }
 
@@ -780,7 +780,7 @@ export component AppWindow inherits Window {
             center-column := Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
-                background: #12130f;
+                background: #131313;
                 border-top-left-radius: 10px;
                 border-top-right-radius: root.right-open ? 10px : 0px;
                 clip: true;
@@ -907,7 +907,7 @@ export component AppWindow inherits Window {
                                 width: 6px;
                                 height: root.thumb-height;
                                 border-radius: 3px;
-                                background: bar-touch.pressed ? #565a4f : bar-touch.has-hover ? #43463c : #2f322a;
+                                background: bar-touch.pressed ? #585858 : bar-touch.has-hover ? #454545 : #313131;
                                 animate background { duration: 120ms; }
                             }
 
@@ -957,8 +957,8 @@ export component AppWindow inherits Window {
                         width: 28px;
                         height: 28px;
                         border-radius: 14px;
-                        background: jump-touch.has-hover ? #2e3026 : #1b1d18;
-                        border-color: #34372e;
+                        background: jump-touch.has-hover ? #2f2f2f : #1c1c1c;
+                        border-color: #363636;
                         border-width: 1px;
                         IconChevronDown {
                             x: (parent.width - self.width) / 2;
@@ -989,8 +989,8 @@ export component AppWindow inherits Window {
                         width: 36px;
                         height: 3px;
                         border-radius: 1.5px;
-                        background: root.dragging ? #6b7059
-                            : (root.handle-hover ? #4a4d42 : #33362d);
+                        background: root.dragging ? #6d6d6d
+                            : (root.handle-hover ? #4c4c4c : #353535);
                     }
 
 
@@ -1013,8 +1013,8 @@ export component AppWindow inherits Window {
                     y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
                     height: root.box-height;
-    background: #0f100d;
-    border-color: #23251f;
+    background: #101010;
+    border-color: #242424;
     border-width: 1px;
     border-radius: 12px;
 
@@ -1025,8 +1025,8 @@ export component AppWindow inherits Window {
         width: 36px;
         height: 3px;
         border-radius: 1.5px;
-        background: root.dragging ? #6b7059
-            : (root.handle-hover ? #4a4d42 : #33362d);
+        background: root.dragging ? #6d6d6d
+            : (root.handle-hover ? #4c4c4c : #353535);
     }
 
     VerticalLayout {
@@ -1051,9 +1051,9 @@ export component AppWindow inherits Window {
                     height: 44px;
                     border-radius: 8px;
                     clip: true;
-                    background: #191a15;
+                    background: #191919;
                     border-width: 1px;
-                    border-color: thumb-touch.has-hover ? #3a3d32 : #2a2c24;
+                    border-color: thumb-touch.has-hover ? #3c3c3c : #2b2b2b;
 
                     Image {
                         x: 1px;
@@ -1075,7 +1075,7 @@ export component AppWindow inherits Window {
                         width: 14px;
                         height: 14px;
                         border-radius: 7px;
-                        background: #0b0c09;
+                        background: #0c0c0c;
                         opacity: thumb-touch.has-hover ? 0.92 : 0.0;
                         animate opacity { duration: 120ms; }
                         Rectangle {
@@ -1084,7 +1084,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d9d6cc;
+                            background: #d6d6d6;
                             transform-rotation: 45deg;
                         }
                         Rectangle {
@@ -1093,7 +1093,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d9d6cc;
+                            background: #d6d6d6;
                             transform-rotation: -45deg;
                         }
                     }
@@ -1241,7 +1241,7 @@ export component AppWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     text: root.status-line;
-                    color: root.status-line-bad ? #c98a7f : #6b6e63;
+                    color: root.status-line-bad ? #c98a7f : #6d6d6d;
                     font-size: 10px;
                     vertical-alignment: center;
                     wrap: no-wrap;
@@ -1277,8 +1277,8 @@ export component AppWindow inherits Window {
                     y: -self.height - 14px;
                     width: 216px;
                     height: self.preferred-height;
-                    background: #171814;
-                    border-color: #2a2c24;
+                    background: #181818;
+                    border-color: #2b2b2b;
                     border-width: 1px;
                     border-radius: 8px;
                     drop-shadow-blur: 10px;
@@ -1310,12 +1310,12 @@ export component AppWindow inherits Window {
                 width: 20px;
                 height: 20px;
                 border-radius: 6px;
-                background: attach-touch.has-hover ? #23251f : #1a1b16;
+                background: attach-touch.has-hover ? #242424 : #1a1a1a;
                 animate background { duration: 120ms; }
                 IconPlus {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    tint: attach-touch.has-hover ? #b0b1a8 : #8a8d82;
+                    tint: attach-touch.has-hover ? #b0b0b0 : #8c8c8c;
                 }
                 attach-touch := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
@@ -1345,9 +1345,12 @@ export component AppWindow inherits Window {
                 width: 25px;
                 height: 25px;
                 border-radius: 12.5px;
+                // Grey has no saturation to spend on the primary action, so it
+                // spends contrast instead: the disc is the lightest thing in the
+                // composer, carrying a near-black arrow.
                 background: root.stop-mode
                     ? (send-touch.has-hover ? #b8614c : #a2543f)
-                    : (send-touch.has-hover ? #b39e4c : #a18e41);
+                    : (send-touch.has-hover ? #f2f2f2 : #e6e6e6);
                 animate background { duration: 240ms; easing: ease-in-out; }
 
                 IconSend {
@@ -1366,7 +1369,7 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     // a dot rounding out into a square as it arrives
                     border-radius: 3px - 1.5px * root.stop-mix;
-                    background: #f6efe6;
+                    background: #f0f0f0;
                     opacity: root.stop-mix;
                     transform-rotation: (1.0 - root.stop-mix) * -45deg;
                 }
@@ -1401,7 +1404,7 @@ export component AppWindow inherits Window {
             // Blank by request: the column, its width and its fold, nothing else.
             if root.right-open : Rectangle {
                 width: 320px;
-                background: #10110e;
+                background: #111111;
             }
         }
     }
@@ -1414,8 +1417,8 @@ export component AppWindow inherits Window {
         y: clamp(root.hover-y - 4px, 40px, root.height - self.height - 12px);
         width: min(self.preferred-width, 260px);
         height: self.preferred-height;
-        background: #171814;
-        border-color: #2a2c24;
+        background: #181818;
+        border-color: #2b2b2b;
         border-width: 1px;
         border-radius: 8px;
         drop-shadow-blur: 12px;
@@ -1427,7 +1430,7 @@ export component AppWindow inherits Window {
             padding-bottom: 6px;
             Text {
                 text: root.hover-title;
-                color: #e2e0d8;
+                color: #e0e0e0;
                 font-size: 11px;
                 wrap: word-wrap;
                 max-width: 240px;
@@ -1500,8 +1503,8 @@ export component AppWindow inherits Window {
         // not `q-scroll.height`: a ScrollView's height reads back as nothing at
         // the time the parent binds, which collapsed the panel to a sliver
         height: root.q-scroll-h + 12px;
-        background: #171814;
-        border-color: #2c2f26;
+        background: #181818;
+        border-color: #2e2e2e;
         border-width: 1px;
         border-radius: 10px;
         drop-shadow-blur: 12px;
@@ -1530,7 +1533,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: root.queued-count == 1 ? "1 message waiting" : root.queued-count + " messages waiting";
-                    color: #b0b1a8;
+                    color: #b0b0b0;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-steering : QueueRow {
@@ -1555,7 +1558,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: "runs next";
-                    color: #6b6e63;
+                    color: #6d6d6d;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-followup : QueueRowUp {
@@ -1580,7 +1583,7 @@ export component AppWindow inherits Window {
                     width: parent.width - 16px;
                     height: 22px;
                     border-radius: 5px;
-                    background: clear-touch.has-hover ? #1f211a : transparent;
+                    background: clear-touch.has-hover ? #202020 : transparent;
 
                     Text {
                         x: 2px;
@@ -1588,7 +1591,7 @@ export component AppWindow inherits Window {
                         height: parent.height;
                         vertical-alignment: center;
                         text: "clear all";
-                        color: clear-touch.has-hover ? #d9d8d1 : #6b6e63;
+                        color: clear-touch.has-hover ? #d8d8d8 : #6d6d6d;
                         font-size: 10px;
                     }
 
