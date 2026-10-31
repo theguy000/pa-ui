@@ -74,7 +74,7 @@ export component AppWindow inherits Window {
     min-height: 560px;
     preferred-width: 1180px;
     preferred-height: 820px;
-    background: #12130f;
+    background: #10110e;
     default-font-family: "Segoe UI";
 
     in property <[SessionItem]> sessions;
@@ -765,13 +765,17 @@ export component AppWindow inherits Window {
             center-column := Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
+                background: #12130f;
+                border-top-left-radius: 10px;
+                border-top-right-radius: root.right-open ? 10px : 0px;
+                clip: true;
 
                     transcript-area := Rectangle {
                         x: 0;
                         y: 0;
                         width: parent.width;
                         height: parent.height - root.composer-total;
-                        background: #12130f;
+                        background: transparent;
 
                         area-touch := TouchArea {
                             x: 0;
