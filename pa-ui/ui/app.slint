@@ -1,7 +1,7 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
-import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon } from "icons.slint";
+import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
 import { EffortItem, ModelGroup, QueueItem, SessionItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionRow } from "sidebar.slint";
@@ -234,6 +234,7 @@ export component AppWindow inherits Window {
     in-out property <length> hover-y: 0px;
     in-out property <bool> tooltip-on: false;
     in-out property <bool> sidebar-open: true;
+    in-out property <bool> open-sidebar-tip: false;
     // The right-hand column. It is blank on purpose: the shell exists and nothing
     // lives in it yet.
     in-out property <bool> right-open: false;
@@ -543,8 +544,6 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
-        // room for the custom title bar drawn above this layout
-        padding-top: 32px;
 
         HorizontalLayout {
             // Folded: the column keeps only its controls. The session rows cannot survive
@@ -555,30 +554,36 @@ export component AppWindow inherits Window {
                 background: #10110e;
         
                 VerticalLayout {
-                    padding-top: 10px;
-                    spacing: 4px;
+                    padding-top: 4px;
+                    spacing: 6px;
         
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
-                                background: strip-panel-touch.has-hover ? #2a2c24 : transparent;
-                                PanelIcon {
-                                    x: 6px;
-                                    y: 6px;
-                                    arrow: strip-panel-touch.has-hover;
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: strip-panel-touch.has-hover ? #2a2c24 : #1c1d18;
+                                animate background { duration: 120ms; }
+                                if !strip-panel-touch.has-hover : PrimeAgentMark {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                if strip-panel-touch.has-hover : PanelIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    arrow: true;
                                     point-left: false;
-                                    tint: strip-panel-touch.has-hover ? #e7e5df : #b0b1a8;
+                                    tint: #e7e5df;
                                 }
                                 strip-panel-touch := TouchArea {
+                                    changed has-hover => { root.open-sidebar-tip = self.has-hover; }
                                     mouse-cursor: pointer;
                                     accessible-role: button;
-                                    accessible-label: "Expand sidebar";
-                                    clicked => { root.sidebar-open = true; }
+                                    accessible-label: "Open sidebar";
+                                    clicked => { root.open-sidebar-tip = false; root.sidebar-open = true; }
                                 }
                             }
                         }
@@ -586,18 +591,18 @@ export component AppWindow inherits Window {
         
                     // New Session, mark only: the label has nowhere to go at this width.
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
-                                background: strip-new-touch.has-hover ? #23251f : transparent;
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: strip-new-touch.has-hover ? #2a2c24 : #181915;
                                 IconNewChat {
-                                    x: 5px;
-                                    y: 5px;
-                                    tint: strip-new-touch.has-hover ? #e7e5df : #b0b1a8;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: strip-new-touch.has-hover ? #e7e5df : #d7d7d1;
                                 }
                                 strip-new-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -612,16 +617,17 @@ export component AppWindow inherits Window {
                     // The magnifier again, still drawn and still inert: folded or not,
                     // it holds the same place in the column.
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
                                 IconSearch {
-                                    x: 6px;
-                                    y: 6px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: #b0b1a8;
                                 }
                             }
                         }
@@ -636,49 +642,54 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
-                    padding-top: 8px;
+                    padding-top: 2px;
                     spacing: 6px;
-                    // The band: the column's own header. The wordmark says whose window
-                    // this is; the magnifier is drawn and inert, because search is not
-                    // built yet and a button that does nothing is a lie; the panel mark
-                    // folds the column away and is the only thing here that is a control.
+                    // The band: the column's own header. Logo + wordmark on the left,
+                    // search and collapse panel control on the right.
                     Rectangle {
-                        height: 40px;
+                        height: 36px;
+
+                        PrimeAgentMark {
+                            x: 6px;
+                            y: (parent.height - self.height) / 2;
+                        }
 
                         Text {
-                            x: 2px;
+                            x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "Prime Agent";
                             color: #e7e5df;
-                            font-size: 12px;
+                            font-size: 14px;
+                            font-weight: 600;
                         }
 
                         // Drawn, not wired: no TouchArea, no callback, no pointer.
                         // It holds the band's shape until search exists.
                         Rectangle {
-                            x: parent.width - 56px;
-                            y: (parent.height - 26px) / 2;
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
+                            x: parent.width - 64px;
+                            y: (parent.height - 30px) / 2;
+                            width: 30px;
+                            height: 30px;
+                            border-radius: 15px;
                             IconSearch {
-                                x: 5px;
-                                y: 5px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                tint: #b0b1a8;
                             }
                         }
 
                         // The fold: a frame with its edge turning away, on a round
                         // hit area, the way the reference draws it.
                         Rectangle {
-                            x: parent.width - 26px;
-                            y: (parent.height - 26px) / 2;
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
+                            x: parent.width - 30px;
+                            y: (parent.height - 30px) / 2;
+                            width: 30px;
+                            height: 30px;
+                            border-radius: 15px;
                             background: panel-touch.has-hover ? #2a2c24 : transparent;
                             PanelIcon {
-                                x: 5px;
-                                y: 5px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
                                 arrow: panel-touch.has-hover;
                                 point-left: root.sidebar-open;
                                 tint: panel-touch.has-hover ? #e7e5df : #b0b1a8;
@@ -762,6 +773,10 @@ export component AppWindow inherits Window {
             // explicit geometry: a Rectangle's preferred size never reflects its
             // children in Slint, so a layout here always under-measured the
             // composer and let it spill past the window
+            VerticalLayout {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                padding-top: 32px;
             center-column := Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
@@ -1381,6 +1396,7 @@ export component AppWindow inherits Window {
                 }
 
             }
+            }
 
             // Blank by request: the column, its width and its fold, nothing else.
             if root.right-open : Rectangle {
@@ -1636,6 +1652,25 @@ export component AppWindow inherits Window {
 
 
 
+
+    if !root.sidebar-open && root.open-sidebar-tip : Rectangle {
+        x: 52px;
+        y: 6px;
+        width: open-tip-label.preferred-width + 24px;
+        height: 28px;
+        border-radius: 14px;
+        background: #e3e3e3;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000066;
+        open-tip-label := Text {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            text: "Open sidebar";
+            color: #1f1f1f;
+            font-size: 12px;
+            font-weight: 500;
+        }
+    }
 
     // drawn last so it sits above the content and the drag surface beneath it
     title-bar := TitleBar {

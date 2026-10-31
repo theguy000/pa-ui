@@ -49,6 +49,69 @@ export component PanelIcon inherits Path {
 
 // sidebar
 
+// The Prime Agent mark (from design/logo-designer.html: stemExt = 0.100 (+10.0%), weight = 0.152),
+// drawn bare without its dark tile so it sits cleanly inside the sidebar header and
+// collapsed badge without duplicating the caption's tiled favicon.
+export component PrimeAgentMark inherits Rectangle {
+    width: 18px;
+    height: 18px;
+    background: transparent;
+
+    // Lower parallel wing (#acaeb8) including the wing's inner stem-shadow (#82838c)
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: #acaeb8;
+        stroke: transparent;
+        commands: "M 73 41.5 L 43.2 61.5 L 43.2 44.36 L 54.48 36.79 Z";
+    }
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: #82838c;
+        stroke: transparent;
+        commands: "M 43.2 44.36 L 45.4 42.88 L 45.4 60.02 L 43.2 61.5 Z";
+    }
+
+    // Extended vertical P-stem (#62626e)
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: #62626e;
+        stroke: transparent;
+        commands: "M 28 16.5 L 43.2 27.14 L 43.2 79.3 L 28 89.5 Z";
+    }
+
+    // Drop shadow under top blade across stem and wing
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: #0000007a;
+        stroke: transparent;
+        commands: "M 28 33.22 L 73 41.5 L 68.98 44.2 L 28 36.02 Z";
+    }
+
+    // Top blade (#ffffff)
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: #ffffff;
+        stroke: transparent;
+        commands: "M 28 16.5 L 50 16.5 L 73 41.5 L 28 33.22 Z";
+    }
+}
+
+
 // The new-session mark: a ring left open at its top right, with the pen that
 // opened it still crossing the gap. Both shapes are stroked outlines, so they
 // share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
