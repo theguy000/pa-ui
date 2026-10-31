@@ -565,7 +565,7 @@ export component AppWindow inherits Window {
                                 width: 32px;
                                 height: 32px;
                                 border-radius: 16px;
-                                background: strip-panel-touch.has-hover ? #2a2c24 : #1c1d18;
+                                background: strip-panel-touch.has-hover ? #2a2c24 : transparent;
                                 animate background { duration: 120ms; }
                                 if !strip-panel-touch.has-hover : PrimeAgentMark {
                                     x: (parent.width - self.width) / 2;
@@ -598,7 +598,7 @@ export component AppWindow inherits Window {
                                 width: 32px;
                                 height: 32px;
                                 border-radius: 16px;
-                                background: strip-new-touch.has-hover ? #2a2c24 : #181915;
+                                background: strip-new-touch.has-hover ? #2a2c24 : transparent;
                                 IconNewChat {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
