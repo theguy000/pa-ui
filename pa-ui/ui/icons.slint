@@ -50,64 +50,89 @@ export component PanelIcon inherits Path {
 // sidebar
 
 // The Prime Agent mark (from design/logo-designer.html: stemExt = 0.100 (+10.0%), weight = 0.152),
-// drawn bare without its dark tile so it sits cleanly inside the sidebar header and
-// collapsed badge without duplicating the caption's tiled favicon.
+// drawn bare without its dark tile on a tight 74x74 viewbox around the glyph bounds
+// (x: 28..73, y: 16.5..89.5), with the source-atop shadows pre-clipped to the stem and wing.
 export component PrimeAgentMark inherits Rectangle {
     width: 18px;
     height: 18px;
     background: transparent;
 
-    // Lower parallel wing (#acaeb8) including the wing's inner stem-shadow (#82838c)
+    // Lower parallel wing (#acaeb8) with wingVy = th / cos(angLow) = 18.31
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 100;
-        viewbox-height: 100;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
         fill: #acaeb8;
         stroke: transparent;
-        commands: "M 73 41.5 L 43.2 61.5 L 43.2 44.36 L 54.48 36.79 Z";
+        commands: "M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z";
     }
+
+    // Wing's inner stem-shadow (#82838c), clipped to x = 43.2..45.4
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 100;
-        viewbox-height: 100;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
         fill: #82838c;
         stroke: transparent;
-        commands: "M 43.2 44.36 L 45.4 42.88 L 45.4 60.02 L 43.2 61.5 Z";
+        commands: "M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z";
+    }
+
+    // Top-blade shadow clipped to lower wing (#595a60)
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: #595a60;
+        stroke: transparent;
+        commands: "M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z";
     }
 
     // Extended vertical P-stem (#62626e)
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 100;
-        viewbox-height: 100;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
         fill: #62626e;
         stroke: transparent;
-        commands: "M 28 16.5 L 43.2 27.14 L 43.2 79.3 L 28 89.5 Z";
+        commands: "M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z";
     }
 
-    // Drop shadow under top blade across stem and wing
+    // Top-blade shadow clipped to P-stem (#333339)
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 100;
-        viewbox-height: 100;
-        fill: #0000007a;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: #333339;
         stroke: transparent;
-        commands: "M 28 33.22 L 73 41.5 L 68.98 44.2 L 28 36.02 Z";
+        commands: "M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z";
     }
 
     // Top blade (#ffffff)
     Path {
         width: 100%;
         height: 100%;
-        viewbox-width: 100;
-        viewbox-height: 100;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
         fill: #ffffff;
         stroke: transparent;
-        commands: "M 28 16.5 L 50 16.5 L 73 41.5 L 28 33.22 Z";
+        commands: "M 28 16.5 L 28 33.22 L 73 41.5 L 50 16.5 Z";
     }
 }
 
