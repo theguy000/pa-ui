@@ -1,5 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
+import { MarqueeText } from "marquee-text.slint";
 import { MatEdit, MatDelete, MatDeleteForever, LucidePencil, LucideTrash2, LucideSquarePen, MatClose, SimpleBin, CrossEven, CrossHeavy, LucideCross, IMDeleteoutline, IMHighlightoff, IMIndeterminatecheckbox, ILCircleX } from "icons-real.slint";
 
 // The reading size. The DeepSeek Harness sets its conversation text at 14px on
@@ -36,7 +37,6 @@ export struct SessionItem {
     full: string,
     tip: string,
     status: string,
-    scroll: length,
 }
 
 // one waiting message, addressed by its lane and its position in that lane
@@ -476,14 +476,16 @@ component SessionRow inherits Rectangle {
             height: 32px;
             clip: true;
 
-            if !root.editing : Text {
+            // a name longer than the rail travels while the row is hovered;
+            // left alone the row is clipped where it lies, as it always was
+            if !root.editing : MarqueeText {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: parent.width;
                 text: root.item.name;
-                color: root.selected ? #e7e5df : #b0b1a8;
+                text-color: root.selected ? #e7e5df : #b0b1a8;
                 font-size: Type.item;
-                height: parent.height;
-                vertical-alignment: center;
-                x: ta.has-hover && root.item.scroll > 0px ? -root.item.scroll : 0px;
-                animate x { duration: 1.8s; easing: ease-in-out; }
+                active: ta.has-hover;
             }
 
             if root.editing : input := TextInput {
@@ -744,7 +746,13 @@ component TranscriptRow inherits VerticalLayout {
                         height: 14px;
                         border-radius: 7px;
                         background: err-touch.has-hover ? #8d4235 : #6b342b;
-                        IconAlert { x: 0; y: 0; }
+                        // the glyph is drawn in the badge's own box: at its
+                        // default 16px it overhangs a 14px ring, and its stroke
+                        // lands a pixel right and a pixel down of the centre
+                        IconAlert {
+                            width: parent.width;
+                            height: parent.height;
+                        }
                         err-touch := TouchArea {
                             x: 0;
                             y: 0;
@@ -3470,34 +3478,39 @@ export component AppWindow inherits Window {
     // A failure reason is drawn at the window root: inside the row it was
     // covered by whatever row came next, so a command row painted over the
     // popup that belonged to the row above it.
-    if root.reason-open : Rectangle {
+    // The cap is on the width. `max-width` could not be: it is a constraint the
+    // layout engine applies, and this popup is out of every layout, so
+    // `width: self.preferred-width` won and the box grew to the message's own
+    // width — past the window edge, where the message was then cut mid-word.
+    // It sits on one line, because a reason is an exception message and its
+    // interesting end is in the tail; whatever the cap cannot show travels
+    // inside it (MarqueeText), so a long reason is read by watching instead of
+    // being lost off the right edge.
+    //
+    // Hidden rather than created and destroyed: hover opens this and leaving
+    // closes it, and a marquee that is created already past the end has nothing
+    // to animate from. Out of sight it keeps its place — `active` falls, the
+    // text walks home, and the next hover starts the sweep from the start.
+    Rectangle {
+        visible: root.reason-open;
         x: min(root.reason-x, root.width - self.width - 12px);
         y: root.reason-y + 4px;
-        width: self.preferred-width;
-        max-width: 320px;
-        height: self.preferred-height;
-        max-height: 4 * reason-line.preferred-height + 16px;
+        width: min(reason-text.preferred-width + 20px, 440px);
+        height: reason-text.height + 16px;
         background: #1d1412;
         border-color: #6b342b;
         border-width: 1px;
         border-radius: 6px;
-        HorizontalLayout {
-            padding-left: 10px;
-            padding-right: 10px;
-            padding-top: 8px;
-            padding-bottom: 8px;
-            Text {
-                text: root.reason-text;
-                color: #e0b6ad;
-                font-size: 10px;
-                wrap: word-wrap;
-            }
-        }
-        reason-line := Text {
-            x: -400px;
-            text: "x";
+
+        reason-text := MarqueeText {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            text: root.reason-text;
+            text-color: #e0b6ad;
             font-size: 10px;
-            opacity: 0;
+            active: root.reason-open;
+            loop: true;
         }
     }
 

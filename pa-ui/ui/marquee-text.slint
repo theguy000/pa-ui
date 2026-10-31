@@ -1,0 +1,116 @@
+// One line of text, and the room to travel when it does not fit.
+//
+// Two places need this and need it the same way: a conversation's name in the
+// rail, which runs past the rail, and a failed cell's reason, which is an
+// exception message and runs past any tooltip worth drawing. The rail used to
+// work the shift out in Rust — 6.6px a character against 178px of rail — which
+// is a guess about a font and could only be right at one size. The measurement
+// lives here instead, beside a probe `Text` drawn in the string's own font.
+//
+// The component owns the travel; the caller owns *when*. Set `active` while the
+// reader should be able to see the rest of the string: the rail sets it on row
+// hover, a failed cell while its reason is open. `loop` decides what happens at
+// the end of a leg — the rail holds the tail, because letting go of the row
+// sends the name back to the start; a reason comes back by itself, because a
+// popup has nowhere else to send the reader.
+export component MarqueeText inherits Rectangle {
+    in property <string> text;
+    in property <brush> text-color: #e7e5df;
+    in property <length> font-size: 12px;
+
+    // the reader's ask: may the text move?
+    in property <bool> active: false;
+    // come back at the end of a leg instead of holding the tail
+    in property <bool> loop: false;
+
+    // The parent decides the width — a stretched rail row, a capped popup — and
+    // what gets to be too long is the text, never the box: the size this
+    // reports is the string's own, so a caller can ask for it (and cap it),
+    // and the label travelling past the edge cannot resize the thing that
+    // measures it.
+    min-width: 0px;
+    preferred-width: probe.preferred-width;
+    height: label.preferred-height;
+    clip: true;
+
+    // Measured, not guessed: `preferred-width` of a `no-wrap` Text is the width
+    // the string needs on one line whatever width the element was given. The
+    // probe is parked outside the clip, so its width never feeds back into the
+    // box that measures it.
+    probe := Text {
+        x: -1000px;
+        y: 0px;
+        text: root.text;
+        color: transparent;
+        font-size: root.font-size;
+        wrap: no-wrap;
+    }
+
+    // how far the tail has to come left before it is in view
+    property <length> travel: max(0px, probe.preferred-width - root.width);
+
+    // One leg of a sweep: the distance at 70px a second — about two words a
+    // second, a reading pace rather than a flicker — and never shorter than
+    // 1.2s, so a few pixels of overshoot still gets a whole beat.
+    property <duration> leg: max(1.2s, (root.travel / 70px) * 1s);
+    // held at each end, because the tail is what the reader came for and a
+    // marquee that turns around the instant it arrives is easy to miss.
+    property <duration> dwell: 700ms;
+
+    // Where the sweep has got to: `false` is home, `true` is the tail.
+    property <bool> at-end: false;
+    // whether the first leg has started (see `kick`)
+    property <bool> leg-started: false;
+
+    label := Text {
+        // In hold mode the ask is the whole story. In loop mode the legs are
+        // driven by `kick` below, because the ask cannot start one — see there.
+        x: root.active && root.travel > 0px
+            ? (root.loop ? (root.at-end ? -root.travel : 0px) : -root.travel)
+            : 0px;
+        y: (root.height - self.height) / 2;
+        width: probe.preferred-width;
+        text: root.text;
+        color: root.text-color;
+        font-size: root.font-size;
+        wrap: no-wrap;
+
+        animate x {
+            duration: root.leg;
+            // constant speed. An eased leg is fastest halfway through — the one
+            // place the reader is mid-sentence — so the sweep does not ease at all.
+            easing: linear;
+            // `alternate` walks the same leg back, and an endless count keeps it
+            // walking for as long as the reader is hovering. Releasing `active`
+            // drops the count to one, so the text returns home and stops there
+            // instead of oscillating around it.
+            direction: root.loop ? alternate : normal;
+            iteration-count: root.loop && root.active ? -1 : 1;
+        }
+    }
+
+    // The ask alone cannot start a loop. Slint takes an animated binding's
+    // baseline on its first read and does not animate that read ("the very
+    // first read never animates"), and this text is first read on the frame its
+    // popup appears — already asked to move, so it would snap to the tail and
+    // sit there. The kick gives that read a beat (three frames at 60Hz) and then
+    // flips the phase, which is a real change on a live element; the interval
+    // becomes a leg and its dwell, so every flip after it lands once the leg it
+    // started has been walked and its end has been held.
+    kick := Timer {
+        interval: root.leg-started ? root.leg + root.dwell : 48ms;
+        running: root.loop && root.active && root.travel > 0px;
+        triggered => {
+            root.leg-started = true;
+            root.at-end = !root.at-end;
+        }
+    }
+
+    // let go: the next ask starts the sweep from home again
+    changed active => {
+        if !root.active {
+            root.leg-started = false;
+            root.at-end = false;
+        }
+    }
+}

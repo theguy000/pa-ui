@@ -92,12 +92,6 @@ pub(crate) fn tool_output_text(result: Option<&serde_json::Value>) -> String {
 }
 
 
-pub(crate) fn marquee_shift(name: &str) -> f32 {
-    let width = name.chars().count() as f32 * 6.6;
-    (width - 178.0).max(0.0)
-}
-
-
 pub(crate) fn trim_to(text: &str, width: usize) -> String {
     let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if cleaned.chars().count() <= width {

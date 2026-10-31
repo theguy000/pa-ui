@@ -26,7 +26,6 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
         full,
         tip,
         status: status.into(),
-        scroll: marquee_shift(&trim_to(&display_name(row), 90)),
     }
 }
 
