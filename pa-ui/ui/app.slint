@@ -1135,13 +1135,8 @@ component TitleBar inherits Rectangle {
         }
     }
 
-    // the hairline Windows puts between a title bar and the client area
-    Rectangle {
-        y: parent.height - 1px;
-        width: 100%;
-        height: 1px;
-        background: #1b1c17;
-    }
+    // no rule under the caption: the bar and the body meet in one flat field,
+    // because the frame around them draws nothing to stop against
 }
 
 export component AppWindow inherits Window {
