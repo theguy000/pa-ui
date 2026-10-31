@@ -7,6 +7,9 @@ import { MatEdit, MatDelete, MatDeleteForever, LucidePencil, LucideTrash2, Lucid
 // the difference instead: one point up, on the spacing the font chooses.
 export global Type {
     out property <length> body: 15px;
+    // The rail: the harness sets its list of conversations at 13px, one step
+    // under the conversation itself.
+    out property <length> item: 13px;
 }
 
 export struct TRow {
@@ -476,7 +479,7 @@ component SessionRow inherits Rectangle {
             if !root.editing : Text {
                 text: root.item.name;
                 color: root.selected ? #e7e5df : #b0b1a8;
-                font-size: 12px;
+                font-size: Type.item;
                 height: parent.height;
                 vertical-alignment: center;
                 x: ta.has-hover && root.item.scroll > 0px ? -root.item.scroll : 0px;
@@ -488,7 +491,7 @@ component SessionRow inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
                 color: #e7e5df;
-                font-size: 12px;
+                font-size: Type.item;
                 single-line: true;
                 edited => { root.draft = self.text; }
                 accepted => { root.commit(root.item.id, root.draft); }
@@ -1033,13 +1036,128 @@ component Chip inherits Rectangle {
 
 
 
+// ---- custom title bar -------------------------------------------------------
+// Windows draws nothing here: titlebar.rs makes the frame invisible while keeping
+// its behaviours, so this row *is* the caption. Geometry must agree with HEIGHT
+// and BUTTON in src/titlebar.rs.
+
+component CaptionButton inherits Rectangle {
+    in property <bool> hover;
+    in property <color> hover-fill: #ffffff12;
+    width: 46px;
+    height: 100%;
+    background: hover ? hover-fill : transparent;
+}
+
+component CaptionGlyph inherits Path {
+    in property <color> tint: #d7d7d1;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    stroke: tint;
+    stroke-width: 1px;
+    fill: transparent;
+}
+
+component TitleBar inherits Rectangle {
+    in property <bool> maximized: false;
+    in property <bool> max-hover: false;
+    in property <string> caption: "Prime Agent Desktop";
+    callback minimize();
+    callback close();
+    callback menu();
+
+    height: 32px;
+    width: 100%;
+    background: #0c0d0a;
+
+    Image {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: @image-url("../assets/icon-tile-32.png");
+    }
+
+    // the icon is a button: left-click drops the system menu, like the native caption
+    icon-touch := TouchArea {
+        x: 6px;
+        y: 0;
+        width: 28px;
+        height: 100%;
+        clicked => { root.menu(); }
+    }
+
+    Text {
+        x: 36px;
+        // Windows sits caption ink about a pixel below the bar's centre (asymmetric
+        // font ascent/descent); match that instead of centring the box exactly.
+        y: (parent.height - self.height) / 2 - 1px;
+        text: root.caption;
+        color: #b9bab2;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+
+    // minimise and close are ours; maximise belongs to Windows for Snap Layouts
+    min-button := CaptionButton {
+        x: parent.width - 138px;
+        hover: min-touch.has-hover;
+        min-touch := TouchArea { clicked => { root.minimize(); } }
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2; commands: "M 0.5 5.5 L 9.5 5.5"; }
+    }
+
+    max-button := CaptionButton {
+        x: parent.width - 92px;
+        hover: root.max-hover;
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            commands: root.maximized
+                ? "M 2.5 0.5 L 9.5 0.5 L 9.5 7.5 M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z"
+                : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
+        }
+    }
+
+    close-button := CaptionButton {
+        x: parent.width - 46px;
+        hover: close-touch.has-hover;
+        hover-fill: #c42b1c;
+        close-touch := TouchArea { clicked => { root.close(); } }
+        CaptionGlyph {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close-touch.has-hover ? #ffffff : #d7d7d1;
+            commands: "M 0.5 0.5 L 9.5 9.5 M 9.5 0.5 L 0.5 9.5";
+        }
+    }
+
+    // the hairline Windows puts between a title bar and the client area
+    Rectangle {
+        y: parent.height - 1px;
+        width: 100%;
+        height: 1px;
+        background: #1b1c17;
+    }
+}
+
 export component AppWindow inherits Window {
     // the failure reason of a cell, drawn here so no row can paint over it
     in-out property <bool> reason-open;
     in-out property <length> reason-x;
     in-out property <length> reason-y;
     in-out property <string> reason-text;
-    title: "prime-agent";
+    title: "Prime Agent Desktop";
+
+    // the custom title bar, driven from src/titlebar.rs
+    callback titlebar-minimize();
+    callback titlebar-close();
+    callback titlebar-menu();
+    in-out property <bool> titlebar-maximized: false;
+    in-out property <bool> titlebar-max-hover: false;
 
     // The drag surface is the whole window, so the pointer can never leave it
     // mid-drag, and it measures the pointer in window coordinates: anchored to
@@ -1566,6 +1684,8 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+        // room for the custom title bar drawn above this layout
+        padding-top: 32px;
         Rectangle {
             height: 44px;
             background: #10110e;
@@ -3392,4 +3512,15 @@ export component AppWindow inherits Window {
 
 
 
+    // drawn last so it sits above the content and the drag surface beneath it
+    title-bar := TitleBar {
+        y: 0;
+        width: 100%;
+        caption: root.title;
+        maximized: root.titlebar-maximized;
+        max-hover: root.titlebar-max-hover;
+        minimize => { root.titlebar-minimize(); }
+        close => { root.titlebar-close(); }
+        menu => { root.titlebar-menu(); }
+    }
 }

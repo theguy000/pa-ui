@@ -19,6 +19,8 @@ mod slash;
 mod text;
 mod tick;
 mod transcript;
+mod titlebar;
+mod window_icon;
 mod worker;
 
 // Each module owns one concern and is re-exported here, so a call site does not
@@ -373,5 +375,75 @@ fn main() -> Result<(), slint::PlatformError> {
     std::mem::forget(poll);
 
     ui.set_canvas_mode(canvas_mode);
+    // The window does not exist until run() shows it, so try a few times and then stop.
+    let icon_timer = std::rc::Rc::new(slint::Timer::default());
+    let icon_ticks = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    {
+        let timer = icon_timer.clone();
+        let ticks = icon_ticks.clone();
+        icon_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(50),
+            move || {
+                ticks.set(ticks.get() + 1);
+                if (window_icon::apply() & titlebar::init()) || ticks.get() > 40 {
+                    timer.stop();
+                }
+            },
+        );
+    }
+
+    // Custom title bar. Windows handles drag, snap and resize itself (the frame is
+    // invisible, not removed), so only minimise and close need to cross back in;
+    // maximise belongs to Windows for Snap Layouts and is sampled here.
+    ui.on_titlebar_minimize({
+        let ui = ui.as_weak();
+        move || {
+            if let Some(ui) = ui.upgrade() {
+                let _ = ui.window().set_minimized(true);
+            }
+        }
+    });
+    ui.on_titlebar_close(|| titlebar::close());
+    ui.on_titlebar_menu(|| titlebar::show_system_menu());
+
+    let bar_timer = std::rc::Rc::new(slint::Timer::default());
+    {
+        let ui_weak = ui.as_weak();
+        let timer = bar_timer.clone();
+        bar_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(60),
+            move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_titlebar_maximized(ui.window().is_maximized());
+                    ui.set_titlebar_max_hover(titlebar::cursor_over_maximize());
+                } else {
+                    timer.stop();
+                }
+            },
+        );
+    }
+
+    if let Ok(path) = std::env::var("PA_SNAPSHOT") {
+        let shot_ui = ui.as_weak();
+        let shot_timer = std::rc::Rc::new(slint::Timer::default());
+        let stop = shot_timer.clone();
+        shot_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(600), move || {
+            stop.stop();
+            if let Some(ui) = shot_ui.upgrade() {
+                if let Ok(buffer) = ui.window().take_snapshot() {
+                    let mut bytes = Vec::new();
+                    bytes.extend_from_slice(&buffer.width().to_le_bytes());
+                    bytes.extend_from_slice(&buffer.height().to_le_bytes());
+                    for pixel in buffer.as_slice() {
+                        bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+                    }
+                    let _ = std::fs::write(&path, bytes);
+                }
+            }
+        });
+    }
+
     ui.run()
 }

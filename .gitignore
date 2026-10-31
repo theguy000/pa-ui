@@ -1,5 +1,5 @@
-/target
-/target-alt/
+target/
+target-alt/
 
 # Runs and session dumps: the window writes these on demand, they are never
 # part of the product.
