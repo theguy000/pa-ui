@@ -24,6 +24,10 @@ _Avoid_: cache, database, history, backend
 
 ### What the reader sees
 
+**Sidebar**:
+The column of sessions down the window's left: where the reader picks a session or starts one. It folds to a strip of controls and unfolds again.
+_Avoid_: rail, side panel, nav
+
 **Reader**:
 The person looking at the window. They own the scroll position and whatever they have opened.
 _Avoid_: user (that is the role a message carries, or the person the agent serves)

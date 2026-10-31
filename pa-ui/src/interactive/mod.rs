@@ -8,7 +8,7 @@ pub(crate) mod attachments;
 pub(crate) mod canvas;
 pub(crate) mod menu;
 pub(crate) mod queue;
-pub(crate) mod rail;
+pub(crate) mod sidebar;
 pub(crate) mod rows;
 pub(crate) mod send;
 pub(crate) mod slash;

@@ -1,4 +1,4 @@
-//! The rail's sessions: session rows, the rail's filter, and the name a session is shown under.
+//! The sidebar's sessions: session rows, the sidebar's filter, and the name a session is shown under.
 
 use crate::*;
 
@@ -30,20 +30,11 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
 }
 
 
-/// The rail's rows for a query: a session matches if its name or either id
-/// carries the text, case aside. An empty query keeps everything.
-pub(crate) fn session_items(rows: &[SessionRow], query: &str) -> Vec<SessionItem> {
-    let needle = query.trim().to_lowercase();
-    rows.iter()
-        .filter(|row| {
-            needle.is_empty()
-                || display_name(row).to_lowercase().contains(&needle)
-                || row.id.to_lowercase().contains(&needle)
-                || row.session_id.to_lowercase().contains(&needle)
-        })
-        .map(to_item)
-        .collect()
+/// Every session, as the sidebar draws it, in the order the daemon gave them.
+pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
+    rows.iter().map(to_item).collect()
 }
+
 
 
 /// The session the selection follows: ids are re-keyed by a daemon restart,

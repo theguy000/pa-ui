@@ -127,9 +127,6 @@ fn main() -> Result<(), slint::PlatformError> {
     std::thread::spawn(move || worker(job_rx, msg_tx, worker_client_id));
 
     // transcript model, kept alive so a toggle can patch one row
-    // the rail's filter and the rows it filters: a keystroke re-filters from
-    // the cache instead of waiting for the next poll
-    let session_filter: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
     let sessions_cache: Rc<RefCell<Vec<SessionRow>>> = Rc::new(RefCell::new(Vec::new()));
     // The sheet owns the rows and the list the window draws. Everything below
     // hands it rows; nothing else keeps the two in step.
@@ -267,11 +264,10 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::queue::clear(&ui, &job_tx);
 
-    interactive::rail::search(&ui, &session_filter, &sessions_cache);
 
-    interactive::rail::new_chat(&ui, &job_tx);
+    interactive::sidebar::new_chat(&ui, &job_tx);
 
-    interactive::rail::rename(&ui, &job_tx);
+    interactive::sidebar::rename(&ui, &job_tx);
 
     interactive::rows::toggle(&ui, &sheet);
 
@@ -328,7 +324,6 @@ fn main() -> Result<(), slint::PlatformError> {
         history_rows,
         last_tick: std::cell::Cell::new(SystemTime::now()),
         sheet: sheet.clone(),
-        session_filter: session_filter.clone(),
         sessions_cache: sessions_cache.clone(),
         in_flight: in_flight.clone(),
         pending_user: pending_user.clone(),

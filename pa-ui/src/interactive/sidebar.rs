@@ -1,4 +1,4 @@
-//! The rail: filtering sessions, starting a new chat, renaming one.
+//! The sidebar: filtering sessions, starting a new chat, renaming one.
 
 use crate::*;
 
@@ -28,16 +28,3 @@ pub(crate) fn new_chat(ui: &AppWindow, job_tx: &Sender<Job>) {
     });
 }
 
-pub(crate) fn search(ui: &AppWindow, session_filter: &Rc<RefCell<String>>, sessions_cache: &Rc<RefCell<Vec<SessionRow>>>) {
-    let weak = ui.as_weak();
-    let filter = session_filter.clone();
-    let cache = sessions_cache.clone();
-    ui.on_search_edited(move |query| {
-        let Some(ui) = weak.upgrade() else { return };
-        let query = query.to_string();
-        *filter.borrow_mut() = query.clone();
-        let rows = cache.borrow().clone();
-        let items = session_items(&rows, &query);
-        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
-    });
-}

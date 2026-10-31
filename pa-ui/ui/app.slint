@@ -8,7 +8,7 @@ import { MatEdit, MatDelete, MatDeleteForever, LucidePencil, LucideTrash2, Lucid
 // the difference instead: one point up, on the spacing the font chooses.
 export global Type {
     out property <length> body: 15px;
-    // The rail: the harness sets its list of conversations at 13px, one step
+    // The sidebar: the harness sets its list of conversations at 13px, one step
     // under the conversation itself.
     out property <length> item: 13px;
 }
@@ -100,18 +100,6 @@ component IconToTop inherits Path {
     fill: transparent;
 }
 
-component IconX inherits Path {
-    in property <color> tint: #8b8c85;
-    width: 8px;
-    height: 8px;
-    viewbox-width: 10;
-    viewbox-height: 10;
-    commands: "M 2 2 L 8 8 M 8 2 L 2 8";
-    stroke: tint;
-    stroke-width: 1.4px;
-    fill: transparent;
-}
-
 // One waiting message in the steering lane: already inside this turn, so the
 // only action is delete. Two row components instead of one with a conditional
 // button: a button made conditional does not take clicks here, even though it
@@ -126,6 +114,76 @@ component IconPencil inherits Path {
     stroke-width: 1.1px;
     fill: transparent;
 }
+// The panel marks, from the two sidebar sheets: a frame, its folded edge, and -
+// once the pointer is on it - the direction the column will travel. Resting, it
+// is only a frame, so the hover is what tells you what the click is going to do.
+component PanelIcon inherits Path {
+    // the folded edge sits on the right for the right-hand column
+    in property <bool> folded-edge-right: false;
+    in property <bool> arrow: false;
+    in property <bool> point-left: false;
+    in property <color> tint: #b0b1a8;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.5px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 7 3 L 17 3 A 4 4 0 0 1 21 7 L 21 17 A 4 4 0 0 1 17 21 L 7 21 A 4 4 0 0 1 3 17 L 3 7 A 4 4 0 0 1 7 3 Z"
+        + (folded-edge-right ? " M 16 8 L 16 16" : " M 8 8 L 8 16")
+        + (arrow
+            ? (folded-edge-right
+                ? (point-left ? " M 11.5 9.5 L 8.5 12 L 11.5 14.5" : " M 9 9.5 L 12 12 L 9 14.5")
+                : (point-left ? " M 15 9.5 L 12 12 L 15 14.5" : " M 12.5 9.5 L 15.5 12 L 12.5 14.5"))
+            : "");
+}
+
+// The new-session mark: a ring left open at its top right, with the pen that
+// opened it still crossing the gap. Both shapes are stroked outlines, so they
+// share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
+// that drawing's rounded rect carried through its own -45 degree turn.
+component IconNewChat inherits Path {
+    in property <color> tint: #b0b1a8;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    // the mark's own 2.1 on a 24 viewbox, at the size it is drawn here
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 10.5 5 C 6 5 4 7.2 4 12.5 C 4 17.8 6.2 20 11.8 20 C 17.4 20 19.5 17.8 19.5 13 "
+        + "M 9.36 10.93 L 15.73 4.56 A 1.8 1.8 0 0 1 18.27 4.56 L 18.84 5.13 "
+        + "A 1.8 1.8 0 0 1 18.84 7.67 L 12.47 14.04 A 1.8 1.8 0 0 1 9.93 14.04 "
+        + "L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z";
+}
+
+// The magnifier: a lens that fills most of its box and a handle cut short, so
+// the pair still reads at 16px. Its tint stays the dim one both columns already
+// use for search: the mark is drawn and inert until search exists, and a control
+// that cannot be clicked should not look like one.
+component IconSearch inherits Path {
+    in property <color> tint: #8b8c85;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    // the mark's own 2.3 on a 24 viewbox, at the size it is drawn here
+    stroke-width: 1.5px;
+    stroke-line-cap: butt;
+    // the circle is four quarter arcs: no half-turn flag to get wrong
+    commands: "M 11 3.5 A 7.5 7.5 0 0 1 18.5 11 A 7.5 7.5 0 0 1 11 18.5 "
+        + "A 7.5 7.5 0 0 1 3.5 11 A 7.5 7.5 0 0 1 11 3.5 Z "
+        + "M 16.3 16.3 L 20.2 20.2";
+}
+
 
 component QueueRow inherits Rectangle {
     in property <string> text;
@@ -358,17 +416,6 @@ component QueueRowUp inherits Rectangle {
     }
 }
 
-component IconRail inherits Path {
-    in property <bool> open;
-    width: 10px;
-    height: 10px;
-    viewbox-width: 10;
-    viewbox-height: 10;
-    commands: open ? "M 6.5 1.5 L 2.5 5 L 6.5 8.5" : "M 3.5 1.5 L 7.5 5 L 3.5 8.5";
-    stroke: #8b8c85;
-    stroke-width: 1.3px;
-    fill: transparent;
-}
 
 component IconDown inherits Path {
     width: 10px;
@@ -476,7 +523,7 @@ component SessionRow inherits Rectangle {
             height: 32px;
             clip: true;
 
-            // a name longer than the rail travels while the row is hovered;
+            // a name longer than the sidebar travels while the row is hovered;
             // left alone the row is clipped where it lies, as it always was
             if !root.editing : MarqueeText {
                 x: 0;
@@ -1069,6 +1116,8 @@ component CaptionGlyph inherits Path {
 }
 
 component TitleBar inherits Rectangle {
+    in property <bool> right-open: false;
+    callback toggle-right();
     in property <bool> maximized: false;
     in property <bool> max-hover: false;
     in property <string> caption: "Prime Agent Desktop";
@@ -1106,6 +1155,31 @@ component TitleBar inherits Rectangle {
         color: #b9bab2;
         font-size: 12px;
         vertical-alignment: center;
+    }
+
+    // The right column's fold lives in the chrome, not in the column: the column is
+    // blank, so a mark inside it would have nothing to sit on.
+    right-toggle := Rectangle {
+        x: parent.width - 172px;
+        y: (parent.height - 26px) / 2;
+        width: 26px;
+        height: 26px;
+        border-radius: 13px;
+        background: right-touch.has-hover ? #2a2c24 : transparent;
+        PanelIcon {
+            x: 5px;
+            y: 5px;
+            folded-edge-right: true;
+            arrow: right-touch.has-hover;
+            point-left: !root.right-open;
+            tint: right-touch.has-hover ? #e7e5df : #6d7066;
+        }
+        right-touch := TouchArea {
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: "Toggle the right column";
+            clicked => { root.toggle-right(); }
+        }
     }
 
     // minimise and close are ours; maximise belongs to Windows for Snap Layouts
@@ -1174,7 +1248,7 @@ export component AppWindow inherits Window {
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
         // a click that lands on nothing in particular dismisses the model menu
-        clicked => { root.model-menu = false; root.queue-open = false; root.search-open = false; }
+        clicked => { root.model-menu = false; root.queue-open = false; }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
                 root.pointer-moved();
@@ -1371,7 +1445,10 @@ export component AppWindow inherits Window {
     in-out property <string> hover-title: "";
     in-out property <length> hover-y: 0px;
     in-out property <bool> tooltip-on: false;
-    in-out property <bool> rail-open: true;
+    in-out property <bool> sidebar-open: true;
+    // The right-hand column. It is blank on purpose: the shell exists and nothing
+    // lives in it yet.
+    in-out property <bool> right-open: false;
     in-out property <bool> model-menu: false;
     in-out property <string> selected-id;
 
@@ -1416,8 +1493,6 @@ export component AppWindow inherits Window {
     callback queue-act(string, int, string);
     callback queue-clear();
     callback new-chat();
-    // the rail's filter: "" means every session is shown
-    in-out property <string> search-query: "";
     // 0 while idle, 1 while a run is in flight: the one clock the send button's
     // two marks share
     // Stop is only the button's job while the composer is empty. The moment you
@@ -1427,10 +1502,8 @@ export component AppWindow inherits Window {
     out property <bool> stop-mode: root.busy && !root.composer-has-text;
     in-out property <float> stop-mix: root.stop-mode ? 1.0 : 0.0;
     animate stop-mix { duration: 240ms; easing: ease-in-out; }
-    in-out property <bool> search-open: false;
     // the composer taking the caret is "somewhere else" too
     out property <bool> composer-focused: draft-window.has-focus;
-    callback search-edited(string);
 
     // A latch, not a measurement: while it is true a new row pulls the view
     // along; the moment the reader touches the wheel or the bar it is false, and
@@ -1689,38 +1762,91 @@ export component AppWindow inherits Window {
     VerticalLayout {
         // room for the custom title bar drawn above this layout
         padding-top: 32px;
-        Rectangle {
-            height: 44px;
-            background: #10110e;
-
-            Rectangle {
-                x: 8px;
-                y: 9px;
-                width: 26px;
-                height: 26px;
-                border-radius: 6px;
-                background: rail-touch.has-hover ? #1d1e19 : transparent;
-                VerticalLayout {
-                    alignment: center;
-                    HorizontalLayout {
-                        alignment: center;
-                        IconRail { open: root.rail-open; }
-                    }
-                }
-                rail-touch := TouchArea { clicked => { root.rail-open = !root.rail-open; } }
-            }
-
-            Text {
-                x: parent.width - self.width - 14px;
-                y: (parent.height - self.height) / 2;
-                text: root.status-line;
-                color: #565a4f;
-                font-size: 10px;
-            }
-        }
 
         HorizontalLayout {
-            if root.rail-open : Rectangle {
+            // Folded: the column keeps only its controls. The session rows cannot survive
+            // at 48px - there is no room for a name - and the caption bar already carries
+            // the mark, so drawing it again 30px lower would say the same thing twice.
+            if !root.sidebar-open : Rectangle {
+                width: 48px;
+                background: #10110e;
+        
+                VerticalLayout {
+                    padding-top: 10px;
+                    spacing: 4px;
+        
+                    Rectangle {
+                        height: 28px;
+                        HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 14px;
+                                background: strip-panel-touch.has-hover ? #2a2c24 : transparent;
+                                PanelIcon {
+                                    x: 6px;
+                                    y: 6px;
+                                    arrow: strip-panel-touch.has-hover;
+                                    point-left: false;
+                                    tint: strip-panel-touch.has-hover ? #e7e5df : #b0b1a8;
+                                }
+                                strip-panel-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button;
+                                    accessible-label: "Expand sidebar";
+                                    clicked => { root.sidebar-open = true; }
+                                }
+                            }
+                        }
+                    }
+        
+                    // New Session, mark only: the label has nowhere to go at this width.
+                    Rectangle {
+                        height: 28px;
+                        HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 14px;
+                                background: strip-new-touch.has-hover ? #23251f : transparent;
+                                IconNewChat {
+                                    x: 5px;
+                                    y: 5px;
+                                    tint: strip-new-touch.has-hover ? #e7e5df : #b0b1a8;
+                                }
+                                strip-new-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button;
+                                    accessible-label: "New Session";
+                                    clicked => { root.new-chat(); }
+                                }
+                            }
+                        }
+                    }
+        
+                    // The magnifier again, still drawn and still inert: folded or not,
+                    // it holds the same place in the column.
+                    Rectangle {
+                        height: 28px;
+                        HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 14px;
+                                IconSearch {
+                                    x: 6px;
+                                    y: 6px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        
+            if root.sidebar-open : Rectangle {
                 width: 232px;
                 background: #10110e;
                 VerticalLayout {
@@ -1728,194 +1854,91 @@ export component AppWindow inherits Window {
                     padding-right: 8px;
                     padding-top: 8px;
                     spacing: 6px;
-                    // The header carries the two things a list of chats needs:
-                    // find one, and start one. Both are drawn marks on a fill,
-                    // no borders.
-                    //
-                    // Search opens a field here and closes when the pointer goes
-                    // elsewhere - but that only hides it: the filter stays until
-                    // the x inside the field is pressed, so a collapsed search
-                    // still explains why the list is short.
+                    // The band: the column's own header. The wordmark says whose window
+                    // this is; the magnifier is drawn and inert, because search is not
+                    // built yet and a button that does nothing is a lie; the panel mark
+                    // folds the column away and is the only thing here that is a control.
                     Rectangle {
-                        height: 22px;
+                        height: 40px;
 
-
-
-                        if !root.search-open : Text {
-                            x: 8px;
+                        Text {
+                            x: 2px;
                             y: (parent.height - self.height) / 2;
-                            text: "sessions";
-                            color: #565a4f;
-                            font-size: 10px;
-                        }
-
-                        // the find button
-                        if !root.search-open : Rectangle {
-                            x: parent.width - 44px;
-                            y: (parent.height - self.height) / 2;
-                            width: 20px;
-                            height: 20px;
-                            border-radius: 5px;
-                            // a live filter keeps the button lit: the list is
-                            // short for a reason, and this is the reason
-                            background: search-touch.has-hover || root.search-query != ""
-                                ? #23251f : #1a1b16;
-
-                            Rectangle {
-                                x: 5px;
-                                y: 5px;
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                border-width: 1.3px;
-                                border-color: search-touch.has-hover || root.search-query != ""
-                                    ? #e7e5df : #b0b1a8;
-                            }
-                            Path {
-                                width: 6px;
-                                height: 6px;
-                                x: 11px;
-                                y: 11px;
-                                viewbox-width: 6;
-                                viewbox-height: 6;
-                                commands: "M 0.7 0.7 L 5 5";
-                                stroke: search-touch.has-hover || root.search-query != ""
-                                    ? #e7e5df : #b0b1a8;
-                                stroke-width: 1.3px;
-                                fill: transparent;
-                            }
-                            search-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.search-open = true; }
-                            }
-                        }
-
-                        // the field, in the header's own row
-                        if root.search-open : Rectangle {
-                            x: 0;
-                            y: 0;
-                            width: parent.width;
-                            height: 22px;
-                        border-radius: 6px;
-                        background: #1a1b16;
-
-                        Rectangle {
-                            x: 6px;
-                            y: 7px;
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            border-width: 1.2px;
-                            border-color: #8b8c85;
-                        }
-                        Path {
-                            x: 12px;
-                            y: 13px;
-                            width: 5px;
-                            height: 5px;
-                            viewbox-width: 5;
-                            viewbox-height: 5;
-                            commands: "M 0.6 0.6 L 4.2 4.2";
-                            stroke: #8b8c85;
-                            stroke-width: 1.2px;
-                            fill: transparent;
-                        }
-
-                        if root.search-query == "" : Text {
-                            x: 24px;
-                            y: 0;
-                            height: parent.height;
-                            vertical-alignment: center;
-                            text: "search sessions";
-                            color: #565a4f;
-                            font-size: 10px;
-                        }
-
-                        search-field := TextInput {
-                            x: 24px;
-                            y: 0;
-                            width: parent.width - 46px;
-                            height: parent.height;
-                            text <=> root.search-query;
+                            text: "Prime Agent";
                             color: #e7e5df;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            single-line: true;
-                            // it takes the focus it is created with, so
-                            // opening the search is enough to type
-                            init => { self.focus(); }
-                            edited => { root.search-edited(root.search-query); }
-                            key-pressed(event) => {
-                                // escape and return both put the field away;
-                                // neither touches what was typed
-                                if event.text == "\u{1b}" || event.text == "\n" {
-                                    root.search-open = false;
-                                    accept
-                                } else {
-                                    reject
-                                }
-                            }
+                            font-size: 12px;
                         }
 
-                        // the only reset
+                        // Drawn, not wired: no TouchArea, no callback, no pointer.
+                        // It holds the band's shape until search exists.
                         Rectangle {
-                            x: parent.width - 20px;
-                            y: 3px;
-                            width: 16px;
-                            height: 16px;
-                            border-radius: 4px;
-                            background: clear-search.has-hover ? #2a2d24 : transparent;
-
-                            IconX {
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                width: 9px;
-                                height: 9px;
-                                tint: clear-search.has-hover ? #f3ded8 : #8b8c85;
-                            }
-                            clear-search := TouchArea {
-                                x: 0;
-                                y: 0;
-                                width: 100%;
-                                height: 100%;
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.search-query = "";
-                                    root.search-edited("");
-                                    root.search-open = false;
-                                }
+                            x: parent.width - 56px;
+                            y: (parent.height - 26px) / 2;
+                            width: 26px;
+                            height: 26px;
+                            border-radius: 13px;
+                            IconSearch {
+                                x: 5px;
+                                y: 5px;
                             }
                         }
-}
 
-                        // the new chat button
-                        if !root.search-open : Rectangle {
-                            x: parent.width - 20px;
-                            y: (parent.height - self.height) / 2;
-                            width: 20px;
-                            height: 20px;
-                            border-radius: 5px;
-                            background: new-chat-touch.has-hover ? #23251f : #1a1b16;
-                            Rectangle {
+                        // The fold: a frame with its edge turning away, on a round
+                        // hit area, the way the reference draws it.
+                        Rectangle {
+                            x: parent.width - 26px;
+                            y: (parent.height - 26px) / 2;
+                            width: 26px;
+                            height: 26px;
+                            border-radius: 13px;
+                            background: panel-touch.has-hover ? #2a2c24 : transparent;
+                            PanelIcon {
                                 x: 5px;
-                                y: 9px;
-                                width: 10px;
-                                height: 1px;
-                                background: new-chat-touch.has-hover ? #e7e5df : #b0b1a8;
-                            }
-                            Rectangle {
-                                x: 9px;
                                 y: 5px;
-                                width: 1px;
-                                height: 10px;
-                                background: new-chat-touch.has-hover ? #e7e5df : #b0b1a8;
+                                arrow: panel-touch.has-hover;
+                                point-left: root.sidebar-open;
+                                tint: panel-touch.has-hover ? #e7e5df : #b0b1a8;
                             }
-                            new-chat-touch := TouchArea {
+                            panel-touch := TouchArea {
                                 mouse-cursor: pointer;
-                                clicked => { root.new-chat(); }
+                                accessible-role: button;
+                                accessible-label: "Collapse sidebar";
+                                clicked => { root.sidebar-open = !root.sidebar-open; }
                             }
                         }
                     }
+
+                    // The primary action of the column, at full width, because it is
+                    // the one thing a session list is for. It calls the same new-chat
+                    // the folded strip does: a layout change, not a lifecycle change.
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 10px;
+                        background: new-session-touch.has-hover ? #23251f : #1a1b16;
+
+                        IconNewChat {
+                            x: 9px;
+                            y: (parent.height - self.height) / 2;
+                            tint: new-session-touch.has-hover ? #e7e5df : #b0b1a8;
+                        }
+
+                        Text {
+                            x: 32px;
+                            y: (parent.height - self.height) / 2;
+                            text: "New Session";
+                            color: new-session-touch.has-hover ? #ffffff : #e7e5df;
+                            font-size: 12px;
+                        }
+
+                        new-session-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            accessible-role: button;
+                            accessible-label: "New Session";
+                            clicked => { root.new-chat(); }
+                        }
+                    }
+
+
 
                     ListView {
                         for item in root.sessions : SessionRow {
@@ -1925,7 +1948,6 @@ export component AppWindow inherits Window {
                             draft <=> root.draft;
                             picked(id) => {
                                 root.model-menu = false;
-                                root.search-open = false;
                                 root.selected-id = id;
                                 // a picked row drops the card: leaving hover as the
                                 // only way to clear it made it look stuck
@@ -1975,10 +1997,8 @@ export component AppWindow inherits Window {
                                     root.hover-title = "";
                                 }
                                 // this area takes the press, so the drag surface
-                                // below never reports the click that should close
-                                // the rail's search field
+                                // below never reports the click it should have seen
                                 if event.kind == PointerEventKind.down {
-                                    root.search-open = false;
                                     // the page keys follow the pointer: clicking
                                     // the transcript lets Page Up/Down scroll it
                                     transcript-scope.focus();
@@ -2145,30 +2165,6 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    
-                    
-                        // While the rail's search is open, the whole transcript is
-                        // one dismiss target: a press here cannot reach anything
-                        // inside the rail, so this is where "click elsewhere" is
-                        // caught. It is above the rows and swallows that press.
-                        if root.search-open : Rectangle {
-                            x: 0;
-                            y: 0;
-                            width: 100%;
-                            height: 100%;
-
-                            search-scrim := TouchArea {
-                                x: 0;
-                                y: 0;
-                                width: 100%;
-                                height: 100%;
-                                pointer-event(event) => {
-                                    if event.kind == PointerEventKind.down {
-                                        root.search-open = false;
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // live status row: TUI-style � one cell size for glyph and label
@@ -2321,7 +2317,6 @@ export component AppWindow inherits Window {
                                 lane-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
-                                        root.search-open = false;
                                         root.queue-open = !root.queue-open;
                                     }
                                 }
@@ -2862,7 +2857,6 @@ export component AppWindow inherits Window {
                 label: root.model-label;
                 open: root.model-menu;
                 toggled => {
-                    root.search-open = false;
                     root.model-menu = !root.model-menu;
                     if root.model-menu {
                         root.model-menu-opened();
@@ -2929,38 +2923,25 @@ export component AppWindow inherits Window {
             }
         }
     }
-}
+                    }
                 }
+
             }
 
-            Rectangle {
-                width: 260px;
+            // Blank by request: the column, its width and its fold, nothing else.
+            if root.right-open : Rectangle {
+                width: 320px;
                 background: #10110e;
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 10px;
-
-                    Text {
-                        text: "review";
-                        color: #565a4f;
-                        font-size: 10px;
-                    }
-                    Text {
-                        text: "nothing to review yet";
-                        color: #34372e;
-                        font-size: 11px;
-                    }
-                    Rectangle { vertical-stretch: 1; background: transparent; }
-                }
             }
         }
     }
 
     // title card: anchored to the row it describes and shown just to the right
-    // of the rail, the way a tooltip is expected to behave
+    // of the sidebar, the way a tooltip is expected to behave
     if root.hover-title != "" : Rectangle {
-        x: 244px;
-        y: clamp(root.hover-y - 4px, 46px, root.height - self.height - 12px);
+        // 12px clear of the column, whichever width it has
+        x: root.sidebar-open ? 244px : 60px;
+        y: clamp(root.hover-y - 4px, 40px, root.height - self.height - 12px);
         width: min(self.preferred-width, 260px);
         height: self.preferred-height;
         background: #171814;
@@ -2998,11 +2979,6 @@ export component AppWindow inherits Window {
     // the menu is the last child of the window so nothing paints or hit-tests
     // above it: nested in the composer it sat behind the transcript's scroll
     // layer, which composites over later siblings
-    changed composer-focused => {
-        if root.composer-focused {
-            root.search-open = false;
-        }
-    }
 
     // The command menu: opens the moment a slash starts the message, narrows as
     // more is typed, and sits directly above the box it belongs to. Capped and
@@ -3525,6 +3501,8 @@ export component AppWindow inherits Window {
         y: 0;
         width: 100%;
         caption: root.title;
+        right-open: root.right-open;
+        toggle-right => { root.right-open = !root.right-open; }
         maximized: root.titlebar-maximized;
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }
