@@ -556,7 +556,7 @@ export component AppWindow inherits Window {
             // the mark, so drawing it again 30px lower would say the same thing twice.
             if !root.sidebar-open : Rectangle {
                 width: 48px;
-                background: #111111;
+                background: Theme.sidebar-surface;
         
                 VerticalLayout {
                     padding-top: 4px;
@@ -643,7 +643,7 @@ export component AppWindow inherits Window {
         
             if root.sidebar-open : Rectangle {
                 width: 232px;
-                background: #111111;
+                background: Theme.sidebar-surface;
                 VerticalLayout {
                     padding-left: 8px;
                     padding-right: 8px;

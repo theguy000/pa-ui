@@ -141,8 +141,8 @@ pub(crate) enum Derivation {
 /// overrides, so this list is the window's colour glossary: the test in
 /// `tests.rs` holds it and `ui/theme.slint` to the same set.
 // Every variant is prefixed with the part of the window it paints, because that
-// prefix is the role's name in a theme file. The caption is simply the only part
-// the table has reached so far.
+// prefix is the role's name in a theme file. The caption and the sidebar are the
+// parts the table has reached so far.
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
@@ -164,10 +164,48 @@ pub(crate) enum Role {
     TitleBarFoldGlyph,
     /// The fold mark once the pointer arrives and the column says what it does.
     TitleBarFoldGlyphHover,
+    /// The sidebar's own field, folded or open. The row fills are not made of
+    /// it — they are a lift of ink over the palette's background — so a theme
+    /// that moves this role alone keeps the rows it shipped with, and moves
+    /// them with `sidebar-row-fill` and company.
+    SidebarSurface,
+    /// A session row at rest: a veil at no strength, because a resting row
+    /// draws nothing of its own and the column runs through it. A theme that
+    /// wants the rows to read as cards names this role.
+    SidebarRowFill,
+    /// The row the pointer is on.
+    SidebarRowFillHover,
+    /// The row the reader has picked: the session the transcript is showing.
+    SidebarRowFillSelected,
+    /// A session's name at rest — quiet ink, because the names are a column to
+    /// scan rather than the words the reader came for.
+    SidebarNameInk,
+    /// The picked session's name, at the ink body text gets, read against the
+    /// picked row's fill.
+    SidebarNameInkSelected,
+    /// The name in the row being renamed. Its own role although it ships the
+    /// picked name's value: it is read against the row's own field and not the
+    /// picked fill, so a light sidebar has to move the two apart.
+    SidebarNameInkEditing,
+    /// How long ago a session last moved. The window's own value reads at
+    /// 2.7:1 on the column, under any legibility floor, and this table keeps it
+    /// because a pixel may not move here; `contrast.rs` records the miss instead
+    /// of measuring it.
+    SidebarAgeInk,
+    /// A session at work. The three tags are told apart by colour alone, so
+    /// `contrast.rs` holds them to a separation floor. Their own contrast
+    /// against the column is recorded there, not gated: the parked tag, at
+    /// 2.2:1, is drawn as a session meant to recede.
+    TagWorking,
+    /// A session that is not live: it is on the sidebar, but nothing is running
+    /// in it.
+    TagParked,
+    /// A session that is live and between turns, ready for the next prompt.
+    TagIdle,
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 7] = [
+    pub(crate) const ALL: [Role; 18] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -175,6 +213,17 @@ impl Role {
         Role::TitleBarFoldFillHover,
         Role::TitleBarFoldGlyph,
         Role::TitleBarFoldGlyphHover,
+        Role::SidebarSurface,
+        Role::SidebarRowFill,
+        Role::SidebarRowFillHover,
+        Role::SidebarRowFillSelected,
+        Role::SidebarNameInk,
+        Role::SidebarNameInkSelected,
+        Role::SidebarNameInkEditing,
+        Role::SidebarAgeInk,
+        Role::TagWorking,
+        Role::TagParked,
+        Role::TagIdle,
     ];
 
     /// The name a theme file and the theme global both use.
@@ -187,12 +236,24 @@ impl Role {
             Role::TitleBarFoldFillHover => "title-bar-fold-fill-hover",
             Role::TitleBarFoldGlyph => "title-bar-fold-glyph",
             Role::TitleBarFoldGlyphHover => "title-bar-fold-glyph-hover",
+            Role::SidebarSurface => "sidebar-surface",
+            Role::SidebarRowFill => "sidebar-row-fill",
+            Role::SidebarRowFillHover => "sidebar-row-fill-hover",
+            Role::SidebarRowFillSelected => "sidebar-row-fill-selected",
+            Role::SidebarNameInk => "sidebar-name-ink",
+            Role::SidebarNameInkSelected => "sidebar-name-ink-selected",
+            Role::SidebarNameInkEditing => "sidebar-name-ink-editing",
+            Role::SidebarAgeInk => "sidebar-age-ink",
+            Role::TagWorking => "tag-working",
+            Role::TagParked => "tag-parked",
+            Role::TagIdle => "tag-idle",
         }
     }
 
     /// The alphas and shares below are the ones that land on the pixel the
-    /// window drew before there was a theme: the marks at `#d7d7d7` and
-    /// `#6f6f6f`, the chips at `#222222` and `#2b2b2b` over the background.
+    /// window drew before there was a theme: the caption marks at `#d7d7d7` and
+    /// `#6f6f6f`, the chips at `#222222` and `#2b2b2b` over the background, the
+    /// session rows at `#181818` and `#1d1d1d`, and the age at `#585858`.
     fn derivation(self) -> Derivation {
         match self {
             Role::TitleBarGlyph => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
@@ -202,6 +263,19 @@ impl Role {
             Role::TitleBarFoldFillHover => Derivation::Veil(Palette::Ink, 0x1f),
             Role::TitleBarFoldGlyph => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.592),
             Role::TitleBarFoldGlyphHover => Derivation::Palette(Palette::Ink),
+            Role::SidebarSurface => Derivation::Palette(Palette::Background),
+            Role::SidebarRowFill => Derivation::Veil(Palette::Background, 0x00),
+            Role::SidebarRowFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
+            Role::SidebarRowFillSelected => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.057)
+            }
+            Role::SidebarNameInk => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarNameInkSelected => Derivation::Palette(Palette::Ink),
+            Role::SidebarNameInkEditing => Derivation::Palette(Palette::Ink),
+            Role::SidebarAgeInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
+            Role::TagWorking => Derivation::Fixed(Rgba::hex("#a18e41")),
+            Role::TagParked => Derivation::Fixed(Rgba::hex("#4a4d44")),
+            Role::TagIdle => Derivation::Fixed(Rgba::hex("#6f9f5f")),
         }
     }
 }
