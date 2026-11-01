@@ -1522,12 +1522,12 @@ export component AppWindow inherits Window {
         // not `q-scroll.height`: a ScrollView's height reads back as nothing at
         // the time the parent binds, which collapsed the panel to a sliver
         height: root.q-scroll-h + 12px;
-        background: #181818;
-        border-color: #2e2e2e;
+        background: Theme.panel-surface;
+        border-color: Theme.panel-edge;
         border-width: 1px;
         border-radius: 10px;
         drop-shadow-blur: 12px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.panel-shadow;
 
         q-scroll := ScrollView {
             x: 0;
@@ -1552,7 +1552,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: root.queued-count == 1 ? "1 message waiting" : root.queued-count + " messages waiting";
-                    color: #b0b0b0;
+                    color: Theme.queue-card-count-ink;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-steering : QueueRow {
@@ -1577,7 +1577,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: "runs next";
-                    color: #6d6d6d;
+                    color: Theme.queue-card-lane-ink;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-followup : QueueRowUp {
@@ -1602,7 +1602,7 @@ export component AppWindow inherits Window {
                     width: parent.width - 16px;
                     height: 22px;
                     border-radius: 5px;
-                    background: clear-touch.has-hover ? #202020 : transparent;
+                    background: clear-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
                     Text {
                         x: 2px;
@@ -1610,7 +1610,8 @@ export component AppWindow inherits Window {
                         height: parent.height;
                         vertical-alignment: center;
                         text: "clear all";
-                        color: clear-touch.has-hover ? #d8d8d8 : #6d6d6d;
+                        color: clear-touch.has-hover ? Theme.queue-card-clear-ink-hover
+                            : Theme.queue-card-clear-ink;
                         font-size: 10px;
                     }
 

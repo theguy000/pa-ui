@@ -154,7 +154,8 @@ pub(crate) enum Derivation {
 /// `tests.rs` holds it and `ui/theme.slint` to the same set.
 // Every variant is prefixed with the part of the window it paints, because that
 // prefix is the role's name in a theme file. The caption, the sidebar, the
-// transcript and the composer are the parts the table has reached so far.
+// transcript, the composer, the panels that open over them and the status strip
+// are the parts the table has reached so far.
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
@@ -456,10 +457,145 @@ pub(crate) enum Role {
     ComposerStopFillHover,
     /// The square the send arrow becomes as the control turns into a stop.
     ComposerStopMark,
+    /// The field of a panel that opens over the window: the command list, the
+    /// model menu, the ladder that drops off one of its rows, and the queue card.
+    /// One role for all four, because they are one shape and a theme that raises
+    /// the panel surface raises every panel — which is the whole of what makes
+    /// four panels cost one role rather than four. A panel here is a surface that
+    /// opens over the window and closes again; it is not a region of the window's
+    /// layout, which is what the glossary's ban on "side panel" keeps apart.
+    PanelSurface,
+    /// The hairline round that panel: the whole of what parts it from the fields
+    /// it hangs over, since a panel and the sheet under it are the same grey.
+    PanelEdge,
+    /// The shadow that lifts a panel off the window. Black at an alpha, so a
+    /// theme with a light background names this role rather than inheriting it.
+    PanelShadow,
+    /// The shadow under the ladder, which is shallower than a panel's: it is
+    /// drawn on another panel, and what is under it has already been lifted.
+    PanelShadowNested,
+    /// The row the pointer is on, in any of the four panels. A resting row draws
+    /// nothing of its own, so the panel runs through it.
+    PanelRowFillHover,
+    /// The row a panel fills to say which one is in force: the model this session
+    /// runs. A panel state rather than a model menu's own, although the model
+    /// menu is the only one that fills a row today — the ladder marks its rung
+    /// with a check instead, which is this shape's other way of saying it.
+    PanelRowFillCurrent,
+    /// A command's name at rest: quiet ink, because the list is a column to scan.
+    SlashMenuRowInk,
+    /// That name while the row is the one the arrows or the pointer is on. The
+    /// keyboard's row is drawn exactly as the pointer's, because there is one
+    /// highlight and it is never in two places.
+    SlashMenuRowInkHover,
+    /// The argument a command takes, which only the highlighted row shows: read
+    /// at the ink a link gets, one step behind the name beside it.
+    SlashMenuHintInk,
+    /// What a command does, on the highlighted row. The quietest word the list
+    /// carries, because it is there for the row the reader is already on.
+    SlashMenuDescriptionInk,
+    /// A provider's name. The menu is opened to pick one of the models under it,
+    /// so its headers are scanned rather than read: a step under the ink a
+    /// model's own name gets.
+    ModelMenuHeaderInk,
+    /// A provider the reader is not signed in to. Nothing behind the header can
+    /// be picked, so the name steps back to what the window says beside it.
+    ModelMenuHeaderInkQuiet,
+    /// The figure beside a header, and the words that stand in its place. The
+    /// window draws it at 2.5:1 on the panel and this table keeps that because
+    /// no pixel may move here; `contrast.rs` records the miss rather than
+    /// measuring it.
+    ModelMenuCountInk,
+    /// A model's name at rest.
+    ModelMenuRowInk,
+    /// The running model's name, at the ink body text gets: it is the one row
+    /// the menu exists to confirm.
+    ModelMenuRowInkCurrent,
+    /// The context window beside a model's name, for every row but the running
+    /// one — which carries its level there instead.
+    ModelMenuDetailInk,
+    /// How hard the running model is thinking, right of its name: the gold the
+    /// sidebar's working tag is drawn in, because it says the same thing.
+    ModelMenuEffortInk,
+    /// A rung of the ladder at rest.
+    EffortLadderRowInk,
+    /// The rung the model is on: the ink body text gets, beside the check that
+    /// marks it.
+    EffortLadderRowInkCurrent,
+    /// The count of waiting messages over the queue card's first lane.
+    QueueCardCountInk,
+    /// The name of a lane that carries nothing to count — "runs next" over the
+    /// second one. A label rather than a figure, so it steps back from the count
+    /// above it.
+    QueueCardLaneInk,
+    /// The action that empties both lanes.
+    QueueCardClearInk,
+    /// That action with the pointer on it, at the ink a waiting message's own
+    /// row is written in.
+    QueueCardClearInkHover,
+    /// One waiting message, in the row that opens it for editing.
+    QueueRowInk,
+    /// The fill of a button inside a waiting row: editing it, pulling it into
+    /// the running turn, or deleting it. A resting surface rather than a hover
+    /// only one, because a control found only by pointing at it is hidden.
+    QueueRowControlFill,
+    /// That button under the pointer.
+    QueueRowControlFillHover,
+    /// The pencil and the bin, at rest.
+    QueueRowControlMark,
+    /// The pencil under the pointer.
+    QueueRowControlMarkHover,
+    /// The arrow that pulls a follow-up message into the turn already running.
+    /// It is read at the ink a link gets rather than the body ink its neighbours
+    /// get: it is the one control a row offers that moves a message between the
+    /// lanes, and the window drew it a step back.
+    QueueRowPromoteMark,
+    /// That arrow under the pointer.
+    QueueRowPromoteMarkHover,
+    /// The bin under the pointer, in the warmth the transcript's failure is
+    /// drawn in: the one control a waiting row carries that throws something
+    /// away, and the only one that changes colour as it is pointed at.
+    QueueRowDeleteMark,
+    /// The field of the strip that opens above the composer: a step above the
+    /// window's background and below the box it sits behind.
+    StatusStripSurface,
+    /// The outline of the strip's rounded top. Its own role although it ships
+    /// the panel's edge: the strip draws its fill inset by exactly this stroke,
+    /// so a theme that wants a lighter outline moves this one and keeps the
+    /// panels' edges where they were.
+    StatusStripEdge,
+    /// The spinner and the word beside it that name what the turn is doing: one
+    /// role although it paints a mark and a word, because they say one thing,
+    /// and a theme that moved one alone would leave a spinner turning in one
+    /// colour beside a label in another.
+    StatusStripWorkingInk,
+    /// How long the turn has been running. The window draws it at 2.5:1 on the
+    /// strip — it recedes behind the word it follows — and this table keeps that
+    /// because no pixel may move here; `contrast.rs` records the miss.
+    StatusStripElapsedInk,
+    /// The pill that opens the queue, at rest: a veil at no strength, because at
+    /// rest the pill is part of the strip. A theme that wants the queue always
+    /// visible names this role.
+    StatusStripQueueFill,
+    /// The pill the pointer is on, and the pill whose card is open. One state
+    /// rather than two, because the card outlives the pointer: a pill that
+    /// dropped back to nothing under its own open panel would read as closed.
+    StatusStripQueueFillHover,
+    /// How many messages are waiting: the number the pill is opened to answer,
+    /// so it is read at body strength.
+    StatusStripQueueCountInk,
+    /// That number with the pointer on it. Its own role although the fill under
+    /// it stays lit while the card is open: the window brightens the words for
+    /// the pill being pointed at and for nothing else.
+    StatusStripQueueCountInkHover,
+    /// The word beside the number, which names what is counted.
+    StatusStripQueueLabelInk,
+    /// That word with the pointer on it.
+    StatusStripQueueLabelInkHover,
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 103] = [
+    pub(crate) const ALL: [Role; 144] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -563,6 +699,47 @@ impl Role {
         Role::ComposerStopFill,
         Role::ComposerStopFillHover,
         Role::ComposerStopMark,
+        Role::PanelSurface,
+        Role::PanelEdge,
+        Role::PanelShadow,
+        Role::PanelShadowNested,
+        Role::PanelRowFillHover,
+        Role::PanelRowFillCurrent,
+        Role::SlashMenuRowInk,
+        Role::SlashMenuRowInkHover,
+        Role::SlashMenuHintInk,
+        Role::SlashMenuDescriptionInk,
+        Role::ModelMenuHeaderInk,
+        Role::ModelMenuHeaderInkQuiet,
+        Role::ModelMenuCountInk,
+        Role::ModelMenuRowInk,
+        Role::ModelMenuRowInkCurrent,
+        Role::ModelMenuDetailInk,
+        Role::ModelMenuEffortInk,
+        Role::EffortLadderRowInk,
+        Role::EffortLadderRowInkCurrent,
+        Role::QueueCardCountInk,
+        Role::QueueCardLaneInk,
+        Role::QueueCardClearInk,
+        Role::QueueCardClearInkHover,
+        Role::QueueRowInk,
+        Role::QueueRowControlFill,
+        Role::QueueRowControlFillHover,
+        Role::QueueRowControlMark,
+        Role::QueueRowControlMarkHover,
+        Role::QueueRowPromoteMark,
+        Role::QueueRowPromoteMarkHover,
+        Role::QueueRowDeleteMark,
+        Role::StatusStripSurface,
+        Role::StatusStripEdge,
+        Role::StatusStripWorkingInk,
+        Role::StatusStripElapsedInk,
+        Role::StatusStripQueueFill,
+        Role::StatusStripQueueFillHover,
+        Role::StatusStripQueueCountInk,
+        Role::StatusStripQueueCountInkHover,
+        Role::StatusStripQueueLabelInk,
+        Role::StatusStripQueueLabelInkHover,
     ];
 
     /// The name a theme file and the theme global both use.
@@ -671,6 +848,47 @@ impl Role {
             Role::ComposerStopFill => "composer-stop-fill",
             Role::ComposerStopFillHover => "composer-stop-fill-hover",
             Role::ComposerStopMark => "composer-stop-mark",
+            Role::PanelSurface => "panel-surface",
+            Role::PanelEdge => "panel-edge",
+            Role::PanelShadow => "panel-shadow",
+            Role::PanelShadowNested => "panel-shadow-nested",
+            Role::PanelRowFillHover => "panel-row-fill-hover",
+            Role::PanelRowFillCurrent => "panel-row-fill-current",
+            Role::SlashMenuRowInk => "slash-menu-row-ink",
+            Role::SlashMenuRowInkHover => "slash-menu-row-ink-hover",
+            Role::SlashMenuHintInk => "slash-menu-hint-ink",
+            Role::SlashMenuDescriptionInk => "slash-menu-description-ink",
+            Role::ModelMenuHeaderInk => "model-menu-header-ink",
+            Role::ModelMenuHeaderInkQuiet => "model-menu-header-ink-quiet",
+            Role::ModelMenuCountInk => "model-menu-count-ink",
+            Role::ModelMenuRowInk => "model-menu-row-ink",
+            Role::ModelMenuRowInkCurrent => "model-menu-row-ink-current",
+            Role::ModelMenuDetailInk => "model-menu-detail-ink",
+            Role::ModelMenuEffortInk => "model-menu-effort-ink",
+            Role::EffortLadderRowInk => "effort-ladder-row-ink",
+            Role::EffortLadderRowInkCurrent => "effort-ladder-row-ink-current",
+            Role::QueueCardCountInk => "queue-card-count-ink",
+            Role::QueueCardLaneInk => "queue-card-lane-ink",
+            Role::QueueCardClearInk => "queue-card-clear-ink",
+            Role::QueueCardClearInkHover => "queue-card-clear-ink-hover",
+            Role::QueueRowInk => "queue-row-ink",
+            Role::QueueRowControlFill => "queue-row-control-fill",
+            Role::QueueRowControlFillHover => "queue-row-control-fill-hover",
+            Role::QueueRowControlMark => "queue-row-control-mark",
+            Role::QueueRowControlMarkHover => "queue-row-control-mark-hover",
+            Role::QueueRowPromoteMark => "queue-row-promote-mark",
+            Role::QueueRowPromoteMarkHover => "queue-row-promote-mark-hover",
+            Role::QueueRowDeleteMark => "queue-row-delete-mark",
+            Role::StatusStripSurface => "status-strip-surface",
+            Role::StatusStripEdge => "status-strip-edge",
+            Role::StatusStripWorkingInk => "status-strip-working-ink",
+            Role::StatusStripElapsedInk => "status-strip-elapsed-ink",
+            Role::StatusStripQueueFill => "status-strip-queue-fill",
+            Role::StatusStripQueueFillHover => "status-strip-queue-fill-hover",
+            Role::StatusStripQueueCountInk => "status-strip-queue-count-ink",
+            Role::StatusStripQueueCountInkHover => "status-strip-queue-count-ink-hover",
+            Role::StatusStripQueueLabelInk => "status-strip-queue-label-ink",
+            Role::StatusStripQueueLabelInkHover => "status-strip-queue-label-ink-hover",
         }
     }
 
@@ -678,8 +896,9 @@ impl Role {
     /// window drew before there was a theme: the caption marks at `#d7d7d7` and
     /// `#6f6f6f`, the chips at `#222222` and `#2b2b2b` over the background, the
     /// session rows at `#181818` and `#1d1d1d`, the age at `#585858`, the
-    /// transcript a shade at a time from `#0e0e0e` to `#292929`, and the
-    /// composer from `#0c0c0c` to `#e5e5e5`.
+    /// transcript a shade at a time from `#0e0e0e` to `#292929`, the composer
+    /// from `#0c0c0c` to `#e5e5e5`, the panels that open over the window from
+    /// `#181818` to `#3a3a3a`, and the strip from `#191919` to `#c9a86a`.
     ///
     /// A share is not the only reading of a value. A surface is a lift of the
     /// palette's ink over its background, and an ink that steps back is the
@@ -851,6 +1070,79 @@ impl Role {
             Role::ComposerStopFill => Derivation::Fixed(Rgba::hex("#a2543f")),
             Role::ComposerStopFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
             Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
+            Role::PanelSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
+            Role::PanelEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
+            Role::PanelShadow => Derivation::Fixed(Rgba::hex("#00000080")),
+            Role::PanelShadowNested => Derivation::Fixed(Rgba::hex("#00000060")),
+            Role::PanelRowFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0708)
+            }
+            Role::PanelRowFillCurrent => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+            }
+            Role::SlashMenuRowInk => Derivation::Palette(Palette::QuietInk),
+            Role::SlashMenuRowInkHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)
+            }
+            Role::SlashMenuHintInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925),
+            Role::SlashMenuDescriptionInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
+            Role::ModelMenuHeaderInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.9387)
+            }
+            Role::ModelMenuHeaderInkQuiet => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
+            Role::ModelMenuCountInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
+            }
+            Role::ModelMenuRowInk => Derivation::Palette(Palette::QuietInk),
+            Role::ModelMenuRowInkCurrent => Derivation::Palette(Palette::Ink),
+            Role::ModelMenuDetailInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
+            }
+            Role::ModelMenuEffortInk => Derivation::Fixed(Rgba::hex("#a18e41")),
+            Role::EffortLadderRowInk => Derivation::Palette(Palette::QuietInk),
+            Role::EffortLadderRowInkCurrent => Derivation::Palette(Palette::Ink),
+            Role::QueueCardCountInk => Derivation::Palette(Palette::QuietInk),
+            Role::QueueCardLaneInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
+            Role::QueueRowInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9387),
+            Role::QueueCardClearInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
+            Role::QueueCardClearInkHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.9387)
+            }
+            Role::QueueRowControlFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
+            Role::QueueRowControlFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1934)
+            }
+            Role::QueueRowControlMark => Derivation::Palette(Palette::QuietInk),
+            Role::QueueRowControlMarkHover => Derivation::Palette(Palette::Ink),
+            Role::QueueRowPromoteMark => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
+            }
+            Role::QueueRowPromoteMarkHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.8868)
+            }
+            Role::QueueRowDeleteMark => Derivation::Fixed(Rgba::hex("#f3ded8")),
+            Role::StatusStripSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0377),
+            Role::StatusStripEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
+            Role::StatusStripWorkingInk => Derivation::Fixed(Rgba::hex("#c9a86a")),
+            Role::StatusStripElapsedInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
+            }
+            Role::StatusStripQueueFill => Derivation::Veil(Palette::Background, 0x00),
+            Role::StatusStripQueueFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0708)
+            }
+            Role::StatusStripQueueCountInk => Derivation::Palette(Palette::QuietInk),
+            Role::StatusStripQueueCountInkHover => Derivation::Palette(Palette::Ink),
+            Role::StatusStripQueueLabelInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
+            Role::StatusStripQueueLabelInkHover => Derivation::Palette(Palette::QuietInk),
         }
     }
 }

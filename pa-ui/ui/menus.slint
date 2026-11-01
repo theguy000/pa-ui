@@ -1,4 +1,4 @@
-// The three overlays that hang off the composer: the slash command list, the model
+// The three panels that hang off the composer: the slash command list, the model
 // menu, and the thinking-level ladder that drops off one of its rows. Each sits at
 // the window root rather than inside the composer band, because a band-height
 // animation would drag it along, and each is told where the composer is instead of
@@ -7,6 +7,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { EffortItem, ModelGroup, SlashItem } from "types.slint";
 import { IconCaret, IconCheck } from "icons.slint";
+import { Theme } from "theme.slint";
 
 // The command list above the composer. `index` is the highlighted row; arrowing
 // past the fold pulls the list after it.
@@ -23,12 +24,12 @@ export component SlashMenu inherits Rectangle {
     width: min(460px, root.anchor-w - 24px);
     // ten rows at a time; the list scrolls and the highlight pulls it along
     height: min(312px, 12px + root.items.length * 30px);
-    background: #181818;
-    border-color: #2e2e2e;
+    background: Theme.panel-surface;
+    border-color: Theme.panel-edge;
     border-width: 1px;
     border-radius: 10px;
     drop-shadow-blur: 12px;
-    drop-shadow-color: #00000080;
+    drop-shadow-color: Theme.panel-shadow;
 
     slash-list := ScrollView {
         x: 6px;
@@ -57,7 +58,7 @@ export component SlashMenu inherits Rectangle {
                 // one sentence that says what the command does. At rest the
                 // list is names only, like a menu should be.
                 background: index == root.index || slash-touch.has-hover
-                    ? #202020 : transparent;
+                    ? Theme.panel-row-fill-hover : transparent;
                 animate background { duration: 90ms; }
 
                 HorizontalLayout {
@@ -70,19 +71,19 @@ export component SlashMenu inherits Rectangle {
                         text: "/" + item.name;
                         font-size: 13px;
                         color: index == root.index || slash-touch.has-hover
-                            ? #c1c1c1 : #b0b0b0;
+                            ? Theme.slash-menu-row-ink-hover : Theme.slash-menu-row-ink;
                         vertical-alignment: center;
                     }
                     if (index == root.index || slash-touch.has-hover) && item.hint != "" : Text {
                         text: item.hint;
                         font-size: 11px;
-                        color: #8f8f8f;
+                        color: Theme.slash-menu-hint-ink;
                         vertical-alignment: center;
                     }
                     Text {
                         text: item.description;
                         font-size: 11px;
-                        color: #6d6d6d;
+                        color: Theme.slash-menu-description-ink;
                         overflow: elide;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
@@ -123,12 +124,12 @@ export component ModelMenu inherits Rectangle {
     y: root.anchor-y - self.height - 6px;
     width: 300px;
     height: max(64px, min(340px, root.measured-height));
-    background: #181818;
-    border-color: #2e2e2e;
+    background: Theme.panel-surface;
+    border-color: Theme.panel-edge;
     border-width: 1px;
     border-radius: 10px;
     drop-shadow-blur: 12px;
-    drop-shadow-color: #00000080;
+    drop-shadow-color: Theme.panel-shadow;
 
     menu-scroll := ScrollView {
         x: 6px;
@@ -187,7 +188,8 @@ export component ModelMenu inherits Rectangle {
                     width: parent.width - 80px;
                     height: 26px;
                     text: group.label;
-                    color: group.configured ? #d8d8d8 : #6d6d6d;
+                    color: group.configured ? Theme.model-menu-header-ink
+                        : Theme.model-menu-header-ink-quiet;
                     font-size: 11px;
                     vertical-alignment: center;
                     wrap: no-wrap;
@@ -199,7 +201,7 @@ export component ModelMenu inherits Rectangle {
                     width: 52px;
                     height: 26px;
                     text: group.configured ? group.count : "not signed in";
-                    color: #585858;
+                    color: Theme.model-menu-count-ink;
                     font-size: 9px;
                     horizontal-alignment: right;
                     vertical-alignment: center;
@@ -213,8 +215,8 @@ export component ModelMenu inherits Rectangle {
                     width: 100%;
                     height: 24px;
                     border-radius: 5px;
-                    background: model.current ? #242424
-                        : (model-touch.has-hover ? #202020 : transparent);
+                    background: model.current ? Theme.panel-row-fill-current
+                        : (model-touch.has-hover ? Theme.panel-row-fill-hover : transparent);
 
                     model-touch := TouchArea {
                         x: 0;
@@ -250,7 +252,8 @@ export component ModelMenu inherits Rectangle {
                         width: parent.width - 108px;
                         height: 100%;
                         text: model.label;
-                        color: model.current ? #e5e5e5 : #b0b0b0;
+                        color: model.current ? Theme.model-menu-row-ink-current
+                            : Theme.model-menu-row-ink;
                         font-size: 11px;
                         vertical-alignment: center;
                         wrap: no-wrap;
@@ -264,7 +267,8 @@ export component ModelMenu inherits Rectangle {
                         width: 74px;
                         height: 100%;
                         text: model.effort != "" ? model.effort : model.detail;
-                        color: model.effort != "" ? #a18e41 : #585858;
+                        color: model.effort != "" ? Theme.model-menu-effort-ink
+                            : Theme.model-menu-detail-ink;
                         font-size: 9px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -306,12 +310,12 @@ export component EffortLadder inherits Rectangle {
     );
     width: 132px;
     height: 10px + root.items.length * 26px;
-    background: #181818;
-    border-color: #2e2e2e;
+    background: Theme.panel-surface;
+    border-color: Theme.panel-edge;
     border-width: 1px;
     border-radius: 8px;
     drop-shadow-blur: 10px;
-    drop-shadow-color: #00000060;
+    drop-shadow-color: Theme.panel-shadow-nested;
 
     // the ladder answers for its own surface, or moving onto it would
     // count as leaving the row it hangs from
@@ -333,7 +337,7 @@ export component EffortLadder inherits Rectangle {
         width: 100%;
         height: 26px;
         border-radius: 5px;
-        background: item-touch.has-hover ? #202020 : transparent;
+        background: item-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
         item-touch := TouchArea {
             x: 0;
@@ -355,7 +359,8 @@ export component EffortLadder inherits Rectangle {
             width: parent.width - 40px;
             height: 100%;
             text: item.label;
-            color: item.current ? #e5e5e5 : #b0b0b0;
+            color: item.current ? Theme.effort-ladder-row-ink-current
+                : Theme.effort-ladder-row-ink;
             font-size: 11px;
             vertical-alignment: center;
             wrap: no-wrap;

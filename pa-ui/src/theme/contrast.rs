@@ -61,6 +61,18 @@ const ON_CHIP: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFill];
 const ON_CHIP_HOVER: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFillHover];
 const ON_SEND_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerSendFill];
 const ON_STOP_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerStopFill];
+// The four panels that open over the window, each word read on the panel it is
+// drawn on and — where a row carries it — on the fill that row takes.
+const ON_PANEL: &[Role] = &[Role::PanelSurface];
+const ON_PANEL_ROW: &[Role] = &[Role::PanelSurface, Role::PanelRowFillHover];
+const ON_PANEL_ROW_CURRENT: &[Role] = &[Role::PanelSurface, Role::PanelRowFillCurrent];
+// A waiting row's controls: a fill laid on the panel, and a mark drawn on that
+// fill rather than on the panel.
+const ON_ROW_CONTROL: &[Role] = &[Role::PanelSurface, Role::QueueRowControlFill];
+const ON_ROW_CONTROL_HOVER: &[Role] = &[Role::PanelSurface, Role::QueueRowControlFillHover];
+// The strip, and the pill the queue is opened from: one field laid on another.
+const ON_STRIP: &[Role] = &[Role::StatusStripSurface];
+const ON_STRIP_PILL: &[Role] = &[Role::StatusStripSurface, Role::StatusStripQueueFillHover];
 
 /// One colour as the reader sees it: a role, and the fields it is drawn on.
 struct Mark {
@@ -315,6 +327,161 @@ const PAIRS: &[Pair] = &[
         what: "the arrow on the send disc",
         floor: MARK,
     },
+    // The four panels that open over the window. A command's name and a model's
+    // name are what the reader is choosing between, so both are held to the body
+    // floor in every state a row is read in; the sentences, labels and figures
+    // around them are held to the mark floor, because they are read only after
+    // the name they qualify has been found.
+    Pair {
+        ink: Mark { role: Role::SlashMenuRowInk, on: ON_PANEL },
+        what: "a command's name",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SlashMenuRowInkHover, on: ON_PANEL_ROW },
+        what: "the command the pointer or the arrows are on",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SlashMenuHintInk, on: ON_PANEL_ROW },
+        what: "the argument a command takes",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SlashMenuDescriptionInk, on: ON_PANEL_ROW },
+        what: "what a command does",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ModelMenuRowInk, on: ON_PANEL },
+        what: "a model's name at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ModelMenuRowInkCurrent, on: ON_PANEL_ROW_CURRENT },
+        what: "the running model's name",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ModelMenuEffortInk, on: ON_PANEL_ROW_CURRENT },
+        what: "the level the running model is at",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ModelMenuHeaderInk, on: ON_PANEL },
+        what: "a provider's name",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ModelMenuHeaderInkQuiet, on: ON_PANEL },
+        what: "a provider the reader is not signed in to",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::EffortLadderRowInk, on: ON_PANEL },
+        what: "a rung of the ladder",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::EffortLadderRowInkCurrent, on: ON_PANEL_ROW },
+        what: "the rung the model is on",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueCardCountInk, on: ON_PANEL },
+        what: "how many messages are waiting",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueCardLaneInk, on: ON_PANEL },
+        what: "the name of a lane with nothing to count",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueRowInk, on: ON_PANEL_ROW },
+        what: "a waiting message",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueCardClearInk, on: ON_PANEL },
+        what: "the action that empties both lanes",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueCardClearInkHover, on: ON_PANEL_ROW },
+        what: "the action that empties both lanes, under the pointer",
+        floor: BODY,
+    },
+    // A waiting row's three controls are marks on a fill of their own, which is
+    // the only thing that says they are controls: the row draws no outline.
+    Pair {
+        ink: Mark { role: Role::QueueRowControlMark, on: ON_ROW_CONTROL },
+        what: "the pencil and the bin on a waiting row",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueRowControlMarkHover, on: ON_ROW_CONTROL_HOVER },
+        what: "the pencil on a waiting row, under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueRowPromoteMark, on: ON_ROW_CONTROL },
+        what: "the arrow that pulls a message into the running turn",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueRowPromoteMarkHover, on: ON_ROW_CONTROL_HOVER },
+        what: "that arrow under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QueueRowDeleteMark, on: ON_ROW_CONTROL_HOVER },
+        what: "the bin on a waiting row, under the pointer",
+        floor: MARK,
+    },
+    // The strip. The word that says the turn is working and the count the queue
+    // pill carries are the two things a reader glances at, so both are held to
+    // the body floor on the strip and on the pill when it is lit; the word
+    // beside the count names what is counted and is held to the mark floor.
+    Pair {
+        ink: Mark { role: Role::StatusStripWorkingInk, on: ON_STRIP },
+        what: "the word that says what the turn is doing",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueCountInk, on: ON_STRIP },
+        what: "how many messages the pill counts",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueCountInkHover, on: ON_STRIP_PILL },
+        what: "how many messages the pill counts, under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueLabelInk, on: ON_STRIP },
+        what: "the word beside the count on the pill",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueLabelInkHover, on: ON_STRIP_PILL },
+        what: "the word beside the count, under the pointer",
+        floor: MARK,
+    },
+    // The fill stays lit while the card is open and the words do not, so the two
+    // resting inks are read on it as well: the pointer leaving a pill whose card
+    // is still open is the one state where a theme can bury the count without
+    // touching a colour either of the pairs above has seen.
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueCountInk, on: ON_STRIP_PILL },
+        what: "how many messages the pill counts, with its card open",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::StatusStripQueueLabelInk, on: ON_STRIP_PILL },
+        what: "the word beside the count, with the pill's card open",
+        floor: MARK,
+    },
     // The colours below are recorded rather than checked, and all for the same
     // reason: the window already drew them this way and a role that has to
     // resolve to today's pixel cannot be moved here. A theme that wants any of
@@ -328,6 +495,10 @@ const PAIRS: &[Pair] = &[
     //     it: both are the dimmest ink the transcript has.
     //   - a notice line sits at 2.2:1 on the column.
     //   - the language in a block's corner sits at 2.7:1 on the code card.
+    //   - a provider's count and a model's context window sit at 2.5:1 on the
+    //     panel they are drawn on, and the strip's elapsed time at 2.5:1 on the
+    //     strip: the three figures the window draws to recede behind the words
+    //     they qualify.
     //   - the failure badge is a disc of the failure's red on the failed cell's
     //     field, 1.9:1, and the jump chip's edge is 1.5:1 on the column. One is
     //     a mark with a glyph drawn inside it and the other a line whose whole
@@ -411,6 +582,43 @@ const TELLINGS: &[Telling] = &[
         b: Mark { role: Role::ComposerStopFill, on: ON_COMPOSER },
         what: "the send disc and the stop disc",
         floor: APART,
+    },
+    // A waiting row's three controls are told from the row by their fill alone:
+    // they draw no outline, and the code that draws them says why — the fill
+    // sits a clear step above both the panel and the row's own hover. A theme
+    // that tints the panel and leaves the fills behind turns three buttons into
+    // three patches of nothing without moving a word. The tint floor is the
+    // failed cell's, because a control is a field rather than a mark.
+    Telling {
+        a: Mark { role: Role::QueueRowControlFill, on: ON_PANEL },
+        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        what: "a waiting row's buttons and the panel behind them",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::QueueRowControlFill, on: ON_PANEL_ROW },
+        b: Mark { role: Role::PanelRowFillHover, on: ON_PANEL },
+        what: "a waiting row's buttons and the row they sit on",
+        floor: APART_TINT,
+    },
+    // A panel's rows are told from the panel by their fill alone — a resting row
+    // draws nothing of its own, so the highlight is the whole of what says which
+    // row the pointer or the arrows are on, and the fill is the whole of what
+    // says which model the session runs. A theme that moves the panel surface
+    // and leaves those fills at the value they were drawn at is the theme this
+    // ticket promises will work; one that paints the two alike has taken every
+    // menu's highlight away at once and moved no word to say so.
+    Telling {
+        a: Mark { role: Role::PanelRowFillHover, on: ON_PANEL },
+        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        what: "the row the pointer is on and the panel behind it",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::PanelRowFillCurrent, on: ON_PANEL },
+        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        what: "the row a panel marks as current and the panel behind it",
+        floor: APART_TINT,
     },
     // The ring is a bar bent round a circle, and its lit ticks are the only
     // thing that says how much of the context is gone. A theme that paints them

@@ -23,7 +23,7 @@ export component QueueRow inherits Rectangle {
     // a long message shows its beginning and where it was cut.
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #202020 : transparent;
+    background: row-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
     // the text is the edit affordance; it stops short of the button
     row-touch := TouchArea {
@@ -56,7 +56,7 @@ export component QueueRow inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 100px : 72px);
         height: 100%;
         text: root.text;
-        color: #d8d8d8;
+        color: Theme.queue-row-ink;
         font-size: 11px;
         // centred: a one-line message sat against the top of a 34px row
         vertical-alignment: center;
@@ -72,7 +72,8 @@ export component QueueRow inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #3a3a3a : #2e2e2e;
+        background: edit.has-hover ? Theme.queue-row-control-fill-hover
+            : Theme.queue-row-control-fill;
         edit := TouchArea {
             x: 0;
             y: 0;
@@ -86,7 +87,8 @@ export component QueueRow inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e5e5e5 : #b0b0b0;
+            tint: edit.has-hover ? Theme.queue-row-control-mark-hover
+                : Theme.queue-row-control-mark;
         }
     }
 
@@ -100,7 +102,8 @@ export component QueueRow inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #3a3a3a : #2e2e2e;
+        background: del.has-hover ? Theme.queue-row-control-fill-hover
+            : Theme.queue-row-control-fill;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -114,7 +117,8 @@ export component QueueRow inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b0b0;
+            tint: del.has-hover ? Theme.queue-row-delete-mark
+                : Theme.queue-row-control-mark;
         }
     }
 }
@@ -130,7 +134,7 @@ export component QueueRowUp inherits Rectangle {
 
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #202020 : transparent;
+    background: row-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
     row-touch := TouchArea {
         x: 0;
@@ -162,7 +166,7 @@ export component QueueRowUp inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 128px : 100px);
         height: 100%;
         text: root.text;
-        color: #d8d8d8;
+        color: Theme.queue-row-ink;
         font-size: 11px;
         vertical-alignment: center;
         wrap: word-wrap;
@@ -175,7 +179,8 @@ export component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #3a3a3a : #2e2e2e;
+        background: edit.has-hover ? Theme.queue-row-control-fill-hover
+            : Theme.queue-row-control-fill;
         edit := TouchArea {
             x: 0;
             y: 0;
@@ -189,7 +194,8 @@ export component QueueRowUp inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e5e5e5 : #b0b0b0;
+            tint: edit.has-hover ? Theme.queue-row-control-mark-hover
+                : Theme.queue-row-control-mark;
         }
     }
 
@@ -199,7 +205,8 @@ export component QueueRowUp inherits Rectangle {
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: up.has-hover ? #3a3a3a : #2e2e2e;
+        background: up.has-hover ? Theme.queue-row-control-fill-hover
+            : Theme.queue-row-control-fill;
         up := TouchArea {
             x: 0;
             y: 0;
@@ -211,7 +218,8 @@ export component QueueRowUp inherits Rectangle {
         IconToTop {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: up.has-hover ? #cdcdcd : #8f8f8f;
+            tint: up.has-hover ? Theme.queue-row-promote-mark-hover
+                : Theme.queue-row-promote-mark;
         }
     }
 
@@ -223,7 +231,8 @@ export component QueueRowUp inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #3a3a3a : #2e2e2e;
+        background: del.has-hover ? Theme.queue-row-control-fill-hover
+            : Theme.queue-row-control-fill;
         del := TouchArea {
             x: 0;
             y: 0;
@@ -237,7 +246,8 @@ export component QueueRowUp inherits Rectangle {
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b0b0;
+            tint: del.has-hover ? Theme.queue-row-delete-mark
+                : Theme.queue-row-control-mark;
         }
     }
 }
