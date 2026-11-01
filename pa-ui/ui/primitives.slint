@@ -1,81 +1,55 @@
-// The three shapes the window draws more than once, in one place each: a
-// button, a panel and a tag.
-//
-// They are here rather than beside their callers because the promise is that a
-// change reaches every copy at once - the shape, the states it has and the hit
-// area it answers. What each copy paints is a role, and a role is only ever
-// named: nothing here mixes, lightens or fades a colour it was given, because
-// the theme is the only place that decides what a hovered button looks like.
+// Shapes the window draws more than once, so one edit reaches every copy.
+// Rationale for each lives in pa-ui/design/README.md.
 
 import { Theme } from "theme.slint";
 
-/// What a button is for, which decides the field it paints unless its part
-/// names one.
+/// What a button is for; decides the field it paints unless its part names one.
 export enum ButtonKind {
-    // The control that carries a part's main action. It paints a field at rest,
-    // so it is found without being pointed at.
+    // Paints a field at rest, so it is found without being pointed at.
     primary,
-    // The control that stays out of the way until the pointer finds it.
     quiet,
-    // The control that stops or discards what is running.
+    // Stops or discards what is running.
     danger,
+    // Paints a field at rest because it is a control, not a decoration.
+    chip,
 }
 
-// A control: a field that lights under the pointer, and the hit area that makes
-// it one.
-//
-// The field is the whole of what this shape decides. A mark or a word drawn on
-// it keeps the role its own part gave it - a glyph is tinted by the part it
-// sits in, and a label by the call that writes it - so what a copy paints is
-// named where the copy is, and only the kind's own field comes from here.
+// A field that lights under the pointer, plus the hit area that makes it one.
 export component Button inherits Rectangle {
     in property <ButtonKind> kind: ButtonKind.quiet;
-    // Lit by something other than the pointer: a menu this control opened, or a
-    // mode it holds. It paints the same field the pointer does, because a
-    // control that dropped back to rest under its own open panel would read as
-    // closed.
+    // Lit by a menu this control opened or a mode it holds: it keeps the hover
+    // field, because dropping to rest under its own open panel reads as closed.
     in property <bool> lit: false;
-    // Answers no pointer: it keeps its shape and its field and takes no click.
+    // Answers no pointer; keeps its shape and field.
     in property <bool> enabled: true;
-    // The field, in the two states the window draws it in. A kind names the
-    // defaults from the theme; a part whose own table already gives it a fill
-    // names that role here instead, and the shape, the states and the hit area
-    // are still shared.
     in property <color> fill: kind == ButtonKind.primary ? Theme.button-primary-fill
-        : kind == ButtonKind.danger ? Theme.button-danger-fill : Theme.button-quiet-fill;
+        : kind == ButtonKind.danger ? Theme.button-danger-fill
+        : kind == ButtonKind.chip ? Theme.composer-chip-fill : Theme.button-quiet-fill;
     in property <color> fill-hover: kind == ButtonKind.primary ? Theme.button-primary-fill-hover
         : kind == ButtonKind.danger ? Theme.button-danger-fill-hover
+        : kind == ButtonKind.chip ? Theme.composer-chip-fill-hover
         : Theme.button-quiet-fill-hover;
-    // How long the field takes to light, and the curve it follows. The window's
-    // controls move at 120ms on the curve a property animation has by default; the
-    // one that morphs its mark keeps its own clock and its own curve, and the
-    // caption snaps.
+    // The caption snaps at 0ms and the folding mark runs on its own curve.
     in property <duration> fade: 120ms;
     in property <easing> fade-curve: linear;
-    // The cursor the control asks for. The hand is the window's own convention
-    // for a control; the caption keeps the arrow the native bar draws.
+    // The caption keeps the arrow the native bar draws.
     in property <MouseCursor> cursor: MouseCursor.pointer;
-    // What the control is called, for a reader who cannot see it.
+    // Accessible name.
     in property <string> described: "";
 
-    // The pointer is on the control, and the control is drawn lit.
     out property <bool> hot: touch.has-hover;
     out property <bool> on: touch.has-hover || root.lit;
-    // Where the control sits in the window: a caller that hangs something off it
-    // reads it from here, because the hit area that knows is inside the shape.
+    // Read from here because the hit area that knows sits inside the shape.
     out property <length> window-x: touch.absolute-position.x;
     out property <length> window-y: touch.absolute-position.y;
 
-    // The pointer arrived or left. A caller that opens something on hover has to
-    // hear about both halves: a `move` never reports the pointer walking off.
+    // Both halves, because a `move` never reports the pointer leaving.
     callback hovered(bool);
     callback clicked();
 
     background: root.on ? root.fill-hover : root.fill;
     animate background { duration: root.fade; easing: root.fade-curve; }
 
-    // What the control draws goes above its hit area: whatever a caller puts in
-    // here marks the field, and the field is what answers the pointer.
     @children
 
     touch := TouchArea {
@@ -88,13 +62,19 @@ export component Button inherits Rectangle {
     }
 }
 
-// A surface that opens over the window and closes again: the command list, the
-// model menu, the ladder that drops off one of its rows, the queue card, and the
-// card that names a session.
-//
-// A panel's edge is the whole of what parts it from the field it hangs over,
-// since the two are the same grey, so the edge is a role of its own and not a
-// value a component arrives at.
+// A round button that is only its mark; the mark keeps the role of its own part.
+export component PanelButton inherits Button {
+    in property <length> size: 32px;
+
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+
+    @children
+}
+
+// A surface that opens over the window. Its edge is a role, not a value: panel
+// and field are the same grey, so only the edge parts them.
 export component Panel inherits Rectangle {
     in property <color> surface: Theme.panel-surface;
     in property <color> edge: Theme.panel-edge;
@@ -109,25 +89,15 @@ export component Panel inherits Rectangle {
     @children
 }
 
-/// What a tag says: the three states the column draws a session in.
-///
-/// A fourth is waiting for a shape to draw it. The window says "this is the one
-/// in force" with a row fill and with the gold tick and level the panels gave
-/// roles of their own, so a mark of this shape carrying that state has nothing of
-/// its own to paint yet; it lands here, with a role, the day a surface draws it.
 export enum TagKind {
-    // A session at work.
     working,
-    // A session the reader set aside: it is on the column, but nothing is
-    // running in it.
+    // Set aside: on the column, nothing running.
     parked,
-    // A session that is live and between turns.
+    // Live and between turns.
     idle,
 }
 
-// A tag: a mark whose colour is the whole of what it says. Nothing is written on
-// it, so nothing else has to be themed with it - which is also why a tag is one
-// role and not a fill and an ink.
+// A mark whose colour is the whole of what it says, so it is one role and no ink.
 export component Tag inherits Rectangle {
     in property <TagKind> kind: TagKind.idle;
 

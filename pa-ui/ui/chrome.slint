@@ -3,12 +3,10 @@
 
 import { CaptionGlyph, PanelIcon } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button } from "primitives.slint";
+import { Button, PanelButton } from "primitives.slint";
 
-// A caption button is the window's own button with the caption's geometry: the
-// arrow the native bar draws instead of the window's hand, and no fade, because
-// the native caption snaps and a title bar that eased its fills would read as a
-// different window.
+// Arrow and no fade, because the native caption snaps; an eased fill would read
+// as a different window.
 export component CaptionButton inherits Button {
     width: 46px;
     height: 100%;
@@ -25,7 +23,6 @@ export component TitleBar inherits Rectangle {
     in property <string> caption: "Prime Agent Desktop";
     callback minimize();
     callback close();
-    callback menu();
 
     height: 32px;
     width: 100%;
@@ -33,14 +30,12 @@ export component TitleBar inherits Rectangle {
     // sidebar's header band sits inside this height.
     background: transparent;
 
-    // The right column's fold lives in the chrome, not in the column: the column is
-    // blank, so a mark inside it would have nothing to sit on.
-    right-toggle := Button {
+    // The right column's collapse button lives in the chrome, not in the column:
+    // the column is blank, so a mark inside it would have nothing to sit on.
+    right-toggle := PanelButton {
+        size: 26px;
         x: parent.width - 172px;
         y: (parent.height - 26px) / 2;
-        width: 26px;
-        height: 26px;
-        border-radius: 13px;
         fill-hover: Theme.title-bar-fold-fill-hover;
         cursor: MouseCursor.default;
         fade: 0ms;

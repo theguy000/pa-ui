@@ -9,7 +9,7 @@ import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SlashMenu } from "menus.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
-import { Button, ButtonKind, Panel } from "primitives.slint";
+import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
 // The theme global lives in its own source, next to nothing else. It is
 // re-exported here because the window's Rust side reaches it through this
 // file: only a global the compiled file exports becomes a global in Rust.
@@ -27,7 +27,6 @@ export component AppWindow inherits Window {
     // the custom title bar, driven from src/titlebar.rs
     callback titlebar-minimize();
     callback titlebar-close();
-    callback titlebar-menu();
     in-out property <bool> titlebar-maximized: false;
     in-out property <bool> titlebar-max-hover: false;
 
@@ -179,19 +178,13 @@ export component AppWindow inherits Window {
     // 13px text is ~17px per line: 4 lines by default, 10 at most
     out property <length> composer-min: 68px;
     out property <length> composer-max: 170px;
-    // the band is exactly the box plus the 12px pad under it; the queue line
-    // and the jump control live elsewhere, so nothing else needs reserving
-    // queued chip sits above the box, so the transcript has to stop short of it
-    // the popup is drawn at the window root (a child at negative y paints but
-    // cannot be hit), so it anchors off the composer box, which never moves
-    // The band reserves 34px above the box for the chip, and - while a turn is
-    // running - the busy row plus another 34px above it, so the gap that keeps
-    // the transcript off the input sits above the status line instead of below.
-    // The status strip grows open and shuts fast. Everything that has to move
-    // with it reads this one length: the strip's height, the box's height, the
-    // padding above the input, and the band the transcript stops at.
-    // the strip is the home of the queue as well, so it opens while anything is
-    // waiting even if the turn that queued it has just ended
+    // The band is the box plus the 12px pad under it; the chip sits above the box
+    // and the queue line lives in the strip, so nothing else is reserved here.
+    // The popup is drawn at the window root (a child at negative y paints but
+    // cannot be hit), so it anchors off this.
+    // The strip grows open and shuts fast; everything that moves with it reads
+    // this one length. It also opens while anything is queued, even after the
+    // turn that queued it has ended.
     in-out property <length> busy-h: root.busy || root.queued-count > 0 ? 26px : 0px;
     animate busy-h {
         duration: root.busy ? 190ms : 110ms;
@@ -323,21 +316,10 @@ export component AppWindow inherits Window {
         root.scroll-range + transcript-list.content-y
     );
 
-    // Following is a latch, and stopping to read is not an invitation: once the
-    // reader moves up it stays off, through any number of tokens, layout passes
-    // and pauses. Three things turn it back on, and all three are gestures: the
-    // jump-to-bottom button, sending a message, or the reader scrolling *down*
-    // onto the floor with the wheel or the bar.
-    //
-    // A measurement must never re-arm it. Content growing at the bottom rewrites
-    // the scroll offset on the list's own layout pass, and for one frame that
-    // made the distance to the floor read as zero, which is how a paused reader
-    // got yanked to the bottom.
-    // `scrolled` is the window's own "the reader did this" signal: the widget
-    // fires it only for a user drag or wheel, never for our programmatic moves
-    // and never for the list rewriting its offset while rows are measured. That
-    // distinction is the whole fix: a distance measured after a layout pass is
-    // not evidence that anybody scrolled.
+    // Following is a latch. Moving up turns it off and only three gestures turn it
+    // back on: the jump button, sending, or scrolling down onto the floor.
+    // A measurement must never re-arm it: content growing at the bottom rewrites
+    // the offset, and for one frame the distance to the floor reads as zero.
     /// Called by anything that is definitely the reader's own input.
     public function reader-moved-up() {
         root.reader-scrolled = true;
@@ -567,14 +549,11 @@ export component AppWindow inherits Window {
                         height: 32px;
                         HorizontalLayout {
                             alignment: center;
-                            // The mark becomes the fold under the pointer, so the
-                            // control says what it does exactly when it can be
-                            // used - and the hint that says the same thing in
+                            // The mark becomes the way back open under the pointer,
+                            // so the control says what it does exactly when it can
+                            // be used - and the hint that says the same thing in
                             // words is opened from the same hover.
-                            strip-panel := Button {
-                                width: 32px;
-                                height: 32px;
-                                border-radius: 16px;
+                            strip-panel := PanelButton {
                                 described: "Open sidebar";
                                 hovered(over) => { root.open-sidebar-tip = over; }
                                 clicked => {
@@ -601,10 +580,7 @@ export component AppWindow inherits Window {
                         height: 32px;
                         HorizontalLayout {
                             alignment: center;
-                            strip-new := Button {
-                                width: 32px;
-                                height: 32px;
-                                border-radius: 16px;
+                            strip-new := PanelButton {
                                 described: "New Session";
                                 clicked => { root.new-chat(); }
                                 IconNewChat {
@@ -680,14 +656,12 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // The fold: a frame with its edge turning away, on a round
-                        // hit area, the way the reference draws it.
-                        panel-fold := Button {
+                        // The collapse button: a frame with its edge turning away,
+                        // on a round hit area, the way the reference draws it.
+                        panel-fold := PanelButton {
+                            size: 30px;
                             x: parent.width - 30px;
                             y: (parent.height - 30px) / 2;
-                            width: 30px;
-                            height: 30px;
-                            border-radius: 15px;
                             described: "Collapse sidebar";
                             clicked => { root.sidebar-open = !root.sidebar-open; }
                             PanelIcon {
@@ -1165,9 +1139,8 @@ export component AppWindow inherits Window {
                                     // the message: the box is empty when a command was
                                     // taken from the menu, and that is still something
                                     // to send, not a dead key.
-                                    // Ctrl+Enter (or Alt+Enter, kept from before) folds
-                                    // the message into the turn that is running instead
-                                    // of parking it behind
+    // Ctrl+Enter (or Alt+Enter) folds the message into the running turn instead
+    // of parking it behind.
                                     if event.modifiers.control || event.modifiers.alt {
                                         if root.composer-text != ""
                                             || root.composer-command != ""
@@ -1338,22 +1311,13 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            // One control, two jobs: send while the session is idle, stop while it
-            // works. A single hit area with the branch inside it - a button that
-            // swaps element on a condition does not take clicks here.
-            //
-            // Both fields are named rather than taken from a kind, because the one
-            // control changes job while it is on the screen: the stop is the danger
-            // button the shape already names, and the send is the composer's own
-            // fill - grey has no saturation to spend on the primary action, so it
-            // spends contrast instead, the disc being the lightest thing in the
-            // composer and carrying a near-black arrow.
-            //
-            // The two marks are always both present and cross over: the arrow
-            // shrinks and turns as it goes, the stop square grows out of the
-            // middle and turns the other way. Slint cannot interpolate one path
-            // into another, so the fluidity is scale, rotation and opacity on the
-            // same clock - which is what a morph looks like anyway.
+            // One control, two jobs: send while idle, stop while working. One hit
+            // area with the branch inside it, because a button swapped on a
+            // condition does not take clicks here. Both fields are named, not a
+            // kind, since the job changes under the pointer.
+            // Both marks are always present and cross over: the arrow shrinks and
+            // turns, the square grows and turns. Slint cannot interpolate one path
+            // into another, so the morph is scale, rotation and opacity.
             Button {
                 width: 25px;
                 height: 25px;
@@ -1605,22 +1569,12 @@ export component AppWindow inherits Window {
         }
     }
 
-    // A failure reason is drawn at the window root: inside the row it was
-    // covered by whatever row came next, so a command row painted over the
-    // popup that belonged to the row above it.
-    // The cap is on the width. `max-width` could not be: it is a constraint the
-    // layout engine applies, and this popup is out of every layout, so
-    // `width: self.preferred-width` won and the box grew to the message's own
-    // width — past the window edge, where the message was then cut mid-word.
-    // It sits on one line, because a reason is an exception message and its
-    // interesting end is in the tail; whatever the cap cannot show travels
-    // inside it (MarqueeText), so a long reason is read by watching instead of
-    // being lost off the right edge.
-    //
-    // Hidden rather than created and destroyed: hover opens this and leaving
-    // closes it, and a marquee that is created already past the end has nothing
-    // to animate from. Out of sight it keeps its place — `active` falls, the
-    // text walks home, and the next hover starts the sweep from the start.
+    // Drawn at the window root: inside the row it was covered by whichever row came
+    // next. The cap is on the width, not `max-width` - this popup is out of every
+    // layout, so the constraint is not applied. One line, because the interesting
+    // end of an exception is its tail; the rest travels in MarqueeText.
+    // Hidden rather than destroyed: a marquee created already past its end has
+    // nothing to animate from.
     Rectangle {
         visible: root.reason-open;
         x: min(root.reason-x, root.width - self.width - 12px);
@@ -1686,6 +1640,5 @@ export component AppWindow inherits Window {
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }
         close => { root.titlebar-close(); }
-        menu => { root.titlebar-menu(); }
     }
 }

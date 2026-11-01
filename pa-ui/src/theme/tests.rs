@@ -1654,6 +1654,55 @@ fn no_rust_source_writes_a_colour_value() {
     );
 }
 
+/// The primitives are the window's promise that a shape lives in one place: a
+/// change to a button reaches every button, and no copy works around the shared
+/// shape by rebuilding the control underneath it. A copy may name a field (a part
+/// whose own table already decides one) but not the hit area that makes it a
+/// control, which is the half a theme can never reach.
+#[test]
+fn no_component_rebuilds_the_primitives_hit_area() {
+    let offenders: Vec<String> = components()
+        .iter()
+        .filter(|(file, _)| !file.ends_with("primitives.slint"))
+        .flat_map(|(file, text)| {
+            // A control is a TouchArea that names itself to a reader; a scroll
+            // thumb or the window's drag surface names nothing and is not one.
+            let mut inside = false;
+            let mut stack: Vec<usize> = Vec::new();
+            let mut found = Vec::new();
+            for (index, line) in text.lines().enumerate() {
+                let trimmed = line.trim_start();
+                let bare = !trimmed.starts_with("//");
+                if bare && trimmed.ends_with('{') {
+                    if trimmed.contains("TouchArea") {
+                        inside = true;
+                        stack.clear();
+                    } else if inside {
+                        stack.push(index);
+                    }
+                }
+                if inside && bare && trimmed.starts_with("accessible-role:") {
+                    found.push(format!("{file}:{}: control built outside the primitive", index + 1));
+                }
+                if inside && bare && trimmed == "}" {
+                    match stack.pop() {
+                        Some(_) => {}
+                        None => inside = false,
+                    }
+                }
+            }
+            found
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "a control's hit area belongs in ui/primitives.slint, and these draw their \
+         own:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
 /// A role a component names has to be something the theme global declares, or the
 /// name reaches nothing: a rename that half-landed, or a role added to the table
 /// and never wired. Slint refuses the reference too, but it says so in the middle

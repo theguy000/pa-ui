@@ -3,7 +3,7 @@
 
 import { IconCaret } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button } from "primitives.slint";
+import { Button, ButtonKind } from "primitives.slint";
 
 // One line of the context ledger: the label, then the value flush right in a
 // fixed slot so the whole column of numbers has one edge to line up on.
@@ -121,8 +121,7 @@ export component Chip inherits Button {
     border-width: 1px;
     // The resting state is what the old hover state was: a chip that only
     // appears under the pointer reads as decoration, not as a control.
-    fill: Theme.composer-chip-fill;
-    fill-hover: Theme.composer-chip-fill-hover;
+    kind: ButtonKind.chip;
     border-color: root.on ? Theme.composer-chip-edge-hover : Theme.composer-chip-edge;
     lit: root.open;
     fade: 0ms;

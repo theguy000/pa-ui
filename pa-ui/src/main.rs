@@ -418,7 +418,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     ui.on_titlebar_close(titlebar::close);
-    ui.on_titlebar_menu(titlebar::show_system_menu);
 
     let bar_timer = std::rc::Rc::new(slint::Timer::default());
     {

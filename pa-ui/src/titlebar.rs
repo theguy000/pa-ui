@@ -1,20 +1,15 @@
 //! The custom title bar's Windows side.
 //!
-//! The frame is not removed - it is made invisible. The window keeps
-//! `WS_CAPTION|WS_THICKFRAME`, so Windows still gives us the DWM shadow, rounded
-//! corners, Aero Snap, the resize loop and Snap Layouts. `WM_NCCALCSIZE` reports
-//! no non-client area, which is what leaves no caption to draw; `WM_NCHITTEST`
-//! then tells Windows which pixels are which:
+//! A frame that is not removed but made invisible: `WS_CAPTION|WS_THICKFRAME`
+//! still gives DWM its shadow, rounded corners, Aero Snap and Snap Layouts.
+//! `WM_NCCALCSIZE` reports no non-client area; `WM_NCHITTEST` then says which
+//! pixels are which - the top strip is HTCAPTION, the outer few are resize
+//! borders, maximise answers HTMAXBUTTON for Snap Layouts, and the other two
+//! caption buttons answer HTCLIENT so Slint draws and handles them.
 //!
-//! * the top strip is `HTCAPTION`, so dragging, double-click-to-maximise and
-//!   drag-to-edge snapping are all handled natively;
-//! * the outer few pixels are the resize borders;
-//! * the maximise button answers `HTMAXBUTTON`, which is what makes Windows 11
-//!   offer its Snap Layouts flyout on hover;
-//! * the other two buttons answer `HTCLIENT`, so Slint draws and handles them.
-//!
-//! The title bar itself is drawn in Slint (`TitleBar` in ui/app.slint) and has to
-//! agree with the numbers here: \`HEIGHT\` and \`BUTTON\`.
+//! The bar itself is drawn in Slint (`TitleBar` in ui/app.slint) and has to agree
+//! with the numbers here: `HEIGHT`, `BUTTON`, and the two collapse buttons the
+//! columns draw into the strip.
 
 /// Logical height of the bar, matching the Slint `TitleBar` component.
 pub const HEIGHT: i32 = 32;
@@ -22,17 +17,24 @@ pub const HEIGHT: i32 = 32;
 pub const BUTTON: i32 = 46;
 /// How many caption buttons sit at the right edge.
 const BUTTONS: i32 = 3;
-/// Logical geometry of the right column's fold mark, which is drawn in this strip
-/// and is a Slint button: measured from the window's right edge to its left side,
-/// and its width. These must agree with the TitleBar in `ui/app.slint` - a mark
-/// left inside HTCAPTION is a window drag, and its click never arrives.
-const FOLD_INSET: i32 = 172;
-const FOLD: i32 = 26;
+/// Logical geometry of the right column's collapse button, which is drawn in this
+/// strip and is a Slint button: measured from the window's right edge to its left
+/// side, and its width. These must agree with the TitleBar in `ui/app.slint` - a
+/// mark left inside HTCAPTION is a window drag, and its click never arrives.
+const COLLAPSE_INSET: i32 = 172;
+const COLLAPSE: i32 = 26;
 
-/// Width of the clickable icon block at the left of the bar. Without this the icon
-/// would fall inside HTCAPTION, Windows would treat the press as a window drag, and
-/// the click would never reach Slint to open the system menu.
-const ICON: i32 = 34;
+/// The sidebar when it is folded away: a strip of controls whose top mark is the
+/// way back open, so the whole strip is Slint's to answer.
+const STRIP: i32 = 48;
+
+/// Logical geometry of the sidebar's collapse button, drawn at the right of the
+/// column's header band and inside this strip: left edge and width, from the
+/// window's left. The column is 232 wide and its band is inset 8 either side, so
+/// the 30px button starts at `232 - 8 - 30`. These must agree with the column in
+/// `ui/app.slint` for the same reason the right column's do.
+const SIDEBAR_COLLAPSE_LEFT: i32 = 194;
+const SIDEBAR_COLLAPSE: i32 = 30;
 
 /// Attach to this process's main window. Returns false until the window exists.
 pub fn init() -> bool {
@@ -51,13 +53,6 @@ pub fn init() -> bool {
 pub fn close() {
     #[cfg(windows)]
     imp::close();
-}
-
-/// Open the window's own system menu under the caption icon, as the native
-/// caption does on left-click.
-pub fn show_system_menu() {
-    #[cfg(windows)]
-    imp::show_system_menu();
 }
 
 /// True while the pointer is over the maximise button. Windows owns that button
@@ -156,9 +151,6 @@ mod imp {
         fn IsZoomed(hwnd: isize) -> i32;
         fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
         fn GetCursorPos(point: *mut Point) -> i32;
-        fn GetSystemMenu(hwnd: isize, revert: i32) -> isize;
-        fn TrackPopupMenu(menu: isize, flags: u32, x: i32, y: i32, reserved: i32, hwnd: isize, rect: *const isize) -> i32;
-        fn SetForegroundWindow(hwnd: isize) -> i32;
         fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
         fn EnumWindows(callback: extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
         fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
@@ -232,40 +224,6 @@ mod imp {
         }
     }
 
-    /// The native caption's left-click behaviour: drop the window's system menu
-    /// under the icon. Windows owns that menu, so the entries and their state are
-    /// the real ones - Restore/Move/Size/Minimise/Maximise/Close, enablement and all.
-    pub(super) fn show_system_menu() {
-        const TPM_RIGHTBUTTON: u32 = 0x0002;
-        const TPM_RETURNCMD: u32 = 0x0100;
-        unsafe {
-            let hwnd = HWND.load(Ordering::SeqCst);
-            if hwnd == 0 {
-                return;
-            }
-            let menu = GetSystemMenu(hwnd, 0);
-            if menu == 0 {
-                return;
-            }
-            let mut window = Rect::default();
-            if GetWindowRect(hwnd, &mut window) == 0 {
-                return;
-            }
-            let caption = (super::HEIGHT as f64 * scale(hwnd)).round() as i32;
-            let x = window.left + 4;
-            let y = window.top + caption;
-
-            // A menu opened without the window foreground would not dismiss on the
-            // first click elsewhere, which is the classic stuck-menu bug.
-            SetForegroundWindow(hwnd);
-            let chosen = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, std::ptr::null());
-            PostMessageW(hwnd, 0 /* WM_NULL */, 0, 0);
-            if chosen != 0 {
-                PostMessageW(hwnd, WM_SYSCOMMAND, chosen as usize, 0);
-            }
-        }
-    }
-
     pub(super) fn close() {
         let hwnd = HWND.load(Ordering::SeqCst);
         if hwnd != 0 {
@@ -319,22 +277,23 @@ mod imp {
 
             let caption = inset_y + (super::HEIGHT as f64 * scale).round() as i32;
             if y >= inset_y && y < caption {
-                // Collapsed sidebar expand button (left 48px) and expanded sidebar
-                // collapse button (194..228px) live in the top strip and are Slint controls.
-                if x < inset_x + (48.0 * scale).round() as i32 {
+                // The folded strip's top mark and the sidebar's collapse button
+                // live in the top strip and are Slint controls.
+                if x < inset_x + (super::STRIP as f64 * scale).round() as i32 {
                     return HTCLIENT;
                 }
-                let sb_fold_left = inset_x + (194.0 * scale).round() as i32;
-                let sb_fold_right = inset_x + (228.0 * scale).round() as i32;
-                if x >= sb_fold_left && x < sb_fold_right {
+                let sb_left = inset_x + (super::SIDEBAR_COLLAPSE_LEFT as f64 * scale).round() as i32;
+                let sb_right = sb_left + (super::SIDEBAR_COLLAPSE as f64 * scale).round() as i32;
+                if x >= sb_left && x < sb_right {
                     return HTCLIENT;
                 }
-                // The right column's fold sits further along the same strip and is
-                // also Slint's to answer; without this carve-out the press is taken
-                // as a caption drag and the mark never fires.
-                let fold_w = (super::FOLD as f64 * scale).round() as i32;
-                let fold_left = width - inset_x - (super::FOLD_INSET as f64 * scale).round() as i32;
-                if x >= fold_left && x < fold_left + fold_w {
+                // The right column's collapse button sits further along the same
+                // strip and is also Slint's to answer; without this carve-out the
+                // press is taken as a caption drag and the mark never fires.
+                let button_w = (super::COLLAPSE as f64 * scale).round() as i32;
+                let collapse_left =
+                    width - inset_x - (super::COLLAPSE_INSET as f64 * scale).round() as i32;
+                if x >= collapse_left && x < collapse_left + button_w {
                     return HTCLIENT;
                 }
                 let button = (super::BUTTON as f64 * scale).round() as i32;

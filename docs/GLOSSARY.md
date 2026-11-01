@@ -73,16 +73,16 @@ _Avoid_: token, variable, colour constant
 ### The title bar
 
 **Title bar**:
-The strip along the top of the window: the right column's fold and the three caption buttons. The window draws it because the native caption cannot follow the theme, and it paints no field of its own — the window's background and the sidebar's header band run under it.
+The strip along the top of the window: the right column's collapse button and the three caption buttons. The window draws it because the native caption cannot follow the theme, and it paints no field of its own — the window's background and the sidebar's header band run under it.
 _Avoid_: chrome, header, titlebar, caption (a caption is the text a bar carries)
 
 **Caption button**:
 One of the minimise, maximise and close controls at the title bar's right edge. Windows owns the maximise click for Snap Layouts and draws none of the three; the window does, so a theme reaches them.
 _Avoid_: window control, chrome button
 
-**Fold**:
-The control that collapses a column to its strip of controls and back: the sidebar's, at the right of its header, and the right column's, in the title bar.
-_Avoid_: collapse button, toggle, panel button
+**Collapse button**:
+The control that collapses a column to its strip of controls and back: the sidebar's, at the right of its header, and the right column's, in the title bar. A column has one; the standalone control beside it is the way back open.
+_Avoid_: fold, toggle, panel button, expand button
 
 ### Paging
 

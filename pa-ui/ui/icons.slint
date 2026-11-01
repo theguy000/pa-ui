@@ -1,21 +1,17 @@
-// Every glyph the window draws, in the order the window reads: chrome, sidebar,
-// transcript, composer, menus. Each is a Path over a 24- or 12-unit viewbox, sized
-// in px here, so a call site sets a tint and a position and nothing else.
+// Every glyph the window draws, each a Path sized in px so a call site sets a
+// tint and a position and nothing else. Outlines stroke `tint`; solids fill it.
 //
-// Outlines stroke `tint` and fill nothing; solids fill `tint` and stroke nothing.
-// The tint defaults to a role rather than a value, and it is the role of the part
-// the glyph rests in, so a glyph drawn into a themed window follows that theme
-// without its call site saying anything. A call site overrides it only where the
-// glyph is drawn in another state or another part.
+// A glyph drawn in one part defaults to that part's role. One drawn in two has no
+// default and each caller names its own: no single role is right for both.
 //
+// Geometry and theme notes live in pa-ui/design/README.md.
 // Material Symbols (filled) is Apache-2.0; Lucide is ISC.
 
 import { Theme } from "theme.slint";
 
 // window chrome
 
-// The minimise, maximise and close marks. A base, not a glyph: the three call
-// sites supply their own `commands` on a 10x10 viewbox.
+// A base, not a glyph: call sites supply their own `commands`.
 export component CaptionGlyph inherits Path {
     in property <color> tint: Theme.title-bar-glyph;
     width: 10px;
@@ -27,17 +23,14 @@ export component CaptionGlyph inherits Path {
     fill: transparent;
 }
 
-// A frame, its folded edge, and - once the pointer is on it - the direction the
-// column will travel. Resting it is only a frame, so the hover is what tells you
-// what the click is going to do. Two columns draw it: the right one from the
-// title bar, which tints it from the title bar's roles, and the sidebar from its
-// own header, which is why the default is the sidebar's resting mark.
+// A frame and its folded edge; under the pointer it adds the direction the column
+// will travel. No default tint: the title bar and the sidebar both draw it.
 export component PanelIcon inherits Path {
     // the folded edge sits on the right for the right-hand column
     in property <bool> folded-edge-right: false;
     in property <bool> arrow: false;
     in property <bool> point-left: false;
-    in property <color> tint: Theme.sidebar-fold-glyph;
+    in property <color> tint;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -58,16 +51,8 @@ export component PanelIcon inherits Path {
 
 // sidebar
 
-// The Prime Agent mark (from design/logo-designer.html: stemExt = 0.100 (+10.0%), weight = 0.152),
-// drawn bare without its dark tile on a tight 74x74 viewbox around the glyph bounds
-// (x: 28..73, y: 16.5..89.5), with the source-atop shadows pre-clipped to the stem and wing.
-//
-// Its six tones are the theme's, not the artwork's: every one of them is a brand
-// role, and five of those are the brand tone mixed towards the field the mark is
-// cut from, so a theme that turns the window over turns the mark over with it and
-// the shadows keep their distance from the shapes they darken. The mixes live on
-// the roles in src/theme/table.rs, and the tones they come to in that table's
-// tests.
+// The Prime Agent mark, ported from design/logo-designer.html. Its six tones are
+// brand roles, so a theme turns the mark over with the window.
 export component PrimeAgentMark inherits Rectangle {
     width: 18px;
     height: 18px;
@@ -153,10 +138,7 @@ export component PrimeAgentMark inherits Rectangle {
 }
 
 
-// The new-session mark: a ring left open at its top right, with the pen that
-// opened it still crossing the gap. Both shapes are stroked outlines, so they
-// share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
-// that drawing's rounded rect carried through its own -45 degree turn.
+// The search ring and pen that open a session.
 export component IconNewChat inherits Path {
     in property <color> tint: Theme.sidebar-new-session-mark;
     width: 18px;
@@ -175,10 +157,8 @@ export component IconNewChat inherits Path {
         + "L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z";
 }
 
-// The magnifier: a lens that fills most of its box and a handle cut short, so
-// the pair still reads at 16px. Its tint stays the quiet one the column draws it
-// in: the mark is drawn and inert until search exists, and a control that cannot
-// be clicked should not look like one.
+// The quiet tint is deliberate: the mark is inert until search exists, and a
+// control that cannot be clicked should not look like one.
 export component IconSearch inherits Path {
     in property <color> tint: Theme.sidebar-search-mark;
     width: 16px;
@@ -211,7 +191,7 @@ export component IconPencil inherits Path {
 
 // A solid pencil: the edit action on a waiting row.
 export component IconEdit inherits Path {
-    in property <color> tint: Theme.queue-row-control-mark;
+    in property <color> tint;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -223,7 +203,7 @@ export component IconEdit inherits Path {
 
 // A bin with its lid left on: delete, without the promise of permanence.
 export component IconTrash inherits Path {
-    in property <color> tint: Theme.queue-row-control-mark;
+    in property <color> tint;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -235,12 +215,11 @@ export component IconTrash inherits Path {
 
 // transcript
 
-// The caret that says a row opens and closes, in a thinking row's header and in
-// a cell's. The model menu and the composer's chip draw the same shape, and both
-// tint it from their own part.
+// Opens and closes a row. No default tint: the transcript and the composer both
+// draw it.
 export component IconCaret inherits Path {
     in property <bool> up;
-    in property <color> tint: Theme.transcript-caret-mark;
+    in property <color> tint;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -253,7 +232,7 @@ export component IconCaret inherits Path {
 
 // The arrow that pulls a waiting follow-up message into the turn already running.
 export component IconToTop inherits Path {
-    in property <color> tint: Theme.queue-row-promote-mark;
+    in property <color> tint;
     width: 16px;
     height: 16px;
     viewbox-width: 14;

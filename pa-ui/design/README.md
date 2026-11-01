@@ -45,5 +45,38 @@ Slint `Path` elements for `PrimeAgentMark`, keep four invariants in mind:
    (`M 28 16.5 L 28 89.5 …`, not `M 28 16.5 L 43.2 27.14 …`) and the same coordinates
    render solid.
 
-The rule: **`assets/` is build input, `design/` is authoring source.** A new file
+## Why the components look the way they do
+
+Reasoning that does not fit in a one-line comment in the source lives here.
+
+**The mark's tones.** `PrimeAgentMark`'s six fills are brand roles, not artwork
+values. `brand-mark-blade` is the brand tone itself; the other five are that tone
+mixed toward the window's background at fixed ratios, so a theme that turns the
+window over turns the mark over with it and the shadows keep their distance from
+the shapes they darken. The ratios live on the roles in `src/theme/table.rs` and
+the tones they resolve to are asserted in that table's tests.
+
+**The marquee's travel.** `MarqueeText` measures with a probe `Text` drawn in the
+string's own font. The sidebar used to compute the shift in Rust — 6.6px a
+character against 178px of sidebar — which is a guess about a font and can only
+be right at one size. The component owns *how* the text travels; the caller owns
+*when*: the sidebar sets `active` on row hover and holds the tail, because
+letting go of the row should send the name home, while a failed cell's reason
+loops, because a popup has nowhere else to send the reader.
+
+**The send/stop morph.** The two marks are both always present and cross over:
+the arrow shrinks and turns, the square grows out of the middle and turns the
+other way. Slint cannot interpolate one path into another, so the motion is
+scale, rotation and opacity on one clock. The two fields are named rather than
+taken from a `ButtonKind` because the same control changes job while it is on
+screen.
+
+**The follow latch.** Once the reader scrolls up, following stays off through any
+number of layout passes. Only three gestures re-arm it: the jump control, sending,
+or scrolling down onto the floor. A measurement must never re-arm it — content
+growing at the bottom rewrites the offset, and for one frame the distance to the
+floor reads as zero. `scrolled` distinguishes the two, because it fires only for a
+user drag or wheel.
+
+## The rule: **`assets/` is build input, `design/` is authoring source.** A new file
 belongs in `design/` unless `build.rs` or the app reads it at build time.
