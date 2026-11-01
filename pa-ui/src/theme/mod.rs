@@ -8,12 +8,16 @@
 
 mod contrast;
 mod file;
+#[cfg(test)]
+mod sources;
 mod table;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use contrast::*;
 pub(crate) use file::*;
+#[cfg(test)]
+pub(crate) use sources::*;
 pub(crate) use table::*;
 
 use crate::{AppWindow, Theme};
@@ -61,6 +65,7 @@ pub(crate) fn apply(ui: &AppWindow, theme: &Resolved) {
 /// compile, so the table cannot grow a colour the global has never heard of.
 fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
     match role {
+        Role::WindowSurface => global.set_window_surface(value),
         Role::TitleBarGlyph => global.set_title_bar_glyph(value),
         Role::TitleBarCaptionFillHover => global.set_title_bar_caption_fill_hover(value),
         Role::TitleBarCloseFillHover => global.set_title_bar_close_fill_hover(value),
@@ -88,6 +93,7 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
             global.set_sidebar_strip_new_session_mark_hover(value)
         }
         Role::SidebarSearchMark => global.set_sidebar_search_mark(value),
+        Role::SidebarWordmarkInk => global.set_sidebar_wordmark_ink(value),
         Role::SidebarRowRenameMark => global.set_sidebar_row_rename_mark(value),
         Role::SidebarRowRenameFill => global.set_sidebar_row_rename_fill(value),
         Role::SidebarRowRenameFillHover => global.set_sidebar_row_rename_fill_hover(value),

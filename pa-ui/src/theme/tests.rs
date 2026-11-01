@@ -51,6 +51,9 @@ fn the_shipped_theme_draws_todays_sidebar() {
     let theme = Resolved::shipped();
 
     assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#111111"));
+    // The product's name above the rows, and the window the column is drawn on.
+    assert_eq!(theme.get(Role::SidebarWordmarkInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#111111"));
     // A row at rest draws no fill of its own: the column runs through it.
     assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
     assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#181818"));
@@ -726,6 +729,7 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-strip-new-session-mark": "#303030",
                "sidebar-strip-new-session-mark-hover": "#101010",
                "sidebar-search-mark": "#4a4a4a",
+               "sidebar-wordmark-ink": "#101010",
                "sidebar-row-rename-mark": "#5a5a5a",
                "sidebar-row-rename-fill": "#3a3a3a",
                "sidebar-row-rename-fill-hover": "#4a4a4a",
@@ -1447,19 +1451,271 @@ fn a_command_line_with_no_check_in_it_opens_the_window() {
     assert!(check_cli(std::iter::empty()).is_none());
 }
 
+/// The theme global's own source, read when the crate is compiled: a role added
+/// to it cannot be compared against a copy of it that has since moved on.
+const THEME_SOURCE: &str = include_str!("../../ui/theme.slint");
+
 /// The one seam code generation cannot close: the global's properties and the
 /// role table are written twice, so a test holds them to the same set. A role
-/// added to one and not the other fails here rather than in the window.
+/// added to the table and not to the global fails here, and so does a property
+/// added to the global and not to the table, each named on its own side. A role
+/// with no setter behind it never reaches this test: `set` matches every variant,
+/// so a role cannot compile without one.
 #[test]
 fn the_theme_global_declares_exactly_the_roles_the_table_holds() {
-    let mut declared: Vec<&str> = include_str!("../../ui/theme.slint")
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("in-out property <color> "))
-        .map(|name| name.trim_end_matches(';'))
-        .collect();
-    let mut table: Vec<&str> = Role::ALL.iter().map(|role| role.name()).collect();
-    declared.sort_unstable();
-    table.sort_unstable();
+    let declared = declared_roles(THEME_SOURCE);
+    let table: Vec<&str> = Role::ALL.iter().map(|role| role.name()).collect();
+    // Read in both directions rather than as one sorted pair, so the failure is
+    // the two names at fault and not the hundred and eighty that agree.
+    let unheld: Vec<&str> =
+        declared.iter().copied().filter(|name| !table.contains(name)).collect();
+    let undeclared: Vec<&str> =
+        table.iter().copied().filter(|name| !declared.contains(name)).collect();
 
-    assert_eq!(declared, table);
+    assert!(
+        unheld.is_empty() && undeclared.is_empty(),
+        "the theme global and the role table name different roles:\n  \
+         ui/theme.slint declares, and the table does not hold: {unheld:?}\n  \
+         src/theme/table.rs holds, and the global does not declare: {undeclared:?}"
+    );
+}
+
+/// The window's components as the files they are: the directory rather than a
+/// list, so a component someone adds tomorrow is held to the rules below without
+/// anyone remembering to add it here, and in the order a reader would open them.
+///
+/// Each file is named the way a failure should name it — `ui/app.slint` — so a
+/// report is a path a reader can paste into an editor.
+fn components() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|err| panic!("{}: {err}", dir.display()))
+        .map(|entry| entry.expect("an entry in the window's sources").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "slint"))
+        .collect();
+    paths.sort();
+    paths.into_iter().map(|path| read("ui", &path)).collect()
+}
+
+/// The window's own Rust, as text, under the same rule — but not the theme's
+/// directory, which is where a value belongs, and not a `tests.rs`, which is a
+/// source that asserts on the colours the window draws rather than one that
+/// draws them.
+fn rust_sources() -> Vec<(String, String)> {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources = Vec::new();
+    walk(&src, "src", &mut sources);
+    sources.sort();
+    sources
+}
+
+/// Collect every Rust source under `dir`, named by its path inside the crate.
+fn walk(dir: &std::path::Path, named: &str, into: &mut Vec<(String, String)>) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("an entry in the window's sources").path();
+        let name = path.file_name().expect("a named source").to_string_lossy().into_owned();
+        if path.is_dir() {
+            // The theme's own directory is the one place a value is written.
+            if name != "theme" {
+                walk(&path, &format!("{named}/{name}"), into);
+            }
+        } else if name.ends_with(".rs") && name != "tests.rs" {
+            into.push(read(named, &path));
+        }
+    }
+}
+
+/// One source file, of the kinds the build already knows: components and the
+/// Rust sources, never the generated or downloaded trees.
+fn read(named: &str, path: &std::path::Path) -> (String, String) {
+    let name = path.file_name().expect("a named source").to_string_lossy();
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    (format!("{named}/{name}"), text)
+}
+
+/// A failing check as a reader wants it: the sentence saying what is wrong, and
+/// then one line for every place it is wrong in.
+fn places(found: &[Break]) -> String {
+    found.iter().map(Break::describe).collect::<Vec<_>>().join("\n  ")
+}
+
+/// A colour value written into a component is a colour no theme can reach, so the
+/// role table is the only place one may be written. Nothing else stands in the way
+/// of one: a hex is a perfectly good Slint value, and the screenshot that finds it
+/// is a month away.
+#[test]
+fn no_component_writes_a_colour_value() {
+    let written: Vec<Break> = components()
+        .iter()
+        .flat_map(|(file, text)| colour_values(file, text))
+        .collect();
+
+    assert!(
+        written.is_empty(),
+        "a colour value belongs in src/theme/table.rs, and these are written into the \
+         window's components instead:\n  {}",
+        places(&written)
+    );
+}
+
+/// The same rule where the window draws for itself: the transcript's markup and
+/// the composer's canvas are Rust, and both used to keep their colours as
+/// constants of their own.
+#[test]
+fn no_rust_source_writes_a_colour_value() {
+    let written: Vec<Break> = rust_sources()
+        .iter()
+        .flat_map(|(file, text)| rust_values(file, text))
+        .collect();
+
+    assert!(
+        written.is_empty(),
+        "a colour value belongs in src/theme/table.rs, and these are written into the \
+         window's own Rust instead:\n  {}",
+        places(&written)
+    );
+}
+
+/// A role a component names has to be something the theme global declares, or the
+/// name reaches nothing: a rename that half-landed, or a role added to the table
+/// and never wired. Slint refuses the reference too, but it says so in the middle
+/// of a type check; this says which component asked and for what.
+#[test]
+fn no_component_names_a_role_the_theme_global_does_not_declare() {
+    let declared: Vec<&str> = declared_roles(THEME_SOURCE);
+    let unnamed: Vec<Break> = components()
+        .iter()
+        .flat_map(|(file, text)| undeclared_roles(file, text, &declared))
+        .collect();
+
+    assert!(
+        unnamed.is_empty(),
+        "these components ask for a role the theme global does not declare:\n  {}",
+        places(&unnamed)
+    );
+}
+
+/// A value pasted into a component, as the check finds it: the file it is in, the
+/// line to open, and the value as it was written.
+#[test]
+fn a_pasted_value_is_found_where_it_is() {
+    let source = "Rectangle {\n    background: transparent;\n    border-color: #2b2b2b;\n}\n";
+
+    assert_eq!(
+        colour_values("ui/fake.slint", source),
+        [Break {
+            file: "ui/fake.slint".to_string(),
+            line: 3,
+            written: "#2b2b2b".to_string(),
+        }]
+    );
+    assert_eq!(
+        colour_values("ui/fake.slint", source)[0].describe(),
+        "ui/fake.slint:3: #2b2b2b"
+    );
+}
+
+/// Every spelling of a value is a value: a short hex, a hex carrying its alpha,
+/// the functions that build one from numbers, and a colour spelled as a word.
+#[test]
+fn every_way_a_value_can_be_written_is_found() {
+    let source = "a: #fff;\nb: #00000080;\nc: rgb(1, 2, 3);\nd: rgba(1, 2, 3, 0.5);\n\
+                  e: hsv(1, 2, 0.5);\nf: white;\n";
+
+    let written: Vec<String> =
+        colour_values("ui/fake.slint", source).into_iter().map(|broke| broke.written).collect();
+    assert_eq!(written, ["#fff", "#00000080", "rgb", "rgba", "hsv", "white"]);
+}
+
+/// A word about a colour is not a colour. The table's own comments are full of
+/// values, and a component's rationale names them too.
+#[test]
+fn a_comment_about_a_colour_is_not_a_colour() {
+    let source = "// the chip was #2b2b2b and went white, then gold\nbackground: transparent;\n";
+
+    assert!(colour_values("ui/fake.slint", source).is_empty());
+    assert!(rust_values("src/fake.rs", "// the fill was \"#2b2b2b\"\\n").is_empty());
+}
+
+/// Nor is a label that happens to say one, and what follows that label on the
+/// same line is still read.
+#[test]
+fn a_colour_named_in_a_label_is_not_a_colour() {
+    assert!(colour_values("ui/fake.slint", "text: \"#fff on white\";\n").is_empty());
+    assert_eq!(
+        colour_values("ui/fake.slint", "text: \"x\"; color: #fff;\n")[0].written,
+        "#fff"
+    );
+}
+
+/// A name is not a value: `transparent` draws no field for a theme to move, and
+/// another component's property is a name the caller chose.
+#[test]
+fn a_name_is_not_a_value() {
+    let source = "in property <color> warm-gold-ink: root.tint;\n\
+                  fill: root.text-color;\nbackground: transparent;\n";
+
+    assert!(colour_values("ui/fake.slint", source).is_empty());
+}
+
+/// A hex in the window's own Rust is found through the label that carries it —
+/// and a colour built from channels by hand is what this scan cannot see, which
+/// is why the table's `Rgba` is the only reader of one.
+#[test]
+fn a_rust_value_is_found_and_a_channel_built_one_is_not() {
+    let source = "// the hover fill was \"#2b2b2b\" before the theme\n\
+                  let ink = Color::from_rgb_u8(0x11, 0x11, 0x11);\n\
+                  let fill = \"#1d1d1d\";\n";
+
+    assert_eq!(
+        rust_values("src/fake.rs", source),
+        [Break {
+            file: "src/fake.rs".to_string(),
+            line: 3,
+            written: "#1d1d1d".to_string(),
+        }]
+    );
+}
+
+/// A role name the global does not carry, with the place a reader has to open —
+/// and a name that only appears in a comment is not asked for at all.
+#[test]
+fn an_undeclared_role_is_named_with_its_place() {
+    let source = "Rectangle {\n    background: Theme.sidebar-row-fill;\n    \
+                  border-color: Theme.sidebar-row-filed;\n}\n";
+    let declared = ["sidebar-row-fill"];
+
+    assert_eq!(
+        undeclared_roles("ui/fake.slint", source, &declared),
+        [Break {
+            file: "ui/fake.slint".to_string(),
+            line: 3,
+            written: "Theme.sidebar-row-filed".to_string(),
+        }]
+    );
+    assert!(undeclared_roles(
+        "ui/fake.slint",
+        "// used to be Theme.old-name\nbackground: Theme.sidebar-row-fill;\n",
+        &declared
+    )
+    .is_empty());
+}
+
+/// The global is read as declarations and nothing else: a comment after one does
+/// not become part of the name, another qualifier declares a role just the same,
+/// and a line that is not a colour property is not a role.
+#[test]
+fn a_declaration_is_read_past_its_comment_and_its_qualifier() {
+    let source = "export global Theme {\n\
+                  \x20   // the caption\n\
+                  \x20   in-out property <color> a-b; // the note after it\n\
+                  \x20   in property <color> c-d;\n\
+                  \x20   in-out property <color> e-f: red;\n\
+                  \x20   in-out property <length> a-length;\n\
+                  }\n";
+
+    assert_eq!(declared_roles(source), ["a-b", "c-d", "e-f"]);
 }

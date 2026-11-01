@@ -14,7 +14,8 @@
 // change.
 
 export global Theme {
-    // the caption
+    // the window's own field, under everything, and then the caption
+    in-out property <color> window-surface;
     in-out property <color> title-bar-glyph;
     in-out property <color> title-bar-caption-fill-hover;
     in-out property <color> title-bar-close-fill-hover;
@@ -47,6 +48,8 @@ export global Theme {
     in-out property <color> sidebar-strip-new-session-mark;
     in-out property <color> sidebar-strip-new-session-mark-hover;
     in-out property <color> sidebar-search-mark;
+    // the product's name beside the brand mark, above the rows
+    in-out property <color> sidebar-wordmark-ink;
     in-out property <color> sidebar-row-rename-mark;
     // the column's two fields of its own: the chip the rename pencil sits on at
     // rest, and the pill the window shows while the column is folded, with the
