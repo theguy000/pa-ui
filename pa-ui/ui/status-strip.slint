@@ -3,6 +3,9 @@
 // The corner of the strip is the one that grows, so while a turn runs you see two
 // rounded tops - a small one above the input's.
 
+import { Theme } from "theme.slint";
+import { Button } from "primitives.slint";
+
 export component BusyStrip inherits Rectangle {
     in property <length> strip-x;
     in property <length> box-y;
@@ -44,7 +47,7 @@ export component BusyStrip inherits Rectangle {
         y: 0;
         width: parent.width;
         height: parent.height + 24px;
-        background: #2c2f26;
+        background: Theme.status-strip-edge;
         border-radius: 12px;
     }
     Rectangle {
@@ -52,7 +55,7 @@ export component BusyStrip inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: parent.height + 24px;
-        background: #191a14;
+        background: Theme.status-strip-surface;
         border-radius: 11px;
     }
     }
@@ -68,7 +71,7 @@ export component BusyStrip inherits Rectangle {
                         x: 14px;
                         visible: root.strip-h > 1px;
                         text: root.spinner;
-                        color: #c9a86a;
+                        color: Theme.status-strip-working-ink;
                         font-family: "Cascadia Code";
                         font-size: 19px;
                         height: parent.height;
@@ -79,7 +82,7 @@ export component BusyStrip inherits Rectangle {
                         x: spin.x + spin.width + 4px;
                         visible: root.strip-h > 1px;
                         text: root.label;
-                        color: #c9a86a;
+                        color: Theme.status-strip-working-ink;
                         font-family: "Cascadia Code";
                         font-size: 11px;
                         height: parent.height;
@@ -90,7 +93,7 @@ export component BusyStrip inherits Rectangle {
                         x: lbl.x + lbl.width + 8px;
                         visible: root.strip-h > 1px;
                         text: root.elapsed;
-                        color: #565a4f;
+                        color: Theme.status-strip-elapsed-ink;
                         font-family: "Cascadia Code";
                         font-size: 11px;
                         height: parent.height;
@@ -101,14 +104,21 @@ export component BusyStrip inherits Rectangle {
                     // named the way the panel names them, right-aligned
                     // against the strip's padding so it balances the
                     // spinner on the left. The pill only appears under
-                    // the pointer - at rest it is part of the strip.
-                    if root.queued > 0 : Rectangle {
+                    // the pointer - at rest it is part of the strip, and
+                    // it stays lit while the card it opens is open.
+                    if root.queued > 0 : lane := Button {
                         x: parent.width - self.width - 14px;
                         y: (parent.height - self.height) / 2;
                         width: lane-row.preferred-width + 16px;
                         height: 18px;
                         border-radius: 6px;
-                        background: lane-touch.has-hover || root.queue-open ? #1f211a : transparent;
+                        fill: Theme.status-strip-queue-fill;
+                        fill-hover: Theme.status-strip-queue-fill-hover;
+                        lit: root.queue-open;
+                        described: "Show the waiting messages";
+                        clicked => {
+                            root.queue-open = !root.queue-open;
+                        }
 
                         lane-row := HorizontalLayout {
                             // full width with centred alignment: the
@@ -123,22 +133,19 @@ export component BusyStrip inherits Rectangle {
                             alignment: center;
                             Text {
                                 text: root.queued;
-                                color: lane-touch.has-hover ? #e7e5df : #b0b1a8;
+                                color: lane.hot
+                                    ? Theme.status-strip-queue-count-ink-hover
+                                    : Theme.status-strip-queue-count-ink;
                                 font-size: 10px;
                                 vertical-alignment: center;
                             }
                             Text {
                                 text: "queued";
-                                color: lane-touch.has-hover ? #b0b1a8 : #6b6e63;
+                                color: lane.hot
+                                    ? Theme.status-strip-queue-label-ink-hover
+                                    : Theme.status-strip-queue-label-ink;
                                 font-size: 10px;
                                 vertical-alignment: center;
-                            }
-                        }
-
-                        lane-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.queue-open = !root.queue-open;
                             }
                         }
                     }

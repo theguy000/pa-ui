@@ -1,16 +1,19 @@
-// Every glyph the window draws, in the order the window reads: chrome, sidebar,
-// transcript, composer, menus. Each is a Path over a 24- or 12-unit viewbox, sized
-// in px here, so a call site sets a tint and a position and nothing else.
+// Every glyph the window draws, each a Path sized in px so a call site sets a
+// tint and a position and nothing else. Outlines stroke `tint`; solids fill it.
 //
-// Outlines stroke `tint` and fill nothing; solids fill `tint` and stroke nothing.
+// A glyph drawn in one part defaults to that part's role. One drawn in two has no
+// default and each caller names its own: no single role is right for both.
+//
+// Geometry and theme notes live in pa-ui/design/README.md.
 // Material Symbols (filled) is Apache-2.0; Lucide is ISC.
+
+import { Theme } from "theme.slint";
 
 // window chrome
 
-// The minimise, maximise and close marks. A base, not a glyph: the three call
-// sites supply their own `commands` on a 10x10 viewbox.
+// A base, not a glyph: call sites supply their own `commands`.
 export component CaptionGlyph inherits Path {
-    in property <color> tint: #d7d7d1;
+    in property <color> tint: Theme.title-bar-glyph;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -20,15 +23,14 @@ export component CaptionGlyph inherits Path {
     fill: transparent;
 }
 
-// A frame, its folded edge, and - once the pointer is on it - the direction the
-// column will travel. Resting it is only a frame, so the hover is what tells you
-// what the click is going to do.
+// A frame and its folded edge; under the pointer it adds the direction the column
+// will travel. No default tint: the title bar and the sidebar both draw it.
 export component PanelIcon inherits Path {
     // the folded edge sits on the right for the right-hand column
     in property <bool> folded-edge-right: false;
     in property <bool> arrow: false;
     in property <bool> point-left: false;
-    in property <color> tint: #b0b1a8;
+    in property <color> tint;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -49,12 +51,96 @@ export component PanelIcon inherits Path {
 
 // sidebar
 
-// The new-session mark: a ring left open at its top right, with the pen that
-// opened it still crossing the gap. Both shapes are stroked outlines, so they
-// share one Path: the viewbox is the 24 the mark was drawn on, and the pen is
-// that drawing's rounded rect carried through its own -45 degree turn.
+// The Prime Agent mark, ported from design/logo-designer.html. Its six tones are
+// brand roles, so a theme turns the mark over with the window.
+export component PrimeAgentMark inherits Rectangle {
+    width: 18px;
+    height: 18px;
+    background: transparent;
+
+    // Lower parallel wing, with wingVy = th / cos(angLow) = 18.31
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-wing;
+        stroke: transparent;
+        commands: "M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z";
+    }
+
+    // Wing's inner stem-shadow, clipped to x = 43.2..45.4
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-wing-inner-shadow;
+        stroke: transparent;
+        commands: "M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z";
+    }
+
+    // Top-blade shadow clipped to lower wing
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-wing-shadow;
+        stroke: transparent;
+        commands: "M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z";
+    }
+
+    // Extended vertical P-stem
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-stem;
+        stroke: transparent;
+        commands: "M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z";
+    }
+
+    // Top-blade shadow clipped to P-stem
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-stem-shadow;
+        stroke: transparent;
+        commands: "M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z";
+    }
+
+    // Top blade
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 13.5;
+        viewbox-y: 16.0;
+        viewbox-width: 74;
+        viewbox-height: 74;
+        fill: Theme.brand-mark-blade;
+        stroke: transparent;
+        commands: "M 28 16.5 L 28 33.22 L 73 41.5 L 50 16.5 Z";
+    }
+}
+
+
+// The search ring and pen that open a session.
 export component IconNewChat inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint: Theme.sidebar-new-session-mark;
     width: 18px;
     height: 18px;
     viewbox-width: 24;
@@ -71,12 +157,10 @@ export component IconNewChat inherits Path {
         + "L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z";
 }
 
-// The magnifier: a lens that fills most of its box and a handle cut short, so
-// the pair still reads at 16px. Its tint stays the dim one both columns already
-// use for search: the mark is drawn and inert until search exists, and a control
-// that cannot be clicked should not look like one.
+// The quiet tint is deliberate: the mark is inert until search exists, and a
+// control that cannot be clicked should not look like one.
 export component IconSearch inherits Path {
-    in property <color> tint: #8b8c85;
+    in property <color> tint: Theme.sidebar-search-mark;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -92,9 +176,9 @@ export component IconSearch inherits Path {
         + "M 16.3 16.3 L 20.2 20.2";
 }
 
-// The pencil that names a session's rename, and the one a queued row offers.
+// The pencil that names a session's rename, offered by its row.
 export component IconPencil inherits Path {
-    in property <color> tint: #8b8c85;
+    in property <color> tint: Theme.sidebar-row-rename-mark;
     width: 11px;
     height: 11px;
     viewbox-width: 12;
@@ -105,9 +189,9 @@ export component IconPencil inherits Path {
     fill: transparent;
 }
 
-// A solid pencil: the rename action on a session row.
+// A solid pencil: the edit action on a waiting row.
 export component IconEdit inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -119,7 +203,7 @@ export component IconEdit inherits Path {
 
 // A bin with its lid left on: delete, without the promise of permanence.
 export component IconTrash inherits Path {
-    in property <color> tint: #b0b1a8;
+    in property <color> tint;
     width: 13px;
     height: 13px;
     viewbox-width: 24;
@@ -131,9 +215,11 @@ export component IconTrash inherits Path {
 
 // transcript
 
+// Opens and closes a row. No default tint: the transcript and the composer both
+// draw it.
 export component IconCaret inherits Path {
     in property <bool> up;
-    in property <color> tint: #7a7c72;
+    in property <color> tint;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -144,10 +230,9 @@ export component IconCaret inherits Path {
     fill: transparent;
 }
 
-// The jump-back-to-newest mark that rides above the composer while the reader is
-// scrolled away from the floor.
+// The arrow that pulls a waiting follow-up message into the turn already running.
 export component IconToTop inherits Path {
-    in property <color> tint: #a18e41;
+    in property <color> tint;
     width: 16px;
     height: 16px;
     viewbox-width: 14;
@@ -158,8 +243,9 @@ export component IconToTop inherits Path {
     fill: transparent;
 }
 
+// The alert inside the badge a failed cell carries.
 export component IconAlert inherits Path {
-    in property <color> tint: #f3ded8;
+    in property <color> tint: Theme.transcript-cell-badge-mark;
     width: 16px;
     height: 16px;
     viewbox-width: 14;
@@ -173,7 +259,7 @@ export component IconAlert inherits Path {
 // composer
 
 export component IconSend inherits Path {
-    in property <color> tint: #12130f;
+    in property <color> tint: Theme.composer-send-mark;
     width: 12px;
     height: 12px;
     viewbox-width: 12;
@@ -186,7 +272,7 @@ export component IconSend inherits Path {
 
 // The attach control: two 8px arms, centred on its box, with rounded ends.
 export component IconPlus inherits Path {
-    in property <color> tint: #8a8d82;
+    in property <color> tint: Theme.composer-attach-ink;
     width: 12px;
     height: 12px;
     viewbox-width: 12;
@@ -200,9 +286,10 @@ export component IconPlus inherits Path {
 
 // menus
 
-// The "this is the one running" tick, beside the current model or level.
+// The "this is the one running" tick, beside the current model or level. The
+// ladder is a panel of its own and tints it from its own role.
 export component IconCheck inherits Path {
-    in property <color> tint: #a18e41;
+    in property <color> tint: Theme.model-menu-check-mark;
     width: 11px;
     height: 11px;
     viewbox-width: 12;
@@ -213,8 +300,9 @@ export component IconCheck inherits Path {
     fill: transparent;
 }
 
+// The chevron on the chip that walks the reader back to the newest row.
 export component IconChevronDown inherits Path {
-    in property <color> tint: #b6b2a4;
+    in property <color> tint: Theme.transcript-jump-mark;
     width: 10px;
     height: 10px;
     viewbox-width: 10;

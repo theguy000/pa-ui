@@ -1,7 +1,7 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
-import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon } from "icons.slint";
+import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
 import { EffortItem, ModelGroup, QueueItem, SessionItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionRow } from "sidebar.slint";
@@ -9,6 +9,12 @@ import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SlashMenu } from "menus.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
+import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
+// The theme global lives in its own source, next to nothing else. It is
+// re-exported here because the window's Rust side reaches it through this
+// file: only a global the compiled file exports becomes a global in Rust.
+import { Theme } from "theme.slint";
+export { Theme }
 
 export component AppWindow inherits Window {
     // the failure reason of a cell, drawn here so no row can paint over it
@@ -21,7 +27,6 @@ export component AppWindow inherits Window {
     // the custom title bar, driven from src/titlebar.rs
     callback titlebar-minimize();
     callback titlebar-close();
-    callback titlebar-menu();
     in-out property <bool> titlebar-maximized: false;
     in-out property <bool> titlebar-max-hover: false;
 
@@ -74,7 +79,7 @@ export component AppWindow inherits Window {
     min-height: 560px;
     preferred-width: 1180px;
     preferred-height: 820px;
-    background: #12130f;
+    background: Theme.window-surface;
     default-font-family: "Segoe UI";
 
     in property <[SessionItem]> sessions;
@@ -173,19 +178,13 @@ export component AppWindow inherits Window {
     // 13px text is ~17px per line: 4 lines by default, 10 at most
     out property <length> composer-min: 68px;
     out property <length> composer-max: 170px;
-    // the band is exactly the box plus the 12px pad under it; the queue line
-    // and the jump control live elsewhere, so nothing else needs reserving
-    // queued chip sits above the box, so the transcript has to stop short of it
-    // the popup is drawn at the window root (a child at negative y paints but
-    // cannot be hit), so it anchors off the composer box, which never moves
-    // The band reserves 34px above the box for the chip, and - while a turn is
-    // running - the busy row plus another 34px above it, so the gap that keeps
-    // the transcript off the input sits above the status line instead of below.
-    // The status strip grows open and shuts fast. Everything that has to move
-    // with it reads this one length: the strip's height, the box's height, the
-    // padding above the input, and the band the transcript stops at.
-    // the strip is the home of the queue as well, so it opens while anything is
-    // waiting even if the turn that queued it has just ended
+    // The band is the box plus the 12px pad under it; the chip sits above the box
+    // and the queue line lives in the strip, so nothing else is reserved here.
+    // The popup is drawn at the window root (a child at negative y paints but
+    // cannot be hit), so it anchors off this.
+    // The strip grows open and shuts fast; everything that moves with it reads
+    // this one length. It also opens while anything is queued, even after the
+    // turn that queued it has ended.
     in-out property <length> busy-h: root.busy || root.queued-count > 0 ? 26px : 0px;
     animate busy-h {
         duration: root.busy ? 190ms : 110ms;
@@ -234,6 +233,7 @@ export component AppWindow inherits Window {
     in-out property <length> hover-y: 0px;
     in-out property <bool> tooltip-on: false;
     in-out property <bool> sidebar-open: true;
+    in-out property <bool> open-sidebar-tip: false;
     // The right-hand column. It is blank on purpose: the shell exists and nothing
     // lives in it yet.
     in-out property <bool> right-open: false;
@@ -316,21 +316,10 @@ export component AppWindow inherits Window {
         root.scroll-range + transcript-list.content-y
     );
 
-    // Following is a latch, and stopping to read is not an invitation: once the
-    // reader moves up it stays off, through any number of tokens, layout passes
-    // and pauses. Three things turn it back on, and all three are gestures: the
-    // jump-to-bottom button, sending a message, or the reader scrolling *down*
-    // onto the floor with the wheel or the bar.
-    //
-    // A measurement must never re-arm it. Content growing at the bottom rewrites
-    // the scroll offset on the list's own layout pass, and for one frame that
-    // made the distance to the floor read as zero, which is how a paused reader
-    // got yanked to the bottom.
-    // `scrolled` is the window's own "the reader did this" signal: the widget
-    // fires it only for a user drag or wheel, never for our programmatic moves
-    // and never for the list rewriting its offset while rows are measured. That
-    // distinction is the whole fix: a distance measured after a layout pass is
-    // not evidence that anybody scrolled.
+    // Following is a latch. Moving up turns it off and only three gestures turn it
+    // back on: the jump button, sending, or scrolling down onto the floor.
+    // A measurement must never re-arm it: content growing at the bottom rewrites
+    // the offset, and for one frame the distance to the floor reads as zero.
     /// Called by anything that is definitely the reader's own input.
     public function reader-moved-up() {
         root.reader-scrolled = true;
@@ -543,42 +532,44 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
-        // room for the custom title bar drawn above this layout
-        padding-top: 32px;
 
         HorizontalLayout {
-            // Folded: the column keeps only its controls. The session rows cannot survive
-            // at 48px - there is no room for a name - and the caption bar already carries
-            // the mark, so drawing it again 30px lower would say the same thing twice.
+            // Folded: the column keeps only its controls. The session rows cannot
+            // survive at 48px - there is no room for a name - so the strip keeps the
+            // mark and the three controls and drops the rows.
             if !root.sidebar-open : Rectangle {
                 width: 48px;
-                background: #10110e;
+                background: Theme.sidebar-surface;
         
                 VerticalLayout {
-                    padding-top: 10px;
-                    spacing: 4px;
+                    padding-top: 4px;
+                    spacing: 6px;
         
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
-                            Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
-                                background: strip-panel-touch.has-hover ? #2a2c24 : transparent;
-                                PanelIcon {
-                                    x: 6px;
-                                    y: 6px;
-                                    arrow: strip-panel-touch.has-hover;
-                                    point-left: false;
-                                    tint: strip-panel-touch.has-hover ? #e7e5df : #b0b1a8;
+                            // The mark becomes the way back open under the pointer,
+                            // so the control says what it does exactly when it can
+                            // be used - and the hint that says the same thing in
+                            // words is opened from the same hover.
+                            strip-panel := PanelButton {
+                                described: "Open sidebar";
+                                hovered(over) => { root.open-sidebar-tip = over; }
+                                clicked => {
+                                    root.open-sidebar-tip = false;
+                                    root.sidebar-open = true;
                                 }
-                                strip-panel-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button;
-                                    accessible-label: "Expand sidebar";
-                                    clicked => { root.sidebar-open = true; }
+                                if !strip-panel.hot : PrimeAgentMark {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                if strip-panel.hot : PanelIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    arrow: true;
+                                    point-left: false;
+                                    tint: Theme.sidebar-fold-glyph-hover;
                                 }
                             }
                         }
@@ -586,24 +577,18 @@ export component AppWindow inherits Window {
         
                     // New Session, mark only: the label has nowhere to go at this width.
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
-                            Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
-                                background: strip-new-touch.has-hover ? #23251f : transparent;
+                            strip-new := PanelButton {
+                                described: "New Session";
+                                clicked => { root.new-chat(); }
                                 IconNewChat {
-                                    x: 5px;
-                                    y: 5px;
-                                    tint: strip-new-touch.has-hover ? #e7e5df : #b0b1a8;
-                                }
-                                strip-new-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button;
-                                    accessible-label: "New Session";
-                                    clicked => { root.new-chat(); }
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: strip-new.hot
+                                        ? Theme.sidebar-strip-new-session-mark-hover
+                                        : Theme.sidebar-strip-new-session-mark;
                                 }
                             }
                         }
@@ -612,81 +597,81 @@ export component AppWindow inherits Window {
                     // The magnifier again, still drawn and still inert: folded or not,
                     // it holds the same place in the column.
                     Rectangle {
-                        height: 28px;
+                        height: 32px;
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 28px;
-                                height: 28px;
-                                border-radius: 14px;
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
                                 IconSearch {
-                                    x: 6px;
-                                    y: 6px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
                                 }
                             }
                         }
                     }
+                    Rectangle { vertical-stretch: 1; }
                 }
             }
         
             if root.sidebar-open : Rectangle {
                 width: 232px;
-                background: #10110e;
+                background: Theme.sidebar-surface;
                 VerticalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
-                    padding-top: 8px;
+                    padding-top: 2px;
                     spacing: 6px;
-                    // The band: the column's own header. The wordmark says whose window
-                    // this is; the magnifier is drawn and inert, because search is not
-                    // built yet and a button that does nothing is a lie; the panel mark
-                    // folds the column away and is the only thing here that is a control.
+                    // The band: the column's own header. Logo + wordmark on the left,
+                    // search and collapse panel control on the right.
                     Rectangle {
-                        height: 40px;
+                        height: 36px;
+
+                        PrimeAgentMark {
+                            x: 6px;
+                            y: (parent.height - self.height) / 2;
+                        }
 
                         Text {
-                            x: 2px;
+                            x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "Prime Agent";
-                            color: #e7e5df;
-                            font-size: 12px;
+                            color: Theme.sidebar-wordmark-ink;
+                            font-size: 14px;
+                            font-weight: 600;
                         }
 
                         // Drawn, not wired: no TouchArea, no callback, no pointer.
                         // It holds the band's shape until search exists.
                         Rectangle {
-                            x: parent.width - 56px;
-                            y: (parent.height - 26px) / 2;
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
+                            x: parent.width - 64px;
+                            y: (parent.height - 30px) / 2;
+                            width: 30px;
+                            height: 30px;
+                            border-radius: 15px;
                             IconSearch {
-                                x: 5px;
-                                y: 5px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
                             }
                         }
 
-                        // The fold: a frame with its edge turning away, on a round
-                        // hit area, the way the reference draws it.
-                        Rectangle {
-                            x: parent.width - 26px;
-                            y: (parent.height - 26px) / 2;
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
-                            background: panel-touch.has-hover ? #2a2c24 : transparent;
+                        // The collapse button: a frame with its edge turning away,
+                        // on a round hit area, the way the reference draws it.
+                        panel-fold := PanelButton {
+                            size: 30px;
+                            x: parent.width - 30px;
+                            y: (parent.height - 30px) / 2;
+                            described: "Collapse sidebar";
+                            clicked => { root.sidebar-open = !root.sidebar-open; }
                             PanelIcon {
-                                x: 5px;
-                                y: 5px;
-                                arrow: panel-touch.has-hover;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                arrow: panel-fold.hot;
                                 point-left: root.sidebar-open;
-                                tint: panel-touch.has-hover ? #e7e5df : #b0b1a8;
-                            }
-                            panel-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button;
-                                accessible-label: "Collapse sidebar";
-                                clicked => { root.sidebar-open = !root.sidebar-open; }
+                                tint: panel-fold.hot
+                                    ? Theme.sidebar-fold-glyph-hover
+                                    : Theme.sidebar-fold-glyph;
                             }
                         }
                     }
@@ -694,30 +679,29 @@ export component AppWindow inherits Window {
                     // The primary action of the column, at full width, because it is
                     // the one thing a session list is for. It calls the same new-chat
                     // the folded strip does: a layout change, not a lifecycle change.
-                    Rectangle {
+                    new-session := Button {
                         height: 36px;
                         border-radius: 10px;
-                        background: new-session-touch.has-hover ? #23251f : #1a1b16;
+                        kind: ButtonKind.primary;
+                        described: "New Session";
+                        clicked => { root.new-chat(); }
 
                         IconNewChat {
                             x: 9px;
                             y: (parent.height - self.height) / 2;
-                            tint: new-session-touch.has-hover ? #e7e5df : #b0b1a8;
+                            tint: new-session.hot
+                                ? Theme.sidebar-new-session-mark-hover
+                                : Theme.sidebar-new-session-mark;
                         }
 
                         Text {
                             x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "New Session";
-                            color: new-session-touch.has-hover ? #ffffff : #e7e5df;
+                            color: new-session.hot
+                                ? Theme.sidebar-new-session-ink-hover
+                                : Theme.sidebar-new-session-ink;
                             font-size: 12px;
-                        }
-
-                        new-session-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            accessible-role: button;
-                            accessible-label: "New Session";
-                            clicked => { root.new-chat(); }
                         }
                     }
 
@@ -761,14 +745,24 @@ export component AppWindow inherits Window {
             // explicit geometry: a Rectangle's preferred size never reflects its
             // children in Slint, so a layout here always under-measured the
             // composer and let it spill past the window
+            VerticalLayout {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                padding-top: 32px;
             center-column := Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                background: Theme.transcript-surface;
+                border-top-left-radius: 10px;
+                border-top-right-radius: root.right-open ? 10px : 0px;
+                clip: true;
 
                     transcript-area := Rectangle {
                         x: 0;
                         y: 0;
                         width: parent.width;
                         height: parent.height - root.composer-total;
-                        background: #12130f;
+                        background: transparent;
 
                         area-touch := TouchArea {
                             x: 0;
@@ -885,7 +879,9 @@ export component AppWindow inherits Window {
                                 width: 6px;
                                 height: root.thumb-height;
                                 border-radius: 3px;
-                                background: bar-touch.pressed ? #565a4f : bar-touch.has-hover ? #43463c : #2f322a;
+                                background: bar-touch.pressed ? Theme.transcript-scroll-thumb-pressed
+                                    : bar-touch.has-hover ? Theme.transcript-scroll-thumb-hover
+                                    : Theme.transcript-scroll-thumb;
                                 animate background { duration: 120ms; }
                             }
 
@@ -929,22 +925,21 @@ export component AppWindow inherits Window {
 
                         // floating just above the status row, aligned with the
                     // context ring: detached from the composer
-                    if !root.at-bottom : Rectangle {
+                    if !root.at-bottom : Button {
                         x: transcript-area.width - self.width - 22px;
                         y: transcript-area.height - self.height - 10px;
                         width: 28px;
                         height: 28px;
                         border-radius: 14px;
-                        background: jump-touch.has-hover ? #2e3026 : #1b1d18;
-                        border-color: #34372e;
+                        fill: Theme.transcript-jump-fill;
+                        fill-hover: Theme.transcript-jump-fill-hover;
+                        border-color: Theme.transcript-jump-edge;
                         border-width: 1px;
+                        described: "Jump to the newest row";
+                        clicked => { root.force-scroll-to-end(); }
                         IconChevronDown {
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
-                        }
-                        jump-touch := TouchArea {
-                            clicked => { root.force-scroll-to-end(); }
-                            mouse-cursor: pointer;
                         }
                     }
 
@@ -967,8 +962,10 @@ export component AppWindow inherits Window {
                         width: 36px;
                         height: 3px;
                         border-radius: 1.5px;
-                        background: root.dragging ? #6b7059
-                            : (root.handle-hover ? #4a4d42 : #33362d);
+                        background: root.dragging
+                            ? Theme.composer-handle-fill-dragging
+                            : (root.handle-hover ? Theme.composer-handle-fill-hover
+                                : Theme.composer-handle-fill);
                     }
 
 
@@ -991,8 +988,8 @@ export component AppWindow inherits Window {
                     y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
                     height: root.box-height;
-    background: #0f100d;
-    border-color: #23251f;
+    background: Theme.composer-surface;
+    border-color: Theme.composer-edge;
     border-width: 1px;
     border-radius: 12px;
 
@@ -1003,8 +1000,10 @@ export component AppWindow inherits Window {
         width: 36px;
         height: 3px;
         border-radius: 1.5px;
-        background: root.dragging ? #6b7059
-            : (root.handle-hover ? #4a4d42 : #33362d);
+        background: root.dragging
+            ? Theme.composer-handle-fill-dragging
+            : (root.handle-hover ? Theme.composer-handle-fill-hover
+                : Theme.composer-handle-fill);
     }
 
     VerticalLayout {
@@ -1029,9 +1028,10 @@ export component AppWindow inherits Window {
                     height: 44px;
                     border-radius: 8px;
                     clip: true;
-                    background: #191a15;
+                    background: Theme.composer-attachment-fill;
                     border-width: 1px;
-                    border-color: thumb-touch.has-hover ? #3a3d32 : #2a2c24;
+                    border-color: thumb-touch.has-hover ? Theme.composer-attachment-edge-hover
+                        : Theme.composer-attachment-edge;
 
                     Image {
                         x: 1px;
@@ -1053,7 +1053,7 @@ export component AppWindow inherits Window {
                         width: 14px;
                         height: 14px;
                         border-radius: 7px;
-                        background: #0b0c09;
+                        background: Theme.composer-attachment-remove-fill;
                         opacity: thumb-touch.has-hover ? 0.92 : 0.0;
                         animate opacity { duration: 120ms; }
                         Rectangle {
@@ -1062,7 +1062,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d9d6cc;
+                            background: Theme.composer-attachment-remove-ink;
                             transform-rotation: 45deg;
                         }
                         Rectangle {
@@ -1071,7 +1071,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d9d6cc;
+                            background: Theme.composer-attachment-remove-ink;
                             transform-rotation: -45deg;
                         }
                     }
@@ -1089,7 +1089,7 @@ export component AppWindow inherits Window {
                 y: 1px;
                 height: 20px;
                 text: root.composer-command;
-                color: #d8c06a;
+                color: Theme.composer-command-ink;
                 font-size: 13px;
                 vertical-alignment: center;
                 init => { root.command-word-width = self.preferred-width; }
@@ -1139,9 +1139,8 @@ export component AppWindow inherits Window {
                                     // the message: the box is empty when a command was
                                     // taken from the menu, and that is still something
                                     // to send, not a dead key.
-                                    // Ctrl+Enter (or Alt+Enter, kept from before) folds
-                                    // the message into the turn that is running instead
-                                    // of parking it behind
+    // Ctrl+Enter (or Alt+Enter) folds the message into the running turn instead
+    // of parking it behind.
                                     if event.modifiers.control || event.modifiers.alt {
                                         if root.composer-text != ""
                                             || root.composer-command != ""
@@ -1219,7 +1218,8 @@ export component AppWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     text: root.status-line;
-                    color: root.status-line-bad ? #c98a7f : #6b6e63;
+                    color: root.status-line-bad ? Theme.composer-status-line-ink-bad
+                        : Theme.composer-status-line-ink;
                     font-size: 10px;
                     vertical-alignment: center;
                     wrap: no-wrap;
@@ -1250,17 +1250,20 @@ export component AppWindow inherits Window {
                 }
 
                 // the numbers behind the ring
-                if root.ctx-hover : Rectangle {
+                if root.ctx-hover : Panel {
                     x: -self.width + 20px;
                     y: -self.height - 14px;
                     width: 216px;
                     height: self.preferred-height;
-                    background: #171814;
-                    border-color: #2a2c24;
-                    border-width: 1px;
+                    // A panel of the composer's own: it opens off the ring rather
+                    // than off the window's edge, and its three fields are the
+                    // card's, so a theme that moves the panels leaves this one to
+                    // the composer.
+                    surface: Theme.composer-card-surface;
+                    edge: Theme.composer-card-edge;
+                    shadow: Theme.composer-card-shadow;
                     border-radius: 8px;
                     drop-shadow-blur: 10px;
-                    drop-shadow-color: #00000066;
                     VerticalLayout {
                         padding-left: 12px;
                         padding-right: 12px;
@@ -1284,20 +1287,18 @@ export component AppWindow inherits Window {
             }
 
             // attach: a plus in a quiet resting surface, same family as the rest
-            Rectangle {
+            attach := Button {
                 width: 20px;
                 height: 20px;
                 border-radius: 6px;
-                background: attach-touch.has-hover ? #23251f : #1a1b16;
-                animate background { duration: 120ms; }
+                fill: Theme.composer-attach-fill;
+                fill-hover: Theme.composer-attach-fill-hover;
+                described: "Attach a picture";
+                clicked => { root.attach-requested(); }
                 IconPlus {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    tint: attach-touch.has-hover ? #b0b1a8 : #8a8d82;
-                }
-                attach-touch := TouchArea {
-                    mouse-cursor: MouseCursor.pointer;
-                    clicked => { root.attach-requested(); }
+                    tint: attach.hot ? Theme.composer-attach-ink-hover : Theme.composer-attach-ink;
                 }
             }
             Chip {
@@ -1310,23 +1311,34 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            // One control, two jobs: send while the session is idle, stop while it
-            // works. A single TouchArea with the branch inside it - a button that
-            // swaps element on a condition does not take clicks here.
-            //
-            // The two marks are always both present and cross over: the arrow
-            // shrinks and turns as it goes, the stop square grows out of the
-            // middle and turns the other way. Slint cannot interpolate one path
-            // into another, so the fluidity is scale, rotation and opacity on the
-            // same clock - which is what a morph looks like anyway.
-            Rectangle {
+            // One control, two jobs: send while idle, stop while working. One hit
+            // area with the branch inside it, because a button swapped on a
+            // condition does not take clicks here. Both fields are named, not a
+            // kind, since the job changes under the pointer.
+            // Both marks are always present and cross over: the arrow shrinks and
+            // turns, the square grows and turns. Slint cannot interpolate one path
+            // into another, so the morph is scale, rotation and opacity.
+            Button {
                 width: 25px;
                 height: 25px;
                 border-radius: 12.5px;
-                background: root.stop-mode
-                    ? (send-touch.has-hover ? #b8614c : #a2543f)
-                    : (send-touch.has-hover ? #b39e4c : #a18e41);
-                animate background { duration: 240ms; easing: ease-in-out; }
+                fill: root.stop-mode ? Theme.button-danger-fill : Theme.composer-send-fill;
+                fill-hover: root.stop-mode
+                    ? Theme.button-danger-fill-hover : Theme.composer-send-fill-hover;
+                fade: 240ms;
+                fade-curve: ease-in-out;
+                described: root.stop-mode ? "Stop the turn" : "Send";
+                clicked => {
+                    root.model-menu = false;
+                    if root.stop-mode {
+                        // the daemon keeps the queue flowing behind the stopped
+                        // run, so the next waiting message is not stranded
+                        root.abort-requested();
+                    } else {
+                        root.send-requested(root.composer-text);
+                        root.composer-text = "";
+                    }
+                }
 
                 IconSend {
                     width: 12px * (1.0 - 0.34 * root.stop-mix);
@@ -1335,6 +1347,7 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     opacity: 1.0 - root.stop-mix;
                     transform-rotation: root.stop-mix * 45deg;
+                    tint: Theme.composer-send-mark;
                 }
 
                 Rectangle {
@@ -1344,28 +1357,9 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     // a dot rounding out into a square as it arrives
                     border-radius: 3px - 1.5px * root.stop-mix;
-                    background: #f6efe6;
+                    background: Theme.composer-stop-mark;
                     opacity: root.stop-mix;
                     transform-rotation: (1.0 - root.stop-mix) * -45deg;
-                }
-
-                send-touch := TouchArea {
-                    x: 0;
-                    y: 0;
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: MouseCursor.pointer;
-                    clicked => {
-                        root.model-menu = false;
-                        if root.stop-mode {
-                            // the daemon keeps the queue flowing behind the stopped
-                            // run, so the next waiting message is not stranded
-                            root.abort-requested();
-                        } else {
-                            root.send-requested(root.composer-text);
-                            root.composer-text = "";
-                        }
-                    }
                 }
             }
         }
@@ -1374,29 +1368,28 @@ export component AppWindow inherits Window {
                 }
 
             }
+            }
 
             // Blank by request: the column, its width and its fold, nothing else.
             if root.right-open : Rectangle {
                 width: 320px;
-                background: #10110e;
+                background: Theme.window-surface;
             }
         }
     }
 
     // title card: anchored to the row it describes and shown just to the right
     // of the sidebar, the way a tooltip is expected to behave
-    if root.hover-title != "" : Rectangle {
+    if root.hover-title != "" : Panel {
         // 12px clear of the column, whichever width it has
         x: root.sidebar-open ? 244px : 60px;
         y: clamp(root.hover-y - 4px, 40px, root.height - self.height - 12px);
         width: min(self.preferred-width, 260px);
         height: self.preferred-height;
-        background: #171814;
-        border-color: #2a2c24;
-        border-width: 1px;
+        // The panels' own field and shadow, and an edge of its own: the card hangs
+        // off a row rather than over the window, and lies nearer the reader.
+        edge: Theme.session-card-edge;
         border-radius: 8px;
-        drop-shadow-blur: 12px;
-        drop-shadow-color: #00000080;
         HorizontalLayout {
             padding-left: 10px;
             padding-right: 10px;
@@ -1404,7 +1397,7 @@ export component AppWindow inherits Window {
             padding-bottom: 6px;
             Text {
                 text: root.hover-title;
-                color: #e2e0d8;
+                color: Theme.session-card-ink;
                 font-size: 11px;
                 wrap: word-wrap;
                 max-width: 240px;
@@ -1466,7 +1459,7 @@ export component AppWindow inherits Window {
     // The queue panel hangs off the strip, at the window root like the model
     // menu: inside the band it sat at a negative y, where it painted outside
     // the area that answers clicks.
-    if root.queue-open && root.queued-count > 0 : queue-panel := Rectangle {
+    if root.queue-open && root.queued-count > 0 : Panel {
         // measured off the composer box, not the band: the strip's height is
         // animated, and the panel has to ride it
         x: composer-box.absolute-position.x + composer-box.width - self.width;
@@ -1477,12 +1470,7 @@ export component AppWindow inherits Window {
         // not `q-scroll.height`: a ScrollView's height reads back as nothing at
         // the time the parent binds, which collapsed the panel to a sliver
         height: root.q-scroll-h + 12px;
-        background: #171814;
-        border-color: #2c2f26;
-        border-width: 1px;
         border-radius: 10px;
-        drop-shadow-blur: 12px;
-        drop-shadow-color: #00000080;
 
         q-scroll := ScrollView {
             x: 0;
@@ -1507,7 +1495,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: root.queued-count == 1 ? "1 message waiting" : root.queued-count + " messages waiting";
-                    color: #b0b1a8;
+                    color: Theme.queue-card-count-ink;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-steering : QueueRow {
@@ -1532,7 +1520,7 @@ export component AppWindow inherits Window {
                     height: 20px;
                     vertical-alignment: center;
                     text: "runs next";
-                    color: #6b6e63;
+                    color: Theme.queue-card-lane-ink;
                     font-size: 9px;
                 }
                 for item[i] in root.queued-followup : QueueRowUp {
@@ -1551,13 +1539,20 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Rectangle {
+                clear-all := Button {
                     x: 8px;
                     y: root.q-content-h - 24px;
                     width: parent.width - 16px;
                     height: 22px;
                     border-radius: 5px;
-                    background: clear-touch.has-hover ? #1f211a : transparent;
+                    // a row-shaped control: the panel's own row fill is what it
+                    // lights with, so it reads as one of the card's rows.
+                    fill-hover: Theme.panel-row-fill-hover;
+                    described: "Clear all waiting messages";
+                    clicked => {
+                        root.queue-clear();
+                        root.queue-open = false;
+                    }
 
                     Text {
                         x: 2px;
@@ -1565,50 +1560,29 @@ export component AppWindow inherits Window {
                         height: parent.height;
                         vertical-alignment: center;
                         text: "clear all";
-                        color: clear-touch.has-hover ? #d9d8d1 : #6b6e63;
+                        color: clear-all.hot ? Theme.queue-card-clear-ink-hover
+                            : Theme.queue-card-clear-ink;
                         font-size: 10px;
-                    }
-
-                    clear-touch := TouchArea {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.queue-clear();
-                            root.queue-open = false;
-                        }
                     }
                 }
             }
         }
     }
 
-    // A failure reason is drawn at the window root: inside the row it was
-    // covered by whatever row came next, so a command row painted over the
-    // popup that belonged to the row above it.
-    // The cap is on the width. `max-width` could not be: it is a constraint the
-    // layout engine applies, and this popup is out of every layout, so
-    // `width: self.preferred-width` won and the box grew to the message's own
-    // width — past the window edge, where the message was then cut mid-word.
-    // It sits on one line, because a reason is an exception message and its
-    // interesting end is in the tail; whatever the cap cannot show travels
-    // inside it (MarqueeText), so a long reason is read by watching instead of
-    // being lost off the right edge.
-    //
-    // Hidden rather than created and destroyed: hover opens this and leaving
-    // closes it, and a marquee that is created already past the end has nothing
-    // to animate from. Out of sight it keeps its place — `active` falls, the
-    // text walks home, and the next hover starts the sweep from the start.
+    // Drawn at the window root: inside the row it was covered by whichever row came
+    // next. The cap is on the width, not `max-width` - this popup is out of every
+    // layout, so the constraint is not applied. One line, because the interesting
+    // end of an exception is its tail; the rest travels in MarqueeText.
+    // Hidden rather than destroyed: a marquee created already past its end has
+    // nothing to animate from.
     Rectangle {
         visible: root.reason-open;
         x: min(root.reason-x, root.width - self.width - 12px);
         y: root.reason-y + 4px;
         width: min(reason-text.preferred-width + 20px, 440px);
         height: reason-text.height + 16px;
-        background: #1d1412;
-        border-color: #6b342b;
+        background: Theme.transcript-cell-fill-failed;
+        border-color: Theme.transcript-reason-edge;
         border-width: 1px;
         border-radius: 6px;
 
@@ -1617,7 +1591,7 @@ export component AppWindow inherits Window {
             y: 8px;
             width: parent.width - 20px;
             text: root.reason-text;
-            text-color: #e0b6ad;
+            text-color: Theme.transcript-reason-ink;
             font-size: 10px;
             active: root.reason-open;
             loop: true;
@@ -1630,6 +1604,31 @@ export component AppWindow inherits Window {
 
 
 
+    // The hint the folded strip raises under its own control: it names the action
+    // the pointer is over, so it answers no pointer of its own and takes no click
+    // - the strip's button is what heard the hover that shows it.
+    if !root.sidebar-open && root.open-sidebar-tip : Button {
+        x: 52px;
+        y: 6px;
+        width: open-tip-label.preferred-width + 24px;
+        height: 28px;
+        border-radius: 14px;
+        kind: ButtonKind.primary;
+        fill: Theme.sidebar-open-tip-fill;
+        fill-hover: Theme.sidebar-open-tip-fill;
+        enabled: false;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Theme.sidebar-open-tip-shadow;
+        open-tip-label := Text {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            text: "Open sidebar";
+            color: Theme.sidebar-open-tip-ink;
+            font-size: 12px;
+            font-weight: 500;
+        }
+    }
+
     // drawn last so it sits above the content and the drag surface beneath it
     title-bar := TitleBar {
         y: 0;
@@ -1641,6 +1640,5 @@ export component AppWindow inherits Window {
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }
         close => { root.titlebar-close(); }
-        menu => { root.titlebar-menu(); }
     }
 }

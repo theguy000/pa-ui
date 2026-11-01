@@ -2,20 +2,22 @@
 // opens off it.
 
 import { IconCaret } from "icons.slint";
+import { Theme } from "theme.slint";
+import { Button, ButtonKind } from "primitives.slint";
 
 // One line of the context ledger: the label, then the value flush right in a
 // fixed slot so the whole column of numbers has one edge to line up on.
 export component Ledger inherits Rectangle {
     in property <string> label;
     in property <string> value;
-    in property <color> ink: #b0b1a8;
+    in property <color> ink: Theme.composer-card-ledger-ink;
     height: 16px;
     background: transparent;
     HorizontalLayout {
         spacing: 8px;
         Text {
             text: root.label;
-            color: #6b6e63;
+            color: Theme.composer-card-label-ink;
             font-size: 10px;
             vertical-alignment: center;
         }
@@ -54,14 +56,14 @@ export component ContextCard inherits Rectangle {
             spacing: 6px;
             Text {
                 text: "context";
-                color: #6b6e63;
+                color: Theme.composer-card-label-ink;
                 font-size: 10px;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             Text {
                 text: root.percent;
-                color: #e7e5df;
+                color: Theme.composer-card-percent-ink;
                 font-size: 12px;
                 vertical-alignment: center;
             }
@@ -70,22 +72,22 @@ export component ContextCard inherits Rectangle {
         Rectangle {
             height: 3px;
             border-radius: 1.5px;
-            background: #23251f;
+            background: Theme.composer-card-bar-track;
             Rectangle {
                 x: 0;
                 y: 0;
                 height: parent.height;
                 width: parent.width * root.fill;
                 border-radius: 1.5px;
-                background: #a18e41;
+                background: Theme.composer-card-bar-fill;
             }
         }
         Text {
             text: root.used;
-            color: #8b8c85;
+            color: Theme.composer-card-used-ink;
             font-size: 10px;
         }
-        Rectangle { height: 1px; background: #1c1e19; }
+        Rectangle { height: 1px; background: Theme.composer-card-rule; }
         VerticalLayout {
             vertical-stretch: 0;
             spacing: 1px;
@@ -95,21 +97,21 @@ export component ContextCard inherits Rectangle {
             Ledger { label: "out"; value: root.output; }
             Ledger { label: "cached"; value: root.cached; }
         }
-        Rectangle { height: 1px; background: #1c1e19; }
+        Rectangle { height: 1px; background: Theme.composer-card-rule; }
         VerticalLayout {
             vertical-stretch: 0;
             spacing: 1px;
-            Ledger { label: "cost"; value: root.cost; ink: #d9d7cd; }
+            Ledger { label: "cost"; value: root.cost; ink: Theme.composer-card-cost-ink; }
             if root.cost-family-on : Ledger {
                 label: "with subagents";
                 value: root.cost-family;
-                ink: #d9d7cd;
+                ink: Theme.composer-card-cost-ink;
             }
         }
     }
 }
 
-export component Chip inherits Rectangle {
+export component Chip inherits Button {
     in property <string> label;
     in property <bool> open;
     callback toggled;
@@ -119,15 +121,19 @@ export component Chip inherits Rectangle {
     border-width: 1px;
     // The resting state is what the old hover state was: a chip that only
     // appears under the pointer reads as decoration, not as a control.
-    background: ct.has-hover || open ? #23251f : #1a1b16;
-    border-color: ct.has-hover || open ? #33362d : #23251f;
+    kind: ButtonKind.chip;
+    border-color: root.on ? Theme.composer-chip-edge-hover : Theme.composer-chip-edge;
+    lit: root.open;
+    fade: 0ms;
+    described: root.label;
+    clicked => { root.toggled(); }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 6px;
         Text {
             text: root.label;
-            color: ct.has-hover || open ? #e7e5df : #b0b1a8;
+            color: root.on ? Theme.composer-chip-ink-hover : Theme.composer-chip-ink;
             font-size: 10px;
             vertical-alignment: center;
         }
@@ -137,12 +143,9 @@ export component Chip inherits Rectangle {
             IconCaret {
                 y: (parent.height - self.height) / 2;
                 up: root.open;
+                tint: Theme.composer-chip-caret-mark;
             }
         }
-    }
-    ct := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.toggled(); }
     }
 }
 
@@ -186,8 +189,8 @@ global Ticks {
 
 export component ContextRing inherits Rectangle {
     in property <float> fill: 0.0;
-    in property <color> lit: #c9a86a;
-    in property <color> unlit: #33362d;
+    in property <color> lit: Theme.composer-ring-tick-lit;
+    in property <color> unlit: Theme.composer-ring-tick-unlit;
 
     width: 20px;
     height: 20px;

@@ -1,0 +1,259 @@
+// The window's colours, as src/theme/ resolved them.
+//
+// A component asks for a role here and never for a value: a colour written in a
+// component is a colour no theme can reach. What each name means lives beside
+// the table that decides its value, in src/theme/table.rs.
+//
+// Eight of the roles are read by Rust rather than by a component — the five inks
+// the transcript's markup carries and the three the composer's canvas draws with
+// — and are declared here with the rest so this file stays the window's whole
+// colour vocabulary: one theme, one list of names.
+//
+// `in-out` although nothing reassigns any of it yet: the window assigns this
+// once, before it runs, and a reload that lands later needs no component to
+// change.
+
+export global Theme {
+    // the window's own field, under everything, and then the caption
+    in-out property <color> window-surface;
+    in-out property <color> title-bar-glyph;
+    in-out property <color> title-bar-caption-fill-hover;
+    in-out property <color> title-bar-close-fill-hover;
+    in-out property <color> title-bar-close-ink-hover;
+    in-out property <color> title-bar-fold-fill-hover;
+    in-out property <color> title-bar-fold-glyph;
+    in-out property <color> title-bar-fold-glyph-hover;
+    // the sidebar: its field, a session row's three states, the inks a row
+    // carries — a name in each of its states, and an age — and the tags that
+    // say what a session is doing
+    in-out property <color> sidebar-surface;
+    in-out property <color> sidebar-row-fill;
+    in-out property <color> sidebar-row-fill-hover;
+    in-out property <color> sidebar-row-fill-selected;
+    in-out property <color> sidebar-name-ink;
+    in-out property <color> sidebar-name-ink-selected;
+    in-out property <color> sidebar-name-ink-editing;
+    in-out property <color> sidebar-age-ink;
+    in-out property <color> tag-working;
+    in-out property <color> tag-parked;
+    in-out property <color> tag-idle;
+    // the marks the column's controls draw: its fold in the header at rest and
+    // pointed at, the pen on New Session in the header and in the folded strip and
+    // in both of their states, the magnifier both carry, and the pencil a row
+    // offers to rename it
+    in-out property <color> sidebar-fold-glyph;
+    in-out property <color> sidebar-fold-glyph-hover;
+    in-out property <color> sidebar-new-session-mark;
+    in-out property <color> sidebar-new-session-mark-hover;
+    in-out property <color> sidebar-strip-new-session-mark;
+    in-out property <color> sidebar-strip-new-session-mark-hover;
+    in-out property <color> sidebar-search-mark;
+    // the product's name beside the brand mark, above the rows
+    in-out property <color> sidebar-wordmark-ink;
+    in-out property <color> sidebar-row-rename-mark;
+    // the column's two fields of its own: the chip the rename pencil sits on at
+    // rest, and the pill the window shows while the column is folded, with the
+    // words on it and the shadow that lifts it off the sheet it floats over
+    in-out property <color> sidebar-row-rename-fill;
+    in-out property <color> sidebar-row-rename-fill-hover;
+    in-out property <color> sidebar-open-tip-fill;
+    in-out property <color> sidebar-open-tip-ink;
+    in-out property <color> sidebar-open-tip-shadow;
+    // the words on New Session, the column's one filled button, at rest and with
+    // the pointer on it
+    in-out property <color> sidebar-new-session-ink;
+    in-out property <color> sidebar-new-session-ink-hover;
+    // the brand mark's six fills: the blade, the wing it crosses, the shadow on
+    // the wing's inner edge, the shadow the blade casts on the wing, the stem, and
+    // the shadow the blade casts on it
+    in-out property <color> brand-mark-blade;
+    in-out property <color> brand-mark-wing;
+    in-out property <color> brand-mark-wing-inner-shadow;
+    in-out property <color> brand-mark-wing-shadow;
+    in-out property <color> brand-mark-stem;
+    in-out property <color> brand-mark-stem-shadow;
+    // the transcript: the field the rows are drawn on, the prose and the
+    // reader's own message, the heading and the symbol a line of prose carries,
+    // a cell in each state it is drawn in and the failure it can carry, the body
+    // a row opens onto, a thought, a code block with the three kinds of token the
+    // highlighter colours, a table, an image, and the scrollbar and jump chip of
+    // the transcript's own chrome
+    in-out property <color> transcript-surface;
+    in-out property <color> transcript-prose-ink;
+    in-out property <color> transcript-message-fill;
+    in-out property <color> transcript-message-ink;
+    in-out property <color> transcript-link-ink;
+    in-out property <color> transcript-notice-ink;
+    in-out property <color> transcript-heading-ink;
+    in-out property <color> transcript-inline-code-ink;
+    in-out property <color> transcript-caret-mark;
+    in-out property <color> transcript-cell-fill;
+    in-out property <color> transcript-cell-fill-hover;
+    in-out property <color> transcript-cell-title-ink;
+    in-out property <color> transcript-cell-meta-ink;
+    in-out property <color> transcript-cell-separator-ink;
+    in-out property <color> transcript-cell-code-ink;
+    in-out property <color> transcript-cell-output-ink;
+    in-out property <color> transcript-cell-rule;
+    in-out property <color> transcript-cell-edge-expanded;
+    in-out property <color> transcript-thinking-edge-expanded;
+    in-out property <color> transcript-cell-fill-failed;
+    in-out property <color> transcript-cell-fill-failed-hover;
+    in-out property <color> transcript-cell-ink-failed;
+    in-out property <color> transcript-cell-badge-fill;
+    in-out property <color> transcript-cell-badge-fill-hover;
+    in-out property <color> transcript-cell-badge-mark;
+    in-out property <color> transcript-reason-edge;
+    in-out property <color> transcript-reason-ink;
+    in-out property <color> transcript-row-fill-expanded;
+    in-out property <color> transcript-thinking-fill;
+    in-out property <color> transcript-thinking-fill-hover;
+    in-out property <color> transcript-thinking-label-ink;
+    in-out property <color> transcript-thinking-ink;
+    in-out property <color> transcript-code-fill;
+    in-out property <color> transcript-code-ink;
+    in-out property <color> transcript-code-label-ink;
+    in-out property <color> transcript-code-keyword-ink;
+    in-out property <color> transcript-code-string-ink;
+    in-out property <color> transcript-code-comment-ink;
+    in-out property <color> transcript-table-ink;
+    in-out property <color> transcript-image-fill;
+    in-out property <color> transcript-scroll-thumb;
+    in-out property <color> transcript-scroll-thumb-hover;
+    in-out property <color> transcript-scroll-thumb-pressed;
+    in-out property <color> transcript-jump-fill;
+    in-out property <color> transcript-jump-fill-hover;
+    in-out property <color> transcript-jump-edge;
+    in-out property <color> transcript-jump-mark;
+    // the composer: the box the reader writes in and its edge, the bar that grows
+    // it, the draft and the field behind what is selected in it — the words the
+    // canvas paints for itself, and the command word among them — the command
+    // word in front of a draft and the pictures it carries, the line under it, the
+    // context ring and the card that opens off it, the chip that names the model,
+    // and the one control in the two jobs it does
+    in-out property <color> composer-surface;
+    in-out property <color> composer-edge;
+    in-out property <color> composer-handle-fill;
+    in-out property <color> composer-handle-fill-hover;
+    in-out property <color> composer-handle-fill-dragging;
+    in-out property <color> composer-draft-ink;
+    in-out property <color> composer-draft-caret;
+    in-out property <color> composer-draft-selection-fill;
+    in-out property <color> composer-draft-selection-ink;
+    in-out property <color> composer-draft-command-ink;
+    in-out property <color> composer-draft-selection-wash;
+    in-out property <color> composer-command-ink;
+    in-out property <color> composer-attachment-fill;
+    in-out property <color> composer-attachment-edge;
+    in-out property <color> composer-attachment-edge-hover;
+    in-out property <color> composer-attachment-remove-fill;
+    in-out property <color> composer-attachment-remove-ink;
+    in-out property <color> composer-attach-fill;
+    in-out property <color> composer-attach-fill-hover;
+    in-out property <color> composer-attach-ink;
+    in-out property <color> composer-attach-ink-hover;
+    in-out property <color> composer-status-line-ink;
+    in-out property <color> composer-status-line-ink-bad;
+    in-out property <color> composer-ring-tick-lit;
+    in-out property <color> composer-ring-tick-unlit;
+    in-out property <color> composer-card-surface;
+    in-out property <color> composer-card-edge;
+    in-out property <color> composer-card-shadow;
+    in-out property <color> composer-card-label-ink;
+    in-out property <color> composer-card-percent-ink;
+    in-out property <color> composer-card-bar-track;
+    in-out property <color> composer-card-bar-fill;
+    in-out property <color> composer-card-used-ink;
+    in-out property <color> composer-card-rule;
+    in-out property <color> composer-card-ledger-ink;
+    in-out property <color> composer-card-cost-ink;
+    in-out property <color> composer-chip-fill;
+    in-out property <color> composer-chip-fill-hover;
+    in-out property <color> composer-chip-edge;
+    in-out property <color> composer-chip-edge-hover;
+    in-out property <color> composer-chip-ink;
+    in-out property <color> composer-chip-ink-hover;
+    in-out property <color> composer-chip-caret-mark;
+    in-out property <color> composer-send-fill;
+    in-out property <color> composer-send-fill-hover;
+    in-out property <color> composer-send-mark;
+    in-out property <color> composer-stop-mark;
+    // the four panels that open over the window — the command list, the model
+    // menu, the ladder that drops off one of its rows and the queue card — share
+    // one field, one edge and the two row states a panel can draw, and their
+    // shadows are apart because the ladder is drawn on a panel rather than on the
+    // window. The card that names a session is a fifth panel and shares the field
+    // and the shadow; its edge is its own because it hangs off a row rather than
+    // over the window
+    in-out property <color> panel-surface;
+    in-out property <color> panel-edge;
+    in-out property <color> panel-shadow;
+    in-out property <color> panel-shadow-nested;
+    in-out property <color> panel-row-fill-hover;
+    in-out property <color> panel-row-fill-current;
+    in-out property <color> session-card-edge;
+    in-out property <color> session-card-ink;
+    // the command list: a command's name in the two states a row has, the
+    // argument it takes, and the sentence that says what it does
+    in-out property <color> slash-menu-row-ink;
+    in-out property <color> slash-menu-row-ink-hover;
+    in-out property <color> slash-menu-hint-ink;
+    in-out property <color> slash-menu-description-ink;
+    // the model menu: a provider's name signed in and not, the figure beside it,
+    // a model's name in the two states its row has, the context window beside
+    // every row but the running one, and the level the running one carries
+    in-out property <color> model-menu-header-ink;
+    in-out property <color> model-menu-header-ink-quiet;
+    in-out property <color> model-menu-caret-mark;
+    in-out property <color> model-menu-count-ink;
+    in-out property <color> model-menu-row-ink;
+    in-out property <color> model-menu-row-ink-current;
+    in-out property <color> model-menu-check-mark;
+    in-out property <color> model-menu-detail-ink;
+    in-out property <color> model-menu-effort-ink;
+    // the ladder: a rung, the rung the model is on, and the tick beside it
+    in-out property <color> effort-ladder-row-ink;
+    in-out property <color> effort-ladder-row-ink-current;
+    in-out property <color> effort-ladder-check-mark;
+    // the queue card: the count over its first lane, the name of a lane with
+    // nothing to count, a waiting message, and the action that empties both
+    in-out property <color> queue-card-count-ink;
+    in-out property <color> queue-card-lane-ink;
+    in-out property <color> queue-row-ink;
+    in-out property <color> queue-card-clear-ink;
+    in-out property <color> queue-card-clear-ink-hover;
+    // a waiting row's three controls: the fill they sit on in both states, the
+    // pencil and the bin at rest, the pencil and the arrow under the pointer,
+    // and the warmth the bin turns where nothing else on the row is warm
+    in-out property <color> queue-row-control-fill;
+    in-out property <color> queue-row-control-fill-hover;
+    in-out property <color> queue-row-control-mark;
+    in-out property <color> queue-row-control-mark-hover;
+    in-out property <color> queue-row-promote-mark;
+    in-out property <color> queue-row-promote-mark-hover;
+    in-out property <color> queue-row-delete-mark;
+    // the status strip: its field and the outline of its rounded top, the word
+    // that says what the turn is doing and how long it has been at it, and the
+    // pill that opens the queue: a fill that stays lit while its card is open,
+    // and the number and the word beside it, which brighten for the pointer
+    in-out property <color> status-strip-surface;
+    in-out property <color> status-strip-edge;
+    in-out property <color> status-strip-working-ink;
+    in-out property <color> status-strip-elapsed-ink;
+    in-out property <color> status-strip-queue-fill;
+    in-out property <color> status-strip-queue-fill-hover;
+    in-out property <color> status-strip-queue-count-ink;
+    in-out property <color> status-strip-queue-count-ink-hover;
+    in-out property <color> status-strip-queue-label-ink;
+    in-out property <color> status-strip-queue-label-ink-hover;
+    // the field a control paints, in the three characters a control comes in: a
+    // quiet one with no field until the pointer arrives, a primary one that
+    // carries its part's main action, and the danger one that stops a turn. A
+    // part whose field is genuinely its own names that role at the call site
+    in-out property <color> button-quiet-fill;
+    in-out property <color> button-quiet-fill-hover;
+    in-out property <color> button-primary-fill;
+    in-out property <color> button-primary-fill-hover;
+    in-out property <color> button-danger-fill;
+    in-out property <color> button-danger-fill-hover;
+}

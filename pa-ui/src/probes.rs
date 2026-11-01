@@ -122,10 +122,16 @@ mod efficiency_parts {
                 {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {"command": "cargo test"}}
             ]
         });
-        let markup = transcript::markdown_markup("Prose with some inline code and bold and a link.");
+        let markup = transcript::markdown_markup(
+            "Prose with some inline code and bold and a link.",
+            &crate::theme::current(),
+        );
 
         time("markdown_markup, one paragraph", 2000, || {
-            transcript::markdown_markup("Prose with some inline code and bold and a link.")
+            transcript::markdown_markup(
+                "Prose with some inline code and bold and a link.",
+                &crate::theme::current(),
+            )
         });
         let _ = time("StyledText::from_markdown, one row", 2000, || {
             slint::StyledText::from_markdown(&markup)

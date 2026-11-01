@@ -56,6 +56,34 @@ _Avoid_: tool row, tool result (the result is a message; the cell is the row)
 The turn still being written. Its rows are provisional until the store carries the message they belong to.
 _Avoid_: streaming message, open message, partial row
 
+### Colour
+
+**Theme**:
+The colours the window draws with: the set compiled into the window, or that set with a reader's file laid over it. A theme sets base values and, where it has to, single roles.
+_Avoid_: skin, scheme, look
+
+**Palette**:
+The base values a theme sets: the window's background, its ink and quiet ink, danger. Every role is made of one of these unless the theme names that role itself.
+_Avoid_: colours, swatches
+
+**Role**:
+One named colour the window draws: a part, in one state. A component asks for a role and never for a value, so the theme is the only place that decides what a hovered button looks like.
+_Avoid_: token, variable, colour constant
+
+### The title bar
+
+**Title bar**:
+The strip along the top of the window: the right column's collapse button and the three caption buttons. The window draws it because the native caption cannot follow the theme, and it paints no field of its own — the window's background and the sidebar's header band run under it.
+_Avoid_: chrome, header, titlebar, caption (a caption is the text a bar carries)
+
+**Caption button**:
+One of the minimise, maximise and close controls at the title bar's right edge. Windows owns the maximise click for Snap Layouts and draws none of the three; the window does, so a theme reaches them.
+_Avoid_: window control, chrome button
+
+**Collapse button**:
+The control that collapses a column to its strip of controls and back: the sidebar's, at the right of its header, and the right column's, in the title bar. A column has one; the standalone control beside it is the way back open.
+_Avoid_: fold, toggle, panel button, expand button
+
 ### Paging
 
 **Page**:

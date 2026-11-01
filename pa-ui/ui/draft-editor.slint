@@ -1,11 +1,12 @@
 // A draft editor: a scroll view over a text input that grows to its content.
 // Slint's own TextEdit is this same composition, but its colours are baked into
-// the fluent style, so it is reproduced here with the app's palette instead.
+// the fluent style, so it is reproduced here with the draft's own roles instead.
 import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
 export component DraftEditor inherits Rectangle {
     in property <length> font-size: 13px;
-    in property <brush> foreground: #e7e5df;
+    in property <brush> foreground: Theme.composer-draft-ink;
     // canvas mode: the words are painted by Rust and this input only edits them
     in property <bool> use-canvas: false;
     in property <image> canvas;
@@ -26,8 +27,8 @@ export component DraftEditor inherits Rectangle {
         ? root.native-caret-x : root.caret-x;
     out property <length> caret-drawn-y: root.native-caret-y > 0px
         ? root.native-caret-y : root.caret-y;
-    in property <brush> selection-background: #3b3f2e;
-    in property <brush> selection-foreground: #f2f0e8;
+    in property <brush> selection-background: Theme.composer-draft-selection-fill;
+    in property <brush> selection-foreground: Theme.composer-draft-selection-ink;
     in-out property <string> text <=> field.text;
     out property <bool> has-focus: field.has-focus;
     /// Where the caret sits, in bytes.
@@ -77,7 +78,7 @@ export component DraftEditor inherits Rectangle {
             y: root.caret-drawn-y;
             width: 1.5px;
             height: root.caret-height;
-            background: #e7e5df;
+            background: Theme.composer-draft-caret;
             visible: root.blink-on;
         }
 

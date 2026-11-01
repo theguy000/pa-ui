@@ -1,0 +1,106 @@
+// Shapes the window draws more than once, so one edit reaches every copy.
+// Rationale for each lives in pa-ui/design/README.md.
+
+import { Theme } from "theme.slint";
+
+/// What a button is for; decides the field it paints unless its part names one.
+export enum ButtonKind {
+    // Paints a field at rest, so it is found without being pointed at.
+    primary,
+    quiet,
+    // Stops or discards what is running.
+    danger,
+    // Paints a field at rest because it is a control, not a decoration.
+    chip,
+}
+
+// A field that lights under the pointer, plus the hit area that makes it one.
+export component Button inherits Rectangle {
+    in property <ButtonKind> kind: ButtonKind.quiet;
+    // Lit by a menu this control opened or a mode it holds: it keeps the hover
+    // field, because dropping to rest under its own open panel reads as closed.
+    in property <bool> lit: false;
+    // Answers no pointer; keeps its shape and field.
+    in property <bool> enabled: true;
+    in property <color> fill: kind == ButtonKind.primary ? Theme.button-primary-fill
+        : kind == ButtonKind.danger ? Theme.button-danger-fill
+        : kind == ButtonKind.chip ? Theme.composer-chip-fill : Theme.button-quiet-fill;
+    in property <color> fill-hover: kind == ButtonKind.primary ? Theme.button-primary-fill-hover
+        : kind == ButtonKind.danger ? Theme.button-danger-fill-hover
+        : kind == ButtonKind.chip ? Theme.composer-chip-fill-hover
+        : Theme.button-quiet-fill-hover;
+    // The caption snaps at 0ms and the folding mark runs on its own curve.
+    in property <duration> fade: 120ms;
+    in property <easing> fade-curve: linear;
+    // The caption keeps the arrow the native bar draws.
+    in property <MouseCursor> cursor: MouseCursor.pointer;
+    // Accessible name.
+    in property <string> described: "";
+
+    out property <bool> hot: touch.has-hover;
+    out property <bool> on: touch.has-hover || root.lit;
+    // Read from here because the hit area that knows sits inside the shape.
+    out property <length> window-x: touch.absolute-position.x;
+    out property <length> window-y: touch.absolute-position.y;
+
+    // Both halves, because a `move` never reports the pointer leaving.
+    callback hovered(bool);
+    callback clicked();
+
+    background: root.on ? root.fill-hover : root.fill;
+    animate background { duration: root.fade; easing: root.fade-curve; }
+
+    @children
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? root.cursor : MouseCursor.default;
+        accessible-role: button;
+        accessible-label: root.described;
+        changed has-hover => { root.hovered(self.has-hover); }
+        clicked => { root.clicked(); }
+    }
+}
+
+// A round button that is only its mark; the mark keeps the role of its own part.
+export component PanelButton inherits Button {
+    in property <length> size: 32px;
+
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+
+    @children
+}
+
+// A surface that opens over the window. Its edge is a role, not a value: panel
+// and field are the same grey, so only the edge parts them.
+export component Panel inherits Rectangle {
+    in property <color> surface: Theme.panel-surface;
+    in property <color> edge: Theme.panel-edge;
+    in property <color> shadow: Theme.panel-shadow;
+
+    background: root.surface;
+    border-color: root.edge;
+    border-width: 1px;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: root.shadow;
+
+    @children
+}
+
+export enum TagKind {
+    working,
+    // Set aside: on the column, nothing running.
+    parked,
+    // Live and between turns.
+    idle,
+}
+
+// A mark whose colour is the whole of what it says, so it is one role and no ink.
+export component Tag inherits Rectangle {
+    in property <TagKind> kind: TagKind.idle;
+
+    background: kind == TagKind.working ? Theme.tag-working
+        : kind == TagKind.parked ? Theme.tag-parked : Theme.tag-idle;
+}

@@ -2,13 +2,17 @@
 // theme. Geometry must agree with HEIGHT and BUTTON in src/titlebar.rs.
 
 import { CaptionGlyph, PanelIcon } from "icons.slint";
+import { Theme } from "theme.slint";
+import { Button, PanelButton } from "primitives.slint";
 
-export component CaptionButton inherits Rectangle {
-    in property <bool> hover;
-    in property <color> hover-fill: #ffffff12;
+// Arrow and no fade, because the native caption snaps; an eased fill would read
+// as a different window.
+export component CaptionButton inherits Button {
     width: 46px;
     height: 100%;
-    background: hover ? hover-fill : transparent;
+    cursor: MouseCursor.default;
+    fade: 0ms;
+    fill-hover: Theme.title-bar-caption-fill-hover;
 }
 
 export component TitleBar inherits Rectangle {
@@ -19,81 +23,59 @@ export component TitleBar inherits Rectangle {
     in property <string> caption: "Prime Agent Desktop";
     callback minimize();
     callback close();
-    callback menu();
 
     height: 32px;
     width: 100%;
-    background: #0c0d0a;
+    // No field of its own: the window's background runs under the bar, and the
+    // sidebar's header band sits inside this height.
+    background: transparent;
 
-    Image {
-        x: 12px;
-        y: (parent.height - self.height) / 2;
-        width: 16px;
-        height: 16px;
-        source: @image-url("../assets/icon-tile-32.png");
-    }
-
-    // the icon is a button: left-click drops the system menu, like the native caption
-    icon-touch := TouchArea {
-        x: 6px;
-        y: 0;
-        width: 28px;
-        height: 100%;
-        clicked => { root.menu(); }
-    }
-
-    Text {
-        x: 36px;
-        // Windows sits caption ink about a pixel below the bar's centre (asymmetric
-        // font ascent/descent); match that instead of centring the box exactly.
-        y: (parent.height - self.height) / 2 - 1px;
-        text: root.caption;
-        color: #b9bab2;
-        font-size: 12px;
-        vertical-alignment: center;
-    }
-
-    // The right column's fold lives in the chrome, not in the column: the column is
-    // blank, so a mark inside it would have nothing to sit on.
-    right-toggle := Rectangle {
+    // The right column's collapse button lives in the chrome, not in the column:
+    // the column is blank, so a mark inside it would have nothing to sit on.
+    right-toggle := PanelButton {
+        size: 26px;
         x: parent.width - 172px;
         y: (parent.height - 26px) / 2;
-        width: 26px;
-        height: 26px;
-        border-radius: 13px;
-        background: right-touch.has-hover ? #2a2c24 : transparent;
+        fill-hover: Theme.title-bar-fold-fill-hover;
+        cursor: MouseCursor.default;
+        fade: 0ms;
+        described: "Toggle the right column";
+        clicked => { root.toggle-right(); }
         PanelIcon {
             x: 5px;
             y: 5px;
             folded-edge-right: true;
-            arrow: right-touch.has-hover;
+            arrow: right-toggle.hot;
             point-left: !root.right-open;
-            tint: right-touch.has-hover ? #e7e5df : #6d7066;
-        }
-        right-touch := TouchArea {
-            mouse-cursor: pointer;
-            accessible-role: button;
-            accessible-label: "Toggle the right column";
-            clicked => { root.toggle-right(); }
+            tint: right-toggle.hot
+                ? Theme.title-bar-fold-glyph-hover
+                : Theme.title-bar-fold-glyph;
         }
     }
 
-    // minimise and close are ours; maximise belongs to Windows for Snap Layouts
+    // minimise and close are ours; maximise belongs to Windows for Snap Layouts,
+    // which is why its hover state is sampled from the pointer by the Rust side
+    // rather than reported by this button's own hit area.
     min-button := CaptionButton {
         x: parent.width - 138px;
-        hover: min-touch.has-hover;
-        min-touch := TouchArea { clicked => { root.minimize(); } }
+        described: "Minimise the window";
+        clicked => { root.minimize(); }
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2; commands: "M 0.5 5.5 L 9.5 5.5"; }
+            y: (parent.height - self.height) / 2;
+            tint: Theme.title-bar-glyph;
+            commands: "M 0.5 5.5 L 9.5 5.5"; }
     }
 
     max-button := CaptionButton {
         x: parent.width - 92px;
-        hover: root.max-hover;
+        enabled: false;
+        described: "Maximise the window";
+        lit: root.max-hover;
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
+            tint: Theme.title-bar-glyph;
             commands: root.maximized
                 ? "M 2.5 0.5 L 9.5 0.5 L 9.5 7.5 M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z"
                 : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
@@ -102,13 +84,13 @@ export component TitleBar inherits Rectangle {
 
     close-button := CaptionButton {
         x: parent.width - 46px;
-        hover: close-touch.has-hover;
-        hover-fill: #c42b1c;
-        close-touch := TouchArea { clicked => { root.close(); } }
+        fill-hover: Theme.title-bar-close-fill-hover;
+        described: "Close the window";
+        clicked => { root.close(); }
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: close-touch.has-hover ? #ffffff : #d7d7d1;
+            tint: close-button.hot ? Theme.title-bar-close-ink-hover : Theme.title-bar-glyph;
             commands: "M 0.5 0.5 L 9.5 9.5 M 9.5 0.5 L 0.5 9.5";
         }
     }

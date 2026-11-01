@@ -14,6 +14,9 @@ pub struct Config {
     pub queue_preset: bool,
     pub menu: bool,
     pub canvas: bool,
+    /// The theme file or bundled theme name the window draws with, if the
+    /// reader selected one.
+    pub theme: Option<String>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -27,5 +30,6 @@ pub fn cfg() -> &'static Config {
         queue_preset: std::env::var("PA_QUEUE").is_ok(),
         menu: std::env::var("PA_MENU").is_ok(),
         canvas: std::env::var("PA_CANVAS").is_ok(),
+        theme: std::env::var("PA_THEME").ok(),
     })
 }

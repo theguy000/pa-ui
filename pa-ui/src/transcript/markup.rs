@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::theme::{Resolved, Role};
+
 
 /// Text as the layout engine wants it: no non-breaking or thin spaces.
 ///
@@ -223,7 +225,11 @@ pub(crate) fn balance_strong(text: &str) -> String {
 }
 
 
-pub fn markdown_markup(text: &str) -> String {
+/// A message's markdown, in the renderer's own markup: a heading becomes a bold
+/// line in the heading's ink, a rule becomes a blank line, a quote loses its `>`,
+/// and a backticked word becomes the inline code's ink instead of the renderer's
+/// cramped box. Everything the renderer cannot parse is taken out on the way.
+pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
     let decoded = escape_html(&decode_entities(text));
     let text = decoded.as_str();
     let mut out = String::with_capacity(text.len() + 16);
@@ -233,10 +239,11 @@ pub fn markdown_markup(text: &str) -> String {
         }
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
-            // headings carry the accent, the way the TUI colours mdHeading, and
-            // bold, because there is no size step inside one text run
+            // headings carry their own ink, the way the TUI colours mdHeading,
+            // and bold, because there is no size step inside one text run
             let body = trimmed.trim_start_matches('#').trim_start();
-            out.push_str("<font color=\"#c8b158\">**");
+            open_font(theme, Role::TranscriptHeadingInk, &mut out);
+            out.push_str("**");
             out.push_str(body);
             out.push_str("**</font>");
         } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
@@ -251,7 +258,7 @@ pub fn markdown_markup(text: &str) -> String {
     }
     // the indentation guard has to be the last thing: an indented line is a code
     // block to CommonMark, and the renderer has no code blocks
-    guard_block_markers(&balance_strong(&highlight_inline_code(&out)))
+    guard_block_markers(&balance_strong(&highlight_inline_code(&out, theme)))
 }
 
 
@@ -259,9 +266,9 @@ pub fn markdown_markup(text: &str) -> String {
 ///
 /// The renderer's own treatment is a rectangle that hugs the glyphs with no
 /// padding and no styling hook; `highlight_inline_code` replaces the span with
-/// accent-coloured bold text instead. No rectangle, no cramped edges, and it
-/// still reads as "this is a symbol, not prose".
-pub(crate) fn highlight_inline_code(text: &str) -> String {
+/// bold text in the inline code's own ink instead. No rectangle, no cramped
+/// edges, and it still reads as "this is a symbol, not prose".
+pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
     let mut out = String::with_capacity(text.len() + 32);
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -297,11 +304,12 @@ pub(crate) fn highlight_inline_code(text: &str) -> String {
             // already bold (a heading, or prose wrapped in `**`).
             let bold_already = out.matches("**").count() % 2 == 1;
             if bold_already {
-                out.push_str("<font color=\"#a18e41\">");
+                open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
                 out.push_str(body.trim());
                 out.push_str("</font>");
             } else {
-                out.push_str("**<font color=\"#a18e41\">");
+                out.push_str("**");
+                open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
                 out.push_str(body.trim());
                 out.push_str("</font>**");
             }
@@ -543,14 +551,14 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
 /// Highlight a fenced block. Only the python tokenizer exists; anything else is
 /// shown verbatim rather than guessed at.
 #[must_use]
-pub fn highlight_code(lang: &str, code: &str) -> String {
+pub fn highlight_code(lang: &str, code: &str, theme: &Resolved) -> String {
     let language = lang
         .split_whitespace()
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
     if matches!(language.as_str(), "" | "py" | "python" | "python3") {
-        highlight_python(code)
+        highlight_python(code, theme)
     } else {
         plain_markup(code)
     }
@@ -565,24 +573,38 @@ pub(crate) const KEYWORDS: &[&str] = &[
 ];
 
 
-pub(crate) fn wrap(color: &str, text: &str, out: &mut String) {
+/// Open a `<font>` span in a role's colour; the caller closes it.
+///
+/// The markup is the one place a colour leaves the theme as text rather than as
+/// a `slint::Color`, so this is where a role becomes the hex a `<font>` tag
+/// takes. Nothing here decides a value: the role is the whole of the choice.
+fn open_font(theme: &Resolved, role: Role, out: &mut String) {
     out.push_str("<font color=\"");
-    out.push_str(color);
+    out.push_str(&theme.get(role).text());
     out.push_str("\">");
+}
+
+
+pub(crate) fn wrap(theme: &Resolved, role: Role, text: &str, out: &mut String) {
+    open_font(theme, role, out);
     escape(text, out);
     out.push_str("</font>");
 }
 
 
-/// Small python tokenizer -> coloured markup. Not a parser: keywords, strings,
-/// comments and numbers, which is what makes a cell scannable.
-pub fn highlight_python(code: &str) -> String {
+/// Small python tokenizer -> coloured markup. Not a parser: keywords, strings and
+/// comments, which is what makes a cell scannable.
+///
+/// A number is not one of them, and never was: a digit opens a word run, so the
+/// arm below takes `1.5` before a number run could, and the code is drawn in the
+/// ink of the block it sits in. That is also why there is no role for one: it
+/// would paint nothing until that arm changes.
+pub fn highlight_python(code: &str, theme: &Resolved) -> String {
     let decoded = decode_entities(code);
     let code = decoded.as_str();
-    const KEY: &str = "#c9a86a";
-    const STR: &str = "#8fb573";
-    const COM: &str = "#5f6159";
-    const NUM: &str = "#d0a75c";
+    const KEY: Role = Role::TranscriptCodeKeywordInk;
+    const STR: Role = Role::TranscriptCodeStringInk;
+    const COM: Role = Role::TranscriptCodeCommentInk;
 
     let mut out = String::with_capacity(code.len() * 2);
     let mut chars = code.chars().peekable();
@@ -592,7 +614,7 @@ pub fn highlight_python(code: &str) -> String {
             return;
         }
         if KEYWORDS.contains(&word.as_str()) {
-            wrap(KEY, word, out);
+            wrap(theme, KEY, word, out);
         } else {
             escape(word, out);
         }
@@ -642,7 +664,7 @@ pub fn highlight_python(code: &str) -> String {
                         }
                     }
                 }
-                wrap(STR, &literal, &mut out);
+                wrap(theme, STR, &literal, &mut out);
             }
             '#' => {
                 flush_word(&mut word, &mut out);
@@ -653,25 +675,13 @@ pub fn highlight_python(code: &str) -> String {
                     }
                     comment.push(next);
                 }
-                wrap(COM, &comment, &mut out);
+                wrap(theme, COM, &comment, &mut out);
                 out.push('\n');
             }
             ch if ch.is_alphanumeric() || ch == '_' => word.push(ch),
             ch => {
                 flush_word(&mut word, &mut out);
-                if ch.is_ascii_digit() {
-                    let mut number = ch.to_string();
-                    while let Some(next) = chars.peek() {
-                        if next.is_ascii_digit() || *next == '.' {
-                            number.push(chars.next().unwrap_or_default());
-                        } else {
-                            break;
-                        }
-                    }
-                    wrap(NUM, &number, &mut out);
-                } else {
-                    escape(&ch.to_string(), &mut out);
-                }
+                escape(&ch.to_string(), &mut out);
             }
         }
     }

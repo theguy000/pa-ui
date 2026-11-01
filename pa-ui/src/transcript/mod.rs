@@ -10,6 +10,8 @@
 use serde_json::Value;
 use slint::StyledText;
 
+use crate::theme::{self, Resolved};
+
 mod cache;
 mod cells;
 mod demo;
@@ -100,6 +102,7 @@ fn build_message(
     outputs: &std::collections::HashMap<String, (String, bool)>,
     bashes: &std::collections::HashMap<String, BashInfo>,
     durations: &std::collections::HashMap<String, u64>,
+    theme: &Resolved,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
@@ -151,12 +154,12 @@ fn build_message(
                         Block::Prose(prose) => {
                             let mut row =
                                 Row::new(if role == "user" { KIND_USER } else { KIND_AGENT });
-                            row.body = markdown_markup(&prose);
+                            row.body = markdown_markup(&prose, theme);
                             rows.push(row);
                         }
                         Block::Code { lang, body } => {
                             let mut row = Row::new(KIND_CODE);
-                            row.code = highlight_code(&lang, &body);
+                            row.code = highlight_code(&lang, &body, theme);
                             row.meta = lang;
                             row.has_code = true;
                             rows.push(row);
@@ -187,7 +190,7 @@ fn build_message(
                     .unwrap_or_default();
                 let mut row = Row::new(KIND_CELL);
                 row.id = id.to_string();
-                row.code = highlight_python(code);
+                row.code = highlight_python(code, theme);
                 row.has_code = !code.is_empty();
                 if let Some((output, failed)) = outputs.get(id) {
                     row.output = plain_markup(output);
@@ -213,6 +216,11 @@ fn build_message(
 
 /// Build the transcript rows for the newest `limit` messages.
 pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
+    // The theme the window is drawn in, read once here rather than carried
+    // through the worker, the live turn and every cell. It is one value for the
+    // life of the process, which is also what makes the per-message cache below
+    // safe: a row is a row under the theme it was built in.
+    let theme = theme::current();
     let start = messages.len().saturating_sub(limit);
     let window = &messages[start..];
 
@@ -259,7 +267,7 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         match cache_get(&owner, stamp) {
             Some(cached) => rows.extend(cached),
             None => {
-                let built = build_message(message, &owner, &outputs, &bashes, &durations);
+                let built = build_message(message, &owner, &outputs, &bashes, &durations, &theme);
                 cache_put(&owner, stamp, &built);
                 rows.extend(built);
             }

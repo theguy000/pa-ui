@@ -126,7 +126,8 @@ pub fn apply_header(
 
 /// A cell row for a tool call that has just started, shaped exactly like the one
 /// the store will produce for it so the reconcile at turn end changes nothing
-/// on screen.
+/// on screen. Its code is highlighted in the theme the window is drawn in, the
+/// same one the store's copy of the cell is built under.
 #[must_use]
 pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
@@ -135,7 +136,7 @@ pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     let fallback = args.to_string();
     let source = if code.is_empty() { fallback.as_str() } else { code };
     apply_header(&mut row, source, None, None);
-    row.code = highlight_python(code);
+    row.code = highlight_python(code, &crate::theme::current());
     row.has_code = !code.is_empty();
     let lines = code.lines().count();
     row.meta = if code.is_empty() {

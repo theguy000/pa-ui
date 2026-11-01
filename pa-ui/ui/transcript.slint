@@ -5,6 +5,8 @@ import { ScrollView } from "std-widgets.slint";
 import { TRow, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash } from "icons.slint";
+import { Theme } from "theme.slint";
+import { Button } from "primitives.slint";
 
 // One waiting message in the steering lane: already inside this turn, so the
 // only action is delete. Two row components instead of one with a conditional
@@ -22,7 +24,7 @@ export component QueueRow inherits Rectangle {
     // a long message shows its beginning and where it was cut.
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #1f211a : transparent;
+    background: row-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
     // the text is the edit affordance; it stops short of the button
     row-touch := TouchArea {
@@ -55,7 +57,7 @@ export component QueueRow inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 100px : 72px);
         height: 100%;
         text: root.text;
-        color: #d9d8d1;
+        color: Theme.queue-row-ink;
         font-size: 11px;
         // centred: a one-line message sat against the top of a 34px row
         vertical-alignment: center;
@@ -65,33 +67,29 @@ export component QueueRow inherits Rectangle {
 
     // editing is a button, not a lucky click on the text: a row whose only way
     // to change is an invisible target looks uneditable
-    Rectangle {
+    edit := Button {
         x: parent.width - 56px;
         y: (parent.height - self.height) / 2;
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #383c30 : #2c2f26;
-        edit := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "edit"); }
-        }
+        fill: Theme.queue-row-control-fill;
+        fill-hover: Theme.queue-row-control-fill-hover;
+        described: "Edit this message";
+        clicked => { root.act(root.lane, root.slot, "edit"); }
         IconEdit {
             width: 12px;
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+            tint: edit.hot ? Theme.queue-row-control-mark-hover
+                : Theme.queue-row-control-mark;
         }
     }
 
     // a resting surface, not a hover-only one: an action that looks like empty
     // space until the pointer finds it is a hidden control
-    Rectangle {
+    del := Button {
         x: parent.width - 28px;
         y: (parent.height - self.height) / 2;
         width: 24px;
@@ -99,21 +97,17 @@ export component QueueRow inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #383c30 : #2c2f26;
-        del := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "delete"); }
-        }
+        fill: Theme.queue-row-control-fill;
+        fill-hover: Theme.queue-row-control-fill-hover;
+        described: "Delete this message";
+        clicked => { root.act(root.lane, root.slot, "delete"); }
         IconTrash {
             width: 12px;
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+            tint: del.hot ? Theme.queue-row-delete-mark
+                : Theme.queue-row-control-mark;
         }
     }
 }
@@ -129,7 +123,7 @@ export component QueueRowUp inherits Rectangle {
 
     height: 34px;
     border-radius: 6px;
-    background: row-touch.has-hover ? #1f211a : transparent;
+    background: row-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
 
     row-touch := TouchArea {
         x: 0;
@@ -161,60 +155,52 @@ export component QueueRowUp inherits Rectangle {
         width: parent.width - (root.thumb.width > 0 ? 128px : 100px);
         height: 100%;
         text: root.text;
-        color: #d9d8d1;
+        color: Theme.queue-row-ink;
         font-size: 11px;
         vertical-alignment: center;
         wrap: word-wrap;
         overflow: elide;
     }
 
-    Rectangle {
+    edit := Button {
         x: parent.width - 84px;
         y: (parent.height - self.height) / 2;
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: edit.has-hover ? #383c30 : #2c2f26;
-        edit := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "edit"); }
-        }
+        fill: Theme.queue-row-control-fill;
+        fill-hover: Theme.queue-row-control-fill-hover;
+        described: "Edit this message";
+        clicked => { root.act(root.lane, root.slot, "edit"); }
         IconEdit {
             width: 12px;
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: edit.has-hover ? #e7e5df : #b0b1a8;
+            tint: edit.hot ? Theme.queue-row-control-mark-hover
+                : Theme.queue-row-control-mark;
         }
     }
 
-    Rectangle {
+    up := Button {
         x: parent.width - 56px;
         y: (parent.height - self.height) / 2;
         width: 24px;
         height: 24px;
         border-radius: 7px;
-        background: up.has-hover ? #383c30 : #2c2f26;
-        up := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "promote"); }
-        }
+        fill: Theme.queue-row-control-fill;
+        fill-hover: Theme.queue-row-control-fill-hover;
+        described: "Run this message next";
+        clicked => { root.act(root.lane, root.slot, "promote"); }
         IconToTop {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: up.has-hover ? #e0cd7c : #a18e41;
+            tint: up.hot ? Theme.queue-row-promote-mark-hover
+                : Theme.queue-row-promote-mark;
         }
     }
 
-    Rectangle {
+    del := Button {
         x: parent.width - 28px;
         y: (parent.height - self.height) / 2;
         width: 24px;
@@ -222,21 +208,17 @@ export component QueueRowUp inherits Rectangle {
         border-radius: 7px;
         // colour alone, no outline: the fill sits a clear step above both the
         // panel and the row's hover, which is what keeps the button a button
-        background: del.has-hover ? #383c30 : #2c2f26;
-        del := TouchArea {
-            x: 0;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.act(root.lane, root.slot, "delete"); }
-        }
+        fill: Theme.queue-row-control-fill;
+        fill-hover: Theme.queue-row-control-fill-hover;
+        described: "Delete this message";
+        clicked => { root.act(root.lane, root.slot, "delete"); }
         IconTrash {
             width: 12px;
             height: 12px;
             x: 6px;
             y: 6px;
-            tint: del.has-hover ? #f3ded8 : #b0b1a8;
+            tint: del.hot ? Theme.queue-row-delete-mark
+                : Theme.queue-row-control-mark;
         }
     }
 }
@@ -259,7 +241,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-top: 6px;
         padding-bottom: 6px;
         Rectangle {
-            background: #2e2916;
+            background: Theme.transcript-message-fill;
             border-radius: 10px;
             width: min(self.preferred-width, 560px);
             height: self.preferred-height;
@@ -270,9 +252,9 @@ export component TranscriptRow inherits VerticalLayout {
                 padding-bottom: 8px;
                 StyledText {
                     text: data.body;
-                    default-color: #e7e5df;
+                    default-color: Theme.transcript-message-ink;
                     default-font-size: Type.body;
-                    link-color: #a18e41;
+                    link-color: Theme.transcript-link-ink;
                 }
             }
         }
@@ -285,9 +267,9 @@ export component TranscriptRow inherits VerticalLayout {
             y: 6px;
             width: parent.width - 48px;
             text: data.body;
-            default-color: #d2d1ca;
+            default-color: Theme.transcript-prose-ink;
             default-font-size: Type.body;
-            link-color: #a18e41;
+            link-color: Theme.transcript-link-ink;
         }
     }
 
@@ -302,13 +284,24 @@ export component TranscriptRow inherits VerticalLayout {
             width: self.preferred-width;
             height: 24px;
             border-radius: 6px;
-            background: think-touch.has-hover ? #1a1b17 : transparent;
+            background: think-touch.has-hover ? Theme.transcript-thinking-fill-hover
+                : Theme.transcript-thinking-fill;
             HorizontalLayout {
                 padding-left: 8px;
                 padding-right: 8px;
                 spacing: 6px;
-                Text { text: "thinking"; color: #6b6c65; font-size: 10px; vertical-alignment: center; }
-                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+                Text {
+                    text: "thinking";
+                    color: Theme.transcript-thinking-label-ink;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: data.meta;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
 
                 Rectangle {
                     width: 10px;
@@ -316,6 +309,7 @@ export component TranscriptRow inherits VerticalLayout {
                     IconCaret {
                         y: (parent.height - self.height) / 2;
                         up: data.expanded;
+                        tint: Theme.transcript-caret-mark;
                     }
                 }
             }
@@ -323,8 +317,8 @@ export component TranscriptRow inherits VerticalLayout {
         }
 
         if data.expanded : Rectangle {
-            background: #0f100d;
-            border-color: #1e201a;
+            background: Theme.transcript-row-fill-expanded;
+            border-color: Theme.transcript-thinking-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
             height: min(think-text.preferred-height + 24px, 6 * think-probe.preferred-height + 24px);
@@ -346,7 +340,7 @@ export component TranscriptRow inherits VerticalLayout {
                     padding-bottom: 12px;
                     think-text := StyledText {
                         text: data.body;
-                        default-color: #7e8076;
+                        default-color: Theme.transcript-thinking-ink;
                         default-font-family: "Cascadia Code";
                         default-font-size: 11px;
                     }
@@ -366,8 +360,9 @@ export component TranscriptRow inherits VerticalLayout {
             height: 26px;
             border-radius: 6px;
             background: data.failed
-                ? (cell-hot ? #241713 : #1d1412)
-                : (cell-hot ? #181a14 : #14160f);
+                ? (cell-hot ? Theme.transcript-cell-fill-failed-hover
+                    : Theme.transcript-cell-fill-failed)
+                : (cell-hot ? Theme.transcript-cell-fill-hover : Theme.transcript-cell-fill);
 
             property <bool> cell-hot: cell-touch.has-hover || root.err-hover;
 
@@ -390,31 +385,37 @@ export component TranscriptRow inherits VerticalLayout {
                     IconCaret {
                         y: (parent.height - self.height) / 2;
                         up: data.expanded;
+                        tint: Theme.transcript-caret-mark;
                     }
                 }
 
                 Text {
                     text: data.title;
-                    color: data.failed ? #c98a7f : #8b8c85;
+                    color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
                     font-size: 11px;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
 
-                Text { text: data.meta; color: #4a4d44; font-size: 10px; vertical-alignment: center; }
+                Text {
+                    text: data.meta;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
                 // the separator is full white so the run reads as two parts
                 // instead of a sentence ending in a full stop
                 Text {
                     text: "\u{00b7}";
-                    color: #ffffff;
+                    color: Theme.transcript-cell-separator-ink;
                     font-size: 10px;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
                 }
                 Text {
                     text: data.elapsed;
-                    color: #4a4d44;
+                    color: Theme.transcript-cell-meta-ink;
                     font-size: 10px;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
@@ -423,37 +424,39 @@ export component TranscriptRow inherits VerticalLayout {
                 if data.failed : Rectangle {
                     width: 14px;
                     height: 26px;
-                    Rectangle {
+                    err := Button {
                         x: 0;
                         y: (parent.height - self.height) / 2;
                         width: 14px;
                         height: 14px;
                         border-radius: 7px;
-                        background: err-touch.has-hover ? #8d4235 : #6b342b;
+                        fill: Theme.transcript-cell-badge-fill;
+                        fill-hover: Theme.transcript-cell-badge-fill-hover;
+                        cursor: MouseCursor.default;
+                        fade: 0ms;
+                        described: "Why this cell failed";
+                        // The reason hangs off the badge, so the badge reports both
+                        // halves of the hover - a `move` never says the pointer
+                        // walked off - and where it sits, because the popup is
+                        // drawn at the window's root.
+                        hovered(over) => {
+                            root.err-hover = over;
+                            if over {
+                                root.reason-hover(
+                                    data.reason,
+                                    err.window-x,
+                                    err.window-y + err.height,
+                                );
+                            } else {
+                                root.reason-leave();
+                            }
+                        }
                         // the glyph is drawn in the badge's own box: at its
                         // default 16px it overhangs a 14px ring, and its stroke
                         // lands a pixel right and a pixel down of the centre
                         IconAlert {
                             width: parent.width;
                             height: parent.height;
-                        }
-                        err-touch := TouchArea {
-                            x: 0;
-                            y: 0;
-                            width: 100%;
-                            height: 100%;
-                            changed has-hover => {
-                                root.err-hover = self.has-hover;
-                                if self.has-hover {
-                                    root.reason-hover(
-                                        data.reason,
-                                        self.absolute-position.x,
-                                        self.absolute-position.y + self.height,
-                                    );
-                                } else {
-                                    root.reason-leave();
-                                }
-                            }
                         }
                     }
                 }
@@ -463,8 +466,8 @@ export component TranscriptRow inherits VerticalLayout {
         }
 
         if data.expanded : Rectangle {
-            background: #0f100d;
-            border-color: #23251f;
+            background: Theme.transcript-row-fill-expanded;
+            border-color: Theme.transcript-cell-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
             height: self.preferred-height;
@@ -476,17 +479,18 @@ export component TranscriptRow inherits VerticalLayout {
                 spacing: 8px;
                 StyledText {
                     text: data.code;
-                    default-color: #cfd3c8;
+                    default-color: Theme.transcript-cell-code-ink;
                     default-font-family: "Cascadia Code";
                     default-font-size: 12px;
                 }
                 if data.has-output : Rectangle {
                     height: 1px;
-                    background: #1e201a;
+                    background: Theme.transcript-cell-rule;
                 }
                 if data.has-output : StyledText {
                     text: data.output;
-                    default-color: data.failed ? #c98a7f : #8f9187;
+                    default-color: data.failed ? Theme.transcript-cell-ink-failed
+                        : Theme.transcript-cell-output-ink;
                     default-font-family: "Cascadia Code";
                     default-font-size: 11px;
                 }
@@ -501,14 +505,15 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 2px;
         Text {
             text: data.title;
-            color: #4a4d44;
+            color: Theme.transcript-notice-ink;
             font-size: 10px;
         }
     }
 
     // A fenced block: its own surface, mono, the language named in the corner
-    // the way a code card names it. The colours are the TUI's mdCodeBlock (a
-    // sage) and its syntax palette, warmed to sit in this theme.
+    // the way a code card names it. The card and the code's own colour are
+    // roles; the syntax inside the code is still the markup builder's palette,
+    // which is the TUI's warmed to sit in this theme.
     if data.kind == 6 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
@@ -516,14 +521,14 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 5px;
         Rectangle {
             height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
-            background: #0d0e0b;
+            background: Theme.transcript-code-fill;
             border-radius: 8px;
 
             Text {
                 x: 12px;
                 y: 9px;
                 text: data.meta;
-                color: #565a4f;
+                color: Theme.transcript-code-label-ink;
                 font-size: 9px;
                 visible: data.meta != "";
             }
@@ -532,7 +537,7 @@ export component TranscriptRow inherits VerticalLayout {
                 y: 12px + (data.meta == "" ? 0px : 15px);
                 width: parent.width - 24px;
                 text: data.code;
-                default-color: #b3bb9e;
+                default-color: Theme.transcript-code-ink;
                 default-font-size: 11.5px;
                 default-font-family: "Cascadia Code";
             }
@@ -547,7 +552,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-bottom: 5px;
         table-text := StyledText {
             text: data.body;
-            default-color: #a9ab9d;
+            default-color: Theme.transcript-table-ink;
             default-font-size: 11px;
             default-font-family: "Cascadia Code";
         }
@@ -563,7 +568,7 @@ export component TranscriptRow inherits VerticalLayout {
         Rectangle {
             width: 220px;
             height: 150px;
-            background: #1a1c16;
+            background: Theme.transcript-image-fill;
             border-radius: 10px;
             clip: true;
             Image {

@@ -18,6 +18,7 @@ mod sessions;
 mod slash;
 mod status;
 mod text;
+mod theme;
 mod tick;
 mod transcript;
 mod titlebar;
@@ -79,8 +80,25 @@ const SPINNER_FRAMES: [&str; 10] = [
 ];
 
 fn main() -> Result<(), slint::PlatformError> {
+    // A theme author checks a file without a window: the same check the suite
+    // runs over the themes that ship, printed for one file and stopped there.
+    if let Some((code, report)) = theme::check_cli(std::env::args().skip(1)) {
+        print!("{report}");
+        std::process::exit(code);
+    }
+
     let ui = AppWindow::new()?;
     ui.window().set_size(slint::PhysicalSize::new(1200, 830));
+
+    // The window's colours, before it can draw: the theme compiled in, with the
+    // file the reader selected laid over it. A selection that cannot be read is
+    // one line in the log and nothing in the window, which never reports its own
+    // configuration.
+    let (resolved, refusal) = theme::select(crate::env_cfg::cfg().theme.as_deref());
+    if let Some(refusal) = refusal {
+        eprintln!("[theme] {refusal}");
+    }
+    theme::apply(&ui, &resolved);
 
     // design check: seed the queue chip without waiting for a slow turn
     if let Ok(count) = std::env::var("PA_QUEUE") {
@@ -400,7 +418,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     ui.on_titlebar_close(titlebar::close);
-    ui.on_titlebar_menu(titlebar::show_system_menu);
 
     let bar_timer = std::rc::Rc::new(slint::Timer::default());
     {

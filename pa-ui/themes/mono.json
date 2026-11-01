@@ -1,0 +1,25 @@
+{
+    "name": "mono",
+    "version": 1,
+    "palette": {
+        "background": "#111111",
+        "ink": "#e5e5e5",
+        "quiet-ink": "#b0b0b0"
+    },
+    "roles": {
+        "sidebar-row-rename-fill-hover": "#2b2b2b",
+        "sidebar-search-mark": "#b0b0b0",
+        "transcript-jump-mark": "#b2b2b2",
+        "transcript-message-fill": "#292929",
+        "transcript-link-ink": "#8f8f8f",
+        "composer-draft-selection-fill": "#3d3d3d",
+        "composer-draft-selection-ink": "#f0f0f0",
+        "composer-draft-command-ink": "#c1c1c1",
+        "composer-draft-selection-wash": "#434343",
+        "composer-send-fill": "#e6e6e6",
+        "composer-send-fill-hover": "#f2f2f2",
+        "composer-send-mark": "#131313",
+        "queue-row-promote-mark": "#8f8f8f",
+        "queue-row-promote-mark-hover": "#cdcdcd"
+    }
+}
