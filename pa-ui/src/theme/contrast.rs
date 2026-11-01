@@ -44,6 +44,23 @@ const ON_FAILED_CELL_HOVER: &[Role] =
     &[Role::TranscriptSurface, Role::TranscriptCellFillFailedHover];
 const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
 const ON_CODE_CARD: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCodeFill];
+// The composer's own fields: the box the reader writes in, the chip that names
+// the model, and the card the context ring opens.
+const ON_COMPOSER: &[Role] = &[Role::ComposerSurface];
+const ON_SELECTION: &[Role] = &[Role::ComposerSurface, Role::ComposerDraftSelectionFill];
+const ON_ATTACHMENT_REMOVE: &[Role] = &[
+    Role::ComposerSurface,
+    Role::ComposerAttachmentFill,
+    Role::ComposerAttachmentRemoveFill,
+];
+const ON_ATTACH: &[Role] = &[Role::ComposerSurface, Role::ComposerAttachFill];
+const ON_ATTACH_HOVER: &[Role] = &[Role::ComposerSurface, Role::ComposerAttachFillHover];
+const ON_CARD: &[Role] = &[Role::ComposerCardSurface];
+const ON_BAR_TRACK: &[Role] = &[Role::ComposerCardSurface, Role::ComposerCardBarTrack];
+const ON_CHIP: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFill];
+const ON_CHIP_HOVER: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFillHover];
+const ON_SEND_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerSendFill];
+const ON_STOP_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerStopFill];
 
 /// One colour as the reader sees it: a role, and the fields it is drawn on.
 struct Mark {
@@ -188,6 +205,116 @@ const PAIRS: &[Pair] = &[
         what: "a table's text",
         floor: BODY,
     },
+    // The composer. The draft is the reader's own words and the one place there
+    // body text is written rather than read back, so it is held to the body floor
+    // on both the field it is typed on and the field a selection lays over it.
+    Pair {
+        ink: Mark { role: Role::ComposerDraftInk, on: ON_COMPOSER },
+        what: "the draft the reader is writing",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerDraftSelectionInk, on: ON_SELECTION },
+        what: "the words the reader has selected",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCommandInk, on: ON_COMPOSER },
+        what: "the command a draft starts with",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerStatusLineInk, on: ON_COMPOSER },
+        what: "the composer's status line",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerStatusLineInkBad, on: ON_COMPOSER },
+        what: "the status line when something went wrong",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerAttachInk, on: ON_ATTACH },
+        what: "the plus that attaches a picture",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerAttachInkHover, on: ON_ATTACH_HOVER },
+        what: "the plus that attaches a picture, under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerAttachmentRemoveInk, on: ON_ATTACHMENT_REMOVE },
+        what: "the × that removes a picture",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerChipInk, on: ON_CHIP },
+        what: "the model the chip names",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerChipInkHover, on: ON_CHIP_HOVER },
+        what: "the model the chip names, pointed at or open",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerStopMark, on: ON_STOP_FILL },
+        what: "the square on the stop disc",
+        floor: MARK,
+    },
+    // The card the ring opens: the numbers are what it is opened for, so the
+    // figure and every ledger value are held to the body floor, and the small
+    // labels and the bar to the mark floor.
+    Pair {
+        ink: Mark { role: Role::ComposerCardPercentInk, on: ON_CARD },
+        what: "the share of the context used",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCardUsedInk, on: ON_CARD },
+        what: "what is left of the context",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCardLedgerInk, on: ON_CARD },
+        what: "a ledger value",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCardCostInk, on: ON_CARD },
+        what: "what the session has cost",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCardLabelInk, on: ON_CARD },
+        what: "the card's small labels",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerCardBarFill, on: ON_BAR_TRACK },
+        what: "the bar that says how full the context is",
+        floor: MARK,
+    },
+    // The one control is a disc rather than a mark, and what it stands on is the
+    // composer's own field. Held to the mark floor because the disc is the whole
+    // of what says the control is there: a send disc mixed into the box it sits
+    // in leaves a button that cannot be found.
+    Pair {
+        ink: Mark { role: Role::ComposerSendFill, on: ON_COMPOSER },
+        what: "the send disc on the composer's field",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerStopFill, on: ON_COMPOSER },
+        what: "the stop disc on the composer's field",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerSendMark, on: ON_SEND_FILL },
+        what: "the arrow on the send disc",
+        floor: MARK,
+    },
     // The colours below are recorded rather than checked, and all for the same
     // reason: the window already drew them this way and a role that has to
     // resolve to today's pixel cannot be moved here. A theme that wants any of
@@ -272,6 +399,26 @@ const TELLINGS: &[Telling] = &[
         a: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
         b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
         what: "a failed cell's name and a quiet cell's name",
+        floor: APART,
+    },
+    // The composer's one control does two opposite jobs. The arrow that becomes a
+    // square says which while it is being pressed; the fill has to say it first,
+    // to a reader who is only looking. The two states are never on the screen at
+    // once, so the pair is compared the way the reader compares it: this fill
+    // against the one they saw a moment ago.
+    Telling {
+        a: Mark { role: Role::ComposerSendFill, on: ON_COMPOSER },
+        b: Mark { role: Role::ComposerStopFill, on: ON_COMPOSER },
+        what: "the send disc and the stop disc",
+        floor: APART,
+    },
+    // The ring is a bar bent round a circle, and its lit ticks are the only
+    // thing that says how much of the context is gone. A theme that paints them
+    // into the ticks it never reached leaves a circle with nothing to read.
+    Telling {
+        a: Mark { role: Role::ComposerRingTickLit, on: ON_COMPOSER },
+        b: Mark { role: Role::ComposerRingTickUnlit, on: ON_COMPOSER },
+        what: "the context ring's lit ticks and the ones it never reached",
         floor: APART,
     },
 ];

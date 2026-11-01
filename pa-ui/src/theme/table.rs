@@ -153,8 +153,8 @@ pub(crate) enum Derivation {
 /// overrides, so this list is the window's colour glossary: the test in
 /// `tests.rs` holds it and `ui/theme.slint` to the same set.
 // Every variant is prefixed with the part of the window it paints, because that
-// prefix is the role's name in a theme file. The caption, the sidebar and the
-// transcript are the parts the table has reached so far.
+// prefix is the role's name in a theme file. The caption, the sidebar, the
+// transcript and the composer are the parts the table has reached so far.
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
@@ -326,10 +326,140 @@ pub(crate) enum Role {
     /// Its edge, which is the whole of what makes it read as a control while it
     /// is not being pointed at.
     TranscriptJumpEdge,
+    /// The composer's own field. A shade below the window's background, so the
+    /// box reads as a well in the band it sits on — and that band is the
+    /// transcript's sheet, which is why the two fields are separate roles.
+    ComposerSurface,
+    /// The hairline round that box.
+    ComposerEdge,
+    /// The bar on the box's top edge that grows it, at rest.
+    ComposerHandleFill,
+    /// That bar with the pointer on it, which is the whole of what says the bar
+    /// is a control.
+    ComposerHandleFillHover,
+    /// That bar while the reader is dragging it.
+    ComposerHandleFillDragging,
+    /// The words the reader is writing. The one place in the composer where ink
+    /// is body text on a field.
+    ComposerDraftInk,
+    /// The caret a canvas-mode draft paints for itself, because the words it
+    /// edits are a picture. A native field draws its own, and Slint gives that
+    /// one no colour to set.
+    ComposerDraftCaret,
+    /// The field behind the words the reader has selected.
+    ComposerDraftSelectionFill,
+    /// Those words, read on that field. Whiter than the body ink, which the
+    /// palette has no word for, so a theme names it.
+    ComposerDraftSelectionInk,
+    /// The command word a draft starts with: the token the slash menu put in
+    /// front of the words. A gold no palette entry describes, so — like the
+    /// sidebar's tags — it is a fixed value a theme names outright.
+    ComposerCommandInk,
+    /// The tile a picture the draft carries is drawn on. `image-fit: cover`
+    /// leaves it showing at the edges.
+    ComposerAttachmentFill,
+    /// That tile's edge.
+    ComposerAttachmentEdge,
+    /// That edge with the pointer on the tile, which is the whole of what says
+    /// the tile is also the control that removes it.
+    ComposerAttachmentEdgeHover,
+    /// The disc behind the × that removes a picture. It appears only while the
+    /// pointer is on the tile.
+    ComposerAttachmentRemoveFill,
+    /// The ×'s two strokes.
+    ComposerAttachmentRemoveInk,
+    /// The plus that attaches a picture, at rest.
+    ComposerAttachFill,
+    /// That plus with the pointer on it.
+    ComposerAttachFillHover,
+    /// The plus mark at rest.
+    ComposerAttachInk,
+    /// The plus mark with the pointer on it.
+    ComposerAttachInkHover,
+    /// The line under the draft that says what the composer is doing.
+    ComposerStatusLineInk,
+    /// The same line when it carries a failure. Its own role although it ships
+    /// the failed cell's red: it is read on the composer's field, and a theme
+    /// that moves one of the two has already decided about the other. A fixed
+    /// value, because the palette's danger is a red the window never drew a
+    /// status line in, so a theme names this role rather than moving `danger`.
+    ComposerStatusLineInkBad,
+    /// A tick of the context ring the session has reached. The ring is a mark
+    /// rather than a fill: it is drawn as 24 hairlines round a circle, so a
+    /// theme can move it without moving anything else the composer draws.
+    ComposerRingTickLit,
+    /// A tick the session has not reached, which is the rest of the dial.
+    ComposerRingTickUnlit,
+    /// The field of the card the ring opens: how close the session is to
+    /// forgetting, at the scale of numbers rather than of ticks.
+    ComposerCardSurface,
+    /// That card's edge, which is what makes it read as a panel over the window
+    /// rather than as part of it.
+    ComposerCardEdge,
+    /// The shadow that lifts the card off the window. Black at an alpha, so a
+    /// theme with a light background names this role rather than inheriting it.
+    ComposerCardShadow,
+    /// The card's small labels: the word over its bar and the name of each
+    /// ledger line.
+    ComposerCardLabelInk,
+    /// The share of the context used, which is the number the card is opened
+    /// for.
+    ComposerCardPercentInk,
+    /// The track of the bar that answers "how close am I" before a single
+    /// number is read.
+    ComposerCardBarTrack,
+    /// The part of that track the session has used.
+    ComposerCardBarFill,
+    /// The words under the bar: what is left of the context, and how much of
+    /// it the session still has.
+    ComposerCardUsedInk,
+    /// The hairline that parts the card's three questions — the window, the
+    /// counts, the money — so they are read as three and not as one column.
+    ComposerCardRule,
+    /// A ledger's value, flush right in its column.
+    ComposerCardLedgerInk,
+    /// What the session, and the subagents under it, have cost. The one ledger
+    /// the card draws at full strength, because it is the one the reader came
+    /// to the card to check.
+    ComposerCardCostInk,
+    /// The chip that names the running model, at rest.
+    ComposerChipFill,
+    /// That chip with the pointer on it, or with its menu open: the resting
+    /// state is what the old hover state was, because a chip that appears only
+    /// under the pointer reads as decoration rather than as a control.
+    ComposerChipFillHover,
+    /// That chip's edge at rest.
+    ComposerChipEdge,
+    /// That chip's edge while it is pointed at or open.
+    ComposerChipEdgeHover,
+    /// The model's name at rest.
+    ComposerChipInk,
+    /// The model's name while the chip is pointed at or open.
+    ComposerChipInkHover,
+    /// What the control is filled with while it sends. The lightest thing in
+    /// the composer: with no hue to spend, the primary action spends contrast
+    /// and carries the near-black arrow below. A value above the palette's ink,
+    /// which the palette has no word for, so a theme names it.
+    ComposerSendFill,
+    /// That fill with the pointer on it.
+    ComposerSendFillHover,
+    /// The arrow on that fill. Its own role because the arrow is the one mark a
+    /// theme has to move when it moves the disc: the send fill ships lighter
+    /// than anything else in the window, so a theme that darkens the disc and
+    /// leaves this one behind draws a dark mark on it.
+    ComposerSendMark,
+    /// What the control is filled with while it stops the turn. Its own role
+    /// and not a thinning of the send's: the two say opposite things, and a
+    /// theme has to be able to move one without the other.
+    ComposerStopFill,
+    /// That fill with the pointer on it.
+    ComposerStopFillHover,
+    /// The square the send arrow becomes as the control turns into a stop.
+    ComposerStopMark,
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 57] = [
+    pub(crate) const ALL: [Role; 103] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -387,6 +517,52 @@ impl Role {
         Role::TranscriptJumpFill,
         Role::TranscriptJumpFillHover,
         Role::TranscriptJumpEdge,
+        Role::ComposerSurface,
+        Role::ComposerEdge,
+        Role::ComposerHandleFill,
+        Role::ComposerHandleFillHover,
+        Role::ComposerHandleFillDragging,
+        Role::ComposerDraftInk,
+        Role::ComposerDraftCaret,
+        Role::ComposerDraftSelectionFill,
+        Role::ComposerDraftSelectionInk,
+        Role::ComposerCommandInk,
+        Role::ComposerAttachmentFill,
+        Role::ComposerAttachmentEdge,
+        Role::ComposerAttachmentEdgeHover,
+        Role::ComposerAttachmentRemoveFill,
+        Role::ComposerAttachmentRemoveInk,
+        Role::ComposerAttachFill,
+        Role::ComposerAttachFillHover,
+        Role::ComposerAttachInk,
+        Role::ComposerAttachInkHover,
+        Role::ComposerStatusLineInk,
+        Role::ComposerStatusLineInkBad,
+        Role::ComposerRingTickLit,
+        Role::ComposerRingTickUnlit,
+        Role::ComposerCardSurface,
+        Role::ComposerCardEdge,
+        Role::ComposerCardShadow,
+        Role::ComposerCardLabelInk,
+        Role::ComposerCardPercentInk,
+        Role::ComposerCardBarTrack,
+        Role::ComposerCardBarFill,
+        Role::ComposerCardUsedInk,
+        Role::ComposerCardRule,
+        Role::ComposerCardLedgerInk,
+        Role::ComposerCardCostInk,
+        Role::ComposerChipFill,
+        Role::ComposerChipFillHover,
+        Role::ComposerChipEdge,
+        Role::ComposerChipEdgeHover,
+        Role::ComposerChipInk,
+        Role::ComposerChipInkHover,
+        Role::ComposerSendFill,
+        Role::ComposerSendFillHover,
+        Role::ComposerSendMark,
+        Role::ComposerStopFill,
+        Role::ComposerStopFillHover,
+        Role::ComposerStopMark,
     ];
 
     /// The name a theme file and the theme global both use.
@@ -449,14 +625,61 @@ impl Role {
             Role::TranscriptJumpFill => "transcript-jump-fill",
             Role::TranscriptJumpFillHover => "transcript-jump-fill-hover",
             Role::TranscriptJumpEdge => "transcript-jump-edge",
+            Role::ComposerSurface => "composer-surface",
+            Role::ComposerEdge => "composer-edge",
+            Role::ComposerHandleFill => "composer-handle-fill",
+            Role::ComposerHandleFillHover => "composer-handle-fill-hover",
+            Role::ComposerHandleFillDragging => "composer-handle-fill-dragging",
+            Role::ComposerDraftInk => "composer-draft-ink",
+            Role::ComposerDraftCaret => "composer-draft-caret",
+            Role::ComposerDraftSelectionFill => "composer-draft-selection-fill",
+            Role::ComposerDraftSelectionInk => "composer-draft-selection-ink",
+            Role::ComposerCommandInk => "composer-command-ink",
+            Role::ComposerAttachmentFill => "composer-attachment-fill",
+            Role::ComposerAttachmentEdge => "composer-attachment-edge",
+            Role::ComposerAttachmentEdgeHover => "composer-attachment-edge-hover",
+            Role::ComposerAttachmentRemoveFill => "composer-attachment-remove-fill",
+            Role::ComposerAttachmentRemoveInk => "composer-attachment-remove-ink",
+            Role::ComposerAttachFill => "composer-attach-fill",
+            Role::ComposerAttachFillHover => "composer-attach-fill-hover",
+            Role::ComposerAttachInk => "composer-attach-ink",
+            Role::ComposerAttachInkHover => "composer-attach-ink-hover",
+            Role::ComposerStatusLineInk => "composer-status-line-ink",
+            Role::ComposerStatusLineInkBad => "composer-status-line-ink-bad",
+            Role::ComposerRingTickLit => "composer-ring-tick-lit",
+            Role::ComposerRingTickUnlit => "composer-ring-tick-unlit",
+            Role::ComposerCardSurface => "composer-card-surface",
+            Role::ComposerCardEdge => "composer-card-edge",
+            Role::ComposerCardShadow => "composer-card-shadow",
+            Role::ComposerCardLabelInk => "composer-card-label-ink",
+            Role::ComposerCardPercentInk => "composer-card-percent-ink",
+            Role::ComposerCardBarTrack => "composer-card-bar-track",
+            Role::ComposerCardBarFill => "composer-card-bar-fill",
+            Role::ComposerCardUsedInk => "composer-card-used-ink",
+            Role::ComposerCardRule => "composer-card-rule",
+            Role::ComposerCardLedgerInk => "composer-card-ledger-ink",
+            Role::ComposerCardCostInk => "composer-card-cost-ink",
+            Role::ComposerChipFill => "composer-chip-fill",
+            Role::ComposerChipFillHover => "composer-chip-fill-hover",
+            Role::ComposerChipEdge => "composer-chip-edge",
+            Role::ComposerChipEdgeHover => "composer-chip-edge-hover",
+            Role::ComposerChipInk => "composer-chip-ink",
+            Role::ComposerChipInkHover => "composer-chip-ink-hover",
+            Role::ComposerSendFill => "composer-send-fill",
+            Role::ComposerSendFillHover => "composer-send-fill-hover",
+            Role::ComposerSendMark => "composer-send-mark",
+            Role::ComposerStopFill => "composer-stop-fill",
+            Role::ComposerStopFillHover => "composer-stop-fill-hover",
+            Role::ComposerStopMark => "composer-stop-mark",
         }
     }
 
     /// The alphas and shares below are the ones that land on the pixel the
     /// window drew before there was a theme: the caption marks at `#d7d7d7` and
     /// `#6f6f6f`, the chips at `#222222` and `#2b2b2b` over the background, the
-    /// session rows at `#181818` and `#1d1d1d`, the age at `#585858`, and the
-    /// transcript a shade at a time from `#0e0e0e` to `#292929`.
+    /// session rows at `#181818` and `#1d1d1d`, the age at `#585858`, the
+    /// transcript a shade at a time from `#0e0e0e` to `#292929`, and the
+    /// composer from `#0c0c0c` to `#e5e5e5`.
     ///
     /// A share is not the only reading of a value. A surface is a lift of the
     /// palette's ink over its background, and an ink that steps back is the
@@ -558,6 +781,76 @@ impl Role {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.1415)
             }
             Role::TranscriptJumpEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1745),
+            Role::ComposerSurface => Derivation::Shade(Palette::Background, 0x0a),
+            Role::ComposerEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
+            Role::ComposerHandleFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
+            Role::ComposerHandleFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.2783)
+            }
+            Role::ComposerHandleFillDragging => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.434)
+            }
+            Role::ComposerDraftInk => Derivation::Palette(Palette::Ink),
+            Role::ComposerDraftCaret => Derivation::Palette(Palette::Ink),
+            Role::ComposerDraftSelectionFill => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.2075)
+            }
+            Role::ComposerDraftSelectionInk => Derivation::Fixed(Rgba::hex("#f0f0f0")),
+            Role::ComposerCommandInk => Derivation::Fixed(Rgba::hex("#d8c06a")),
+            Role::ComposerAttachmentFill => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0377)
+            }
+            Role::ComposerAttachmentEdge => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1226)
+            }
+            Role::ComposerAttachmentEdgeHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.2028)
+            }
+            Role::ComposerAttachmentRemoveFill => Derivation::Shade(Palette::Background, 0x4b),
+            Role::ComposerAttachmentRemoveInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.9292)
+            }
+            Role::ComposerAttachFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
+            Role::ComposerAttachFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+            }
+            Role::ComposerAttachInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7736),
+            Role::ComposerAttachInkHover => Derivation::Palette(Palette::QuietInk),
+            Role::ComposerStatusLineInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
+            Role::ComposerStatusLineInkBad => Derivation::Fixed(Rgba::hex("#c98a7f")),
+            Role::ComposerRingTickLit => Derivation::Fixed(Rgba::hex("#c9a86a")),
+            Role::ComposerRingTickUnlit => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
+            Role::ComposerCardSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
+            Role::ComposerCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
+            Role::ComposerCardShadow => Derivation::Fixed(Rgba::hex("#00000066")),
+            Role::ComposerCardLabelInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
+            Role::ComposerCardPercentInk => Derivation::Palette(Palette::Ink),
+            Role::ComposerCardBarTrack => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+            }
+            Role::ComposerCardBarFill => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
+            }
+            Role::ComposerCardUsedInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+            }
+            Role::ComposerCardRule => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
+            Role::ComposerCardLedgerInk => Derivation::Palette(Palette::QuietInk),
+            Role::ComposerCardCostInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
+            Role::ComposerChipFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
+            Role::ComposerChipFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
+            Role::ComposerChipEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
+            Role::ComposerChipEdgeHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
+            Role::ComposerChipInk => Derivation::Palette(Palette::QuietInk),
+            Role::ComposerChipInkHover => Derivation::Palette(Palette::Ink),
+            Role::ComposerSendFill => Derivation::Fixed(Rgba::hex("#e6e6e6")),
+            Role::ComposerSendFillHover => Derivation::Fixed(Rgba::hex("#f2f2f2")),
+            Role::ComposerSendMark => Derivation::Fixed(Rgba::hex("#131313")),
+            Role::ComposerStopFill => Derivation::Fixed(Rgba::hex("#a2543f")),
+            Role::ComposerStopFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
+            Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
         }
     }
 }

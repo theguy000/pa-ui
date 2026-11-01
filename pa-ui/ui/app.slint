@@ -997,8 +997,10 @@ export component AppWindow inherits Window {
                         width: 36px;
                         height: 3px;
                         border-radius: 1.5px;
-                        background: root.dragging ? #6d6d6d
-                            : (root.handle-hover ? #4c4c4c : #353535);
+                        background: root.dragging
+                            ? Theme.composer-handle-fill-dragging
+                            : (root.handle-hover ? Theme.composer-handle-fill-hover
+                                : Theme.composer-handle-fill);
                     }
 
 
@@ -1021,8 +1023,8 @@ export component AppWindow inherits Window {
                     y: parent.height - self.height - 12px;
                     width: parent.width - 36px;
                     height: root.box-height;
-    background: #101010;
-    border-color: #242424;
+    background: Theme.composer-surface;
+    border-color: Theme.composer-edge;
     border-width: 1px;
     border-radius: 12px;
 
@@ -1033,8 +1035,10 @@ export component AppWindow inherits Window {
         width: 36px;
         height: 3px;
         border-radius: 1.5px;
-        background: root.dragging ? #6d6d6d
-            : (root.handle-hover ? #4c4c4c : #353535);
+        background: root.dragging
+            ? Theme.composer-handle-fill-dragging
+            : (root.handle-hover ? Theme.composer-handle-fill-hover
+                : Theme.composer-handle-fill);
     }
 
     VerticalLayout {
@@ -1059,9 +1063,10 @@ export component AppWindow inherits Window {
                     height: 44px;
                     border-radius: 8px;
                     clip: true;
-                    background: #191919;
+                    background: Theme.composer-attachment-fill;
                     border-width: 1px;
-                    border-color: thumb-touch.has-hover ? #3c3c3c : #2b2b2b;
+                    border-color: thumb-touch.has-hover ? Theme.composer-attachment-edge-hover
+                        : Theme.composer-attachment-edge;
 
                     Image {
                         x: 1px;
@@ -1083,7 +1088,7 @@ export component AppWindow inherits Window {
                         width: 14px;
                         height: 14px;
                         border-radius: 7px;
-                        background: #0c0c0c;
+                        background: Theme.composer-attachment-remove-fill;
                         opacity: thumb-touch.has-hover ? 0.92 : 0.0;
                         animate opacity { duration: 120ms; }
                         Rectangle {
@@ -1092,7 +1097,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d6d6d6;
+                            background: Theme.composer-attachment-remove-ink;
                             transform-rotation: 45deg;
                         }
                         Rectangle {
@@ -1101,7 +1106,7 @@ export component AppWindow inherits Window {
                             width: 7px;
                             height: 1.5px;
                             border-radius: 0.75px;
-                            background: #d6d6d6;
+                            background: Theme.composer-attachment-remove-ink;
                             transform-rotation: -45deg;
                         }
                     }
@@ -1119,7 +1124,7 @@ export component AppWindow inherits Window {
                 y: 1px;
                 height: 20px;
                 text: root.composer-command;
-                color: #d8c06a;
+                color: Theme.composer-command-ink;
                 font-size: 13px;
                 vertical-alignment: center;
                 init => { root.command-word-width = self.preferred-width; }
@@ -1249,7 +1254,8 @@ export component AppWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     text: root.status-line;
-                    color: root.status-line-bad ? #c98a7f : #6d6d6d;
+                    color: root.status-line-bad ? Theme.composer-status-line-ink-bad
+                        : Theme.composer-status-line-ink;
                     font-size: 10px;
                     vertical-alignment: center;
                     wrap: no-wrap;
@@ -1285,12 +1291,12 @@ export component AppWindow inherits Window {
                     y: -self.height - 14px;
                     width: 216px;
                     height: self.preferred-height;
-                    background: #181818;
-                    border-color: #2b2b2b;
+                    background: Theme.composer-card-surface;
+                    border-color: Theme.composer-card-edge;
                     border-width: 1px;
                     border-radius: 8px;
                     drop-shadow-blur: 10px;
-                    drop-shadow-color: #00000066;
+                    drop-shadow-color: Theme.composer-card-shadow;
                     VerticalLayout {
                         padding-left: 12px;
                         padding-right: 12px;
@@ -1318,12 +1324,14 @@ export component AppWindow inherits Window {
                 width: 20px;
                 height: 20px;
                 border-radius: 6px;
-                background: attach-touch.has-hover ? #242424 : #1a1a1a;
+                background: attach-touch.has-hover ? Theme.composer-attach-fill-hover
+                    : Theme.composer-attach-fill;
                 animate background { duration: 120ms; }
                 IconPlus {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    tint: attach-touch.has-hover ? #b0b0b0 : #8c8c8c;
+                    tint: attach-touch.has-hover ? Theme.composer-attach-ink-hover
+                        : Theme.composer-attach-ink;
                 }
                 attach-touch := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
@@ -1357,8 +1365,10 @@ export component AppWindow inherits Window {
                 // spends contrast instead: the disc is the lightest thing in the
                 // composer, carrying a near-black arrow.
                 background: root.stop-mode
-                    ? (send-touch.has-hover ? #b8614c : #a2543f)
-                    : (send-touch.has-hover ? #f2f2f2 : #e6e6e6);
+                    ? (send-touch.has-hover ? Theme.composer-stop-fill-hover
+                        : Theme.composer-stop-fill)
+                    : (send-touch.has-hover ? Theme.composer-send-fill-hover
+                        : Theme.composer-send-fill);
                 animate background { duration: 240ms; easing: ease-in-out; }
 
                 IconSend {
@@ -1368,6 +1378,7 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     opacity: 1.0 - root.stop-mix;
                     transform-rotation: root.stop-mix * 45deg;
+                    tint: Theme.composer-send-mark;
                 }
 
                 Rectangle {
@@ -1377,7 +1388,7 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     // a dot rounding out into a square as it arrives
                     border-radius: 3px - 1.5px * root.stop-mix;
-                    background: #f0f0f0;
+                    background: Theme.composer-stop-mark;
                     opacity: root.stop-mix;
                     transform-rotation: (1.0 - root.stop-mix) * -45deg;
                 }

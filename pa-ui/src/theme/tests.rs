@@ -137,6 +137,180 @@ fn the_shipped_theme_draws_todays_failure() {
     assert_eq!(theme.get(Role::TranscriptReasonInk), Rgba::hex("#e0b6ad"));
 }
 
+/// The composer as the window drew it before there was a theme: the values read
+/// off `ui/composer.slint`, `ui/draft-editor.slint` and the composer band in
+/// `ui/app.slint`, not out of this crate.
+#[test]
+fn the_shipped_theme_draws_todays_composer() {
+    let theme = Resolved::shipped();
+
+    // The box the reader writes in, and the bar on its edge that grows it.
+    assert_eq!(theme.get(Role::ComposerSurface), Rgba::hex("#101010"));
+    assert_eq!(theme.get(Role::ComposerEdge), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::ComposerHandleFill), Rgba::hex("#353535"));
+    assert_eq!(theme.get(Role::ComposerHandleFillHover), Rgba::hex("#4c4c4c"));
+    assert_eq!(theme.get(Role::ComposerHandleFillDragging), Rgba::hex("#6d6d6d"));
+
+    // The draft, its caret and the field behind what the reader has selected.
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ComposerDraftCaret), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3d3d3d"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionInk), Rgba::hex("#f0f0f0"));
+
+    // The command word, and whatever the draft is carrying.
+    assert_eq!(theme.get(Role::ComposerCommandInk), Rgba::hex("#d8c06a"));
+    assert_eq!(theme.get(Role::ComposerAttachmentFill), Rgba::hex("#191919"));
+    assert_eq!(theme.get(Role::ComposerAttachmentEdge), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::ComposerAttachmentEdgeHover), Rgba::hex("#3c3c3c"));
+    assert_eq!(theme.get(Role::ComposerAttachmentRemoveFill), Rgba::hex("#0c0c0c"));
+    assert_eq!(theme.get(Role::ComposerAttachmentRemoveInk), Rgba::hex("#d6d6d6"));
+
+    // The plus, and the line under the draft.
+    assert_eq!(theme.get(Role::ComposerAttachFill), Rgba::hex("#1a1a1a"));
+    assert_eq!(theme.get(Role::ComposerAttachFillHover), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::ComposerAttachInk), Rgba::hex("#8c8c8c"));
+    assert_eq!(theme.get(Role::ComposerAttachInkHover), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::ComposerStatusLineInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::ComposerStatusLineInkBad), Rgba::hex("#c98a7f"));
+
+    // The ring, and the card that opens off it.
+    assert_eq!(theme.get(Role::ComposerRingTickLit), Rgba::hex("#c9a86a"));
+    assert_eq!(theme.get(Role::ComposerRingTickUnlit), Rgba::hex("#353535"));
+    assert_eq!(theme.get(Role::ComposerCardSurface), Rgba::hex("#181818"));
+    assert_eq!(theme.get(Role::ComposerCardEdge), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::ComposerCardShadow), Rgba::hex("#00000066"));
+    assert_eq!(theme.get(Role::ComposerCardLabelInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::ComposerCardPercentInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ComposerCardBarTrack), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::ComposerCardBarFill), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::ComposerCardUsedInk), Rgba::hex("#8b8b8b"));
+    assert_eq!(theme.get(Role::ComposerCardRule), Rgba::hex("#1d1d1d"));
+    assert_eq!(theme.get(Role::ComposerCardLedgerInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::ComposerCardCostInk), Rgba::hex("#d7d7d7"));
+
+    // The chip that names the model.
+    assert_eq!(theme.get(Role::ComposerChipFill), Rgba::hex("#1a1a1a"));
+    assert_eq!(theme.get(Role::ComposerChipFillHover), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::ComposerChipEdge), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::ComposerChipEdgeHover), Rgba::hex("#353535"));
+    assert_eq!(theme.get(Role::ComposerChipInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::ComposerChipInkHover), Rgba::hex("#e5e5e5"));
+
+    // The one control, in both of the jobs it does.
+    assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#e6e6e6"));
+    assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#f2f2f2"));
+    assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#131313"));
+    assert_eq!(theme.get(Role::ComposerStopFill), Rgba::hex("#a2543f"));
+    assert_eq!(theme.get(Role::ComposerStopFillHover), Rgba::hex("#b8614c"));
+    assert_eq!(theme.get(Role::ComposerStopMark), Rgba::hex("#f0f0f0"));
+}
+
+/// The composer is made of the base values like every other part: a file that
+/// moves the window's colours carries the box, the draft and the card with it,
+/// which is what makes a light composer possible without naming every role.
+#[test]
+fn a_theme_that_moves_the_base_values_moves_the_composer_with_them() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020" } }"##,
+    )
+    .expect("a file that names only base values");
+
+    let shipped = Resolved::shipped();
+    // The box sits *below* its band, so on a light window it steps further from
+    // the ink rather than towards it.
+    let field = theme.get(Role::ComposerSurface);
+    assert!(field.r > shipped.get(Role::ComposerSurface).r, "{field:?}");
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#202020"));
+    assert_eq!(theme.get(Role::ComposerChipInkHover), Rgba::hex("#202020"));
+    // The chip and the boxes in it are a lift of ink over the background, so on a
+    // light window they step darker than the field and stay light: the lift is
+    // the same few per cent of the ink, which is now the dark end.
+    let chip = theme.get(Role::ComposerChipFillHover);
+    assert!(chip.r < 0xf5 && chip.r > 0x20, "{chip:?}");
+}
+
+/// The one control does two opposite jobs, so a theme that paints the stop like
+/// the send has taken the difference away: nothing but the fill says which of
+/// the two the click will do. The check names the pair.
+#[test]
+fn a_theme_that_paints_the_stop_like_the_send_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "composer-stop-fill": "#e6e6e6",
+                        "composer-stop-fill-hover": "#f2f2f2" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+
+    assert_eq!(named, ["the send disc and the stop disc"]);
+}
+
+/// A file that names the composer's colours repaints the composer and moves
+/// nothing else in the map.
+#[test]
+fn a_theme_that_names_the_composer_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "composer-surface": "#1a1226",
+               "composer-edge": "#3a2a52",
+               "composer-handle-fill": "#3a2a52",
+               "composer-handle-fill-hover": "#4a3a63",
+               "composer-handle-fill-dragging": "#5f4d7d",
+               "composer-draft-ink": "#eee6ff",
+               "composer-draft-caret": "#eee6ff",
+               "composer-draft-selection-fill": "#4a3a63",
+               "composer-draft-selection-ink": "#ffffff",
+               "composer-command-ink": "#e0b6ad",
+               "composer-attachment-fill": "#241a33",
+               "composer-attachment-edge": "#3a2a52",
+               "composer-attachment-edge-hover": "#4a3a63",
+               "composer-attachment-remove-fill": "#140f1c",
+               "composer-attachment-remove-ink": "#ded2f2",
+               "composer-attach-fill": "#241a33",
+               "composer-attach-fill-hover": "#2f2242",
+               "composer-attach-ink": "#9a8fb0",
+               "composer-attach-ink-hover": "#cfc0e8",
+               "composer-status-line-ink": "#8a7fa0",
+               "composer-status-line-ink-bad": "#ff9f8f",
+               "composer-ring-tick-lit": "#c9a7ff",
+               "composer-ring-tick-unlit": "#3a2a52",
+               "composer-card-surface": "#1c1526",
+               "composer-card-edge": "#3a2a52",
+               "composer-card-shadow": "#00000099",
+               "composer-card-label-ink": "#9a8fb0",
+               "composer-card-percent-ink": "#eee6ff",
+               "composer-card-bar-track": "#3a2a52",
+               "composer-card-bar-fill": "#c9a7ff",
+               "composer-card-used-ink": "#b0a3c8",
+               "composer-card-rule": "#33254a",
+               "composer-card-ledger-ink": "#cfc0e8",
+               "composer-card-cost-ink": "#eee6ff",
+               "composer-chip-fill": "#241a33",
+               "composer-chip-fill-hover": "#2f2242",
+               "composer-chip-edge": "#3a2a52",
+               "composer-chip-edge-hover": "#4a3a63",
+               "composer-chip-ink": "#cfc0e8",
+               "composer-chip-ink-hover": "#eee6ff",
+               "composer-send-fill": "#c9a7ff",
+               "composer-send-fill-hover": "#ded2f2",
+               "composer-send-mark": "#140f1c",
+               "composer-stop-fill": "#ff9f8f",
+               "composer-stop-fill-hover": "#ffd0c4",
+               "composer-stop-mark": "#140f1c" } }"##,
+    )
+    .expect("a file that repaints the composer");
+
+    // The file names every colour the composer has, and nothing else moves.
+    let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("composer-"));
+    assert_eq!(moved, claimed);
+}
+
 /// The transcript is made of the base values like every other part: a file that
 /// moves the field and the ink carries the sheet of rows with it, which is what
 /// makes a light transcript possible without naming every role by hand.
@@ -388,8 +562,11 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
 /// names — made of quiet ink, which this file never moved — go with it. The
 /// transcript's secondary ink is made of the same quiet ink faded towards the
 /// field, so it stays pale on a pale column while its prose, made of the ink,
-/// follows the file all the way. Those are roles to override, not a file to
-/// refuse, and the author is told which.
+/// follows the file all the way. The composer is the same story twice over: the
+/// chip's name, the plus and the line under the draft are quiet ink faded
+/// towards a field that has just gone light, and the gold of a command word and
+/// the white of a selection are fixed values no palette entry moves. Those are
+/// roles to override, not a file to refuse, and the author is told which.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -407,15 +584,27 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
         [
             "a cell's name at rest",
             "a cell's name under the pointer",
+            "a ledger value",
             "a link in prose",
             "a session's name at rest",
             "a session's name under the pointer",
             "a table's text",
+            "the bar that says how full the context is",
+            "the card's small labels",
+            "the command a draft starts with",
+            "the composer's status line",
             "the dot that parts a cell's meta from its elapsed time",
             "the fold mark at rest",
             "the label a thinking row carries",
+            "the model the chip names",
+            "the plus that attaches a picture",
+            "the plus that attaches a picture, under the pointer",
+            "the send disc on the composer's field",
+            "the status line when something went wrong",
             "the text inside an opened thinking row",
-            "what a cell printed"
+            "the words the reader has selected",
+            "what a cell printed",
+            "what is left of the context"
         ]
     );
 }
