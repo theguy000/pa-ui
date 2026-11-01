@@ -16,16 +16,21 @@
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
-/// Prose.
-const COLOR_NORMAL: Color = Color::rgb(0xe5, 0xe5, 0xe5);
-/// A command the agent or the window will run.
-const COLOR_COMMAND: Color = Color::rgb(0xc1, 0xc1, 0xc1);
-/// Behind a selection, and the glyphs inside one.
-const COLOR_SELECTION: Color = Color::rgba(0x43, 0x43, 0x43, 0xc0);
+use crate::theme::{Resolved, Role};
 
 /// The family the rest of the window uses. Asking for the generic sans gets
 /// Arial, which is a different width and a different weight.
 const FAMILY: &str = "Segoe UI";
+
+/// A role's colour as `cosmic-text` spells it.
+///
+/// The canvas is the one consumer that cannot be handed a `slint::Color`: it
+/// rasterises its own pixels, with its own font stack, and takes its colours as
+/// four channels.
+fn colour(theme: &Resolved, role: Role) -> Color {
+    let value = theme.get(role);
+    Color::rgba(value.r, value.g, value.b, value.a)
+}
 
 /// Where the caret goes, in the canvas' own pixels.
 pub struct Caret {
@@ -186,11 +191,20 @@ pub struct Canvas {
     cache: SwashCache,
     buffer: Buffer,
     metrics: Metrics,
+    /// The draft's own words, and the one word in it that names a command the
+    /// agent or the window will run.
+    normal: Color,
+    command: Color,
+    /// Behind a selection. Laid down opaque, so the words inside it keep the
+    /// draft's own ink.
+    selection: Color,
 }
 
 impl Canvas {
+    /// Build the painter in a theme's colours: they are asked for once, here, so
+    /// a pass per keystroke never resolves a role.
     #[must_use]
-    pub fn new(font_size: f32, line_height: f32) -> Self {
+    pub fn new(font_size: f32, line_height: f32, theme: &Resolved) -> Self {
         let mut fonts = FontSystem::new();
         let metrics = Metrics::new(font_size, line_height);
         let mut buffer = Buffer::new(&mut fonts, metrics);
@@ -200,6 +214,9 @@ impl Canvas {
             cache: SwashCache::new(),
             buffer,
             metrics,
+            normal: colour(theme, Role::ComposerDraftInk),
+            command: colour(theme, Role::ComposerDraftCommandInk),
+            selection: colour(theme, Role::ComposerDraftSelectionWash),
         }
     }
 
@@ -218,10 +235,13 @@ impl Canvas {
         let width = width.max(32.0);
         self.buffer.set_size(&mut self.fonts, Some(width), None);
 
-        let attrs_for = |command: bool| {
+        // copied out of `self` before the buffer is shaped: the pass below holds
+        // the buffer mutably, and a colour is four channels
+        let (normal, command, highlight) = (self.normal, self.command, self.selection);
+        let attrs_for = |command_run: bool| {
             Attrs::new()
                 .family(Family::Name(FAMILY))
-                .color(if command { COLOR_COMMAND } else { COLOR_NORMAL })
+                .color(if command_run { command } else { normal })
         };
         let runs: Vec<(&str, Attrs)> = spans(text, is_command)
             .into_iter()
@@ -311,12 +331,12 @@ impl Canvas {
             let frame = pixels.make_mut_slice();
             for (x, run_width, y) in &selections {
                 let selected = Rect { x: *x, y: *y, width: *run_width, height: line_height };
-                fill(frame, stride, image_w, image_h, selected, COLOR_SELECTION);
+                fill(frame, stride, image_w, image_h, selected, highlight);
             }
             self.buffer.draw(
                 &mut self.fonts,
                 &mut self.cache,
-                COLOR_NORMAL,
+                normal,
                 |x, y, w, h, color| {
                     if color.a() == 0 || x < 0 || y < 0 {
                         return;
@@ -404,6 +424,12 @@ mod tests {
 #[cfg(test)]
 mod caret_tests {
     use super::{split_at_line, Canvas};
+    use crate::theme::Resolved;
+
+    /// A canvas in the theme the window ships with.
+    fn canvas() -> Canvas {
+        Canvas::new(13.0, 18.0, &Resolved::shipped())
+    }
 
     #[test]
     fn the_first_line_is_numbered_from_the_top() {
@@ -447,7 +473,7 @@ mod caret_tests {
     /// the document: a paste put the caret somewhere the writer never clicked.
     #[test]
     fn a_caret_on_a_later_line_lands_between_its_own_glyphs() {
-        let mut canvas = Canvas::new(13.0, 18.0);
+        let mut canvas = canvas();
         let text = "abc\ndefgh";
         let at = |canvas: &mut Canvas, byte: usize| {
             let (_, caret) = canvas.render(text, byte, (byte, byte), 400.0, |_| false);
@@ -467,7 +493,7 @@ mod caret_tests {
     /// instead of the last one.
     #[test]
     fn the_end_of_a_wrapped_line_belongs_to_its_bottom_run() {
-        let mut canvas = Canvas::new(13.0, 18.0);
+        let mut canvas = canvas();
         let text = "one two three four five six seven eight nine ten eleven twelve";
         let (_, caret) = canvas.render(text, text.len(), (0, 0), 60.0, |_| false);
         assert!(
@@ -479,5 +505,93 @@ mod caret_tests {
             caret.content_height - 18.0,
             "the caret is on the last wrapped run, not the first"
         );
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::Canvas;
+    use crate::theme::{light, Resolved, Role};
+
+    /// The draft these cases paint: prose, a command word in the middle of it,
+    /// and its first word selected.
+    const DRAFT: &str = "please /refine this";
+
+    /// What a theme paints for that draft, pixel for pixel, and where the caret
+    /// lands: the buffer the canvas made, before Slint sees it.
+    fn painted(theme: &Resolved) -> (Vec<u8>, (f32, f32, f32, f32)) {
+        let mut canvas = Canvas::new(15.0, 20.0, theme);
+        let (image, caret) =
+            canvas.render(DRAFT, DRAFT.len(), (0, 6), 400.0, |name| name == "refine");
+        let pixels = image
+            .to_rgba8_premultiplied()
+            .expect("a buffer this canvas made")
+            .as_slice()
+            .iter()
+            .flat_map(|pixel| [pixel.r, pixel.g, pixel.b, pixel.a])
+            .collect();
+        (pixels, (caret.x, caret.y, caret.height, caret.content_height))
+    }
+
+    fn draws(pixels: &[u8], colour: [u8; 4]) -> bool {
+        pixels.as_chunks::<4>().0.contains(&colour)
+    }
+
+    /// The coverage each pixel was painted at, which is the glyphs' own shape:
+    /// alpha comes from the rasteriser and the selection, never from a colour.
+    fn coverage(pixels: &[u8]) -> Vec<u8> {
+        pixels.as_chunks::<4>().0.iter().map(|pixel| pixel[3]).collect()
+    }
+
+    /// The ticket's second promise: the same draft, twice, in two themes. The
+    /// words come out in the theme's colours, and every glyph sits exactly where
+    /// it sat — a theme that moved the layout would be a redesign, not a scheme.
+    #[test]
+    fn the_same_draft_under_two_themes_paints_the_same_glyphs_in_other_colours() {
+        let (here, caret_here) = painted(&Resolved::shipped());
+        let (there, caret_there) = painted(&light());
+
+        assert_ne!(here, there, "the draft has to follow the theme");
+        let (here_coverage, there_coverage) = (coverage(&here), coverage(&there));
+        assert_eq!(here_coverage, there_coverage, "the glyphs have not moved");
+        assert_eq!(caret_here, caret_there, "nor has the caret");
+
+        // And the comparison is worth something: some pixel is a glyph at full
+        // strength and some pixel is untouched.
+        assert!(here_coverage.contains(&255) && here_coverage.contains(&0), "an empty pass");
+    }
+
+    /// The other half of the same promise: under the theme that ships, the canvas
+    /// paints the pixels it painted before there was a theme. Read off the buffer
+    /// rather than off the canvas, so this is a check of the drawing.
+    #[test]
+    fn the_shipped_theme_paints_the_draft_the_canvas_painted_before_the_theme() {
+        let (pixels, _) = painted(&Resolved::shipped());
+
+        assert!(draws(&pixels, [0xe5, 0xe5, 0xe5, 255]), "the draft's own ink");
+        assert!(draws(&pixels, [0xc1, 0xc1, 0xc1, 255]), "the command word among them");
+        assert!(draws(&pixels, [0x43, 0x43, 0x43, 255]), "the field under a selection");
+    }
+
+    /// And the same draft on a light window: the three colours it asks for are
+    /// the three the table resolves, so a theme reaches even what the window
+    /// paints for itself.
+    #[test]
+    fn a_light_theme_paints_the_draft_in_its_own_colours() {
+        let light = light();
+        let (pixels, _) = painted(&light);
+
+        for role in [
+            Role::ComposerDraftInk,
+            Role::ComposerDraftCommandInk,
+            Role::ComposerDraftSelectionWash,
+        ] {
+            let colour = light.get(role);
+            assert!(
+                draws(&pixels, [colour.r, colour.g, colour.b, 255]),
+                "{} is not on the canvas: {colour:?}",
+                role.name()
+            );
+        }
     }
 }

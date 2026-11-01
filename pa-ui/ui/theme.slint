@@ -4,6 +4,11 @@
 // component is a colour no theme can reach. What each name means lives beside
 // the table that decides its value, in src/theme/table.rs.
 //
+// Eight of the roles are read by Rust rather than by a component — the five inks
+// the transcript's markup carries and the three the composer's canvas draws with
+// — and are declared here with the rest so this file stays the window's whole
+// colour vocabulary: one theme, one list of names.
+//
 // `in-out` although nothing reassigns any of it yet: the window assigns this
 // once, before it runs, and a reload that lands later needs no component to
 // change.
@@ -53,15 +58,19 @@ export global Theme {
     in-out property <color> brand-mark-stem;
     in-out property <color> brand-mark-stem-shadow;
     // the transcript: the field the rows are drawn on, the prose and the
-    // reader's own message, a cell in each state it is drawn in and the failure
-    // it can carry, the body a row opens onto, a thought, a code block, a table,
-    // an image, and the scrollbar and jump chip of the transcript's own chrome
+    // reader's own message, the heading and the symbol a line of prose carries,
+    // a cell in each state it is drawn in and the failure it can carry, the body
+    // a row opens onto, a thought, a code block with the three kinds of token the
+    // highlighter colours, a table, an image, and the scrollbar and jump chip of
+    // the transcript's own chrome
     in-out property <color> transcript-surface;
     in-out property <color> transcript-prose-ink;
     in-out property <color> transcript-message-fill;
     in-out property <color> transcript-message-ink;
     in-out property <color> transcript-link-ink;
     in-out property <color> transcript-notice-ink;
+    in-out property <color> transcript-heading-ink;
+    in-out property <color> transcript-inline-code-ink;
     in-out property <color> transcript-caret-mark;
     in-out property <color> transcript-cell-fill;
     in-out property <color> transcript-cell-fill-hover;
@@ -89,6 +98,9 @@ export global Theme {
     in-out property <color> transcript-code-fill;
     in-out property <color> transcript-code-ink;
     in-out property <color> transcript-code-label-ink;
+    in-out property <color> transcript-code-keyword-ink;
+    in-out property <color> transcript-code-string-ink;
+    in-out property <color> transcript-code-comment-ink;
     in-out property <color> transcript-table-ink;
     in-out property <color> transcript-image-fill;
     in-out property <color> transcript-scroll-thumb;
@@ -99,10 +111,11 @@ export global Theme {
     in-out property <color> transcript-jump-edge;
     in-out property <color> transcript-jump-mark;
     // the composer: the box the reader writes in and its edge, the bar that grows
-    // it, the draft and the field behind what is selected in it, the command word
-    // and the pictures the draft carries, the line under it, the context ring and
-    // the card that opens off it, the chip that names the model, and the one
-    // control in the two jobs it does
+    // it, the draft and the field behind what is selected in it — the words the
+    // canvas paints for itself, and the command word among them — the command
+    // word in front of a draft and the pictures it carries, the line under it, the
+    // context ring and the card that opens off it, the chip that names the model,
+    // and the one control in the two jobs it does
     in-out property <color> composer-surface;
     in-out property <color> composer-edge;
     in-out property <color> composer-handle-fill;
@@ -112,6 +125,8 @@ export global Theme {
     in-out property <color> composer-draft-caret;
     in-out property <color> composer-draft-selection-fill;
     in-out property <color> composer-draft-selection-ink;
+    in-out property <color> composer-draft-command-ink;
+    in-out property <color> composer-draft-selection-wash;
     in-out property <color> composer-command-ink;
     in-out property <color> composer-attachment-fill;
     in-out property <color> composer-attachment-edge;

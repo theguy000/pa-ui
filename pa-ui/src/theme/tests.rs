@@ -469,6 +469,8 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
                "composer-draft-caret": "#eee6ff",
                "composer-draft-selection-fill": "#4a3a63",
                "composer-draft-selection-ink": "#ffffff",
+               "composer-draft-command-ink": "#c9a7ff",
+               "composer-draft-selection-wash": "#4a3a63",
                "composer-command-ink": "#e0b6ad",
                "composer-attachment-fill": "#241a33",
                "composer-attachment-edge": "#3a2a52",
@@ -513,6 +515,39 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
     // The file names every colour the composer has, and nothing else moves.
     let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("composer-"));
     assert_eq!(moved, claimed);
+}
+
+/// The inks the two Rust consumers paint with, as the window drew them before
+/// there was a theme: the values read off `src/transcript/markup.rs` and
+/// `src/composer_canvas.rs`, not out of the table. What those consumers draw
+/// with them is asserted where they draw it — the markup string in
+/// `transcript::tests`, the pixels in `composer_canvas`.
+///
+/// All but one are steps of the palette, so a theme that turns the window over
+/// turns them over with it; the wash is a lift of the ink like every other field.
+#[test]
+fn the_shipped_theme_resolves_todays_markup_and_canvas_inks() {
+    let theme = Resolved::shipped();
+
+    // Inside a line of prose: the heading, and the symbol the writer put in
+    // backticks.
+    assert_eq!(theme.get(Role::TranscriptHeadingInk), Rgba::hex("#b2b2b2"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#8f8f8f"));
+
+    // The three kinds of token the highlighter colours, in a cell's code and in a
+    // fenced block alike. A number is not one of them: it never had a colour.
+    assert_eq!(theme.get(Role::TranscriptCodeKeywordInk), Rgba::hex("#acacac"));
+    assert_eq!(theme.get(Role::TranscriptCodeStringInk), Rgba::hex("#aaaaaa"));
+    assert_eq!(theme.get(Role::TranscriptCodeCommentInk), Rgba::hex("#606060"));
+
+    // The draft the canvas paints for itself: its words, the one word among them
+    // that names a command, and the field behind what is selected — a lift of the
+    // ink like every other field, and a step lighter than the fill the native
+    // text input is handed for the same selection.
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#c1c1c1"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#434343"));
+    assert!(theme.get(Role::ComposerDraftSelectionWash).r > theme.get(Role::ComposerDraftSelectionFill).r);
 }
 
 /// The transcript is made of the base values like every other part: a file that
@@ -593,6 +628,8 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-message-ink": "#ffffff",
                "transcript-link-ink": "#c9a7ff",
                "transcript-notice-ink": "#8a7fa0",
+               "transcript-heading-ink": "#d8ccee",
+               "transcript-inline-code-ink": "#e0b6ff",
                "transcript-caret-mark": "#a99bc4",
                "transcript-cell-fill": "#241a33",
                "transcript-cell-fill-hover": "#2f2242",
@@ -620,6 +657,9 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-code-fill": "#120d1a",
                "transcript-code-ink": "#ded2f2",
                "transcript-code-label-ink": "#7d7193",
+               "transcript-code-keyword-ink": "#eee6ff",
+               "transcript-code-string-ink": "#ffd0c4",
+               "transcript-code-comment-ink": "#6a5f80",
                "transcript-table-ink": "#c8bae0",
                "transcript-image-fill": "#241a33",
                "transcript-scroll-thumb": "#4a3a63",
