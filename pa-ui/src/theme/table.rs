@@ -136,9 +136,9 @@ impl Palette {
     /// theme existed, unchanged.
     fn shipped(self) -> Rgba {
         Rgba::hex(match self {
-            Palette::Background => "#111111",
-            Palette::Ink => "#e5e5e5",
-            Palette::QuietInk => "#b0b0b0",
+            Palette::Background => "#10110e",
+            Palette::Ink => "#e7e5df",
+            Palette::QuietInk => "#b0b1a8",
             Palette::Danger => "#c42b1c",
             Palette::Brand => "#ffffff",
         })
@@ -491,14 +491,15 @@ pub(crate) enum Role {
     /// A command word inside a draft the canvas paints. Its own role rather than
     /// the `composer-command-ink` the token the slash menu puts in front of a
     /// draft is drawn in: the canvas's word sits in the line the reader is
-    /// writing, and the window drew it a step behind the prose around it, where
-    /// that token is gold.
+    /// writing, and a theme is free to step it back without touching the token.
+    /// The window draws both in the same gold in the default; the mono theme is
+    /// what makes the canvas's one grey.
     ComposerDraftCommandInk,
     /// The field behind the words the canvas paints as selected. Its own role
     /// although it says what the native field's selection fill says: the canvas
     /// lays it down as a rectangle in a buffer of its own — opaque, so the words
-    /// keep their own ink — and the window drew it a step lighter than the fill
-    /// the text input is handed.
+    /// keep their own ink — and the window drew it a blue where the text input
+    /// is handed a green-grey.
     ComposerDraftSelectionWash,
     /// The command word a draft starts with: the token the slash menu put in
     /// front of the words. A gold no palette entry describes, so — like the
@@ -590,17 +591,19 @@ pub(crate) enum Role {
     /// than the transcript's: a theme that repaints the cards the reader opens
     /// must reach this one too.
     ComposerChipCaretMark,
-    /// What the control is filled with while it sends. The lightest thing in
-    /// the composer: with no hue to spend, the primary action spends contrast
-    /// and carries the near-black arrow below. A value above the palette's ink,
-    /// which the palette has no word for, so a theme names it.
+    /// What the control is filled with while it sends. The one field in the
+    /// composer that is not a grey: the window's gold, which the palette has no
+    /// word for, so a theme names it. The mono theme names it too, and makes it
+    /// the lightest thing on the field, because a neutral disc has no hue left to
+    /// mark the primary action and spends contrast instead.
     ComposerSendFill,
     /// That fill with the pointer on it.
     ComposerSendFillHover,
     /// The arrow on that fill. Its own role because the arrow is the one mark a
-    /// theme has to move when it moves the disc: the send fill ships lighter
-    /// than anything else in the window, so a theme that darkens the disc and
-    /// leaves this one behind draws a dark mark on it.
+    /// theme has to move when it moves the disc: the shipped disc is darker than
+    /// the ink, and the mono theme's is lighter than anything else in the window,
+    /// so a theme that moves one and leaves the other behind draws a mark that
+    /// cannot be read.
     ComposerSendMark,
     /// The square the send arrow becomes as the control turns into a stop.
     ComposerStopMark,
@@ -1209,11 +1212,11 @@ impl Role {
             Role::SidebarNewSessionMarkHover => Derivation::Palette(Palette::Ink),
             Role::SidebarStripNewSessionMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
             Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
-            Role::SidebarSearchMark => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarSearchMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9015),
             Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
             Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
-            Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2b2b2b")),
+            Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2a2c24")),
             Role::SidebarNewSessionInk => Derivation::Palette(Palette::Ink),
             Role::SidebarNewSessionInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
             Role::SidebarOpenTipFill => Derivation::Fixed(Rgba::hex("#e3e3e3")),
@@ -1229,11 +1232,9 @@ impl Role {
             Role::BrandMarkStemShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.1429),
             Role::TranscriptSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0094),
             Role::TranscriptProseInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
-            Role::TranscriptMessageFill => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.1132)
-            }
+            Role::TranscriptMessageFill => Derivation::Fixed(Rgba::hex("#2e2916")),
             Role::TranscriptMessageInk => Derivation::Palette(Palette::Ink),
-            Role::TranscriptLinkInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925),
+            Role::TranscriptLinkInk => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::TranscriptNoticeInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
@@ -1317,7 +1318,7 @@ impl Role {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.1415)
             }
             Role::TranscriptJumpEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1745),
-            Role::TranscriptJumpMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.7594),
+            Role::TranscriptJumpMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.6913),
             Role::ComposerSurface => Derivation::Shade(Palette::Background, 0x0a),
             Role::ComposerEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
             Role::ComposerHandleFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
@@ -1329,16 +1330,10 @@ impl Role {
             }
             Role::ComposerDraftInk => Derivation::Palette(Palette::Ink),
             Role::ComposerDraftCaret => Derivation::Palette(Palette::Ink),
-            Role::ComposerDraftSelectionFill => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.2075)
-            }
-            Role::ComposerDraftSelectionInk => Derivation::Fixed(Rgba::hex("#f0f0f0")),
-            Role::ComposerDraftCommandInk => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)
-            }
-            Role::ComposerDraftSelectionWash => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.2358)
-            }
+            Role::ComposerDraftSelectionFill => Derivation::Fixed(Rgba::hex("#3b3f2e")),
+            Role::ComposerDraftSelectionInk => Derivation::Fixed(Rgba::hex("#f2f0e8")),
+            Role::ComposerDraftCommandInk => Derivation::Fixed(Rgba::hex("#d8c06a")),
+            Role::ComposerDraftSelectionWash => Derivation::Fixed(Rgba::hex("#2b4562")),
             Role::ComposerCommandInk => Derivation::Fixed(Rgba::hex("#d8c06a")),
             Role::ComposerAttachmentFill => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0377)
@@ -1389,9 +1384,9 @@ impl Role {
             Role::ComposerChipInk => Derivation::Palette(Palette::QuietInk),
             Role::ComposerChipInkHover => Derivation::Palette(Palette::Ink),
             Role::ComposerChipCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
-            Role::ComposerSendFill => Derivation::Fixed(Rgba::hex("#e6e6e6")),
-            Role::ComposerSendFillHover => Derivation::Fixed(Rgba::hex("#f2f2f2")),
-            Role::ComposerSendMark => Derivation::Fixed(Rgba::hex("#131313")),
+            Role::ComposerSendFill => Derivation::Fixed(Rgba::hex("#a18e41")),
+            Role::ComposerSendFillHover => Derivation::Fixed(Rgba::hex("#b39e4c")),
+            Role::ComposerSendMark => Derivation::Fixed(Rgba::hex("#12130f")),
             Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
             Role::ButtonQuietFill => Derivation::Veil(Palette::Background, 0x00),
             Role::ButtonQuietFillHover => Derivation::Veil(Palette::Ink, 0x1f),
@@ -1456,12 +1451,8 @@ impl Role {
             }
             Role::QueueRowControlMark => Derivation::Palette(Palette::QuietInk),
             Role::QueueRowControlMarkHover => Derivation::Palette(Palette::Ink),
-            Role::QueueRowPromoteMark => {
-                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
-            }
-            Role::QueueRowPromoteMarkHover => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.8868)
-            }
+            Role::QueueRowPromoteMark => Derivation::Fixed(Rgba::hex("#a18e41")),
+            Role::QueueRowPromoteMarkHover => Derivation::Fixed(Rgba::hex("#e0cd7c")),
             Role::QueueRowDeleteMark => Derivation::Fixed(Rgba::hex("#f3ded8")),
             Role::StatusStripSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0377),
             Role::StatusStripEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),

@@ -568,9 +568,9 @@ mod theme_tests {
     fn the_shipped_theme_paints_the_draft_the_canvas_painted_before_the_theme() {
         let (pixels, _) = painted(&Resolved::shipped());
 
-        assert!(draws(&pixels, [0xe5, 0xe5, 0xe5, 255]), "the draft's own ink");
-        assert!(draws(&pixels, [0xc1, 0xc1, 0xc1, 255]), "the command word among them");
-        assert!(draws(&pixels, [0x43, 0x43, 0x43, 255]), "the field under a selection");
+        assert!(draws(&pixels, [0xe7, 0xe5, 0xdf, 255]), "the draft's own ink");
+        assert!(draws(&pixels, [0xd8, 0xc0, 0x6a, 255]), "the command word among them");
+        assert!(draws(&pixels, [0x2b, 0x45, 0x62, 255]), "the field under a selection");
     }
 
     /// And the same draft on a light window: the three colours it asks for are

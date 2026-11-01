@@ -32,15 +32,15 @@ fn the_shipped_theme_draws_todays_title_bar() {
     let on_background = |role| theme.get(role).over(theme.background());
 
     // The marks come out as the one opaque colour each was drawn in.
-    assert_eq!(theme.get(Role::TitleBarGlyph), Rgba::hex("#d7d7d7"));
-    assert_eq!(theme.get(Role::TitleBarFoldGlyph), Rgba::hex("#6f6f6f"));
-    assert_eq!(theme.get(Role::TitleBarFoldGlyphHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::TitleBarGlyph), Rgba::hex("#d9d7d1"));
+    assert_eq!(theme.get(Role::TitleBarFoldGlyph), Rgba::hex("#6f7069"));
+    assert_eq!(theme.get(Role::TitleBarFoldGlyphHover), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::TitleBarCloseFillHover), Rgba::hex("#c42b1c"));
     assert_eq!(theme.get(Role::TitleBarCloseInkHover), Rgba::hex("#ffffff"));
     // The hover chips are veils, so they keep their alpha and are laid on the
     // window behind them.
-    assert_eq!(on_background(Role::TitleBarCaptionFillHover), Rgba::hex("#222222"));
-    assert_eq!(on_background(Role::TitleBarFoldFillHover), Rgba::hex("#2b2b2b"));
+    assert_eq!(on_background(Role::TitleBarCaptionFillHover), Rgba::hex("#21221e"));
+    assert_eq!(on_background(Role::TitleBarFoldFillHover), Rgba::hex("#2a2b27"));
 }
 
 /// The sidebar as the window drew it before there was a theme: the values read
@@ -50,18 +50,18 @@ fn the_shipped_theme_draws_todays_title_bar() {
 fn the_shipped_theme_draws_todays_sidebar() {
     let theme = Resolved::shipped();
 
-    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#111111"));
+    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#10110e"));
     // The product's name above the rows, and the window the column is drawn on.
-    assert_eq!(theme.get(Role::SidebarWordmarkInk), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#111111"));
+    assert_eq!(theme.get(Role::SidebarWordmarkInk), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#10110e"));
     // A row at rest draws no fill of its own: the column runs through it.
     assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
-    assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#181818"));
-    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1d1d1d"));
-    assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::SidebarAgeInk), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#171815"));
+    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1c1d1a"));
+    assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::SidebarAgeInk), Rgba::hex("#585953"));
     // The three tags are the one part of the sidebar whose value no palette
     // entry can describe, so the window keeps them and a theme names them.
     assert_eq!(theme.get(Role::TagWorking), Rgba::hex("#a18e41"));
@@ -70,9 +70,9 @@ fn the_shipped_theme_draws_todays_sidebar() {
     // The column's own fields, drawn by the buttons ticket: the chip a row offers
     // to rename it, the words and the field of New Session, and the pill the
     // folded column shows.
-    assert_eq!(theme.get(Role::SidebarRowRenameFill), Rgba::hex("#1d1d1d"));
-    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2b2b2b"));
-    assert_eq!(theme.get(Role::SidebarNewSessionInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarRowRenameFill), Rgba::hex("#1c1d1a"));
+    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2a2c24"));
+    assert_eq!(theme.get(Role::SidebarNewSessionInk), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::SidebarNewSessionInkHover), Rgba::hex("#ffffff"));
     assert_eq!(theme.get(Role::SidebarOpenTipFill), Rgba::hex("#e3e3e3"));
     assert_eq!(theme.get(Role::SidebarOpenTipInk), Rgba::hex("#1f1f1f"));
@@ -93,33 +93,33 @@ fn the_shipped_theme_draws_todays_glyphs() {
     // The sidebar: its fold in the header, the pen on New Session in the header
     // and in the folded strip, the magnifier both carry, and the pencil a row
     // offers to rename it.
-    assert_eq!(theme.get(Role::SidebarFoldGlyph), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::SidebarFoldGlyphHover), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::SidebarNewSessionMark), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::SidebarNewSessionMarkHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarFoldGlyph), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::SidebarFoldGlyphHover), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::SidebarNewSessionMark), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::SidebarNewSessionMarkHover), Rgba::hex("#e7e5df"));
     // The strip's own pen reads a step above the button's: folded, the mark is
     // the whole control.
-    assert_eq!(theme.get(Role::SidebarStripNewSessionMark), Rgba::hex("#d7d7d7"));
-    assert_eq!(theme.get(Role::SidebarStripNewSessionMarkHover), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::SidebarRowRenameMark), Rgba::hex("#8b8b8b"));
+    assert_eq!(theme.get(Role::SidebarStripNewSessionMark), Rgba::hex("#d9d7d1"));
+    assert_eq!(theme.get(Role::SidebarStripNewSessionMarkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#a0a199"));
+    assert_eq!(theme.get(Role::SidebarRowRenameMark), Rgba::hex("#8b8c84"));
 
     // The transcript: the caret on a row that opens — a thinking row and a cell
     // draw the same shape — the chevron on the chip that walks back to the
     // newest row, and the alert inside a failed cell's badge.
-    assert_eq!(theme.get(Role::TranscriptCaretMark), Rgba::hex("#7b7b7b"));
-    assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#b2b2b2"));
+    assert_eq!(theme.get(Role::TranscriptCaretMark), Rgba::hex("#7c7b77"));
+    assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#a5a49e"));
     assert_eq!(theme.get(Role::TranscriptCellBadgeMark), Rgba::hex("#f3ded8"));
 
     // The panels the caret and the tick are drawn in: the model menu's own
     // caret, its tick beside the running model, and the tick the ladder draws
     // on its current rung.
-    assert_eq!(theme.get(Role::ModelMenuCaretMark), Rgba::hex("#7b7b7b"));
+    assert_eq!(theme.get(Role::ModelMenuCaretMark), Rgba::hex("#7c7b77"));
     assert_eq!(theme.get(Role::ModelMenuCheckMark), Rgba::hex("#a18e41"));
     assert_eq!(theme.get(Role::EffortLadderCheckMark), Rgba::hex("#a18e41"));
 
     // And the caret beside the composer's chip, which opens the model menu.
-    assert_eq!(theme.get(Role::ComposerChipCaretMark), Rgba::hex("#7b7b7b"));
+    assert_eq!(theme.get(Role::ComposerChipCaretMark), Rgba::hex("#7c7b77"));
 }
 
 /// The brand mark's six fills as the artwork drew them before they were roles:
@@ -134,11 +134,11 @@ fn the_shipped_theme_draws_todays_brand_mark() {
     let theme = Resolved::shipped();
 
     assert_eq!(theme.get(Role::BrandMarkBlade), Rgba::hex("#ffffff"));
-    assert_eq!(theme.get(Role::BrandMarkWing), Rgba::hex("#aeaeae"));
-    assert_eq!(theme.get(Role::BrandMarkWingInnerShadow), Rgba::hex("#838383"));
-    assert_eq!(theme.get(Role::BrandMarkWingShadow), Rgba::hex("#5a5a5a"));
-    assert_eq!(theme.get(Role::BrandMarkStem), Rgba::hex("#636363"));
-    assert_eq!(theme.get(Role::BrandMarkStemShadow), Rgba::hex("#333333"));
+    assert_eq!(theme.get(Role::BrandMarkWing), Rgba::hex("#aeaead"));
+    assert_eq!(theme.get(Role::BrandMarkWingInnerShadow), Rgba::hex("#828381"));
+    assert_eq!(theme.get(Role::BrandMarkWingShadow), Rgba::hex("#595a58"));
+    assert_eq!(theme.get(Role::BrandMarkStem), Rgba::hex("#626361"));
+    assert_eq!(theme.get(Role::BrandMarkStemShadow), Rgba::hex("#323330"));
 }
 
 /// Every glyph the palette makes follows the inks it is made of, and the mark
@@ -291,50 +291,50 @@ fn the_shipped_theme_draws_todays_transcript() {
 
     // The field the rows are drawn on, and the field the reader's own message
     // gets: both a lift of the window's ink over its background.
-    assert_eq!(theme.get(Role::TranscriptSurface), Rgba::hex("#131313"));
-    assert_eq!(theme.get(Role::TranscriptMessageFill), Rgba::hex("#292929"));
-    assert_eq!(theme.get(Role::TranscriptMessageInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::TranscriptSurface), Rgba::hex("#121310"));
+    assert_eq!(theme.get(Role::TranscriptMessageFill), Rgba::hex("#2e2916"));
+    assert_eq!(theme.get(Role::TranscriptMessageInk), Rgba::hex("#e7e5df"));
 
     // Prose, and the ink a row steps back to.
-    assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d1d1d1"));
-    assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::TranscriptNoticeInk), Rgba::hex("#4c4c4c"));
+    assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d3d1cb"));
+    assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#a18e41"));
+    assert_eq!(theme.get(Role::TranscriptNoticeInk), Rgba::hex("#4b4c47"));
 
     // A cell in each state it is drawn in.
-    assert_eq!(theme.get(Role::TranscriptCellFill), Rgba::hex("#151515"));
-    assert_eq!(theme.get(Role::TranscriptCellFillHover), Rgba::hex("#191919"));
-    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#8b8b8b"));
-    assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4c4c4c"));
+    assert_eq!(theme.get(Role::TranscriptCellFill), Rgba::hex("#141512"));
+    assert_eq!(theme.get(Role::TranscriptCellFillHover), Rgba::hex("#181916"));
+    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#8b8c84"));
+    assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4b4c47"));
     assert_eq!(theme.get(Role::TranscriptCellSeparatorInk), Rgba::hex("#ffffff"));
-    assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d1d1d1"));
-    assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909090"));
+    assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d3d1cb"));
+    assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909189"));
 
     // And the two panels a row opens, which sit below the field they open on.
-    assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#101010"));
-    assert_eq!(theme.get(Role::TranscriptCellEdgeExpanded), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::TranscriptThinkingEdgeExpanded), Rgba::hex("#1f1f1f"));
-    assert_eq!(theme.get(Role::TranscriptCellRule), Rgba::hex("#1f1f1f"));
+    assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#0f100d"));
+    assert_eq!(theme.get(Role::TranscriptCellEdgeExpanded), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::TranscriptThinkingEdgeExpanded), Rgba::hex("#1e1f1c"));
+    assert_eq!(theme.get(Role::TranscriptCellRule), Rgba::hex("#1e1f1c"));
 
     // A thinking row: it draws no fill of its own until the pointer arrives.
     assert_eq!(theme.get(Role::TranscriptThinkingFill).a, 0, "a resting thinking row is not a fill");
-    assert_eq!(theme.get(Role::TranscriptThinkingFillHover), Rgba::hex("#1b1b1b"));
-    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#6b6b6b"));
-    assert_eq!(theme.get(Role::TranscriptThinkingInk), Rgba::hex("#7f7f7f"));
+    assert_eq!(theme.get(Role::TranscriptThinkingFillHover), Rgba::hex("#1a1b18"));
+    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#6b6c65"));
+    assert_eq!(theme.get(Role::TranscriptThinkingInk), Rgba::hex("#7f8079"));
 
     // A fenced block, the table's text, and the field behind a picture.
-    assert_eq!(theme.get(Role::TranscriptCodeFill), Rgba::hex("#0e0e0e"));
-    assert_eq!(theme.get(Role::TranscriptCodeInk), Rgba::hex("#b7b7b7"));
-    assert_eq!(theme.get(Role::TranscriptCodeLabelInk), Rgba::hex("#585858"));
-    assert_eq!(theme.get(Role::TranscriptTableInk), Rgba::hex("#aaaaaa"));
-    assert_eq!(theme.get(Role::TranscriptImageFill), Rgba::hex("#1b1b1b"));
+    assert_eq!(theme.get(Role::TranscriptCodeFill), Rgba::hex("#0d0e0c"));
+    assert_eq!(theme.get(Role::TranscriptCodeInk), Rgba::hex("#b8b7b2"));
+    assert_eq!(theme.get(Role::TranscriptCodeLabelInk), Rgba::hex("#575853"));
+    assert_eq!(theme.get(Role::TranscriptTableInk), Rgba::hex("#aaaba2"));
+    assert_eq!(theme.get(Role::TranscriptImageFill), Rgba::hex("#1a1b18"));
 
     // The transcript's own chrome, and the chip that walks back to the floor.
-    assert_eq!(theme.get(Role::TranscriptScrollThumb), Rgba::hex("#313131"));
-    assert_eq!(theme.get(Role::TranscriptScrollThumbHover), Rgba::hex("#454545"));
-    assert_eq!(theme.get(Role::TranscriptScrollThumbPressed), Rgba::hex("#585858"));
-    assert_eq!(theme.get(Role::TranscriptJumpFill), Rgba::hex("#1c1c1c"));
-    assert_eq!(theme.get(Role::TranscriptJumpFillHover), Rgba::hex("#2f2f2f"));
-    assert_eq!(theme.get(Role::TranscriptJumpEdge), Rgba::hex("#363636"));
+    assert_eq!(theme.get(Role::TranscriptScrollThumb), Rgba::hex("#30312e"));
+    assert_eq!(theme.get(Role::TranscriptScrollThumbHover), Rgba::hex("#454541"));
+    assert_eq!(theme.get(Role::TranscriptScrollThumbPressed), Rgba::hex("#585854"));
+    assert_eq!(theme.get(Role::TranscriptJumpFill), Rgba::hex("#1b1c19"));
+    assert_eq!(theme.get(Role::TranscriptJumpFillHover), Rgba::hex("#2e2f2c"));
+    assert_eq!(theme.get(Role::TranscriptJumpEdge), Rgba::hex("#363632"));
 }
 
 /// What a failure is drawn in: a warmed red the palette has no word for, and the
@@ -361,61 +361,61 @@ fn the_shipped_theme_draws_todays_composer() {
     let theme = Resolved::shipped();
 
     // The box the reader writes in, and the bar on its edge that grows it.
-    assert_eq!(theme.get(Role::ComposerSurface), Rgba::hex("#101010"));
-    assert_eq!(theme.get(Role::ComposerEdge), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::ComposerHandleFill), Rgba::hex("#353535"));
-    assert_eq!(theme.get(Role::ComposerHandleFillHover), Rgba::hex("#4c4c4c"));
-    assert_eq!(theme.get(Role::ComposerHandleFillDragging), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::ComposerSurface), Rgba::hex("#0f100d"));
+    assert_eq!(theme.get(Role::ComposerEdge), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ComposerHandleFill), Rgba::hex("#353531"));
+    assert_eq!(theme.get(Role::ComposerHandleFillHover), Rgba::hex("#4c4c48"));
+    assert_eq!(theme.get(Role::ComposerHandleFillDragging), Rgba::hex("#6d6d69"));
 
     // The draft, its caret and the field behind what the reader has selected.
-    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::ComposerDraftCaret), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3d3d3d"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionInk), Rgba::hex("#f0f0f0"));
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::ComposerDraftCaret), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3b3f2e"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionInk), Rgba::hex("#f2f0e8"));
 
     // The command word, and whatever the draft is carrying.
     assert_eq!(theme.get(Role::ComposerCommandInk), Rgba::hex("#d8c06a"));
-    assert_eq!(theme.get(Role::ComposerAttachmentFill), Rgba::hex("#191919"));
-    assert_eq!(theme.get(Role::ComposerAttachmentEdge), Rgba::hex("#2b2b2b"));
-    assert_eq!(theme.get(Role::ComposerAttachmentEdgeHover), Rgba::hex("#3c3c3c"));
-    assert_eq!(theme.get(Role::ComposerAttachmentRemoveFill), Rgba::hex("#0c0c0c"));
-    assert_eq!(theme.get(Role::ComposerAttachmentRemoveInk), Rgba::hex("#d6d6d6"));
+    assert_eq!(theme.get(Role::ComposerAttachmentFill), Rgba::hex("#181916"));
+    assert_eq!(theme.get(Role::ComposerAttachmentEdge), Rgba::hex("#2a2b28"));
+    assert_eq!(theme.get(Role::ComposerAttachmentEdgeHover), Rgba::hex("#3c3c38"));
+    assert_eq!(theme.get(Role::ComposerAttachmentRemoveFill), Rgba::hex("#0b0c0a"));
+    assert_eq!(theme.get(Role::ComposerAttachmentRemoveInk), Rgba::hex("#d8d6d0"));
 
     // The plus, and the line under the draft.
-    assert_eq!(theme.get(Role::ComposerAttachFill), Rgba::hex("#1a1a1a"));
-    assert_eq!(theme.get(Role::ComposerAttachFillHover), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::ComposerAttachInk), Rgba::hex("#8c8c8c"));
-    assert_eq!(theme.get(Role::ComposerAttachInkHover), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::ComposerStatusLineInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::ComposerAttachFill), Rgba::hex("#191a17"));
+    assert_eq!(theme.get(Role::ComposerAttachFillHover), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ComposerAttachInk), Rgba::hex("#8c8d85"));
+    assert_eq!(theme.get(Role::ComposerAttachInkHover), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::ComposerStatusLineInk), Rgba::hex("#6d6e67"));
     assert_eq!(theme.get(Role::ComposerStatusLineInkBad), Rgba::hex("#c98a7f"));
 
     // The ring, and the card that opens off it.
     assert_eq!(theme.get(Role::ComposerRingTickLit), Rgba::hex("#c9a86a"));
-    assert_eq!(theme.get(Role::ComposerRingTickUnlit), Rgba::hex("#353535"));
-    assert_eq!(theme.get(Role::ComposerCardSurface), Rgba::hex("#181818"));
-    assert_eq!(theme.get(Role::ComposerCardEdge), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::ComposerRingTickUnlit), Rgba::hex("#353531"));
+    assert_eq!(theme.get(Role::ComposerCardSurface), Rgba::hex("#171815"));
+    assert_eq!(theme.get(Role::ComposerCardEdge), Rgba::hex("#2a2b28"));
     assert_eq!(theme.get(Role::ComposerCardShadow), Rgba::hex("#00000066"));
-    assert_eq!(theme.get(Role::ComposerCardLabelInk), Rgba::hex("#6d6d6d"));
-    assert_eq!(theme.get(Role::ComposerCardPercentInk), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::ComposerCardBarTrack), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::ComposerCardBarFill), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::ComposerCardUsedInk), Rgba::hex("#8b8b8b"));
-    assert_eq!(theme.get(Role::ComposerCardRule), Rgba::hex("#1d1d1d"));
-    assert_eq!(theme.get(Role::ComposerCardLedgerInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::ComposerCardCostInk), Rgba::hex("#d7d7d7"));
+    assert_eq!(theme.get(Role::ComposerCardLabelInk), Rgba::hex("#6d6e67"));
+    assert_eq!(theme.get(Role::ComposerCardPercentInk), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::ComposerCardBarTrack), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ComposerCardBarFill), Rgba::hex("#8f9088"));
+    assert_eq!(theme.get(Role::ComposerCardUsedInk), Rgba::hex("#8b8c84"));
+    assert_eq!(theme.get(Role::ComposerCardRule), Rgba::hex("#1c1d1a"));
+    assert_eq!(theme.get(Role::ComposerCardLedgerInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::ComposerCardCostInk), Rgba::hex("#d9d7d1"));
 
     // The chip that names the model.
-    assert_eq!(theme.get(Role::ComposerChipFill), Rgba::hex("#1a1a1a"));
-    assert_eq!(theme.get(Role::ComposerChipFillHover), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::ComposerChipEdge), Rgba::hex("#242424"));
-    assert_eq!(theme.get(Role::ComposerChipEdgeHover), Rgba::hex("#353535"));
-    assert_eq!(theme.get(Role::ComposerChipInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::ComposerChipInkHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ComposerChipFill), Rgba::hex("#191a17"));
+    assert_eq!(theme.get(Role::ComposerChipFillHover), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ComposerChipEdge), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ComposerChipEdgeHover), Rgba::hex("#353531"));
+    assert_eq!(theme.get(Role::ComposerChipInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::ComposerChipInkHover), Rgba::hex("#e7e5df"));
 
     // The one control, in both of the jobs it does.
-    assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#e6e6e6"));
-    assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#f2f2f2"));
-    assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#131313"));
+    assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#a18e41"));
+    assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#b39e4c"));
+    assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#12130f"));
     assert_eq!(theme.get(Role::ComposerStopMark), Rgba::hex("#f0f0f0"));
 }
 
@@ -453,8 +453,8 @@ fn a_theme_that_paints_the_stop_like_the_send_is_reported() {
     let theme = from_text(
         "mine.json",
         r##"{ "name": "mine", "version": 1,
-             "roles": { "button-danger-fill": "#e6e6e6",
-                        "button-danger-fill-hover": "#f2f2f2" } }"##,
+             "roles": { "button-danger-fill": "#a18e41",
+                        "button-danger-fill-hover": "#b39e4c" } }"##,
     )
     .expect("a theme that loads");
 
@@ -533,30 +533,31 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
 /// `transcript::tests`, the pixels in `composer_canvas`.
 ///
 /// All but one are steps of the palette, so a theme that turns the window over
-/// turns them over with it; the wash is a lift of the ink like every other field.
+/// turns them over with it; the wash and the command word are the gold and the
+/// blue the mono theme used to grey out, so its file names them back.
 #[test]
 fn the_shipped_theme_resolves_todays_markup_and_canvas_inks() {
     let theme = Resolved::shipped();
 
     // Inside a line of prose: the heading, and the symbol the writer put in
     // backticks.
-    assert_eq!(theme.get(Role::TranscriptHeadingInk), Rgba::hex("#b2b2b2"));
-    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::TranscriptHeadingInk), Rgba::hex("#b3b2ad"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#8f9088"));
 
     // The three kinds of token the highlighter colours, in a cell's code and in a
     // fenced block alike. A number is not one of them: it never had a colour.
-    assert_eq!(theme.get(Role::TranscriptCodeKeywordInk), Rgba::hex("#acacac"));
-    assert_eq!(theme.get(Role::TranscriptCodeStringInk), Rgba::hex("#aaaaaa"));
-    assert_eq!(theme.get(Role::TranscriptCodeCommentInk), Rgba::hex("#606060"));
+    assert_eq!(theme.get(Role::TranscriptCodeKeywordInk), Rgba::hex("#acada4"));
+    assert_eq!(theme.get(Role::TranscriptCodeStringInk), Rgba::hex("#aaaba2"));
+    assert_eq!(theme.get(Role::TranscriptCodeCommentInk), Rgba::hex("#60615b"));
 
     // The draft the canvas paints for itself: its words, the one word among them
-    // that names a command, and the field behind what is selected — a lift of the
-    // ink like every other field, and a step lighter than the fill the native
-    // text input is handed for the same selection.
-    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#c1c1c1"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#434343"));
-    assert!(theme.get(Role::ComposerDraftSelectionWash).r > theme.get(Role::ComposerDraftSelectionFill).r);
+    // that names a command, and the field behind what is selected. The word is
+    // the same gold the command the slash menu inserts is drawn in, and the wash
+    // is a blue the palette has no word for; the mono theme is what steps both
+    // of them back to grey.
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#d8c06a"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#2b4562"));
 }
 
 /// The transcript is made of the base values like every other part: a file that
@@ -838,62 +839,62 @@ fn the_shipped_theme_draws_todays_menus() {
 
     // The shape all four share: a field a step over the window's background, the
     // hairline that parts it from the sheet, and the shadow that lifts it.
-    assert_eq!(theme.get(Role::PanelSurface), Rgba::hex("#181818"));
-    assert_eq!(theme.get(Role::PanelEdge), Rgba::hex("#2e2e2e"));
+    assert_eq!(theme.get(Role::PanelSurface), Rgba::hex("#171815"));
+    assert_eq!(theme.get(Role::PanelEdge), Rgba::hex("#2d2e2b"));
     assert_eq!(theme.get(Role::PanelShadow), Rgba::hex("#00000080"));
     // The ladder hangs off the model menu rather than off the window, and its
     // shadow is the shallower one.
     assert_eq!(theme.get(Role::PanelShadowNested), Rgba::hex("#00000060"));
-    assert_eq!(theme.get(Role::PanelRowFillHover), Rgba::hex("#202020"));
-    assert_eq!(theme.get(Role::PanelRowFillCurrent), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::PanelRowFillHover), Rgba::hex("#1f201d"));
+    assert_eq!(theme.get(Role::PanelRowFillCurrent), Rgba::hex("#232421"));
 
     // The command list: a name in the two states its row has, the argument only
     // the highlighted row shows, and the sentence that says what it does.
-    assert_eq!(theme.get(Role::SlashMenuRowInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::SlashMenuRowInkHover), Rgba::hex("#c1c1c1"));
-    assert_eq!(theme.get(Role::SlashMenuHintInk), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::SlashMenuDescriptionInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::SlashMenuRowInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::SlashMenuRowInkHover), Rgba::hex("#c2c1bc"));
+    assert_eq!(theme.get(Role::SlashMenuHintInk), Rgba::hex("#8f9088"));
+    assert_eq!(theme.get(Role::SlashMenuDescriptionInk), Rgba::hex("#6d6e67"));
 
     // The model menu: a provider signed in and not, the figure beside it, a
     // model in both states its row has, and the two things the right of a row
     // can carry.
-    assert_eq!(theme.get(Role::ModelMenuHeaderInk), Rgba::hex("#d8d8d8"));
-    assert_eq!(theme.get(Role::ModelMenuHeaderInkQuiet), Rgba::hex("#6d6d6d"));
-    assert_eq!(theme.get(Role::ModelMenuCountInk), Rgba::hex("#585858"));
-    assert_eq!(theme.get(Role::ModelMenuRowInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::ModelMenuDetailInk), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::ModelMenuHeaderInk), Rgba::hex("#dad8d2"));
+    assert_eq!(theme.get(Role::ModelMenuHeaderInkQuiet), Rgba::hex("#6d6e67"));
+    assert_eq!(theme.get(Role::ModelMenuCountInk), Rgba::hex("#575853"));
+    assert_eq!(theme.get(Role::ModelMenuRowInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::ModelMenuDetailInk), Rgba::hex("#575853"));
     // The level the running model carries is the gold the sidebar's working tag
     // is drawn in: they say the same thing.
     assert_eq!(theme.get(Role::ModelMenuEffortInk), Rgba::hex("#a18e41"));
 
     // The ladder's rungs.
-    assert_eq!(theme.get(Role::EffortLadderRowInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::EffortLadderRowInkCurrent), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::EffortLadderRowInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::EffortLadderRowInkCurrent), Rgba::hex("#e7e5df"));
 
     // The queue card: the count over the first lane, the second lane's own name,
     // a waiting message, and the action that empties both.
-    assert_eq!(theme.get(Role::QueueCardCountInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::QueueCardLaneInk), Rgba::hex("#6d6d6d"));
-    assert_eq!(theme.get(Role::QueueRowInk), Rgba::hex("#d8d8d8"));
-    assert_eq!(theme.get(Role::QueueCardClearInk), Rgba::hex("#6d6d6d"));
-    assert_eq!(theme.get(Role::QueueCardClearInkHover), Rgba::hex("#d8d8d8"));
+    assert_eq!(theme.get(Role::QueueCardCountInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::QueueCardLaneInk), Rgba::hex("#6d6e67"));
+    assert_eq!(theme.get(Role::QueueRowInk), Rgba::hex("#dad8d2"));
+    assert_eq!(theme.get(Role::QueueCardClearInk), Rgba::hex("#6d6e67"));
+    assert_eq!(theme.get(Role::QueueCardClearInkHover), Rgba::hex("#dad8d2"));
 
     // A waiting row's three controls: a fill in the two states it has, and the
     // marks on it. The bin is the one mark that changes colour rather than
     // weight as the pointer arrives.
-    assert_eq!(theme.get(Role::QueueRowControlFill), Rgba::hex("#2e2e2e"));
-    assert_eq!(theme.get(Role::QueueRowControlFillHover), Rgba::hex("#3a3a3a"));
-    assert_eq!(theme.get(Role::QueueRowControlMark), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::QueueRowControlMarkHover), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#cdcdcd"));
+    assert_eq!(theme.get(Role::QueueRowControlFill), Rgba::hex("#2d2e2b"));
+    assert_eq!(theme.get(Role::QueueRowControlFillHover), Rgba::hex("#3a3a36"));
+    assert_eq!(theme.get(Role::QueueRowControlMark), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::QueueRowControlMarkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#a18e41"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#e0cd7c"));
     assert_eq!(theme.get(Role::QueueRowDeleteMark), Rgba::hex("#f3ded8"));
 
     // The card that names a session: the panels' own field and shadow, with an
     // edge of its own because it hangs off a row rather than over the window.
-    assert_eq!(theme.get(Role::SessionCardEdge), Rgba::hex("#2b2b2b"));
-    assert_eq!(theme.get(Role::SessionCardInk), Rgba::hex("#e0e0e0"));
+    assert_eq!(theme.get(Role::SessionCardEdge), Rgba::hex("#2a2b28"));
+    assert_eq!(theme.get(Role::SessionCardInk), Rgba::hex("#e2e0da"));
 }
 
 /// The field a control paints, in the three characters a control comes in, as the
@@ -909,9 +910,9 @@ fn the_shipped_theme_draws_todays_buttons() {
 
     // A quiet control draws nothing at rest: the column runs through it.
     assert_eq!(theme.get(Role::ButtonQuietFill).a, 0, "a quiet control is not a fill");
-    assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2b2b2b"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#1a1a1a"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#242424"));
+    assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2a2b27"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#191a17"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#232421"));
     // The disc that stops the turn keeps the warmth the composer's stop had when
     // it was the composer's own role: the button that stops is the danger one
     // wherever it is drawn.
@@ -957,21 +958,21 @@ fn the_shipped_theme_draws_todays_status_strip() {
 
     // The strip is an outline with a fill inset by exactly its stroke, which is
     // why the two are separate roles although the panels' edge ships this value.
-    assert_eq!(theme.get(Role::StatusStripEdge), Rgba::hex("#2e2e2e"));
-    assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#191919"));
+    assert_eq!(theme.get(Role::StatusStripEdge), Rgba::hex("#2d2e2b"));
+    assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#181916"));
 
     // What the turn is doing, and how long it has been at it.
     assert_eq!(theme.get(Role::StatusStripWorkingInk), Rgba::hex("#c9a86a"));
-    assert_eq!(theme.get(Role::StatusStripElapsedInk), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::StatusStripElapsedInk), Rgba::hex("#575853"));
 
     // The pill that opens the queue: at rest it draws nothing of its own, and
     // the number and the word beside it brighten together.
     assert_eq!(theme.get(Role::StatusStripQueueFill).a, 0, "a resting pill is not a fill");
-    assert_eq!(theme.get(Role::StatusStripQueueFillHover), Rgba::hex("#202020"));
-    assert_eq!(theme.get(Role::StatusStripQueueCountInk), Rgba::hex("#b0b0b0"));
-    assert_eq!(theme.get(Role::StatusStripQueueCountInkHover), Rgba::hex("#e5e5e5"));
-    assert_eq!(theme.get(Role::StatusStripQueueLabelInk), Rgba::hex("#6d6d6d"));
-    assert_eq!(theme.get(Role::StatusStripQueueLabelInkHover), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::StatusStripQueueFillHover), Rgba::hex("#1f201d"));
+    assert_eq!(theme.get(Role::StatusStripQueueCountInk), Rgba::hex("#b0b1a8"));
+    assert_eq!(theme.get(Role::StatusStripQueueCountInkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(theme.get(Role::StatusStripQueueLabelInk), Rgba::hex("#6d6e67"));
+    assert_eq!(theme.get(Role::StatusStripQueueLabelInkHover), Rgba::hex("#b0b1a8"));
 }
 
 /// The panels and the strip are made of the base values like every other part: a
@@ -1152,8 +1153,10 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// field, so it stays pale on a pale column while its prose, made of the ink,
 /// follows the file all the way. The composer is the same story twice over: the
 /// chip's name, the plus and the line under the draft are quiet ink faded
-/// towards a field that has just gone light, and the gold of a command word and
-/// the white of a selection are fixed values no palette entry moves. The four
+/// towards a field that has just gone light, while the gold of a command word
+/// and the selection's fixed dark field with its warm white ink are values no
+/// palette entry moves, so the selection stays readable on a light window. The
+/// four
 /// panels and the strip tell it again — every word made of the quiet ink stays
 /// pale on fields that have gone light, and the gold of the running model's
 /// level and of the strip's spinner stays gold. The glyphs tell it a third time:
@@ -1199,6 +1202,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "how many messages are waiting",
             "how many messages the pill counts",
             "how many messages the pill counts, with its card open",
+            "that arrow under the pointer",
             "the action that empties both lanes",
             "the argument a command takes",
             "the arrow that pulls a message into the running turn",
@@ -1215,6 +1219,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the fold mark at rest",
             "the label a thinking row carries",
             "the level the running model is at",
+            "the message the reader sent",
             "the model the chip names",
             "the name of a lane with nothing to count",
             "the pen on New Session at rest",
@@ -1234,7 +1239,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the word beside the count, with the pill's card open",
             "the word that says what the turn is doing",
             "the words on New Session under the pointer",
-            "the words the reader has selected",
             "what a cell printed",
             "what a command does",
             "what is left of the context"
@@ -1360,6 +1364,64 @@ fn no_selection_is_the_shipped_theme_and_nothing_to_say() {
     assert!(refusal.is_none());
 }
 
+/// A bundled theme is selected by its name, not by wherever the window happened
+/// to be started: the name resolves the same text the file holds.
+#[test]
+fn a_bundled_theme_is_selected_by_name() {
+    for (name, _) in BUNDLED {
+        let (theme, refusal) = select(Some(name));
+
+        assert!(refusal.is_none(), "{name}: {refusal:?}");
+        assert_ne!(theme, Resolved::shipped(), "`{name}` is a theme of its own");
+    }
+}
+
+/// The mono theme is the monochrome pass as a file: surfaces, ink and chrome
+/// neutral, with danger and the three status tags still carrying their hue.
+#[test]
+fn the_monochrome_theme_reproduces_the_monochrome_work() {
+    let theme = resolve("mono").expect("the bundled mono theme");
+
+    assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#111111"));
+    assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::QueueRowControlMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d1d1d1"));
+    assert_eq!(theme.get(Role::TranscriptMessageFill), Rgba::hex("#292929"));
+    assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#b2b2b2"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3d3d3d"));
+    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#434343"));
+    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#c1c1c1"));
+    assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#e6e6e6"));
+    assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#f2f2f2"));
+    assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#131313"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#cdcdcd"));
+
+    let shipped = Resolved::shipped();
+    for role in [Role::TagWorking, Role::TagParked, Role::TagIdle] {
+        assert_eq!(theme.get(role), shipped.get(role), "{} keeps its hue", role.name());
+    }
+    assert_eq!(theme.get(Role::ButtonDangerFill), shipped.get(Role::ButtonDangerFill));
+    assert_eq!(theme.get(Role::TranscriptCellFillFailed), shipped.get(Role::TranscriptCellFillFailed));
+}
+
+/// The check the window runs over the theme it ships with runs over every theme
+/// it carries, so a bundled theme cannot ship unreadable or collapse the tags.
+#[test]
+fn the_bundled_themes_clear_every_floor_they_declare() {
+    for (name, _) in BUNDLED {
+        let theme = resolve(name).expect("a bundled theme");
+
+        let findings = contrast(&theme);
+        assert!(findings.is_empty(), "{name}: {findings:?}");
+        let clashes = separation(&theme);
+        assert!(clashes.is_empty(), "{name}: {clashes:?}");
+    }
+}
+
 /// The check a theme author runs, run here on the theme the window ships with.
 #[test]
 fn the_shipped_theme_clears_every_floor_it_declares() {
@@ -1392,9 +1454,9 @@ fn a_theme_that_buries_the_caption_glyphs_is_reported_while_it_still_resolves() 
 
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].what, "the caption glyphs");
-    // #1e1e1e on #111111 is 1.13:1 by the WCAG definition, worked out here
+    // #1e1e1e on #10110e is 1.14:1 by the WCAG definition, worked out here
     // rather than by the code under test.
-    assert!((findings[0].ratio - 1.13).abs() < 0.005, "{findings:?}");
+    assert!((findings[0].ratio - 1.136).abs() < 0.005, "{findings:?}");
 }
 
 /// The report the command line prints, which is also the report the check above
@@ -1415,6 +1477,19 @@ fn the_command_line_reports_a_file_and_says_nothing_about_a_window() {
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 1, "{report}");
     assert!(report.contains("the caption glyphs"), "{report}");
+}
+
+/// The bundled names work at the command line too: an author can check the
+/// theme the window carries without knowing where the source tree is.
+#[test]
+fn the_command_line_reads_a_bundled_theme_by_name() {
+    let (code, report) = check_cli(
+        ["--check-theme".to_string(), "mono".to_string()].into_iter(),
+    )
+    .expect("a check, not a window");
+
+    assert_eq!(code, 0, "{report}");
+    assert!(report.contains("theme `mono`"), "{report}");
 }
 
 /// A file this window cannot read at all is a different answer from a file that
@@ -1719,3 +1794,4 @@ fn a_declaration_is_read_past_its_comment_and_its_qualifier() {
 
     assert_eq!(declared_roles(source), ["a-b", "c-d", "e-f"]);
 }
+
