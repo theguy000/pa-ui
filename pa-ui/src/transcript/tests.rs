@@ -3,7 +3,14 @@ use super::*;
 
 mod build_tests {
     use super::*;
+    use crate::theme::Resolved;
     use serde_json::json;
+
+    /// The theme the window ships with: these cases are about the rows, not
+    /// about what colour a row came out.
+    fn shipped() -> Resolved {
+        Resolved::shipped()
+    }
 
     fn cell_and_result(output: &str) -> Vec<Row> {
         let messages = vec![
@@ -47,13 +54,13 @@ mod build_tests {
     fn pasted_entities_are_decoded_not_shown() {
         assert_eq!(decode_entities("&#x20;a &amp; b"), " a & b");
         assert_eq!(decode_entities("caf&#233;"), "café");
-        assert!(!markdown_markup("&#x20;    x").contains("&#x20;"));
+        assert!(!markdown_markup("&#x20;    x", &shipped()).contains("&#x20;"));
         assert!(!plain_markup("a&nbsp;b").contains("&nbsp;"));
     }
 
     #[test]
     fn code_markup_survives_the_parser() {
-        let markup = highlight_python("def f():\n    # four space indent\n    return 'x'");
+        let markup = highlight_python("def f():\n    # four space indent\n    return 'x'", &shipped());
         assert!(StyledText::from_markdown(&markup).is_ok(), "parser rejected: {markup}");
     }
 }
@@ -149,10 +156,10 @@ mod strong_tests {
 
     #[test]
     fn a_span_opened_by_a_heading_stays_closed() {
-        // headings become bold inside the accent colour, so the pass sees
+        // headings become bold inside the heading's own ink, so the pass sees
         // balanced markers and must not add any
         assert_eq!(
-            markdown_markup("# Title"),
+            markdown_markup("# Title", &crate::theme::Resolved::shipped()),
             "<font color=\"#b2b2b2\">**Title**</font>"
         );
     }
@@ -345,14 +352,80 @@ mod header_parity_tests {
 
 
 #[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::theme::{light, Resolved};
+
+    /// The words a markup string draws: the colour spans are the whole of what a
+    /// theme may change, so they are the whole of what is taken out before the
+    /// two renderings are compared.
+    fn words(markup: &str) -> String {
+        regex::Regex::new("</?font[^>]*>")
+            .expect("a font tag")
+            .replace_all(markup, "")
+            .into_owned()
+    }
+
+    /// The ticket's first promise: the same cell, built twice in two themes,
+    /// emits the same words in other colours. The prose around it too, which is
+    /// where the heading and the symbol in backticks are drawn.
+    #[test]
+    fn the_same_cell_under_two_themes_emits_the_same_words_in_other_colours() {
+        let shipped = Resolved::shipped();
+        let light = light();
+
+        let code = "def total(rows):\n    # add them up\n    return sum(rows), 'done'";
+        let here = highlight_python(code, &shipped);
+        let there = highlight_python(code, &light);
+        assert_ne!(here, there, "the cell has to follow the theme");
+        assert_eq!(words(&here), words(&there), "only the colours may differ");
+
+        let prose = "# the running total\n\ncall `total(rows)` after the loop";
+        let here = markdown_markup(prose, &shipped);
+        let there = markdown_markup(prose, &light);
+        assert_ne!(here, there, "the prose has to follow the theme");
+        assert_eq!(words(&here), words(&there), "only the colours may differ");
+    }
+
+    /// The other half of that promise: the theme that ships draws exactly the
+    /// markup the builder drew before there was a theme, character for character.
+    #[test]
+    fn the_shipped_theme_emits_the_markup_the_window_drew_before_the_theme() {
+        let shipped = Resolved::shipped();
+
+        assert_eq!(
+            markdown_markup("# Title", &shipped),
+            "<font color=\"#b2b2b2\">**Title**</font>"
+        );
+        assert_eq!(
+            markdown_markup("a `b` c", &shipped),
+            "a **<font color=\"#8f8f8f\">b</font>** c"
+        );
+        assert_eq!(
+            highlight_python("return 'x'", &shipped),
+            "<font color=\"#acacac\">return</font> <font color=\"#aaaaaa\">'x'</font>"
+        );
+        assert_eq!(highlight_python("# why", &shipped), "<font color=\"#606060\"># why</font>\n");
+    }
+}
+
+#[cfg(test)]
 mod markup_tests {
     use super::{markdown_markup, plain_markup, styled};
+    use crate::theme::Resolved;
     use slint::StyledText;
+
+    /// Every one of these reads the theme the window ships with: the builder
+    /// takes the theme it is drawn in, and the cases here are about the markup
+    /// and not about the colours it came out in.
+    fn shipped() -> Resolved {
+        Resolved::shipped()
+    }
 
     /// The renderer refuses a document whole when one span is malformed, and
     /// then the row prints as plain text. These are the shapes that did it.
     fn parses(text: &str) -> bool {
-        StyledText::from_markdown(&markdown_markup(text)).is_ok()
+        StyledText::from_markdown(&markdown_markup(text, &shipped())).is_ok()
     }
 
     #[test]
@@ -381,7 +454,7 @@ mod markup_tests {
         assert!(parses("write <font color=\"#fff\"> by hand"));
         assert!(parses("**bold `</font>` bold**"));
         assert!(parses("a < b && c > d"));
-        let drawn = markdown_markup("the `</font>` overlap");
+        let drawn = markdown_markup("the `</font>` overlap", &shipped());
         assert!(drawn.contains("&lt;/font&gt;"), "got {drawn}");
     }
 
@@ -408,7 +481,7 @@ mod markup_tests {
             "text with <b>html</b> in it",
             "text with a &amp; entity and `code`",
         ] {
-            let _ = styled(&markdown_markup(sample));
+            let _ = styled(&markdown_markup(sample, &shipped()));
         }
     }
 }

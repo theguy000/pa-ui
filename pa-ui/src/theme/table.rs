@@ -66,6 +66,19 @@ impl Rgba {
         slint::Color::from_argb_u8(self.a, self.r, self.g, self.b)
     }
 
+    /// The colour written the way a theme file writes one: `#rrggbb`, or
+    /// `#rrggbbaa` when it carries an alpha of its own.
+    ///
+    /// The markup builder is the one consumer that cannot be handed a
+    /// `slint::Color`: a `<font>` tag takes its colour as text.
+    pub(crate) fn text(self) -> String {
+        let mut out = format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b);
+        if self.a != 255 {
+            out.push_str(&format!("{:02x}", self.a));
+        }
+        out
+    }
+
     /// `share` of this colour and the rest of `other`, both kept opaque.
     pub(crate) fn mix(self, other: Rgba, share: f32) -> Rgba {
         let lerp = |a: u8, b: u8| {
@@ -293,6 +306,15 @@ pub(crate) enum Role {
     /// The line a notice row carries. A notice is the quietest thing the
     /// transcript says, and it is drawn to recede.
     TranscriptNoticeInk,
+    /// A heading line inside prose: the one line of a message the renderer draws
+    /// bold, and read a step above the prose around it because there is no size
+    /// step inside one text run to say it is a heading.
+    TranscriptHeadingInk,
+    /// A word the reader's message wrapped in backticks, inside a line of prose.
+    /// The renderer's own box around it hugs the glyphs with no padding and no
+    /// styling hook, so the span is drawn as a colour instead: a step back from
+    /// the prose, which is what makes it read as a symbol and not as emphasis.
+    TranscriptInlineCodeInk,
     /// The caret that says a row opens, in the header of a thinking row and of a
     /// cell. One role although two kinds of row draw it: it says the same thing
     /// and it is read on the same sheet.
@@ -375,6 +397,16 @@ pub(crate) enum Role {
     /// The language named in the block's corner. The quietest label the
     /// transcript has, and drawn to recede.
     TranscriptCodeLabelInk,
+    /// A python keyword in highlighted code. The three token roles below are
+    /// drawn by one tokeniser, which paints the code inside a cell and a fenced
+    /// block alike, so a theme that recolours a keyword recolours it in both
+    /// places.
+    TranscriptCodeKeywordInk,
+    /// A string literal in that code.
+    TranscriptCodeStringInk,
+    /// A comment in that code: the furthest back of the three, because it is the
+    /// part of the code a reader skips until they want it.
+    TranscriptCodeCommentInk,
     /// The box-drawn table's text.
     TranscriptTableInk,
     /// The field behind an attached picture. `image-fit: contain` leaves it
@@ -421,6 +453,18 @@ pub(crate) enum Role {
     /// Those words, read on that field. Whiter than the body ink, which the
     /// palette has no word for, so a theme names it.
     ComposerDraftSelectionInk,
+    /// A command word inside a draft the canvas paints. Its own role rather than
+    /// the `composer-command-ink` the token the slash menu puts in front of a
+    /// draft is drawn in: the canvas's word sits in the line the reader is
+    /// writing, and the window drew it a step behind the prose around it, where
+    /// that token is gold.
+    ComposerDraftCommandInk,
+    /// The field behind the words the canvas paints as selected. Its own role
+    /// although it says what the native field's selection fill says: the canvas
+    /// lays it down as a rectangle in a buffer of its own — opaque, so the words
+    /// keep their own ink — and the window drew it a step lighter than the fill
+    /// the text input is handed.
+    ComposerDraftSelectionWash,
     /// The command word a draft starts with: the token the slash menu put in
     /// front of the words. A gold no palette entry describes, so — like the
     /// sidebar's tags — it is a fixed value a theme names outright.
@@ -681,7 +725,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 165] = [
+    pub(crate) const ALL: [Role; 172] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -720,6 +764,8 @@ impl Role {
         Role::TranscriptMessageInk,
         Role::TranscriptLinkInk,
         Role::TranscriptNoticeInk,
+        Role::TranscriptHeadingInk,
+        Role::TranscriptInlineCodeInk,
         Role::TranscriptCaretMark,
         Role::TranscriptCellFill,
         Role::TranscriptCellFillHover,
@@ -747,6 +793,9 @@ impl Role {
         Role::TranscriptCodeFill,
         Role::TranscriptCodeInk,
         Role::TranscriptCodeLabelInk,
+        Role::TranscriptCodeKeywordInk,
+        Role::TranscriptCodeStringInk,
+        Role::TranscriptCodeCommentInk,
         Role::TranscriptTableInk,
         Role::TranscriptImageFill,
         Role::TranscriptScrollThumb,
@@ -765,6 +814,8 @@ impl Role {
         Role::ComposerDraftCaret,
         Role::ComposerDraftSelectionFill,
         Role::ComposerDraftSelectionInk,
+        Role::ComposerDraftCommandInk,
+        Role::ComposerDraftSelectionWash,
         Role::ComposerCommandInk,
         Role::ComposerAttachmentFill,
         Role::ComposerAttachmentEdge,
@@ -890,6 +941,8 @@ impl Role {
             Role::TranscriptMessageInk => "transcript-message-ink",
             Role::TranscriptLinkInk => "transcript-link-ink",
             Role::TranscriptNoticeInk => "transcript-notice-ink",
+            Role::TranscriptHeadingInk => "transcript-heading-ink",
+            Role::TranscriptInlineCodeInk => "transcript-inline-code-ink",
             Role::TranscriptCaretMark => "transcript-caret-mark",
             Role::TranscriptCellFill => "transcript-cell-fill",
             Role::TranscriptCellFillHover => "transcript-cell-fill-hover",
@@ -917,6 +970,9 @@ impl Role {
             Role::TranscriptCodeFill => "transcript-code-fill",
             Role::TranscriptCodeInk => "transcript-code-ink",
             Role::TranscriptCodeLabelInk => "transcript-code-label-ink",
+            Role::TranscriptCodeKeywordInk => "transcript-code-keyword-ink",
+            Role::TranscriptCodeStringInk => "transcript-code-string-ink",
+            Role::TranscriptCodeCommentInk => "transcript-code-comment-ink",
             Role::TranscriptTableInk => "transcript-table-ink",
             Role::TranscriptImageFill => "transcript-image-fill",
             Role::TranscriptScrollThumb => "transcript-scroll-thumb",
@@ -935,6 +991,8 @@ impl Role {
             Role::ComposerDraftCaret => "composer-draft-caret",
             Role::ComposerDraftSelectionFill => "composer-draft-selection-fill",
             Role::ComposerDraftSelectionInk => "composer-draft-selection-ink",
+            Role::ComposerDraftCommandInk => "composer-draft-command-ink",
+            Role::ComposerDraftSelectionWash => "composer-draft-selection-wash",
             Role::ComposerCommandInk => "composer-command-ink",
             Role::ComposerAttachmentFill => "composer-attachment-fill",
             Role::ComposerAttachmentEdge => "composer-attachment-edge",
@@ -1081,6 +1139,12 @@ impl Role {
             Role::TranscriptNoticeInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
+            Role::TranscriptHeadingInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.7594)
+            }
+            Role::TranscriptInlineCodeInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
+            }
             Role::TranscriptCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
             Role::TranscriptCellFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0189),
             Role::TranscriptCellFillHover => {
@@ -1128,6 +1192,15 @@ impl Role {
             Role::TranscriptCodeLabelInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
             }
+            Role::TranscriptCodeKeywordInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9748)
+            }
+            Role::TranscriptCodeStringInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9623)
+            }
+            Role::TranscriptCodeCommentInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4969)
+            }
             Role::TranscriptTableInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9623)
             }
@@ -1162,6 +1235,12 @@ impl Role {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.2075)
             }
             Role::ComposerDraftSelectionInk => Derivation::Fixed(Rgba::hex("#f0f0f0")),
+            Role::ComposerDraftCommandInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)
+            }
+            Role::ComposerDraftSelectionWash => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.2358)
+            }
             Role::ComposerCommandInk => Derivation::Fixed(Rgba::hex("#d8c06a")),
             Role::ComposerAttachmentFill => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0377)

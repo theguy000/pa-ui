@@ -18,13 +18,37 @@ pub(crate) use table::*;
 
 use crate::{AppWindow, Theme};
 use slint::ComponentHandle;
+use std::sync::{PoisonError, RwLock};
 
-/// Assign every role to the window's theme global.
+/// The theme the two parts that paint their own colours read: the transcript's
+/// markup builder and the composer's canvas. Neither can be handed a
+/// `slint::Color`, so neither goes through the global below.
+///
+/// Written by `apply` and read here, so the one entry point reaches everything:
+/// a reload that lands later has nothing else to update, and no component has to
+/// change. Unset — a test that only resolves files, a theme author's check —
+/// reads the theme the window ships with.
+static CURRENT: RwLock<Option<Resolved>> = RwLock::new(None);
+
+/// The theme the window is drawn in, or the shipped one before anything applied.
+///
+/// A copy rather than a borrow: the map is a fixed number of four-byte colours,
+/// and it is read once per poll or per draft, not once per glyph.
+pub(crate) fn current() -> Resolved {
+    // A poisoned lock is a panic in another thread; the value it guards cannot
+    // be left half-written here, so it is still the theme the window drew with.
+    let held = CURRENT.read().unwrap_or_else(PoisonError::into_inner);
+    held.clone().unwrap_or_else(Resolved::shipped)
+}
+
+/// Assign every role to the window's theme global, and hand the same theme to
+/// the code that paints its own colours.
 ///
 /// The single entry point: nothing else in the window knows how a colour gets
-/// into Slint, so a reload that lands later has one place to reach and no
-/// component has to change.
+/// into Slint or into a `<font>` tag, so a reload that lands later has one place
+/// to reach and no component has to change.
 pub(crate) fn apply(ui: &AppWindow, theme: &Resolved) {
+    *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = Some(theme.clone());
     let global = ui.global::<Theme>();
     for role in Role::ALL {
         set(&global, role, theme.get(role).to_slint());
@@ -77,6 +101,8 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptMessageInk => global.set_transcript_message_ink(value),
         Role::TranscriptLinkInk => global.set_transcript_link_ink(value),
         Role::TranscriptNoticeInk => global.set_transcript_notice_ink(value),
+        Role::TranscriptHeadingInk => global.set_transcript_heading_ink(value),
+        Role::TranscriptInlineCodeInk => global.set_transcript_inline_code_ink(value),
         Role::TranscriptCaretMark => global.set_transcript_caret_mark(value),
         Role::TranscriptCellFill => global.set_transcript_cell_fill(value),
         Role::TranscriptCellFillHover => global.set_transcript_cell_fill_hover(value),
@@ -106,6 +132,9 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptCodeFill => global.set_transcript_code_fill(value),
         Role::TranscriptCodeInk => global.set_transcript_code_ink(value),
         Role::TranscriptCodeLabelInk => global.set_transcript_code_label_ink(value),
+        Role::TranscriptCodeKeywordInk => global.set_transcript_code_keyword_ink(value),
+        Role::TranscriptCodeStringInk => global.set_transcript_code_string_ink(value),
+        Role::TranscriptCodeCommentInk => global.set_transcript_code_comment_ink(value),
         Role::TranscriptTableInk => global.set_transcript_table_ink(value),
         Role::TranscriptImageFill => global.set_transcript_image_fill(value),
         Role::TranscriptScrollThumb => global.set_transcript_scroll_thumb(value),
@@ -124,6 +153,8 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::ComposerDraftCaret => global.set_composer_draft_caret(value),
         Role::ComposerDraftSelectionFill => global.set_composer_draft_selection_fill(value),
         Role::ComposerDraftSelectionInk => global.set_composer_draft_selection_ink(value),
+        Role::ComposerDraftCommandInk => global.set_composer_draft_command_ink(value),
+        Role::ComposerDraftSelectionWash => global.set_composer_draft_selection_wash(value),
         Role::ComposerCommandInk => global.set_composer_command_ink(value),
         Role::ComposerAttachmentFill => global.set_composer_attachment_fill(value),
         Role::ComposerAttachmentEdge => global.set_composer_attachment_edge(value),
@@ -211,4 +242,18 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
             global.set_status_strip_queue_label_ink_hover(value)
         }
     }
+}
+
+
+/// A second theme for the tests that have to see one theme follow another: the
+/// window turned over, with both inks moved so a role made of either follows it.
+/// Not a bundled theme — the two consumers' tests are the only callers.
+#[cfg(test)]
+pub(crate) fn light() -> Resolved {
+    from_text(
+        "light.json",
+        r##"{ "name": "light", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020", "quiet-ink": "#5a5a5a" } }"##,
+    )
+    .expect("a theme that turns the window light")
 }
