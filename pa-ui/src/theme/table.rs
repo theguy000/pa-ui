@@ -27,8 +27,18 @@ impl Rgba {
         let digits = text.strip_prefix('#')?;
         let byte = |at: usize| u8::from_str_radix(digits.get(at..at + 2)?, 16).ok();
         Some(match digits.len() {
-            6 => Self { r: byte(0)?, g: byte(2)?, b: byte(4)?, a: 255 },
-            8 => Self { r: byte(0)?, g: byte(2)?, b: byte(4)?, a: byte(6)? },
+            6 => Self {
+                r: byte(0)?,
+                g: byte(2)?,
+                b: byte(4)?,
+                a: 255,
+            },
+            8 => Self {
+                r: byte(0)?,
+                g: byte(2)?,
+                b: byte(4)?,
+                a: byte(6)?,
+            },
             _ => return None,
         })
     }
@@ -47,7 +57,12 @@ impl Rgba {
     /// This colour darkened by `amount` out of 255: a field that sits below the
     /// one it is drawn on. Laid over black, which is the floor there is.
     pub(crate) fn shaded(self, amount: u8) -> Self {
-        self.with_alpha(255 - amount).over(Self { r: 0, g: 0, b: 0, a: 255 })
+        self.with_alpha(255 - amount).over(Self {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        })
     }
 
     /// This colour laid over `behind`, which must be opaque: what a veil comes
@@ -58,7 +73,12 @@ impl Rgba {
         let blend = |over: u8, under: u8| {
             ((u32::from(over) * weight + u32::from(under) * rest + 127) / 255) as u8
         };
-        Rgba { r: blend(self.r, behind.r), g: blend(self.g, behind.g), b: blend(self.b, behind.b), a: 255 }
+        Rgba {
+            r: blend(self.r, behind.r),
+            g: blend(self.g, behind.g),
+            b: blend(self.b, behind.b),
+            a: 255,
+        }
     }
 
     /// The colour the renderer draws: same channels, alpha included.
@@ -81,9 +101,8 @@ impl Rgba {
 
     /// `share` of this colour and the rest of `other`, both kept opaque.
     pub(crate) fn mix(self, other: Rgba, share: f32) -> Rgba {
-        let lerp = |a: u8, b: u8| {
-            (f32::from(a) * share + f32::from(b) * (1.0 - share)).round() as u8
-        };
+        let lerp =
+            |a: u8, b: u8| (f32::from(a) * share + f32::from(b) * (1.0 - share)).round() as u8;
         Rgba {
             r: lerp(self.r, other.r),
             g: lerp(self.g, other.g),
@@ -118,8 +137,13 @@ pub(crate) enum Palette {
 }
 
 impl Palette {
-    pub(crate) const ALL: [Palette; 5] =
-        [Palette::Background, Palette::Ink, Palette::QuietInk, Palette::Danger, Palette::Brand];
+    pub(crate) const ALL: [Palette; 5] = [
+        Palette::Background,
+        Palette::Ink,
+        Palette::QuietInk,
+        Palette::Danger,
+        Palette::Brand,
+    ];
 
     /// The name a theme file uses.
     pub(crate) fn name(self) -> &'static str {
@@ -184,16 +208,24 @@ pub(crate) enum Derivation {
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
-    /// The window's own field, under everything: the caption paints none of its
-    /// own and is read against this, the right column shows it while it is blank,
-    /// and the sidebar's field ships the same value so the column reads as part of
-    /// the window rather than as a slab laid on it. Its own role all the same: a
-    /// theme that wants a lighter column than window, or a window one shade off
-    /// its column, has to be able to say so.
+    /// The window's field: the one surface the chrome is made of. The title bar
+    /// paints none of its own, the left column and the right one both show this,
+    /// and the transcript's strip beside them sits on it. The chrome is one
+    /// component - a pair of columns and the caption above them - so a theme
+    /// moves all three of them by naming this role, and reaches a single column
+    /// only through the fills that column draws for itself.
     WindowSurface,
-    /// The minimise, maximise and close marks at rest: ink stepped back a
-    /// little, so a row of three does not shout from the corner.
-    TitleBarGlyph,
+    /// The marks the chrome draws: the caption's three, the fold in the title
+    /// bar, the fold inside the column and the magnifier beside it. One role,
+    /// because the chrome is one component: a title bar drawn a shade brighter
+    /// than the marks in the column beneath it reads as two windows, and a
+    /// theme that moves one of them and not the others says so by accident. Ink
+    /// stepped back a little, so a row of three does not shout from a corner.
+    ChromeMark,
+    /// Those marks with the pointer on them, and the arrow the folded strip
+    /// draws: ink at full strength, and the folded strip's arrow only appears
+    /// under the pointer, so it is always drawn in this state.
+    ChromeMarkHover,
     /// A caption button with the pointer on it: a faint veil of ink over the
     /// window behind it, the chip the native caption draws.
     TitleBarCaptionFillHover,
@@ -204,16 +236,6 @@ pub(crate) enum Role {
     TitleBarCloseInkHover,
     /// The right column's fold, with the pointer on it.
     TitleBarFoldFillHover,
-    /// The fold mark at rest: quiet ink stepped back further, because it is
-    /// chrome nobody is using.
-    TitleBarFoldGlyph,
-    /// The fold mark once the pointer arrives and the column says what it does.
-    TitleBarFoldGlyphHover,
-    /// The sidebar's own field, folded or open. The row fills are not made of
-    /// it — they are a lift of ink over the palette's background — so a theme
-    /// that moves this role alone keeps the rows it shipped with, and moves
-    /// them with `sidebar-row-fill` and company.
-    SidebarSurface,
     /// A session row at rest: a veil at no strength, because a resting row
     /// draws nothing of its own and the column runs through it. A theme that
     /// wants the rows to read as cards names this role.
@@ -247,14 +269,6 @@ pub(crate) enum Role {
     TagParked,
     /// A session that is live and between turns, ready for the next prompt.
     TagIdle,
-    /// The column's own fold, at the right of its header, at rest. The mark is
-    /// the whole of what says the control folds the column, so it is read on the
-    /// column it sits on rather than on a field of its own.
-    SidebarFoldGlyph,
-    /// That mark with the pointer on it — and the one the folded strip draws on
-    /// the control that opens the column again, which draws its arrow only while
-    /// the pointer is on it and so is always drawn in this state.
-    SidebarFoldGlyphHover,
     /// The pen on the New Session button at rest: quiet ink, because the label
     /// beside it carries the words.
     SidebarNewSessionMark,
@@ -268,9 +282,6 @@ pub(crate) enum Role {
     /// the button's hover: a theme that moves the strip's pen would have it spring
     /// back to the button's colour under the pointer.
     SidebarStripNewSessionMarkHover,
-    /// The magnifier in the column's header, and again in its folded strip.
-    /// Drawn and inert until search exists, and read at the quiet ink both draw.
-    SidebarSearchMark,
     /// The product's name beside the brand mark, at the top of the column. The one
     /// piece of lettering in the column that is not a session's, so it is read at
     /// body ink while the names under it step back.
@@ -492,8 +503,8 @@ pub(crate) enum Role {
     /// the `composer-command-ink` the token the slash menu puts in front of a
     /// draft is drawn in: the canvas's word sits in the line the reader is
     /// writing, and a theme is free to step it back without touching the token.
-    /// The window draws both in the same gold in the default; the mono theme is
-    /// what makes the canvas's one grey.
+    /// The window draws both in the same gold in the compiled-in table; the
+    /// bundled theme is what makes the canvas's one grey.
     ComposerDraftCommandInk,
     /// The field behind the words the canvas paints as selected. Its own role
     /// although it says what the native field's selection fill says: the canvas
@@ -593,7 +604,7 @@ pub(crate) enum Role {
     ComposerChipCaretMark,
     /// What the control is filled with while it sends. The one field in the
     /// composer that is not a grey: the window's gold, which the palette has no
-    /// word for, so a theme names it. The mono theme names it too, and makes it
+    /// word for, so a theme names it. The bundled theme names it too, and makes it
     /// the lightest thing on the field, because a neutral disc has no hue left to
     /// mark the primary action and spends contrast instead.
     ComposerSendFill,
@@ -601,7 +612,7 @@ pub(crate) enum Role {
     ComposerSendFillHover,
     /// The arrow on that fill. Its own role because the arrow is the one mark a
     /// theme has to move when it moves the disc: the shipped disc is darker than
-    /// the ink, and the mono theme's is lighter than anything else in the window,
+    /// the ink, and the bundled theme's is lighter than anything else in the window,
     /// so a theme that moves one and leaves the other behind draws a mark that
     /// cannot be read.
     ComposerSendMark,
@@ -787,16 +798,14 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 187] = [
+    pub(crate) const ALL: [Role; 182] = [
         Role::WindowSurface,
-        Role::TitleBarGlyph,
+        Role::ChromeMark,
+        Role::ChromeMarkHover,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
         Role::TitleBarCloseInkHover,
         Role::TitleBarFoldFillHover,
-        Role::TitleBarFoldGlyph,
-        Role::TitleBarFoldGlyphHover,
-        Role::SidebarSurface,
         Role::SidebarRowFill,
         Role::SidebarRowFillHover,
         Role::SidebarRowFillSelected,
@@ -807,13 +816,10 @@ impl Role {
         Role::TagWorking,
         Role::TagParked,
         Role::TagIdle,
-        Role::SidebarFoldGlyph,
-        Role::SidebarFoldGlyphHover,
         Role::SidebarNewSessionMark,
         Role::SidebarNewSessionMarkHover,
         Role::SidebarStripNewSessionMark,
         Role::SidebarStripNewSessionMarkHover,
-        Role::SidebarSearchMark,
         Role::SidebarWordmarkInk,
         Role::SidebarRowRenameMark,
         Role::SidebarRowRenameFill,
@@ -981,14 +987,12 @@ impl Role {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Role::WindowSurface => "window-surface",
-            Role::TitleBarGlyph => "title-bar-glyph",
+            Role::ChromeMark => "chrome-mark",
+            Role::ChromeMarkHover => "chrome-mark-hover",
             Role::TitleBarCaptionFillHover => "title-bar-caption-fill-hover",
             Role::TitleBarCloseFillHover => "title-bar-close-fill-hover",
             Role::TitleBarCloseInkHover => "title-bar-close-ink-hover",
             Role::TitleBarFoldFillHover => "title-bar-fold-fill-hover",
-            Role::TitleBarFoldGlyph => "title-bar-fold-glyph",
-            Role::TitleBarFoldGlyphHover => "title-bar-fold-glyph-hover",
-            Role::SidebarSurface => "sidebar-surface",
             Role::SidebarRowFill => "sidebar-row-fill",
             Role::SidebarRowFillHover => "sidebar-row-fill-hover",
             Role::SidebarRowFillSelected => "sidebar-row-fill-selected",
@@ -999,13 +1003,10 @@ impl Role {
             Role::TagWorking => "tag-working",
             Role::TagParked => "tag-parked",
             Role::TagIdle => "tag-idle",
-            Role::SidebarFoldGlyph => "sidebar-fold-glyph",
-            Role::SidebarFoldGlyphHover => "sidebar-fold-glyph-hover",
             Role::SidebarNewSessionMark => "sidebar-new-session-mark",
             Role::SidebarNewSessionMarkHover => "sidebar-new-session-mark-hover",
             Role::SidebarStripNewSessionMark => "sidebar-strip-new-session-mark",
             Role::SidebarStripNewSessionMarkHover => "sidebar-strip-new-session-mark-hover",
-            Role::SidebarSearchMark => "sidebar-search-mark",
             Role::SidebarWordmarkInk => "sidebar-wordmark-ink",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
             Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
@@ -1186,14 +1187,12 @@ impl Role {
     fn derivation(self) -> Derivation {
         match self {
             Role::WindowSurface => Derivation::Palette(Palette::Background),
-            Role::TitleBarGlyph => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
+            Role::ChromeMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
+            Role::ChromeMarkHover => Derivation::Palette(Palette::Ink),
             Role::TitleBarCaptionFillHover => Derivation::Veil(Palette::Ink, 0x14),
             Role::TitleBarCloseFillHover => Derivation::Palette(Palette::Danger),
             Role::TitleBarCloseInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
             Role::TitleBarFoldFillHover => Derivation::Veil(Palette::Ink, 0x1f),
-            Role::TitleBarFoldGlyph => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.592),
-            Role::TitleBarFoldGlyphHover => Derivation::Palette(Palette::Ink),
-            Role::SidebarSurface => Derivation::Palette(Palette::Background),
             Role::SidebarRowFill => Derivation::Veil(Palette::Background, 0x00),
             Role::SidebarRowFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
             Role::SidebarRowFillSelected => {
@@ -1206,16 +1205,19 @@ impl Role {
             Role::TagWorking => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::TagParked => Derivation::Fixed(Rgba::hex("#4a4d44")),
             Role::TagIdle => Derivation::Fixed(Rgba::hex("#6f9f5f")),
-            Role::SidebarFoldGlyph => Derivation::Palette(Palette::QuietInk),
-            Role::SidebarFoldGlyphHover => Derivation::Palette(Palette::Ink),
             Role::SidebarNewSessionMark => Derivation::Palette(Palette::QuietInk),
             Role::SidebarNewSessionMarkHover => Derivation::Palette(Palette::Ink),
-            Role::SidebarStripNewSessionMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
+            Role::SidebarStripNewSessionMark => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.933)
+            }
             Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
-            Role::SidebarSearchMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9015),
             Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
-            Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
-            Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
+            Role::SidebarRowRenameMark => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+            }
+            Role::SidebarRowRenameFill => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0566)
+            }
             Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2a2c24")),
             Role::SidebarNewSessionInk => Derivation::Palette(Palette::Ink),
             Role::SidebarNewSessionInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
@@ -1227,9 +1229,13 @@ impl Role {
             Role::BrandMarkWingInnerShadow => {
                 Derivation::Mix(Palette::Brand, Palette::Background, 0.479)
             }
-            Role::BrandMarkWingShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.3067),
+            Role::BrandMarkWingShadow => {
+                Derivation::Mix(Palette::Brand, Palette::Background, 0.3067)
+            }
             Role::BrandMarkStem => Derivation::Mix(Palette::Brand, Palette::Background, 0.3445),
-            Role::BrandMarkStemShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.1429),
+            Role::BrandMarkStemShadow => {
+                Derivation::Mix(Palette::Brand, Palette::Background, 0.1429)
+            }
             Role::TranscriptSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0094),
             Role::TranscriptProseInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
             Role::TranscriptMessageFill => Derivation::Fixed(Rgba::hex("#2e2916")),
@@ -1256,7 +1262,9 @@ impl Role {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
             Role::TranscriptCellSeparatorInk => Derivation::Fixed(Rgba::hex("#ffffff")),
-            Role::TranscriptCellCodeInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
+            Role::TranscriptCellCodeInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.9057)
+            }
             Role::TranscriptCellOutputInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7987)
             }
@@ -1352,12 +1360,18 @@ impl Role {
             Role::ComposerAttachFillHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
             }
-            Role::ComposerAttachInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7736),
+            Role::ComposerAttachInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7736)
+            }
             Role::ComposerAttachInkHover => Derivation::Palette(Palette::QuietInk),
-            Role::ComposerStatusLineInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
+            Role::ComposerStatusLineInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
             Role::ComposerStatusLineInkBad => Derivation::Fixed(Rgba::hex("#c98a7f")),
             Role::ComposerRingTickLit => Derivation::Fixed(Rgba::hex("#c9a86a")),
-            Role::ComposerRingTickUnlit => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
+            Role::ComposerRingTickUnlit => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1698)
+            }
             Role::ComposerCardSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
             Role::ComposerCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
             Role::ComposerCardShadow => Derivation::Fixed(Rgba::hex("#00000066")),
@@ -1378,9 +1392,13 @@ impl Role {
             Role::ComposerCardLedgerInk => Derivation::Palette(Palette::QuietInk),
             Role::ComposerCardCostInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
             Role::ComposerChipFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
-            Role::ComposerChipFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
+            Role::ComposerChipFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+            }
             Role::ComposerChipEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
-            Role::ComposerChipEdgeHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
+            Role::ComposerChipEdgeHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1698)
+            }
             Role::ComposerChipInk => Derivation::Palette(Palette::QuietInk),
             Role::ComposerChipInkHover => Derivation::Palette(Palette::Ink),
             Role::ComposerChipCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
@@ -1400,25 +1418,21 @@ impl Role {
             Role::PanelEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
             Role::PanelShadow => Derivation::Fixed(Rgba::hex("#00000080")),
             Role::PanelShadowNested => Derivation::Fixed(Rgba::hex("#00000060")),
-            Role::PanelRowFillHover => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.0708)
-            }
-            Role::PanelRowFillCurrent => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
-            }
+            Role::PanelRowFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.0708),
+            Role::PanelRowFillCurrent => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
             Role::SessionCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
             Role::SessionCardInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9764),
             Role::SlashMenuRowInk => Derivation::Palette(Palette::QuietInk),
             Role::SlashMenuRowInkHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)
             }
-            Role::SlashMenuHintInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925),
+            Role::SlashMenuHintInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
+            }
             Role::SlashMenuDescriptionInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
             }
-            Role::ModelMenuHeaderInk => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.9387)
-            }
+            Role::ModelMenuHeaderInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9387),
             Role::ModelMenuHeaderInkQuiet => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
             }
@@ -1437,7 +1451,9 @@ impl Role {
             Role::EffortLadderRowInkCurrent => Derivation::Palette(Palette::Ink),
             Role::EffortLadderCheckMark => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::QueueCardCountInk => Derivation::Palette(Palette::QuietInk),
-            Role::QueueCardLaneInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
+            Role::QueueCardLaneInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
             Role::QueueRowInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9387),
             Role::QueueCardClearInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
@@ -1516,7 +1532,12 @@ impl Resolved {
     /// then every derivation, then the roles the file named — so a file can
     /// never leave half of itself behind.
     pub(crate) fn with_overlay(patch: &Overlay) -> Self {
-        let blank = Rgba { r: 0, g: 0, b: 0, a: 255 };
+        let blank = Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
         let mut palette = [blank; Palette::ALL.len()];
         for key in Palette::ALL {
             palette[key as usize] = key.shipped();
@@ -1546,7 +1567,12 @@ impl Resolved {
     /// sits behind the window, so a background carrying an alpha is read as if
     /// it were solid.
     pub(crate) fn background(&self) -> Rgba {
-        self.palette[Palette::Background as usize].over(Rgba { r: 0, g: 0, b: 0, a: 255 })
+        self.palette[Palette::Background as usize].over(Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        })
     }
 }
 

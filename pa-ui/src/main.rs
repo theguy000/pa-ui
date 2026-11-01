@@ -12,16 +12,16 @@ mod preview;
 mod probes;
 mod queue;
 mod scroll;
-mod sheet;
 mod send;
 mod sessions;
+mod sheet;
 mod slash;
 mod status;
 mod text;
 mod theme;
 mod tick;
-mod transcript;
 mod titlebar;
+mod transcript;
 mod window_icon;
 mod worker;
 
@@ -56,8 +56,8 @@ pub(crate) type Repaint = Rc<dyn Fn(&AppWindow)>;
 pub(crate) type RepaintSlot = Rc<RefCell<Option<Repaint>>>;
 
 use pa_client::{
-    attach_as, clear_queue, create_session, get_queue, list_sessions, model_catalog,
-    clamp_level, get_commands, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
+    attach_as, clamp_level, clear_queue, create_session, get_commands, get_queue, list_sessions,
+    model_catalog, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
     set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -75,8 +75,8 @@ const OLDER_PAGE: usize = 80;
 
 /// The TUI's loader frames (pa-tui `LOADER_FRAMES`), advanced every poll tick.
 const SPINNER_FRAMES: [&str; 10] = [
-    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
-    "\u{2827}", "\u{2807}", "\u{280f}",
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280f}",
 ];
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -127,7 +127,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
 
-
     // one identity for this window: the supervisor addresses session events to
     // the connections registered under it
     let client_id = format!(
@@ -171,8 +170,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let editing: Editing = Rc::new(RefCell::new(None));
     // the session's own commands (templates and skills): the builtin table is
     // only half of what the agent accepts
-    let extra_commands: SlashCommands =
-        Rc::new(RefCell::new(Vec::new()));
+    let extra_commands: SlashCommands = Rc::new(RefCell::new(Vec::new()));
     // the byte range of the `/command` token the caret is in, so taking a command
     // can replace exactly that token and leave the words around it alone
     let slash_token: Rc<RefCell<(usize, usize)>> = Rc::new(RefCell::new((0, 0)));
@@ -196,14 +194,12 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // the model catalog and which provider groups the user has folded away.
     // Collapse lives here, not in Slint: it has to survive closing the menu.
-    let catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>> = Rc::new(RefCell::new(Vec::new()));
     let collapsed: Rc<RefCell<std::collections::HashSet<String>>> =
         Rc::new(RefCell::new(std::collections::HashSet::new()));
     let catalog_loaded = Rc::new(std::cell::Cell::new(false));
     // the row whose effort ladder is open, so the pick knows its target
     let hovered: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
-
 
     interactive::send::send(
         &ui,
@@ -257,7 +253,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Painting on the keystroke, not on the poll tick: a letter that waits for a
     // timer is a letter that arrives late, and holding a key shows it plainly.
-    let repaint_canvas = interactive::canvas::painter(&canvas_cell, &canvas_key, &extra_commands, true);
+    let repaint_canvas =
+        interactive::canvas::painter(&canvas_cell, &canvas_key, &extra_commands, true);
 
     interactive::slash::typed(&ui, &extra_commands, &repaint_canvas, &slash_token);
 
@@ -281,7 +278,6 @@ fn main() -> Result<(), slint::PlatformError> {
     interactive::send::steer(&ui, &attachment_model, &attachments, &job_tx, &pending_user);
 
     interactive::queue::clear(&ui, &job_tx);
-
 
     interactive::sidebar::new_chat(&ui, &job_tx);
 
@@ -317,7 +313,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let spin_secs = std::cell::Cell::new(u64::MAX);
     let spin = Timer::default();
     spin.start(TimerMode::Repeated, Duration::from_millis(80), move || {
-        let Some(ui) = spin_weak.upgrade() else { return };
+        let Some(ui) = spin_weak.upgrade() else {
+            return;
+        };
         if !ui.get_busy() {
             return;
         }
@@ -442,20 +440,24 @@ fn main() -> Result<(), slint::PlatformError> {
         let shot_ui = ui.as_weak();
         let shot_timer = std::rc::Rc::new(slint::Timer::default());
         let stop = shot_timer.clone();
-        shot_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(600), move || {
-            stop.stop();
-            if let Some(ui) = shot_ui.upgrade() {
-                if let Ok(buffer) = ui.window().take_snapshot() {
-                    let mut bytes = Vec::new();
-                    bytes.extend_from_slice(&buffer.width().to_le_bytes());
-                    bytes.extend_from_slice(&buffer.height().to_le_bytes());
-                    for pixel in buffer.as_slice() {
-                        bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+        shot_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(600),
+            move || {
+                stop.stop();
+                if let Some(ui) = shot_ui.upgrade() {
+                    if let Ok(buffer) = ui.window().take_snapshot() {
+                        let mut bytes = Vec::new();
+                        bytes.extend_from_slice(&buffer.width().to_le_bytes());
+                        bytes.extend_from_slice(&buffer.height().to_le_bytes());
+                        for pixel in buffer.as_slice() {
+                            bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+                        }
+                        let _ = std::fs::write(&path, bytes);
                     }
-                    let _ = std::fs::write(&path, bytes);
                 }
-            }
-        });
+            },
+        );
     }
 
     ui.run()

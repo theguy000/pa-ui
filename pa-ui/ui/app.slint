@@ -557,7 +557,7 @@ export component AppWindow inherits Window {
             // mark and the three controls and drops the rows.
             if !root.sidebar-open : Rectangle {
                 width: 48px;
-                background: Theme.sidebar-surface;
+                background: Theme.window-surface;
         
                 VerticalLayout {
                     padding-top: 4px;
@@ -590,7 +590,7 @@ export component AppWindow inherits Window {
                                     y: (parent.height - self.height) / 2;
                                     arrow: true;
                                     point-left: false;
-                                    tint: Theme.sidebar-fold-glyph-hover;
+                                    tint: Theme.chrome-mark-hover;
                                 }
                             }
                         }
@@ -641,7 +641,7 @@ export component AppWindow inherits Window {
         
             if root.sidebar-open : Rectangle {
                 width: 232px;
-                background: Theme.sidebar-surface;
+                background: Theme.window-surface;
                 VerticalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
@@ -696,8 +696,8 @@ export component AppWindow inherits Window {
                                 arrow: panel-fold.hot;
                                 point-left: root.sidebar-open;
                                 tint: panel-fold.hot
-                                    ? Theme.sidebar-fold-glyph-hover
-                                    : Theme.sidebar-fold-glyph;
+                                    ? Theme.chrome-mark-hover
+                                    : Theme.chrome-mark;
                             }
                         }
                     }

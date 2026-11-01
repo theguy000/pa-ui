@@ -20,7 +20,11 @@ fn moved_and_claimed(
         .filter(|role| theme.get(**role) != shipped.get(**role))
         .map(|role| role.name())
         .collect();
-    let named = Role::ALL.iter().map(|role| role.name()).filter(|name| claimed(name)).collect();
+    let named = Role::ALL
+        .iter()
+        .map(|role| role.name())
+        .filter(|name| claimed(name))
+        .collect();
     (moved, named)
 }
 
@@ -31,16 +35,25 @@ fn the_shipped_theme_draws_todays_title_bar() {
     let theme = Resolved::shipped();
     let on_background = |role| theme.get(role).over(theme.background());
 
-    // The marks come out as the one opaque colour each was drawn in.
-    assert_eq!(theme.get(Role::TitleBarGlyph), Rgba::hex("#d9d7d1"));
-    assert_eq!(theme.get(Role::TitleBarFoldGlyph), Rgba::hex("#6f7069"));
-    assert_eq!(theme.get(Role::TitleBarFoldGlyphHover), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::TitleBarCloseFillHover), Rgba::hex("#c42b1c"));
+    // The chrome's marks come out as the one opaque colour they are all drawn
+    // in, whether the caption, the title bar's fold or the column's.
+    assert_eq!(theme.get(Role::ChromeMark), Rgba::hex("#d9d7d1"));
+    assert_eq!(theme.get(Role::ChromeMarkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::TitleBarCloseFillHover),
+        Rgba::hex("#c42b1c")
+    );
     assert_eq!(theme.get(Role::TitleBarCloseInkHover), Rgba::hex("#ffffff"));
     // The hover chips are veils, so they keep their alpha and are laid on the
     // window behind them.
-    assert_eq!(on_background(Role::TitleBarCaptionFillHover), Rgba::hex("#21221e"));
-    assert_eq!(on_background(Role::TitleBarFoldFillHover), Rgba::hex("#2a2b27"));
+    assert_eq!(
+        on_background(Role::TitleBarCaptionFillHover),
+        Rgba::hex("#21221e")
+    );
+    assert_eq!(
+        on_background(Role::TitleBarFoldFillHover),
+        Rgba::hex("#2a2b27")
+    );
 }
 
 /// The sidebar as the window drew it before there was a theme: the values read
@@ -50,16 +63,27 @@ fn the_shipped_theme_draws_todays_title_bar() {
 fn the_shipped_theme_draws_todays_sidebar() {
     let theme = Resolved::shipped();
 
-    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#10110e"));
-    // The product's name above the rows, and the window the column is drawn on.
-    assert_eq!(theme.get(Role::SidebarWordmarkInk), Rgba::hex("#e7e5df"));
+    // The column has no field of its own: it is drawn on the window's, which is
+    // the same role the caption and the right column show.
     assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#10110e"));
+    // The product's name above the rows.
+    assert_eq!(theme.get(Role::SidebarWordmarkInk), Rgba::hex("#e7e5df"));
     // A row at rest draws no fill of its own: the column runs through it.
-    assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
+    assert_eq!(
+        theme.get(Role::SidebarRowFill).a,
+        0,
+        "a resting row is not a fill"
+    );
     assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#171815"));
-    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1c1d1a"));
+    assert_eq!(
+        theme.get(Role::SidebarRowFillSelected),
+        Rgba::hex("#1c1d1a")
+    );
     assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::SidebarNameInkSelected),
+        Rgba::hex("#e7e5df")
+    );
     assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::SidebarAgeInk), Rgba::hex("#585953"));
     // The three tags are the one part of the sidebar whose value no palette
@@ -71,12 +95,21 @@ fn the_shipped_theme_draws_todays_sidebar() {
     // to rename it, the words and the field of New Session, and the pill the
     // folded column shows.
     assert_eq!(theme.get(Role::SidebarRowRenameFill), Rgba::hex("#1c1d1a"));
-    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2a2c24"));
+    assert_eq!(
+        theme.get(Role::SidebarRowRenameFillHover),
+        Rgba::hex("#2a2c24")
+    );
     assert_eq!(theme.get(Role::SidebarNewSessionInk), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::SidebarNewSessionInkHover), Rgba::hex("#ffffff"));
+    assert_eq!(
+        theme.get(Role::SidebarNewSessionInkHover),
+        Rgba::hex("#ffffff")
+    );
     assert_eq!(theme.get(Role::SidebarOpenTipFill), Rgba::hex("#e3e3e3"));
     assert_eq!(theme.get(Role::SidebarOpenTipInk), Rgba::hex("#1f1f1f"));
-    assert_eq!(theme.get(Role::SidebarOpenTipShadow), Rgba::hex("#00000066"));
+    assert_eq!(
+        theme.get(Role::SidebarOpenTipShadow),
+        Rgba::hex("#00000066")
+    );
 }
 
 /// The glyphs as the window drew them before there was a theme: the values read
@@ -90,18 +123,24 @@ fn the_shipped_theme_draws_todays_sidebar() {
 fn the_shipped_theme_draws_todays_glyphs() {
     let theme = Resolved::shipped();
 
-    // The sidebar: its fold in the header, the pen on New Session in the header
-    // and in the folded strip, the magnifier both carry, and the pencil a row
-    // offers to rename it.
-    assert_eq!(theme.get(Role::SidebarFoldGlyph), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::SidebarFoldGlyphHover), Rgba::hex("#e7e5df"));
+    // The sidebar: the pen on New Session in the header and in the folded strip,
+    // and the pencil a row offers to rename it. Its fold and its magnifier are
+    // the chrome's marks, asserted with the rest of the chrome.
     assert_eq!(theme.get(Role::SidebarNewSessionMark), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::SidebarNewSessionMarkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::SidebarNewSessionMarkHover),
+        Rgba::hex("#e7e5df")
+    );
     // The strip's own pen reads a step above the button's: folded, the mark is
     // the whole control.
-    assert_eq!(theme.get(Role::SidebarStripNewSessionMark), Rgba::hex("#d9d7d1"));
-    assert_eq!(theme.get(Role::SidebarStripNewSessionMarkHover), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#a0a199"));
+    assert_eq!(
+        theme.get(Role::SidebarStripNewSessionMark),
+        Rgba::hex("#d9d7d1")
+    );
+    assert_eq!(
+        theme.get(Role::SidebarStripNewSessionMarkHover),
+        Rgba::hex("#e7e5df")
+    );
     assert_eq!(theme.get(Role::SidebarRowRenameMark), Rgba::hex("#8b8c84"));
 
     // The transcript: the caret on a row that opens — a thinking row and a cell
@@ -109,7 +148,10 @@ fn the_shipped_theme_draws_todays_glyphs() {
     // newest row, and the alert inside a failed cell's badge.
     assert_eq!(theme.get(Role::TranscriptCaretMark), Rgba::hex("#7c7b77"));
     assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#a5a49e"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeMark), Rgba::hex("#f3ded8"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellBadgeMark),
+        Rgba::hex("#f3ded8")
+    );
 
     // The panels the caret and the tick are drawn in: the model menu's own
     // caret, its tick beside the running model, and the tick the ladder draws
@@ -135,7 +177,10 @@ fn the_shipped_theme_draws_todays_brand_mark() {
 
     assert_eq!(theme.get(Role::BrandMarkBlade), Rgba::hex("#ffffff"));
     assert_eq!(theme.get(Role::BrandMarkWing), Rgba::hex("#aeaead"));
-    assert_eq!(theme.get(Role::BrandMarkWingInnerShadow), Rgba::hex("#828381"));
+    assert_eq!(
+        theme.get(Role::BrandMarkWingInnerShadow),
+        Rgba::hex("#828381")
+    );
     assert_eq!(theme.get(Role::BrandMarkWingShadow), Rgba::hex("#595a58"));
     assert_eq!(theme.get(Role::BrandMarkStem), Rgba::hex("#626361"));
     assert_eq!(theme.get(Role::BrandMarkStemShadow), Rgba::hex("#323330"));
@@ -156,13 +201,10 @@ fn a_theme_that_moves_the_inks_repaints_the_glyphs_and_the_mark() {
     let shipped = Resolved::shipped();
 
     for role in [
-        Role::SidebarFoldGlyph,
-        Role::SidebarFoldGlyphHover,
         Role::SidebarNewSessionMark,
         Role::SidebarNewSessionMarkHover,
         Role::SidebarStripNewSessionMark,
         Role::SidebarStripNewSessionMarkHover,
-        Role::SidebarSearchMark,
         Role::SidebarRowRenameMark,
         Role::TranscriptCaretMark,
         Role::TranscriptJumpMark,
@@ -175,7 +217,12 @@ fn a_theme_that_moves_the_inks_repaints_the_glyphs_and_the_mark() {
         Role::BrandMarkStem,
         Role::BrandMarkStemShadow,
     ] {
-        assert_ne!(theme.get(role), shipped.get(role), "{} did not follow", role.name());
+        assert_ne!(
+            theme.get(role),
+            shipped.get(role),
+            "{} did not follow",
+            role.name()
+        );
     }
 
     // Three glyphs are the exception every part with a hue has: the alert inside
@@ -183,9 +230,17 @@ fn a_theme_that_moves_the_inks_repaints_the_glyphs_and_the_mark() {
     // in colours no palette word describes, so they stay values a theme names
     // outright rather than being mixed out of the ink. The check measures each of
     // them where it is drawn.
-    for role in [Role::TranscriptCellBadgeMark, Role::ModelMenuCheckMark, Role::EffortLadderCheckMark]
-    {
-        assert_eq!(theme.get(role), shipped.get(role), "{} is not made of the inks", role.name());
+    for role in [
+        Role::TranscriptCellBadgeMark,
+        Role::ModelMenuCheckMark,
+        Role::EffortLadderCheckMark,
+    ] {
+        assert_eq!(
+            theme.get(role),
+            shipped.get(role),
+            "{} is not made of the inks",
+            role.name()
+        );
     }
 }
 
@@ -203,7 +258,10 @@ fn an_inverted_theme_keeps_the_brand_marks_tones_apart() {
     .expect("a file that turns the window light");
 
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
-    assert!(!named.iter().any(|what| what.starts_with("the mark's")), "{named:?}");
+    assert!(
+        !named.iter().any(|what| what.starts_with("the mark's")),
+        "{named:?}"
+    );
 
     // Turned over rather than merely paler: the tone that was the lightest is
     // now the darkest, and the shadow that was the darkest is now the lightest.
@@ -215,8 +273,14 @@ fn an_inverted_theme_keeps_the_brand_marks_tones_apart() {
     // can hear about it: the gold of the tick that says what is running stays
     // gold, so on a light panel the ratio check names it. A theme that wants the
     // two read high names them — the same trade the sidebar's tags make.
-    let findings: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
-    assert!(findings.contains(&"the tick beside the running model"), "{findings:?}");
+    let findings: Vec<&str> = contrast(&theme)
+        .iter()
+        .map(|finding| finding.what)
+        .collect();
+    assert!(
+        findings.contains(&"the tick beside the running model"),
+        "{findings:?}"
+    );
 }
 
 /// The other side of the mark's bargain: it is artwork cut from the field, not ink
@@ -241,7 +305,12 @@ fn a_theme_that_moves_only_the_inks_leaves_the_mark_alone() {
         Role::BrandMarkStem,
         Role::BrandMarkStemShadow,
     ] {
-        assert_eq!(theme.get(role), shipped.get(role), "{} follows the field", role.name());
+        assert_eq!(
+            theme.get(role),
+            shipped.get(role),
+            "{} follows the field",
+            role.name()
+        );
     }
 }
 
@@ -260,8 +329,10 @@ fn a_theme_that_leaves_the_brand_tone_behind_flattens_the_mark() {
     .expect("a file that turns the window light");
 
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
-    let flattened: Vec<&&str> =
-        named.iter().filter(|what| what.starts_with("the mark's")).collect();
+    let flattened: Vec<&&str> = named
+        .iter()
+        .filter(|what| what.starts_with("the mark's"))
+        .collect();
 
     assert_eq!(flattened.len(), 4, "{named:?}");
 }
@@ -302,38 +373,81 @@ fn the_shipped_theme_draws_todays_transcript() {
 
     // A cell in each state it is drawn in.
     assert_eq!(theme.get(Role::TranscriptCellFill), Rgba::hex("#141512"));
-    assert_eq!(theme.get(Role::TranscriptCellFillHover), Rgba::hex("#181916"));
-    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#8b8c84"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellFillHover),
+        Rgba::hex("#181916")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellTitleInk),
+        Rgba::hex("#8b8c84")
+    );
     assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4b4c47"));
-    assert_eq!(theme.get(Role::TranscriptCellSeparatorInk), Rgba::hex("#ffffff"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellSeparatorInk),
+        Rgba::hex("#ffffff")
+    );
     assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d3d1cb"));
-    assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909189"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellOutputInk),
+        Rgba::hex("#909189")
+    );
 
     // And the two panels a row opens, which sit below the field they open on.
-    assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#0f100d"));
-    assert_eq!(theme.get(Role::TranscriptCellEdgeExpanded), Rgba::hex("#232421"));
-    assert_eq!(theme.get(Role::TranscriptThinkingEdgeExpanded), Rgba::hex("#1e1f1c"));
+    assert_eq!(
+        theme.get(Role::TranscriptRowFillExpanded),
+        Rgba::hex("#0f100d")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellEdgeExpanded),
+        Rgba::hex("#232421")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptThinkingEdgeExpanded),
+        Rgba::hex("#1e1f1c")
+    );
     assert_eq!(theme.get(Role::TranscriptCellRule), Rgba::hex("#1e1f1c"));
 
     // A thinking row: it draws no fill of its own until the pointer arrives.
-    assert_eq!(theme.get(Role::TranscriptThinkingFill).a, 0, "a resting thinking row is not a fill");
-    assert_eq!(theme.get(Role::TranscriptThinkingFillHover), Rgba::hex("#1a1b18"));
-    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#6b6c65"));
+    assert_eq!(
+        theme.get(Role::TranscriptThinkingFill).a,
+        0,
+        "a resting thinking row is not a fill"
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptThinkingFillHover),
+        Rgba::hex("#1a1b18")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptThinkingLabelInk),
+        Rgba::hex("#6b6c65")
+    );
     assert_eq!(theme.get(Role::TranscriptThinkingInk), Rgba::hex("#7f8079"));
 
     // A fenced block, the table's text, and the field behind a picture.
     assert_eq!(theme.get(Role::TranscriptCodeFill), Rgba::hex("#0d0e0c"));
     assert_eq!(theme.get(Role::TranscriptCodeInk), Rgba::hex("#b8b7b2"));
-    assert_eq!(theme.get(Role::TranscriptCodeLabelInk), Rgba::hex("#575853"));
+    assert_eq!(
+        theme.get(Role::TranscriptCodeLabelInk),
+        Rgba::hex("#575853")
+    );
     assert_eq!(theme.get(Role::TranscriptTableInk), Rgba::hex("#aaaba2"));
     assert_eq!(theme.get(Role::TranscriptImageFill), Rgba::hex("#1a1b18"));
 
     // The transcript's own chrome, and the chip that walks back to the floor.
     assert_eq!(theme.get(Role::TranscriptScrollThumb), Rgba::hex("#30312e"));
-    assert_eq!(theme.get(Role::TranscriptScrollThumbHover), Rgba::hex("#454541"));
-    assert_eq!(theme.get(Role::TranscriptScrollThumbPressed), Rgba::hex("#585854"));
+    assert_eq!(
+        theme.get(Role::TranscriptScrollThumbHover),
+        Rgba::hex("#454541")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptScrollThumbPressed),
+        Rgba::hex("#585854")
+    );
     assert_eq!(theme.get(Role::TranscriptJumpFill), Rgba::hex("#1b1c19"));
-    assert_eq!(theme.get(Role::TranscriptJumpFillHover), Rgba::hex("#2e2f2c"));
+    assert_eq!(
+        theme.get(Role::TranscriptJumpFillHover),
+        Rgba::hex("#2e2f2c")
+    );
     assert_eq!(theme.get(Role::TranscriptJumpEdge), Rgba::hex("#363632"));
 }
 
@@ -344,11 +458,26 @@ fn the_shipped_theme_draws_todays_transcript() {
 fn the_shipped_theme_draws_todays_failure() {
     let theme = Resolved::shipped();
 
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
-    assert_eq!(theme.get(Role::TranscriptCellFillFailedHover), Rgba::hex("#241713"));
-    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeFill), Rgba::hex("#6b342b"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeFillHover), Rgba::hex("#8d4235"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellFillFailed),
+        Rgba::hex("#1d1412")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellFillFailedHover),
+        Rgba::hex("#241713")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellInkFailed),
+        Rgba::hex("#c98a7f")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellBadgeFill),
+        Rgba::hex("#6b342b")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellBadgeFillHover),
+        Rgba::hex("#8d4235")
+    );
     assert_eq!(theme.get(Role::TranscriptReasonEdge), Rgba::hex("#6b342b"));
     assert_eq!(theme.get(Role::TranscriptReasonInk), Rgba::hex("#e0b6ad"));
 }
@@ -364,30 +493,66 @@ fn the_shipped_theme_draws_todays_composer() {
     assert_eq!(theme.get(Role::ComposerSurface), Rgba::hex("#0f100d"));
     assert_eq!(theme.get(Role::ComposerEdge), Rgba::hex("#232421"));
     assert_eq!(theme.get(Role::ComposerHandleFill), Rgba::hex("#353531"));
-    assert_eq!(theme.get(Role::ComposerHandleFillHover), Rgba::hex("#4c4c48"));
-    assert_eq!(theme.get(Role::ComposerHandleFillDragging), Rgba::hex("#6d6d69"));
+    assert_eq!(
+        theme.get(Role::ComposerHandleFillHover),
+        Rgba::hex("#4c4c48")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerHandleFillDragging),
+        Rgba::hex("#6d6d69")
+    );
 
     // The draft, its caret and the field behind what the reader has selected.
     assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::ComposerDraftCaret), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3b3f2e"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionInk), Rgba::hex("#f2f0e8"));
+    assert_eq!(
+        theme.get(Role::ComposerDraftSelectionFill),
+        Rgba::hex("#3b3f2e")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerDraftSelectionInk),
+        Rgba::hex("#f2f0e8")
+    );
 
     // The command word, and whatever the draft is carrying.
     assert_eq!(theme.get(Role::ComposerCommandInk), Rgba::hex("#d8c06a"));
-    assert_eq!(theme.get(Role::ComposerAttachmentFill), Rgba::hex("#181916"));
-    assert_eq!(theme.get(Role::ComposerAttachmentEdge), Rgba::hex("#2a2b28"));
-    assert_eq!(theme.get(Role::ComposerAttachmentEdgeHover), Rgba::hex("#3c3c38"));
-    assert_eq!(theme.get(Role::ComposerAttachmentRemoveFill), Rgba::hex("#0b0c0a"));
-    assert_eq!(theme.get(Role::ComposerAttachmentRemoveInk), Rgba::hex("#d8d6d0"));
+    assert_eq!(
+        theme.get(Role::ComposerAttachmentFill),
+        Rgba::hex("#181916")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerAttachmentEdge),
+        Rgba::hex("#2a2b28")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerAttachmentEdgeHover),
+        Rgba::hex("#3c3c38")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerAttachmentRemoveFill),
+        Rgba::hex("#0b0c0a")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerAttachmentRemoveInk),
+        Rgba::hex("#d8d6d0")
+    );
 
     // The plus, and the line under the draft.
     assert_eq!(theme.get(Role::ComposerAttachFill), Rgba::hex("#191a17"));
-    assert_eq!(theme.get(Role::ComposerAttachFillHover), Rgba::hex("#232421"));
+    assert_eq!(
+        theme.get(Role::ComposerAttachFillHover),
+        Rgba::hex("#232421")
+    );
     assert_eq!(theme.get(Role::ComposerAttachInk), Rgba::hex("#8c8d85"));
-    assert_eq!(theme.get(Role::ComposerAttachInkHover), Rgba::hex("#b0b1a8"));
+    assert_eq!(
+        theme.get(Role::ComposerAttachInkHover),
+        Rgba::hex("#b0b1a8")
+    );
     assert_eq!(theme.get(Role::ComposerStatusLineInk), Rgba::hex("#6d6e67"));
-    assert_eq!(theme.get(Role::ComposerStatusLineInkBad), Rgba::hex("#c98a7f"));
+    assert_eq!(
+        theme.get(Role::ComposerStatusLineInkBad),
+        Rgba::hex("#c98a7f")
+    );
 
     // The ring, and the card that opens off it.
     assert_eq!(theme.get(Role::ComposerRingTickLit), Rgba::hex("#c9a86a"));
@@ -396,7 +561,10 @@ fn the_shipped_theme_draws_todays_composer() {
     assert_eq!(theme.get(Role::ComposerCardEdge), Rgba::hex("#2a2b28"));
     assert_eq!(theme.get(Role::ComposerCardShadow), Rgba::hex("#00000066"));
     assert_eq!(theme.get(Role::ComposerCardLabelInk), Rgba::hex("#6d6e67"));
-    assert_eq!(theme.get(Role::ComposerCardPercentInk), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::ComposerCardPercentInk),
+        Rgba::hex("#e7e5df")
+    );
     assert_eq!(theme.get(Role::ComposerCardBarTrack), Rgba::hex("#232421"));
     assert_eq!(theme.get(Role::ComposerCardBarFill), Rgba::hex("#8f9088"));
     assert_eq!(theme.get(Role::ComposerCardUsedInk), Rgba::hex("#8b8c84"));
@@ -534,7 +702,7 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
 ///
 /// All but one are steps of the palette, so a theme that turns the window over
 /// turns them over with it; the wash and the command word are the gold and the
-/// blue the mono theme used to grey out, so its file names them back.
+/// blue the bundled theme greys out, so its file names them back.
 #[test]
 fn the_shipped_theme_resolves_todays_markup_and_canvas_inks() {
     let theme = Resolved::shipped();
@@ -542,22 +710,40 @@ fn the_shipped_theme_resolves_todays_markup_and_canvas_inks() {
     // Inside a line of prose: the heading, and the symbol the writer put in
     // backticks.
     assert_eq!(theme.get(Role::TranscriptHeadingInk), Rgba::hex("#b3b2ad"));
-    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#8f9088"));
+    assert_eq!(
+        theme.get(Role::TranscriptInlineCodeInk),
+        Rgba::hex("#8f9088")
+    );
 
     // The three kinds of token the highlighter colours, in a cell's code and in a
     // fenced block alike. A number is not one of them: it never had a colour.
-    assert_eq!(theme.get(Role::TranscriptCodeKeywordInk), Rgba::hex("#acada4"));
-    assert_eq!(theme.get(Role::TranscriptCodeStringInk), Rgba::hex("#aaaba2"));
-    assert_eq!(theme.get(Role::TranscriptCodeCommentInk), Rgba::hex("#60615b"));
+    assert_eq!(
+        theme.get(Role::TranscriptCodeKeywordInk),
+        Rgba::hex("#acada4")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCodeStringInk),
+        Rgba::hex("#aaaba2")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCodeCommentInk),
+        Rgba::hex("#60615b")
+    );
 
     // The draft the canvas paints for itself: its words, the one word among them
     // that names a command, and the field behind what is selected. The word is
     // the same gold the command the slash menu inserts is drawn in, and the wash
-    // is a blue the palette has no word for; the mono theme is what steps both
+    // is a blue the palette has no word for; the bundled theme is what steps both
     // of them back to grey.
     assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#d8c06a"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#2b4562"));
+    assert_eq!(
+        theme.get(Role::ComposerDraftCommandInk),
+        Rgba::hex("#d8c06a")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerDraftSelectionWash),
+        Rgba::hex("#2b4562")
+    );
 }
 
 /// The transcript is made of the base values like every other part: a file that
@@ -579,12 +765,34 @@ fn a_theme_that_moves_the_base_values_moves_the_transcript_with_them() {
         Role::TranscriptRowFillExpanded,
         Role::TranscriptCodeFill,
     ] {
-        assert_ne!(theme.get(field), shipped.get(field), "{} follows the field", field.name());
-        assert!(theme.get(field).r > 0x80, "{} is a field of a light window", field.name());
+        assert_ne!(
+            theme.get(field),
+            shipped.get(field),
+            "{} follows the field",
+            field.name()
+        );
+        assert!(
+            theme.get(field).r > 0x80,
+            "{} is a field of a light window",
+            field.name()
+        );
     }
-    for ink in [Role::TranscriptProseInk, Role::TranscriptMessageInk, Role::TranscriptCodeInk] {
-        assert_ne!(theme.get(ink), shipped.get(ink), "{} follows the ink", ink.name());
-        assert!(theme.get(ink).r < 0x80, "{} is ink on a light window", ink.name());
+    for ink in [
+        Role::TranscriptProseInk,
+        Role::TranscriptMessageInk,
+        Role::TranscriptCodeInk,
+    ] {
+        assert_ne!(
+            theme.get(ink),
+            shipped.get(ink),
+            "{} follows the ink",
+            ink.name()
+        );
+        assert!(
+            theme.get(ink).r < 0x80,
+            "{} is ink on a light window",
+            ink.name()
+        );
     }
 }
 
@@ -600,8 +808,14 @@ fn the_theme_that_names_only_base_values_leaves_the_failure_where_it_was() {
     )
     .expect("a file that names only base values");
 
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
-    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
+    assert_eq!(
+        theme.get(Role::TranscriptCellFillFailed),
+        Rgba::hex("#1d1412")
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellInkFailed),
+        Rgba::hex("#c98a7f")
+    );
 }
 
 /// A failed cell is distinguishable because of its field's tint and the red its
@@ -620,8 +834,14 @@ fn a_theme_that_paints_a_failed_cell_like_a_quiet_one_is_reported() {
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
 
     assert_eq!(named.len(), 2, "{named:?}");
-    assert!(named.contains(&"a failed cell's field and a quiet cell's field"), "{named:?}");
-    assert!(named.contains(&"a failed cell's name and a quiet cell's name"), "{named:?}");
+    assert!(
+        named.contains(&"a failed cell's field and a quiet cell's field"),
+        "{named:?}"
+    );
+    assert!(
+        named.contains(&"a failed cell's name and a quiet cell's name"),
+        "{named:?}"
+    );
 }
 
 /// A file that names the transcript's colours repaints the transcript and moves
@@ -712,7 +932,6 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
         "mine.json",
         r##"{ "name": "mine", "version": 1,
              "roles": {
-               "sidebar-surface": "#f5f5f5",
                "sidebar-row-fill": "#eeeeee",
                "sidebar-row-fill-hover": "#e4e4e4",
                "sidebar-row-fill-selected": "#dadada",
@@ -723,13 +942,10 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "tag-working": "#8a6d00",
                "tag-parked": "#8a8a8a",
                "tag-idle": "#2f7d3a",
-               "sidebar-fold-glyph": "#4a4a4a",
-               "sidebar-fold-glyph-hover": "#101010",
                "sidebar-new-session-mark": "#4a4a4a",
                "sidebar-new-session-mark-hover": "#101010",
                "sidebar-strip-new-session-mark": "#303030",
                "sidebar-strip-new-session-mark-hover": "#101010",
-               "sidebar-search-mark": "#4a4a4a",
                "sidebar-wordmark-ink": "#101010",
                "sidebar-row-rename-mark": "#5a5a5a",
                "sidebar-row-rename-fill": "#3a3a3a",
@@ -742,14 +958,22 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
     )
     .expect("a file that repaints the sidebar");
 
-    // The file names every colour the sidebar has, and nothing else moves.
+    // The file names every colour the sidebar has, and nothing else moves. The
+    // column's own field and its two chrome marks are the window's, not the
+    // sidebar's, so they are not in the list.
     let (moved, claimed) = moved_and_claimed(&theme, |name| {
         name.starts_with("sidebar-") || name.starts_with("tag-")
     });
     assert_eq!(moved, claimed);
 
-    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#f5f5f5"));
+    assert_eq!(theme.get(Role::SidebarRowFill), Rgba::hex("#eeeeee"));
     assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#2f7d3a"));
+    // The column's own field is the window's, and a file that repaints the
+    // sidebar does not move the caption and the right column with it.
+    assert_eq!(
+        theme.get(Role::WindowSurface),
+        Resolved::shipped().get(Role::WindowSurface)
+    );
 }
 
 /// The sidebar is made of the base values like every other part: a file that
@@ -765,8 +989,11 @@ fn a_theme_that_moves_the_base_values_moves_the_sidebar_with_them() {
     )
     .expect("a file that names only base values");
 
-    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#f5f5f5"));
-    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#202020"));
+    assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#f5f5f5"));
+    assert_eq!(
+        theme.get(Role::SidebarNameInkSelected),
+        Rgba::hex("#202020")
+    );
     // The row fills are a mix of ink and background, so on a light window a
     // hover steps darker than the field rather than lighter.
     let hover = theme.get(Role::SidebarRowFillHover);
@@ -804,9 +1031,18 @@ fn three_tags_that_barely_differ_are_three_findings() {
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
 
     assert_eq!(named.len(), 3, "{named:?}");
-    assert!(named.contains(&"the working tag and the parked tag"), "{named:?}");
-    assert!(named.contains(&"the working tag and the idle tag"), "{named:?}");
-    assert!(named.contains(&"the parked tag and the idle tag"), "{named:?}");
+    assert!(
+        named.contains(&"the working tag and the parked tag"),
+        "{named:?}"
+    );
+    assert!(
+        named.contains(&"the working tag and the idle tag"),
+        "{named:?}"
+    );
+    assert!(
+        named.contains(&"the parked tag and the idle tag"),
+        "{named:?}"
+    );
 }
 
 /// A theme that only moves base values: every role it never mentions still
@@ -823,10 +1059,16 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
     // The base values moved what is made of them: the marks, the chips, the
     // close button's fill, and the background they all sit on.
     assert_eq!(theme.background(), Rgba::hex("#f5f5f5"));
-    assert_eq!(theme.get(Role::TitleBarFoldGlyphHover), Rgba::hex("#202020"));
-    assert_eq!(theme.get(Role::TitleBarCloseFillHover), Rgba::hex("#7a1f18"));
-    let glyph = theme.get(Role::TitleBarGlyph).over(theme.background());
-    assert!(glyph.r < 0x60, "the caption glyphs follow the ink: {glyph:?}");
+    assert_eq!(theme.get(Role::ChromeMarkHover), Rgba::hex("#202020"));
+    assert_eq!(
+        theme.get(Role::TitleBarCloseFillHover),
+        Rgba::hex("#7a1f18")
+    );
+    let glyph = theme.get(Role::ChromeMark).over(theme.background());
+    assert!(
+        glyph.r < 0x60,
+        "the caption glyphs follow the ink: {glyph:?}"
+    );
 }
 
 /// The four panels that open over the window as the window drew them before
@@ -853,16 +1095,25 @@ fn the_shipped_theme_draws_todays_menus() {
     assert_eq!(theme.get(Role::SlashMenuRowInk), Rgba::hex("#b0b1a8"));
     assert_eq!(theme.get(Role::SlashMenuRowInkHover), Rgba::hex("#c2c1bc"));
     assert_eq!(theme.get(Role::SlashMenuHintInk), Rgba::hex("#8f9088"));
-    assert_eq!(theme.get(Role::SlashMenuDescriptionInk), Rgba::hex("#6d6e67"));
+    assert_eq!(
+        theme.get(Role::SlashMenuDescriptionInk),
+        Rgba::hex("#6d6e67")
+    );
 
     // The model menu: a provider signed in and not, the figure beside it, a
     // model in both states its row has, and the two things the right of a row
     // can carry.
     assert_eq!(theme.get(Role::ModelMenuHeaderInk), Rgba::hex("#dad8d2"));
-    assert_eq!(theme.get(Role::ModelMenuHeaderInkQuiet), Rgba::hex("#6d6e67"));
+    assert_eq!(
+        theme.get(Role::ModelMenuHeaderInkQuiet),
+        Rgba::hex("#6d6e67")
+    );
     assert_eq!(theme.get(Role::ModelMenuCountInk), Rgba::hex("#575853"));
     assert_eq!(theme.get(Role::ModelMenuRowInk), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::ModelMenuRowInkCurrent),
+        Rgba::hex("#e7e5df")
+    );
     assert_eq!(theme.get(Role::ModelMenuDetailInk), Rgba::hex("#575853"));
     // The level the running model carries is the gold the sidebar's working tag
     // is drawn in: they say the same thing.
@@ -870,7 +1121,10 @@ fn the_shipped_theme_draws_todays_menus() {
 
     // The ladder's rungs.
     assert_eq!(theme.get(Role::EffortLadderRowInk), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::EffortLadderRowInkCurrent), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::EffortLadderRowInkCurrent),
+        Rgba::hex("#e7e5df")
+    );
 
     // The queue card: the count over the first lane, the second lane's own name,
     // a waiting message, and the action that empties both.
@@ -878,17 +1132,29 @@ fn the_shipped_theme_draws_todays_menus() {
     assert_eq!(theme.get(Role::QueueCardLaneInk), Rgba::hex("#6d6e67"));
     assert_eq!(theme.get(Role::QueueRowInk), Rgba::hex("#dad8d2"));
     assert_eq!(theme.get(Role::QueueCardClearInk), Rgba::hex("#6d6e67"));
-    assert_eq!(theme.get(Role::QueueCardClearInkHover), Rgba::hex("#dad8d2"));
+    assert_eq!(
+        theme.get(Role::QueueCardClearInkHover),
+        Rgba::hex("#dad8d2")
+    );
 
     // A waiting row's three controls: a fill in the two states it has, and the
     // marks on it. The bin is the one mark that changes colour rather than
     // weight as the pointer arrives.
     assert_eq!(theme.get(Role::QueueRowControlFill), Rgba::hex("#2d2e2b"));
-    assert_eq!(theme.get(Role::QueueRowControlFillHover), Rgba::hex("#3a3a36"));
+    assert_eq!(
+        theme.get(Role::QueueRowControlFillHover),
+        Rgba::hex("#3a3a36")
+    );
     assert_eq!(theme.get(Role::QueueRowControlMark), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::QueueRowControlMarkHover), Rgba::hex("#e7e5df"));
+    assert_eq!(
+        theme.get(Role::QueueRowControlMarkHover),
+        Rgba::hex("#e7e5df")
+    );
     assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#a18e41"));
-    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#e0cd7c"));
+    assert_eq!(
+        theme.get(Role::QueueRowPromoteMarkHover),
+        Rgba::hex("#e0cd7c")
+    );
     assert_eq!(theme.get(Role::QueueRowDeleteMark), Rgba::hex("#f3ded8"));
 
     // The card that names a session: the panels' own field and shadow, with an
@@ -909,10 +1175,20 @@ fn the_shipped_theme_draws_todays_buttons() {
     let over_column = |role| theme.get(role).over(theme.background());
 
     // A quiet control draws nothing at rest: the column runs through it.
-    assert_eq!(theme.get(Role::ButtonQuietFill).a, 0, "a quiet control is not a fill");
-    assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2a2b27"));
+    assert_eq!(
+        theme.get(Role::ButtonQuietFill).a,
+        0,
+        "a quiet control is not a fill"
+    );
+    assert_eq!(
+        over_column(Role::ButtonQuietFillHover),
+        Rgba::hex("#2a2b27")
+    );
     assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#191a17"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#232421"));
+    assert_eq!(
+        theme.get(Role::ButtonPrimaryFillHover),
+        Rgba::hex("#232421")
+    );
     // The disc that stops the turn keeps the warmth the composer's stop had when
     // it was the composer's own role: the button that stops is the danger one
     // wherever it is drawn.
@@ -967,12 +1243,31 @@ fn the_shipped_theme_draws_todays_status_strip() {
 
     // The pill that opens the queue: at rest it draws nothing of its own, and
     // the number and the word beside it brighten together.
-    assert_eq!(theme.get(Role::StatusStripQueueFill).a, 0, "a resting pill is not a fill");
-    assert_eq!(theme.get(Role::StatusStripQueueFillHover), Rgba::hex("#1f201d"));
-    assert_eq!(theme.get(Role::StatusStripQueueCountInk), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::StatusStripQueueCountInkHover), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::StatusStripQueueLabelInk), Rgba::hex("#6d6e67"));
-    assert_eq!(theme.get(Role::StatusStripQueueLabelInkHover), Rgba::hex("#b0b1a8"));
+    assert_eq!(
+        theme.get(Role::StatusStripQueueFill).a,
+        0,
+        "a resting pill is not a fill"
+    );
+    assert_eq!(
+        theme.get(Role::StatusStripQueueFillHover),
+        Rgba::hex("#1f201d")
+    );
+    assert_eq!(
+        theme.get(Role::StatusStripQueueCountInk),
+        Rgba::hex("#b0b1a8")
+    );
+    assert_eq!(
+        theme.get(Role::StatusStripQueueCountInkHover),
+        Rgba::hex("#e7e5df")
+    );
+    assert_eq!(
+        theme.get(Role::StatusStripQueueLabelInk),
+        Rgba::hex("#6d6e67")
+    );
+    assert_eq!(
+        theme.get(Role::StatusStripQueueLabelInkHover),
+        Rgba::hex("#b0b1a8")
+    );
 }
 
 /// The panels and the strip are made of the base values like every other part: a
@@ -994,13 +1289,25 @@ fn a_theme_that_moves_the_base_values_moves_the_panels_and_the_strip_with_them()
         Role::StatusStripSurface,
         Role::StatusStripEdge,
     ] {
-        assert_ne!(theme.get(field), shipped.get(field), "{} follows the field", field.name());
-        assert!(theme.get(field).r > 0x80, "{} is a field of a light window", field.name());
+        assert_ne!(
+            theme.get(field),
+            shipped.get(field),
+            "{} follows the field",
+            field.name()
+        );
+        assert!(
+            theme.get(field).r > 0x80,
+            "{} is a field of a light window",
+            field.name()
+        );
     }
     // The running model's name and the strip's word for the turn follow the ink;
     // the rows are a lift of it over the background, so on a light window they
     // step darker than the panel rather than lighter.
-    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#202020"));
+    assert_eq!(
+        theme.get(Role::ModelMenuRowInkCurrent),
+        Rgba::hex("#202020")
+    );
     let hover = theme.get(Role::PanelRowFillHover);
     assert!(hover.r < 0xf5 && hover.r > 0x20, "{hover:?}");
 }
@@ -1089,7 +1396,10 @@ fn a_theme_that_names_the_status_strip_roles_moves_only_those() {
 
     assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#1a1226"));
     // The panels are not the strip: the same file leaves their surface alone.
-    assert_eq!(theme.get(Role::PanelSurface), Resolved::shipped().get(Role::PanelSurface));
+    assert_eq!(
+        theme.get(Role::PanelSurface),
+        Resolved::shipped().get(Role::PanelSurface)
+    );
 }
 
 /// The ticket's second promise, in the unit that can keep it: the strip's tags —
@@ -1107,7 +1417,10 @@ fn a_theme_that_paints_the_strips_tags_into_the_strip_is_reported() {
     )
     .expect("a theme that loads");
 
-    let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
+    let mut named: Vec<&str> = contrast(&theme)
+        .iter()
+        .map(|finding| finding.what)
+        .collect();
     named.sort_unstable();
 
     assert_eq!(
@@ -1136,13 +1449,22 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
             ),
         )
         .expect("a theme that loads");
-        separation(&theme).into_iter().map(|clash| clash.what).collect::<Vec<&str>>()
+        separation(&theme)
+            .into_iter()
+            .map(|clash| clash.what)
+            .collect::<Vec<&str>>()
     };
 
     // The panel's own field.
-    assert_eq!(painted("#181818"), ["a waiting row's buttons and the panel behind them"]);
+    assert_eq!(
+        painted("#181818"),
+        ["a waiting row's buttons and the panel behind them"]
+    );
     // The fill a row takes when the pointer is on it.
-    assert_eq!(painted("#202020"), ["a waiting row's buttons and the row they sit on"]);
+    assert_eq!(
+        painted("#202020"),
+        ["a waiting row's buttons and the row they sit on"]
+    );
 }
 
 /// A base value carries a theme far, and the places it does not carry are the
@@ -1182,7 +1504,10 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     )
     .expect("a file that names only base values");
 
-    let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
+    let mut named: Vec<&str> = contrast(&theme)
+        .iter()
+        .map(|finding| finding.what)
+        .collect();
     named.sort_unstable();
 
     assert_eq!(
@@ -1216,7 +1541,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the command a draft starts with",
             "the composer's status line",
             "the dot that parts a cell's meta from its elapsed time",
-            "the fold mark at rest",
             "the label a thinking row carries",
             "the level the running model is at",
             "the message the reader sent",
@@ -1228,8 +1552,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the plus that attaches a picture",
             "the plus that attaches a picture, under the pointer",
             "the send disc on the composer's field",
-            "the sidebar's fold mark at rest",
-            "the sidebar's magnifier",
             "the status line when something went wrong",
             "the text inside an opened thinking row",
             "the tick beside the rung the model is on",
@@ -1258,21 +1580,24 @@ fn a_role_override_beats_the_value_the_palette_derives() {
     )
     .expect("a file that overrides one role");
 
-    assert_eq!(theme.get(Role::TitleBarCloseFillHover), Rgba::hex("#123456"));
+    assert_eq!(
+        theme.get(Role::TitleBarCloseFillHover),
+        Rgba::hex("#123456")
+    );
 }
 
 #[test]
 fn an_unknown_role_is_refused_with_the_file_the_name_used_and_the_nearest_legal_one() {
     let refusal = from_text(
         "themes/mine.json",
-        r##"{ "name": "mine", "version": 1, "roles": { "title-bar-gylph": "#ffffff" } }"##,
+        r##"{ "name": "mine", "version": 1, "roles": { "chrome-mrak": "#ffffff" } }"##,
     )
     .expect_err("a role this window does not have");
     let line = refusal.to_string();
 
     assert!(line.contains("themes/mine.json"), "{line}");
-    assert!(line.contains("title-bar-gylph"), "{line}");
-    assert!(line.contains("title-bar-glyph"), "{line}");
+    assert!(line.contains("chrome-mrak"), "{line}");
+    assert!(line.contains("chrome-mark"), "{line}");
 }
 
 #[test]
@@ -1316,8 +1641,8 @@ fn a_file_from_another_schema_version_is_refused_rather_than_half_read() {
 /// any other, and the log line is the only place a reader learns of it.
 #[test]
 fn a_file_that_does_not_name_itself_is_refused() {
-    let refusal = from_text("mine.json", r##"{ "version": 1 }"##)
-        .expect_err("a theme with no name");
+    let refusal =
+        from_text("mine.json", r##"{ "version": 1 }"##).expect_err("a theme with no name");
 
     assert!(refusal.to_string().contains("name"), "{refusal}");
 }
@@ -1328,59 +1653,94 @@ fn a_file_that_does_not_name_itself_is_refused() {
 fn a_file_written_with_a_byte_order_mark_is_still_read() {
     let theme = from_text(
         "mine.json",
-        "\u{feff}{ \"name\": \"mine\", \"version\": 1, \"roles\": { \"title-bar-glyph\": \"#ffffff\" } }",
+        "\u{feff}{ \"name\": \"mine\", \"version\": 1, \"roles\": { \"chrome-mark\": \"#ffffff\" } }",
     )
     .expect("a file with a mark in front of it");
 
-    assert_eq!(theme.get(Role::TitleBarGlyph), Rgba::hex("#ffffff"));
+    assert_eq!(theme.get(Role::ChromeMark), Rgba::hex("#ffffff"));
 }
 
 #[test]
 fn a_key_at_the_top_of_the_file_this_window_does_not_know_is_refused() {
-    let refusal = from_text("mine.json", r##"{ "name": "mine", "version": 1, "colours": {} }"##)
-        .expect_err("a top-level key with no meaning");
+    let refusal = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1, "colours": {} }"##,
+    )
+    .expect_err("a top-level key with no meaning");
 
     let line = refusal.to_string();
     assert!(line.contains("colours"), "{line}");
 }
 
 /// The selection the window makes: a path it cannot read leaves the window on
-/// the theme it ships with, and the refusal is what goes in the log.
+/// the theme it opens on, and the refusal is what goes in the log.
 #[test]
-fn a_selection_that_cannot_be_read_leaves_the_shipped_theme_in_place() {
-    let missing = format!("{}/no-such-theme-{}.json", std::env::temp_dir().display(), std::process::id());
+fn a_selection_that_cannot_be_read_leaves_the_opening_theme_in_place() {
+    let missing = format!(
+        "{}/no-such-theme-{}.json",
+        std::env::temp_dir().display(),
+        std::process::id()
+    );
     let (theme, refusal) = select(Some(&missing));
 
-    assert_eq!(theme, Resolved::shipped());
+    assert_eq!(theme, select(None).0);
     let refusal = refusal.expect("a selection that could not be read");
     assert!(refusal.to_string().contains("no-such-theme"), "{refusal}");
 }
 
+/// With nothing selected the window opens on the bundled theme `DEFAULT` names:
+/// the monochrome look, not the compiled-in table.
 #[test]
-fn no_selection_is_the_shipped_theme_and_nothing_to_say() {
+fn no_selection_is_the_opening_theme_and_nothing_to_say() {
     let (theme, refusal) = select(None);
 
-    assert_eq!(theme, Resolved::shipped());
     assert!(refusal.is_none());
+    assert_eq!(theme, resolve(DEFAULT).expect("the opening theme resolves"));
+    assert_ne!(
+        theme,
+        Resolved::shipped(),
+        "the opening theme is its own look"
+    );
+}
+
+/// Setting the variable to the opening theme's own name changes nothing, so a
+/// reader does not need to unset it to get the default back.
+#[test]
+fn selecting_the_opening_theme_by_name_is_no_selection() {
+    assert_eq!(select(Some(DEFAULT)).0, select(None).0);
+    assert_eq!(select(Some("")).0, select(None).0);
+    assert!(is_default(DEFAULT) && is_default(""));
+    assert!(!is_default("elsewhere"));
 }
 
 /// A bundled theme is selected by its name, not by wherever the window happened
 /// to be started: the name resolves the same text the file holds.
 #[test]
 fn a_bundled_theme_is_selected_by_name() {
-    for (name, _) in BUNDLED {
+    let opening = select(None).0;
+    for (name, text) in BUNDLED {
         let (theme, refusal) = select(Some(name));
 
         assert!(refusal.is_none(), "{name}: {refusal:?}");
-        assert_ne!(theme, Resolved::shipped(), "`{name}` is a theme of its own");
+        assert_eq!(
+            theme,
+            from_text(name, text).expect("a bundled theme"),
+            "{name}"
+        );
+        if *name != DEFAULT {
+            assert_ne!(
+                theme, opening,
+                "`{name}` is a look the window is not opening on"
+            );
+        }
     }
 }
 
-/// The mono theme is the monochrome pass as a file: surfaces, ink and chrome
+/// The bundled theme is the monochrome pass as a file: surfaces, ink and chrome
 /// neutral, with danger and the three status tags still carrying their hue.
 #[test]
 fn the_monochrome_theme_reproduces_the_monochrome_work() {
-    let theme = resolve("mono").expect("the bundled mono theme");
+    let theme = resolve("default").expect("the bundled default theme");
 
     assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#111111"));
     assert_eq!(theme.get(Role::ComposerDraftInk), Rgba::hex("#e5e5e5"));
@@ -1388,24 +1748,49 @@ fn the_monochrome_theme_reproduces_the_monochrome_work() {
     assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d1d1d1"));
     assert_eq!(theme.get(Role::TranscriptMessageFill), Rgba::hex("#292929"));
     assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2b2b2b"));
-    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(
+        theme.get(Role::SidebarRowRenameFillHover),
+        Rgba::hex("#2b2b2b")
+    );
     assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#b2b2b2"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionFill), Rgba::hex("#3d3d3d"));
-    assert_eq!(theme.get(Role::ComposerDraftSelectionWash), Rgba::hex("#434343"));
-    assert_eq!(theme.get(Role::ComposerDraftCommandInk), Rgba::hex("#c1c1c1"));
+    assert_eq!(
+        theme.get(Role::ComposerDraftSelectionFill),
+        Rgba::hex("#3d3d3d")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerDraftSelectionWash),
+        Rgba::hex("#434343")
+    );
+    assert_eq!(
+        theme.get(Role::ComposerDraftCommandInk),
+        Rgba::hex("#c1c1c1")
+    );
     assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#e6e6e6"));
     assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#f2f2f2"));
     assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#131313"));
     assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#8f8f8f"));
-    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#cdcdcd"));
+    assert_eq!(
+        theme.get(Role::QueueRowPromoteMarkHover),
+        Rgba::hex("#cdcdcd")
+    );
 
     let shipped = Resolved::shipped();
     for role in [Role::TagWorking, Role::TagParked, Role::TagIdle] {
-        assert_eq!(theme.get(role), shipped.get(role), "{} keeps its hue", role.name());
+        assert_eq!(
+            theme.get(role),
+            shipped.get(role),
+            "{} keeps its hue",
+            role.name()
+        );
     }
-    assert_eq!(theme.get(Role::ButtonDangerFill), shipped.get(Role::ButtonDangerFill));
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), shipped.get(Role::TranscriptCellFillFailed));
+    assert_eq!(
+        theme.get(Role::ButtonDangerFill),
+        shipped.get(Role::ButtonDangerFill)
+    );
+    assert_eq!(
+        theme.get(Role::TranscriptCellFillFailed),
+        shipped.get(Role::TranscriptCellFillFailed)
+    );
 }
 
 /// The check the window runs over the theme it ships with runs over every theme
@@ -1446,14 +1831,17 @@ fn the_shipped_themes_marks_stay_apart() {
 fn a_theme_that_buries_the_caption_glyphs_is_reported_while_it_still_resolves() {
     let theme = from_text(
         "mine.json",
-        r##"{ "name": "mine", "version": 1, "roles": { "title-bar-glyph": "#1e1e1e" } }"##,
+        r##"{ "name": "mine", "version": 1, "roles": { "chrome-mark": "#1e1e1e" } }"##,
     )
     .expect("a theme that loads");
 
     let findings = contrast(&theme);
 
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].what, "the caption glyphs");
+    // The one role is read on both fields it is drawn on: the window under the
+    // caption, and the column under the magnifier and the fold.
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert_eq!(findings[0].what, "the chrome's marks on the caption");
+    assert_eq!(findings[1].what, "the chrome's marks on the column");
     // #1e1e1e on #10110e is 1.14:1 by the WCAG definition, worked out here
     // rather than by the code under test.
     assert!((findings[0].ratio - 1.136).abs() < 0.005, "{findings:?}");
@@ -1466,7 +1854,7 @@ fn the_command_line_reports_a_file_and_says_nothing_about_a_window() {
     let path = std::env::temp_dir().join(format!("pa-ui-theme-check-{}.json", std::process::id()));
     std::fs::write(
         &path,
-        r##"{ "name": "mine", "version": 1, "roles": { "title-bar-glyph": "#1e1e1e" } }"##,
+        r##"{ "name": "mine", "version": 1, "roles": { "chrome-mark": "#1e1e1e" } }"##,
     )
     .expect("a file to check");
 
@@ -1476,20 +1864,21 @@ fn the_command_line_reports_a_file_and_says_nothing_about_a_window() {
 
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 1, "{report}");
-    assert!(report.contains("the caption glyphs"), "{report}");
+    assert!(
+        report.contains("the chrome's marks on the caption"),
+        "{report}"
+    );
 }
 
 /// The bundled names work at the command line too: an author can check the
 /// theme the window carries without knowing where the source tree is.
 #[test]
 fn the_command_line_reads_a_bundled_theme_by_name() {
-    let (code, report) = check_cli(
-        ["--check-theme".to_string(), "mono".to_string()].into_iter(),
-    )
-    .expect("a check, not a window");
+    let (code, report) = check_cli(["--check-theme".to_string(), "default".to_string()].into_iter())
+        .expect("a check, not a window");
 
     assert_eq!(code, 0, "{report}");
-    assert!(report.contains("theme `mono`"), "{report}");
+    assert!(report.contains("theme `default`"), "{report}");
 }
 
 /// A file this window cannot read at all is a different answer from a file that
@@ -1499,7 +1888,7 @@ fn the_command_line_tells_a_refused_file_apart_from_a_hard_to_read_one() {
     let path = std::env::temp_dir().join(format!("pa-ui-theme-typo-{}.json", std::process::id()));
     std::fs::write(
         &path,
-        r##"{ "name": "mine", "version": 1, "roles": { "title-bar-gylph": "#ffffff" } }"##,
+        r##"{ "name": "mine", "version": 1, "roles": { "chrome-mrak": "#ffffff" } }"##,
     )
     .expect("a file to check");
 
@@ -1509,7 +1898,7 @@ fn the_command_line_tells_a_refused_file_apart_from_a_hard_to_read_one() {
 
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 2, "{report}");
-    assert!(report.contains("title-bar-glyph"), "{report}");
+    assert!(report.contains("chrome-mark"), "{report}");
 }
 
 #[test]
@@ -1542,10 +1931,16 @@ fn the_theme_global_declares_exactly_the_roles_the_table_holds() {
     let table: Vec<&str> = Role::ALL.iter().map(|role| role.name()).collect();
     // Read in both directions rather than as one sorted pair, so the failure is
     // the two names at fault and not the hundred and eighty that agree.
-    let unheld: Vec<&str> =
-        declared.iter().copied().filter(|name| !table.contains(name)).collect();
-    let undeclared: Vec<&str> =
-        table.iter().copied().filter(|name| !declared.contains(name)).collect();
+    let unheld: Vec<&str> = declared
+        .iter()
+        .copied()
+        .filter(|name| !table.contains(name))
+        .collect();
+    let undeclared: Vec<&str> = table
+        .iter()
+        .copied()
+        .filter(|name| !declared.contains(name))
+        .collect();
 
     assert!(
         unheld.is_empty() && undeclared.is_empty(),
@@ -1586,11 +1981,14 @@ fn rust_sources() -> Vec<(String, String)> {
 
 /// Collect every Rust source under `dir`, named by its path inside the crate.
 fn walk(dir: &std::path::Path, named: &str, into: &mut Vec<(String, String)>) {
-    let entries =
-        std::fs::read_dir(dir).unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|err| panic!("{}: {err}", dir.display()));
     for entry in entries {
         let path = entry.expect("an entry in the window's sources").path();
-        let name = path.file_name().expect("a named source").to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .expect("a named source")
+            .to_string_lossy()
+            .into_owned();
         if path.is_dir() {
             // The theme's own directory is the one place a value is written.
             if name != "theme" {
@@ -1606,15 +2004,19 @@ fn walk(dir: &std::path::Path, named: &str, into: &mut Vec<(String, String)>) {
 /// Rust sources, never the generated or downloaded trees.
 fn read(named: &str, path: &std::path::Path) -> (String, String) {
     let name = path.file_name().expect("a named source").to_string_lossy();
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
     (format!("{named}/{name}"), text)
 }
 
 /// A failing check as a reader wants it: the sentence saying what is wrong, and
 /// then one line for every place it is wrong in.
 fn places(found: &[Break]) -> String {
-    found.iter().map(Break::describe).collect::<Vec<_>>().join("\n  ")
+    found
+        .iter()
+        .map(Break::describe)
+        .collect::<Vec<_>>()
+        .join("\n  ")
 }
 
 /// A colour value written into a component is a colour no theme can reach, so the
@@ -1700,9 +2102,14 @@ fn every_way_a_value_can_be_written_is_found() {
     let source = "a: #fff;\nb: #00000080;\nc: rgb(1, 2, 3);\nd: rgba(1, 2, 3, 0.5);\n\
                   e: hsv(1, 2, 0.5);\nf: white;\n";
 
-    let written: Vec<String> =
-        colour_values("ui/fake.slint", source).into_iter().map(|broke| broke.written).collect();
-    assert_eq!(written, ["#fff", "#00000080", "rgb", "rgba", "hsv", "white"]);
+    let written: Vec<String> = colour_values("ui/fake.slint", source)
+        .into_iter()
+        .map(|broke| broke.written)
+        .collect();
+    assert_eq!(
+        written,
+        ["#fff", "#00000080", "rgb", "rgba", "hsv", "white"]
+    );
 }
 
 /// A word about a colour is not a colour. The table's own comments are full of
@@ -1794,4 +2201,3 @@ fn a_declaration_is_read_past_its_comment_and_its_qualifier() {
 
     assert_eq!(declared_roles(source), ["a-b", "c-d", "e-f"]);
 }
-

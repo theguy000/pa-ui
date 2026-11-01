@@ -2,8 +2,12 @@
 
 use crate::*;
 
-pub(crate) fn provider_toggled(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, collapsed: &Rc<RefCell<std::collections::HashSet<String>>>) {
-// folding a group is remembered for the rest of the session, so a menu
+pub(crate) fn provider_toggled(
+    ui: &AppWindow,
+    catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>,
+    collapsed: &Rc<RefCell<std::collections::HashSet<String>>>,
+) {
+    // folding a group is remembered for the rest of the session, so a menu
     // reopened later comes back exactly as it was left
     let weak = ui.as_weak();
     let catalog = catalog.clone();
@@ -24,7 +28,11 @@ pub(crate) fn provider_toggled(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_clien
     });
 }
 
-pub(crate) fn open(ui: &AppWindow, catalog_loaded: &Rc<std::cell::Cell<bool>>, job_tx: &Sender<Job>) {
+pub(crate) fn open(
+    ui: &AppWindow,
+    catalog_loaded: &Rc<std::cell::Cell<bool>>,
+    job_tx: &Sender<Job>,
+) {
     // opening the menu pulls the catalog once; after that it is cached, and
     // only the group fold state changes
     let weak = ui.as_weak();
@@ -56,7 +64,13 @@ pub(crate) fn open(ui: &AppWindow, catalog_loaded: &Rc<std::cell::Cell<bool>>, j
     });
 }
 
-pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(String, String)>>>, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, hovered: &Rc<RefCell<Option<(String, String)>>>, job_tx: &Sender<Job>) {
+pub(crate) fn effort_pick(
+    ui: &AppWindow,
+    hover_current: &Rc<RefCell<Option<(String, String)>>>,
+    catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>,
+    hovered: &Rc<RefCell<Option<(String, String)>>>,
+    job_tx: &Sender<Job>,
+) {
     let weak = ui.as_weak();
     let hover_current = hover_current.clone();
     let jobs = job_tx.clone();
@@ -68,7 +82,9 @@ pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(Str
         if session.is_empty() {
             return;
         }
-        let Some((provider, model)) = hovered.borrow().clone() else { return };
+        let Some((provider, model)) = hovered.borrow().clone() else {
+            return;
+        };
         let level = catalog
             .borrow()
             .iter()
@@ -79,8 +95,7 @@ pub(crate) fn effort_pick(ui: &AppWindow, hover_current: &Rc<RefCell<Option<(Str
                     .and_then(|index| entry.thinking_levels.get(index).cloned())
             });
         let Some(level) = level else { return };
-        let switch = !(ui.get_model_id() == model
-            && ui.get_model_provider() == provider);
+        let switch = !(ui.get_model_id() == model && ui.get_model_provider() == provider);
         ui.set_effort_open(false);
         *hover_current.borrow_mut() = None;
         let _ = jobs.send(Job::SetLevel {
@@ -167,7 +182,11 @@ pub(crate) fn effort_hover(ui: &AppWindow, hover_close: &Rc<Timer>) {
     });
 }
 
-pub(crate) fn pointer(ui: &AppWindow, hover_close: &Rc<Timer>, hover_current: &Rc<RefCell<Option<(String, String)>>>) {
+pub(crate) fn pointer(
+    ui: &AppWindow,
+    hover_close: &Rc<Timer>,
+    hover_current: &Rc<RefCell<Option<(String, String)>>>,
+) {
     let weak = ui.as_weak();
     let timer = hover_close.clone();
     let current = hover_current.clone();
@@ -178,19 +197,28 @@ pub(crate) fn pointer(ui: &AppWindow, hover_close: &Rc<Timer>, hover_current: &R
         }
         let weak = ui.as_weak();
         let current = current.clone();
-        timer.start(TimerMode::SingleShot, Duration::from_millis(120), move || {
-            if let Some(ui) = weak.upgrade() {
-                if crate::env_cfg::cfg().debug {
-                    eprintln!("[menu] ladder closed");
+        timer.start(
+            TimerMode::SingleShot,
+            Duration::from_millis(120),
+            move || {
+                if let Some(ui) = weak.upgrade() {
+                    if crate::env_cfg::cfg().debug {
+                        eprintln!("[menu] ladder closed");
+                    }
+                    *current.borrow_mut() = None;
+                    ui.set_effort_open(false);
                 }
-                *current.borrow_mut() = None;
-                ui.set_effort_open(false);
-            }
-        });
+            },
+        );
     });
 }
 
-pub(crate) fn picked(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>, collapsed: &Rc<RefCell<std::collections::HashSet<String>>>, job_tx: &Sender<Job>) {
+pub(crate) fn picked(
+    ui: &AppWindow,
+    catalog: &Rc<RefCell<Vec<pa_client::ModelEntry>>>,
+    collapsed: &Rc<RefCell<std::collections::HashSet<String>>>,
+    job_tx: &Sender<Job>,
+) {
     let weak = ui.as_weak();
     let jobs = job_tx.clone();
     let catalog = catalog.clone();
@@ -209,9 +237,11 @@ pub(crate) fn picked(ui: &AppWindow, catalog: &Rc<RefCell<Vec<pa_client::ModelEn
         }
         // the chip follows the click; the daemon's own state lands on the
         // next list refresh
-        if let Some(entry) = catalog.borrow().iter().find(|entry| {
-            entry.id == model.as_str() && entry.provider == provider.as_str()
-        }) {
+        if let Some(entry) = catalog
+            .borrow()
+            .iter()
+            .find(|entry| entry.id == model.as_str() && entry.provider == provider.as_str())
+        {
             ui.set_model_label(model_label(&entry.name, &entry.id).into());
         }
         ui.set_model_id(model.clone());

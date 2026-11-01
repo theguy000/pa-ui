@@ -1,4 +1,3 @@
-
 use super::*;
 
 mod build_tests {
@@ -60,11 +59,16 @@ mod build_tests {
 
     #[test]
     fn code_markup_survives_the_parser() {
-        let markup = highlight_python("def f():\n    # four space indent\n    return 'x'", &shipped());
-        assert!(StyledText::from_markdown(&markup).is_ok(), "parser rejected: {markup}");
+        let markup = highlight_python(
+            "def f():\n    # four space indent\n    return 'x'",
+            &shipped(),
+        );
+        assert!(
+            StyledText::from_markdown(&markup).is_ok(),
+            "parser rejected: {markup}"
+        );
     }
 }
-
 
 #[cfg(test)]
 mod strong_tests {
@@ -77,7 +81,6 @@ mod strong_tests {
             "one **two**\n**three** four"
         );
     }
-
 
     #[test]
     fn a_message_splits_into_prose_code_and_table() {
@@ -112,15 +115,22 @@ mod strong_tests {
 
     #[test]
     fn tables_pad_columns_and_honour_right_alignment() {
-        let table = render_table(&["| model | cost |", "|:--|--:|", "| a | $1.50 |", "| longer | $2 |"])
-            .expect("a valid table");
+        let table = render_table(&[
+            "| model | cost |",
+            "|:--|--:|",
+            "| a | $1.50 |",
+            "| longer | $2 |",
+        ])
+        .expect("a valid table");
         let lines: Vec<&str> = table.lines().collect();
         assert_eq!(lines.len(), 6, "top, header, rule, two rows, bottom");
         assert!(lines[0].starts_with('\u{250c}') && lines[0].ends_with('\u{2510}'));
         assert!(lines[1].contains("\u{2502} model"));
         // right aligned: the shorter price keeps its padding on the left
         assert!(lines[4].contains("  $2 \u{2502}"), "{:?}", lines[4]);
-        assert!(lines.iter().all(|line| line.chars().count() == lines[0].chars().count()));
+        assert!(lines
+            .iter()
+            .all(|line| line.chars().count() == lines[0].chars().count()));
     }
 
     #[test]
@@ -134,7 +144,10 @@ mod strong_tests {
         .expect("a valid table");
         let width = table.lines().next().map_or(0, |line| line.chars().count());
         assert!(width <= 92, "table stayed {width} wide");
-        assert!(table.contains('\u{2026}'), "overflow elides, it does not wrap");
+        assert!(
+            table.contains('\u{2026}'),
+            "overflow elides, it does not wrap"
+        );
     }
 
     #[test]
@@ -165,7 +178,6 @@ mod strong_tests {
     }
 }
 
-
 #[cfg(test)]
 mod image_tests {
     use super::*;
@@ -193,10 +205,6 @@ mod image_tests {
         assert_eq!(rows[0].kind, KIND_IMAGE);
     }
 }
-
-
-
-
 
 #[cfg(test)]
 mod golden_preview_tests {
@@ -229,7 +237,10 @@ mod golden_preview_tests {
                 "text": ipython.text,
             });
             if ours_ipython != case["ipython"] {
-                failures.push(format!("ipython {input:.40}: {ours_ipython} != {}", case["ipython"]));
+                failures.push(format!(
+                    "ipython {input:.40}: {ours_ipython} != {}",
+                    case["ipython"]
+                ));
             }
         }
         assert!(
@@ -246,14 +257,16 @@ mod golden_preview_tests {
     fn titles_are_the_label_and_the_preview() {
         let args = serde_json::json!({ "code": "cd '/repo' && npm run test -- --watch" });
         let row = crate::transcript::tool_cell("call_0_x", &args);
-        assert_eq!(row.title, "python \u{00b7} cd '/repo' && npm run test -- --watch");
+        assert_eq!(
+            row.title,
+            "python \u{00b7} cd '/repo' && npm run test -- --watch"
+        );
 
         let args = serde_json::json!({ "code": "out = '/repo/out.txt'\nout.write_text('hello')" });
         let row = crate::transcript::tool_cell("call_0_x", &args);
         assert_eq!(row.title, "python \u{00b7} write /repo/out.txt");
     }
 }
-
 
 #[cfg(test)]
 mod duration_tests {
@@ -289,7 +302,6 @@ mod duration_tests {
     }
 }
 
-
 #[cfg(test)]
 mod header_parity_tests {
     use super::*;
@@ -307,7 +319,8 @@ mod header_parity_tests {
     /// command, with the count of the rest.
     #[test]
     fn a_bash_dominated_cell_reads_as_bash() {
-        let code = "r = await sh(\"\"\"\ncd crates/pa-tui\ncargo test -p pa-tui\n\"\"\")\nprint(r.output)";
+        let code =
+            "r = await sh(\"\"\"\ncd crates/pa-tui\ncargo test -p pa-tui\n\"\"\")\nprint(r.output)";
         let details = serde_json::json!({
             "status": "ok",
             "durationMs": 2,
@@ -317,14 +330,18 @@ mod header_parity_tests {
                 "lines": 4,
             },
         });
-        assert_eq!(title(code, Some(details)), "bash \u{00b7} cargo test -p pa-tui \u{00b7} +2 more");
+        assert_eq!(
+            title(code, Some(details)),
+            "bash \u{00b7} cargo test -p pa-tui \u{00b7} +2 more"
+        );
     }
 
     /// `bash_minority_cell_stays_python`: one bash line among four is not
     /// dominance, so the cell keeps the python label and the python preview.
     #[test]
     fn a_bash_minority_cell_stays_python() {
-        let code = "async def sh(cmd):\n    return await bash(cmd)\nr = await sh(\"ls\")\nprint(r.pid)";
+        let code =
+            "async def sh(cmd):\n    return await bash(cmd)\nr = await sh(\"ls\")\nprint(r.pid)";
         let details = serde_json::json!({
             "status": "ok",
             "durationMs": 5,
@@ -340,16 +357,21 @@ mod header_parity_tests {
     /// the label comes from the code alone.
     #[test]
     fn a_running_cell_previews_its_own_code() {
-        assert_eq!(title("out = '/repo/out.txt'\nout.write_text('hi')", None), "python \u{00b7} write /repo/out.txt");
+        assert_eq!(
+            title("out = '/repo/out.txt'\nout.write_text('hi')", None),
+            "python \u{00b7} write /repo/out.txt"
+        );
     }
 
     /// A `%%bash` cell is bash, label and all.
     #[test]
     fn a_bash_cell_magic_is_bash() {
-        assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
+        assert_eq!(
+            title("%%bash\necho in-bash-cell", None),
+            "bash \u{00b7} echo in-bash-cell"
+        );
     }
 }
-
 
 #[cfg(test)]
 mod theme_tests {
@@ -405,7 +427,10 @@ mod theme_tests {
             highlight_python("return 'x'", &shipped),
             "<font color=\"#acada4\">return</font> <font color=\"#aaaba2\">'x'</font>"
         );
-        assert_eq!(highlight_python("# why", &shipped), "<font color=\"#60615b\"># why</font>\n");
+        assert_eq!(
+            highlight_python("# why", &shipped),
+            "<font color=\"#60615b\"># why</font>\n"
+        );
     }
 }
 
@@ -466,8 +491,7 @@ mod markup_tests {
 
     #[test]
     fn plain_rows_still_parse() {
-        assert!(StyledText::from_markdown(&plain_markup("just words\n    and indented"))
-            .is_ok());
+        assert!(StyledText::from_markdown(&plain_markup("just words\n    and indented")).is_ok());
     }
 
     #[test]

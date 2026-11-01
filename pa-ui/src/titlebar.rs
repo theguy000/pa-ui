@@ -148,16 +148,31 @@ mod imp {
         }
     }
 
-
     #[link(name = "user32")]
     extern "system" {
         fn GetWindowRect(hwnd: isize, rect: *mut Rect) -> i32;
         fn GetDpiForWindow(hwnd: isize) -> u32;
         fn IsZoomed(hwnd: isize) -> i32;
-        fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn SetWindowPos(
+            hwnd: isize,
+            after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
         fn GetCursorPos(point: *mut Point) -> i32;
         fn GetSystemMenu(hwnd: isize, revert: i32) -> isize;
-        fn TrackPopupMenu(menu: isize, flags: u32, x: i32, y: i32, reserved: i32, hwnd: isize, rect: *const isize) -> i32;
+        fn TrackPopupMenu(
+            menu: isize,
+            flags: u32,
+            x: i32,
+            y: i32,
+            reserved: i32,
+            hwnd: isize,
+            rect: *const isize,
+        ) -> i32;
         fn SetForegroundWindow(hwnd: isize) -> i32;
         fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
         fn EnumWindows(callback: extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
@@ -226,8 +241,15 @@ mod imp {
 
             SetWindowSubclass(hwnd, subclass, 1, 0);
             // Make Windows re-run WM_NCCALCSIZE with the new rules.
-            SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
             true
         }
     }
@@ -258,7 +280,15 @@ mod imp {
             // A menu opened without the window foreground would not dismiss on the
             // first click elsewhere, which is the classic stuck-menu bug.
             SetForegroundWindow(hwnd);
-            let chosen = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, std::ptr::null());
+            let chosen = TrackPopupMenu(
+                menu,
+                TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                x,
+                y,
+                0,
+                hwnd,
+                std::ptr::null(),
+            );
             PostMessageW(hwnd, 0 /* WM_NULL */, 0, 0);
             if chosen != 0 {
                 PostMessageW(hwnd, WM_SYSCOMMAND, chosen as usize, 0);
@@ -276,7 +306,11 @@ mod imp {
     fn scale(hwnd: isize) -> f64 {
         unsafe {
             let dpi = GetDpiForWindow(hwnd);
-            if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 }
+            if dpi == 0 {
+                1.0
+            } else {
+                dpi as f64 / 96.0
+            }
         }
     }
 
@@ -341,7 +375,11 @@ mod imp {
                 let buttons_left = width - inset_x - button * super::BUTTONS;
                 if x >= buttons_left {
                     // 0 = minimise, 1 = maximise/restore, 2 = close
-                    return if (x - buttons_left) / button == 1 { HTMAXBUTTON } else { HTCLIENT };
+                    return if (x - buttons_left) / button == 1 {
+                        HTMAXBUTTON
+                    } else {
+                        HTCLIENT
+                    };
                 }
                 return HTCAPTION;
             }
@@ -388,7 +426,11 @@ mod imp {
                 // the click is forwarded rather than handled in Slint. Doing it here
                 // keeps the toggle working even if the shell declines the default.
                 WM_NCLBUTTONDOWN if wparam as isize == HTMAXBUTTON => {
-                    let command = if IsZoomed(hwnd) == 0 { SC_MAXIMIZE } else { SC_RESTORE };
+                    let command = if IsZoomed(hwnd) == 0 {
+                        SC_MAXIMIZE
+                    } else {
+                        SC_RESTORE
+                    };
                     PostMessageW(hwnd, WM_SYSCOMMAND, command, 0);
                     0
                 }
@@ -396,8 +438,15 @@ mod imp {
                 // A DPI change moves the caption height; ask for a fresh frame pass.
                 WM_DPICHANGED => {
                     let result = DefSubclassProc(hwnd, msg, wparam, lparam);
-                    SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                        SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    SetWindowPos(
+                        hwnd,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                    );
                     result
                 }
 
@@ -428,7 +477,10 @@ mod imp {
             let buttons_left = width - inset_x - button * super::BUTTONS;
             let x = cursor.x - window.left;
             let y = cursor.y - window.top;
-            y >= inset_y && y < caption && x >= buttons_left + button && x < buttons_left + button * 2
+            y >= inset_y
+                && y < caption
+                && x >= buttons_left + button
+                && x < buttons_left + button * 2
         }
     }
 }

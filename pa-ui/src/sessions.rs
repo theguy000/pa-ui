@@ -29,13 +29,10 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
     }
 }
 
-
 /// Every session, as the sidebar draws it, in the order the daemon gave them.
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
     rows.iter().map(to_item).collect()
 }
-
-
 
 /// The session the selection follows: ids are re-keyed by a daemon restart,
 /// the session's uuid is not.
@@ -44,7 +41,6 @@ pub(crate) fn uuid_of<'a>(rows: &'a [SessionRow], id: &str) -> Option<&'a str> {
         .find(|row| row.id == id)
         .map(|row| row.session_id.as_str())
 }
-
 
 pub(crate) fn display_name(row: &SessionRow) -> SharedString {
     let name = row.name.trim();

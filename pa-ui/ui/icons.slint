@@ -17,7 +17,7 @@ import { Theme } from "theme.slint";
 // The minimise, maximise and close marks. A base, not a glyph: the three call
 // sites supply their own `commands` on a 10x10 viewbox.
 export component CaptionGlyph inherits Path {
-    in property <color> tint: Theme.title-bar-glyph;
+    in property <color> tint: Theme.chrome-mark;
     width: 10px;
     height: 10px;
     viewbox-width: 10;
@@ -37,7 +37,7 @@ export component PanelIcon inherits Path {
     in property <bool> folded-edge-right: false;
     in property <bool> arrow: false;
     in property <bool> point-left: false;
-    in property <color> tint: Theme.sidebar-fold-glyph;
+    in property <color> tint: Theme.chrome-mark;
     width: 16px;
     height: 16px;
     viewbox-width: 24;
@@ -180,7 +180,7 @@ export component IconNewChat inherits Path {
 // in: the mark is drawn and inert until search exists, and a control that cannot
 // be clicked should not look like one.
 export component IconSearch inherits Path {
-    in property <color> tint: Theme.sidebar-search-mark;
+    in property <color> tint: Theme.chrome-mark;
     width: 16px;
     height: 16px;
     viewbox-width: 24;

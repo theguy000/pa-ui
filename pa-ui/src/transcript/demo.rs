@@ -16,7 +16,10 @@ pub fn demo_rows() -> Vec<Row> {
     let mut failed = Row::new(KIND_CELL);
     failed.title = "python · rows = [r for r in data]".to_string();
     failed.meta = "2 lines".to_string();
-    failed.code = highlight_python("rows = [r for r in data]\nprint(rows[3][\"name\"])\n", &theme);
+    failed.code = highlight_python(
+        "rows = [r for r in data]\nprint(rows[3][\"name\"])\n",
+        &theme,
+    );
     failed.output = plain_markup(
         "Traceback (most recent call last):\n  File \"<cell-9>\", line 2, in <module>\n    print(rows[3][\"name\"])\n          ~~~~^^^\nKeyError: 'name'",
     );
@@ -26,8 +29,6 @@ pub fn demo_rows() -> Vec<Row> {
     failed.reason = "KeyError: 'name'".to_string();
     vec![ok, failed]
 }
-
-
 
 /// A scratch message covering every block and inline style the transcript can
 /// draw - `PA_DEMO=markdown` splices it in so the rendering can be looked at

@@ -9,7 +9,10 @@ pub(crate) fn rename(ui: &AppWindow, job_tx: &Sender<Job>) {
         if session.is_empty() || name.trim().is_empty() {
             return;
         }
-        let _ = jobs.send(Job::Rename { session, name: name.trim().to_string() });
+        let _ = jobs.send(Job::Rename {
+            session,
+            name: name.trim().to_string(),
+        });
     });
 }
 
@@ -19,4 +22,3 @@ pub(crate) fn new_chat(ui: &AppWindow, job_tx: &Sender<Job>) {
         let _ = jobs.send(Job::NewChat);
     });
 }
-

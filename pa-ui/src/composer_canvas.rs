@@ -155,7 +155,14 @@ struct Rect {
 }
 
 /// A flat rectangle of colour, premultiplied.
-fn fill(frame: &mut [Rgba8Pixel], stride: usize, width: u32, height: u32, rect: Rect, color: Color) {
+fn fill(
+    frame: &mut [Rgba8Pixel],
+    stride: usize,
+    width: u32,
+    height: u32,
+    rect: Rect,
+    color: Color,
+) {
     let x0 = rect.x.floor().max(0.0) as u32;
     let x1 = ((rect.x + rect.width).ceil().max(0.0) as u32).min(width);
     let y0 = rect.y.floor().max(0.0) as u32;
@@ -259,7 +266,10 @@ impl Canvas {
         let caret_byte = caret_byte.min(text.len());
         let (select_start, select_end) = {
             let (a, b) = selection;
-            (a.min(text.len()).min(b), b.min(text.len()).max(a.min(text.len())))
+            (
+                a.min(text.len()).min(b),
+                b.min(text.len()).max(a.min(text.len())),
+            )
         };
         let (caret_line, caret_index) = split_at_line(text, caret_byte);
         let select_from = split_at_line(text, select_start);
@@ -284,8 +294,16 @@ impl Canvas {
                 && run.line_i >= select_from.0
                 && run.line_i <= select_to.0
             {
-                let from = if run.line_i == select_from.0 { select_from.1 } else { 0 };
-                let to = if run.line_i == select_to.0 { select_to.1 } else { run.text.len() };
+                let from = if run.line_i == select_from.0 {
+                    select_from.1
+                } else {
+                    0
+                };
+                let to = if run.line_i == select_to.0 {
+                    select_to.1
+                } else {
+                    run.text.len()
+                };
                 (from, to.max(from))
             } else {
                 (0, 0)
@@ -301,10 +319,7 @@ impl Canvas {
                 {
                     caret = Some((glyph.x, run.line_top));
                 }
-                if selected.0 < selected.1
-                    && glyph.start < selected.1
-                    && glyph.end > selected.0
-                {
+                if selected.0 < selected.1 && glyph.start < selected.1 && glyph.end > selected.0 {
                     run_start = Some(run_start.map_or(glyph.x, |x: f32| x.min(glyph.x)));
                     run_end = run_end.max(glyph.x + glyph.w);
                 }
@@ -330,7 +345,12 @@ impl Canvas {
         {
             let frame = pixels.make_mut_slice();
             for (x, run_width, y) in &selections {
-                let selected = Rect { x: *x, y: *y, width: *run_width, height: line_height };
+                let selected = Rect {
+                    x: *x,
+                    y: *y,
+                    width: *run_width,
+                    height: line_height,
+                };
                 fill(frame, stride, image_w, image_h, selected, highlight);
             }
             self.buffer.draw(
@@ -386,8 +406,16 @@ mod tests {
         assert_eq!(
             spans("/refine tighten this", known),
             vec![
-                Span { start: 0, end: 7, command: true },
-                Span { start: 7, end: 20, command: false },
+                Span {
+                    start: 0,
+                    end: 7,
+                    command: true
+                },
+                Span {
+                    start: 7,
+                    end: 20,
+                    command: false
+                },
             ]
         );
     }
@@ -405,8 +433,12 @@ mod tests {
 
     #[test]
     fn an_unknown_word_after_a_slash_stays_prose() {
-        assert!(spans("/nonsense here", known).iter().all(|span| !span.command));
-        assert!(spans("a/b is a path", known).iter().all(|span| !span.command));
+        assert!(spans("/nonsense here", known)
+            .iter()
+            .all(|span| !span.command));
+        assert!(spans("a/b is a path", known)
+            .iter()
+            .all(|span| !span.command));
     }
 
     #[test]
@@ -463,7 +495,11 @@ mod caret_tests {
         // the "e" with an acute is two bytes and one character: a caret left
         // at byte 1 by an earlier edit must not panic the painter
         let text = "\u{e9}x\ny";
-        assert_eq!(split_at_line(text, 1), (0, 0), "snapped back to the character start");
+        assert_eq!(
+            split_at_line(text, 1),
+            (0, 0),
+            "snapped back to the character start"
+        );
         assert_eq!(split_at_line(text, 2), (0, 2));
         assert_eq!(split_at_line(text, 4), (1, 0), "after the newline");
     }
@@ -482,7 +518,11 @@ mod caret_tests {
         let (start_of_second, y_start) = at(&mut canvas, 5);
         let (inside_second, y_inside) = at(&mut canvas, 6);
         let (end_of_document, y_end) = at(&mut canvas, 9);
-        assert_eq!((y_start, y_inside, y_end), (18.0, 18.0, 18.0), "all three are on the second line");
+        assert_eq!(
+            (y_start, y_inside, y_end),
+            (18.0, 18.0, 18.0),
+            "all three are on the second line"
+        );
         assert!(
             start_of_second < inside_second && inside_second < end_of_document,
             "the caret inside the line sits between the line's own glyphs: {start_of_second} < {inside_second} < {end_of_document}"
@@ -530,7 +570,10 @@ mod theme_tests {
             .iter()
             .flat_map(|pixel| [pixel.r, pixel.g, pixel.b, pixel.a])
             .collect();
-        (pixels, (caret.x, caret.y, caret.height, caret.content_height))
+        (
+            pixels,
+            (caret.x, caret.y, caret.height, caret.content_height),
+        )
     }
 
     fn draws(pixels: &[u8], colour: [u8; 4]) -> bool {
@@ -540,7 +583,12 @@ mod theme_tests {
     /// The coverage each pixel was painted at, which is the glyphs' own shape:
     /// alpha comes from the rasteriser and the selection, never from a colour.
     fn coverage(pixels: &[u8]) -> Vec<u8> {
-        pixels.as_chunks::<4>().0.iter().map(|pixel| pixel[3]).collect()
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| pixel[3])
+            .collect()
     }
 
     /// The ticket's second promise: the same draft, twice, in two themes. The
@@ -558,7 +606,10 @@ mod theme_tests {
 
         // And the comparison is worth something: some pixel is a glyph at full
         // strength and some pixel is untouched.
-        assert!(here_coverage.contains(&255) && here_coverage.contains(&0), "an empty pass");
+        assert!(
+            here_coverage.contains(&255) && here_coverage.contains(&0),
+            "an empty pass"
+        );
     }
 
     /// The other half of the same promise: under the theme that ships, the canvas
@@ -568,9 +619,18 @@ mod theme_tests {
     fn the_shipped_theme_paints_the_draft_the_canvas_painted_before_the_theme() {
         let (pixels, _) = painted(&Resolved::shipped());
 
-        assert!(draws(&pixels, [0xe7, 0xe5, 0xdf, 255]), "the draft's own ink");
-        assert!(draws(&pixels, [0xd8, 0xc0, 0x6a, 255]), "the command word among them");
-        assert!(draws(&pixels, [0x2b, 0x45, 0x62, 255]), "the field under a selection");
+        assert!(
+            draws(&pixels, [0xe7, 0xe5, 0xdf, 255]),
+            "the draft's own ink"
+        );
+        assert!(
+            draws(&pixels, [0xd8, 0xc0, 0x6a, 255]),
+            "the command word among them"
+        );
+        assert!(
+            draws(&pixels, [0x2b, 0x45, 0x62, 255]),
+            "the field under a selection"
+        );
     }
 
     /// And the same draft on a light window: the three colours it asks for are

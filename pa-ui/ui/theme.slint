@@ -16,17 +16,15 @@
 export global Theme {
     // the window's own field, under everything, and then the caption
     in-out property <color> window-surface;
-    in-out property <color> title-bar-glyph;
+    in-out property <color> chrome-mark;
+    in-out property <color> chrome-mark-hover;
     in-out property <color> title-bar-caption-fill-hover;
     in-out property <color> title-bar-close-fill-hover;
     in-out property <color> title-bar-close-ink-hover;
     in-out property <color> title-bar-fold-fill-hover;
-    in-out property <color> title-bar-fold-glyph;
-    in-out property <color> title-bar-fold-glyph-hover;
     // the sidebar: its field, a session row's three states, the inks a row
     // carries — a name in each of its states, and an age — and the tags that
     // say what a session is doing
-    in-out property <color> sidebar-surface;
     in-out property <color> sidebar-row-fill;
     in-out property <color> sidebar-row-fill-hover;
     in-out property <color> sidebar-row-fill-selected;
@@ -41,13 +39,10 @@ export global Theme {
     // pointed at, the pen on New Session in the header and in the folded strip and
     // in both of their states, the magnifier both carry, and the pencil a row
     // offers to rename it
-    in-out property <color> sidebar-fold-glyph;
-    in-out property <color> sidebar-fold-glyph-hover;
     in-out property <color> sidebar-new-session-mark;
     in-out property <color> sidebar-new-session-mark-hover;
     in-out property <color> sidebar-strip-new-session-mark;
     in-out property <color> sidebar-strip-new-session-mark-hover;
-    in-out property <color> sidebar-search-mark;
     // the product's name beside the brand mark, above the rows
     in-out property <color> sidebar-wordmark-ink;
     in-out property <color> sidebar-row-rename-mark;

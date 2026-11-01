@@ -7,7 +7,6 @@ pub(crate) fn provider_label(provider: &str) -> String {
     provider.replace('_', " ")
 }
 
-
 /// The catalog's `name` repeats the provider ("... (river.ai)"); the group
 /// header already says it.
 pub(crate) fn model_label(name: &str, id: &str) -> String {
@@ -21,7 +20,6 @@ pub(crate) fn model_label(name: &str, id: &str) -> String {
     }
 }
 
-
 /// A rough size for the right-hand hint: `200k`, `1M`.
 pub(crate) fn context_hint(tokens: u64) -> String {
     if tokens >= 1_000_000 {
@@ -33,7 +31,6 @@ pub(crate) fn context_hint(tokens: u64) -> String {
     }
 }
 
-
 /// 1234 ? "1.2k", 47_011_000 ? "47.0M".
 pub(crate) fn tokens(value: u64) -> String {
     if value >= 1_000_000 {
@@ -44,7 +41,6 @@ pub(crate) fn tokens(value: u64) -> String {
         value.to_string()
     }
 }
-
 
 /// Concatenated text of a wire message's content parts.
 pub(crate) fn message_text(message: &serde_json::Value) -> String {
@@ -62,7 +58,6 @@ pub(crate) fn message_text(message: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-
 /// Tool results arrive as a model-facing value: sometimes a string, sometimes
 /// `{ output, ... }`, sometimes a list of content blocks. Take the text.
 pub(crate) fn tool_output_text(result: Option<&serde_json::Value>) -> String {
@@ -70,7 +65,10 @@ pub(crate) fn tool_output_text(result: Option<&serde_json::Value>) -> String {
         match value {
             serde_json::Value::String(text) => Some(text.clone()),
             serde_json::Value::Array(items) => {
-                let parts: Vec<String> = items.iter().filter_map(|item| text_of(item, depth + 1)).collect();
+                let parts: Vec<String> = items
+                    .iter()
+                    .filter_map(|item| text_of(item, depth + 1))
+                    .collect();
                 (!parts.is_empty()).then(|| parts.join("\n"))
             }
             serde_json::Value::Object(map) if depth < 4 => {
@@ -91,15 +89,17 @@ pub(crate) fn tool_output_text(result: Option<&serde_json::Value>) -> String {
         .unwrap_or_default()
 }
 
-
 pub(crate) fn trim_to(text: &str, width: usize) -> String {
     let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if cleaned.chars().count() <= width {
         return cleaned;
     }
-    cleaned.chars().take(width.saturating_sub(1)).chain(['\u{2026}']).collect()
+    cleaned
+        .chars()
+        .take(width.saturating_sub(1))
+        .chain(['\u{2026}'])
+        .collect()
 }
-
 
 pub(crate) fn age_of(stamp: &str) -> String {
     let Some(seconds) = parse_iso_seconds(stamp) else {
@@ -117,12 +117,12 @@ pub(crate) fn age_of(stamp: &str) -> String {
     }
 }
 
-
 pub(crate) fn parse_iso_seconds(stamp: &str) -> Option<i64> {
     if stamp.len() < 19 {
         return None;
     }
-    let num = |range: std::ops::Range<usize>| stamp.get(range).and_then(|part| part.parse::<i64>().ok());
+    let num =
+        |range: std::ops::Range<usize>| stamp.get(range).and_then(|part| part.parse::<i64>().ok());
     let year = num(0..4)?;
     let month = num(5..7)?;
     let day = num(8..10)?;
@@ -131,7 +131,6 @@ pub(crate) fn parse_iso_seconds(stamp: &str) -> Option<i64> {
     let second = num(17..19)?;
     Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
 }
-
 
 pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };

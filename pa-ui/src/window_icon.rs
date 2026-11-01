@@ -45,7 +45,14 @@ mod imp {
         fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
         fn IsWindowVisible(hwnd: isize) -> i32;
         fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
-        fn LoadImageW(instance: isize, name: *const u16, kind: u32, cx: i32, cy: i32, flags: u32) -> isize;
+        fn LoadImageW(
+            instance: isize,
+            name: *const u16,
+            kind: u32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> isize;
         fn GetSystemMetrics(index: i32) -> i32;
     }
 
@@ -80,12 +87,20 @@ mod imp {
             let module = GetModuleHandleW(ptr::null());
             let tile = ptr::dangling::<u16>();
             let small = LoadImageW(
-                module, tile, IMAGE_ICON,
-                GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0,
+                module,
+                tile,
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                0,
             );
             let big = LoadImageW(
-                module, tile, IMAGE_ICON,
-                GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0,
+                module,
+                tile,
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXICON),
+                GetSystemMetrics(SM_CYICON),
+                0,
             );
             if small == 0 || big == 0 {
                 return false;

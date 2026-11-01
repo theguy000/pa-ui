@@ -6,7 +6,6 @@
 //!   {role:"toolResult", toolCallId, toolName, content:[{text}]}
 //!   {customType, content, display}
 
-
 use serde_json::Value;
 use slint::StyledText;
 
@@ -105,9 +104,15 @@ fn build_message(
     theme: &Resolved,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if message.get("customType").is_some() {
-        let text = message.get("content").and_then(Value::as_str).unwrap_or_default();
+        let text = message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let mut row = Row::new(KIND_NOTICE);
         row.body = plain_markup(text);
         row.title = message
@@ -126,7 +131,11 @@ fn build_message(
         return rows;
     };
     for block in blocks {
-        match block.get("type").and_then(Value::as_str).unwrap_or_default() {
+        match block
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             // An image is a row of its own. Without this a message that is
             // nothing but a picture produced no row at all, and one with
             // words lost the picture: the blocks were read for text only.
@@ -142,7 +151,10 @@ fn build_message(
                 rows.push(row);
             }
             "text" => {
-                let text = block.get("text").and_then(Value::as_str).unwrap_or_default();
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -152,8 +164,11 @@ fn build_message(
                 for piece in split_blocks(text) {
                     match piece {
                         Block::Prose(prose) => {
-                            let mut row =
-                                Row::new(if role == "user" { KIND_USER } else { KIND_AGENT });
+                            let mut row = Row::new(if role == "user" {
+                                KIND_USER
+                            } else {
+                                KIND_AGENT
+                            });
                             row.body = markdown_markup(&prose, theme);
                             rows.push(row);
                         }
@@ -173,7 +188,10 @@ fn build_message(
                 }
             }
             "thinking" => {
-                let text = block.get("thinking").and_then(Value::as_str).unwrap_or_default();
+                let text = block
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -199,7 +217,11 @@ fn build_message(
                     row.reason = failure_reason(output, *failed);
                 }
                 let lines = code.lines().count();
-                row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
+                row.meta = if lines == 1 {
+                    "1 line".to_string()
+                } else {
+                    format!("{lines} lines")
+                };
                 let info = bashes.get(&row.id).cloned();
                 let taken = durations.get(&row.id).copied();
                 apply_header(&mut row, code, info.as_ref(), taken);
@@ -225,7 +247,8 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     let window = &messages[start..];
 
     // tool outputs keyed by call id, so a cell carries its own result
-    let mut outputs: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+    let mut outputs: std::collections::HashMap<String, (String, bool)> =
+        std::collections::HashMap::new();
     // and the bash preview the tool reported for itself: the TUI titles a cell
     // by the command that ran, not by the first line of the cell's source
     let mut bashes: std::collections::HashMap<String, BashInfo> = std::collections::HashMap::new();
@@ -234,7 +257,10 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
         if message.get("role").and_then(Value::as_str) != Some("toolResult") {
             continue;
         }
-        let id = message.get("toolCallId").and_then(Value::as_str).unwrap_or_default();
+        let id = message
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let text = message
             .get("content")
             .and_then(Value::as_array)
@@ -285,7 +311,10 @@ pub fn message_key(message: &Value) -> String {
             return id.to_string();
         }
     }
-    let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let stamp = message
         .get("timestamp")
         .and_then(Value::as_i64)

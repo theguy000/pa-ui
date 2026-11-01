@@ -23,10 +23,8 @@ pub struct PagerState {
     pub height: f32,
 }
 
-
 /// How close to the top counts as "the reader reached the top".
 pub(crate) const TOP_SLACK: f32 = 2200.0;
-
 
 #[must_use]
 pub fn should_load_older(state: PagerState) -> bool {
@@ -46,7 +44,6 @@ pub fn should_load_older(state: PagerState) -> bool {
     }
     state.content_y >= -TOP_SLACK
 }
-
 
 #[cfg(test)]
 mod pager_tests {

@@ -131,7 +131,9 @@ impl Tick {
         if !should_load_older(state) {
             return;
         }
-        let Some(before) = self.oldest_cursor.borrow().clone() else { return };
+        let Some(before) = self.oldest_cursor.borrow().clone() else {
+            return;
+        };
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
             return;
@@ -159,7 +161,9 @@ impl Tick {
             }
         }
         self.last_tick.set(now);
-        let Some(ui) = self.weak.upgrade() else { return };
+        let Some(ui) = self.weak.upgrade() else {
+            return;
+        };
         let mut l = Local::load(self);
         let jobs = &self.jobs;
         let msg_rx = &self.msg_rx;
@@ -243,7 +247,10 @@ impl Tick {
         {
             l.tail_at = SystemTime::now();
             if let Some(session) = l.loaded.clone() {
-                let _ = jobs.send(Job::Tail { session, fresh: false });
+                let _ = jobs.send(Job::Tail {
+                    session,
+                    fresh: false,
+                });
             }
         }
 
@@ -347,8 +354,10 @@ impl Tick {
                     let selected = ui.get_selected_id().to_string();
                     if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
                         if let Some(uuid) = l.selected_uuid.as_deref() {
-                            if let Some(rebound) =
-                                rows.iter().find(|row| row.session_id == uuid).map(|row| row.id.clone())
+                            if let Some(rebound) = rows
+                                .iter()
+                                .find(|row| row.session_id == uuid)
+                                .map(|row| row.id.clone())
                             {
                                 if crate::env_cfg::cfg().debug {
                                     eprintln!("[rebind] {selected} -> {rebound}");
@@ -402,7 +411,10 @@ impl Tick {
                             // the run just ended: grab whatever landed after the
                             // last refresh so the final tool calls are not lost
                             if let Some(session) = l.loaded.clone() {
-                                let _ = jobs.send(Job::Tail { session, fresh: false });
+                                let _ = jobs.send(Job::Tail {
+                                    session,
+                                    fresh: false,
+                                });
                             }
                         }
                         if busy_now && !ui.get_busy() {
@@ -428,7 +440,12 @@ impl Tick {
                     }
                     ui.set_busy(true);
                 }
-                Msg::Transcript { session, rows, skipped, messages } => {
+                Msg::Transcript {
+                    session,
+                    rows,
+                    skipped,
+                    messages,
+                } => {
                     // the session's own commands arrive with the session
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
@@ -494,7 +511,10 @@ impl Tick {
                             l.tail_len,
                             messages
                                 .last()
-                                .map(|m| m.get("timestamp").and_then(serde_json::Value::as_u64).unwrap_or(0))
+                                .map(|m| m
+                                    .get("timestamp")
+                                    .and_then(serde_json::Value::as_u64)
+                                    .unwrap_or(0))
                                 .unwrap_or(0)
                         );
                     }
@@ -570,7 +590,10 @@ impl Tick {
                     }
                     sheet::trace("tail merge", &sheet.rows());
                     if crate::env_cfg::cfg().debug {
-                        eprintln!("[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})", messages.len());
+                        eprintln!(
+                            "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
+                            messages.len()
+                        );
                     }
                     if follow {
                         scroll_to_end_when_ready(&ui.as_weak());
@@ -601,7 +624,10 @@ impl Tick {
                     }
                     let built_at = SystemTime::now();
                     let older = rows;
-                    let build_ms = built_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+                    let build_ms = built_at
+                        .elapsed()
+                        .map(|d| d.as_secs_f64() * 1000.0)
+                        .unwrap_or(0.0);
                     if older.is_empty() {
                         has_older.set(false);
                         ui.set_has_older(false);
@@ -613,7 +639,10 @@ impl Tick {
                     let older_len = older.len();
                     let insert_at = SystemTime::now();
                     sheet.prepend(older);
-                    let insert_ms = insert_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+                    let insert_ms = insert_at
+                        .elapsed()
+                        .map(|d| d.as_secs_f64() * 1000.0)
+                        .unwrap_or(0.0);
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[older] our side: build {build_ms:.1} ms, insert {insert_ms:.1} ms for {older_len} rows"
@@ -752,7 +781,10 @@ impl Tick {
                     let Some(message) = event.get("message") else {
                         continue;
                     };
-                    if !matches!(kind, Some("message_start" | "message_update" | "message_end")) {
+                    if !matches!(
+                        kind,
+                        Some("message_start" | "message_update" | "message_end")
+                    ) {
                         continue;
                     }
                     let role = message.get("role").and_then(serde_json::Value::as_str);
@@ -815,13 +847,18 @@ impl Tick {
                         continue;
                     };
                     // Ignore toolcall JSON deltas and *_end markers that don't change visible prose/thinking
-                    if !delta_kind.is_empty() && !delta_kind.starts_with("text_delta") && !delta_kind.starts_with("thinking_delta") {
+                    if !delta_kind.is_empty()
+                        && !delta_kind.starts_with("text_delta")
+                        && !delta_kind.starts_with("thinking_delta")
+                    {
                         continue;
                     }
                     if kind == Some("message_end") {
                         continue;
                     }
-                    if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
+                    if let Some(delta) =
+                        delta_event.get("delta").and_then(serde_json::Value::as_str)
+                    {
                         if delta_kind.starts_with("text") {
                             turn.push_text(delta);
                         } else if delta_kind.starts_with("thinking") {
@@ -838,19 +875,33 @@ impl Tick {
                     if crate::env_cfg::cfg().debug && kind == Some("message_update") {
                         eprintln!(
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
-                            l.stream_started.elapsed().map(|d| d.as_millis()).unwrap_or(0),
+                            l.stream_started
+                                .elapsed()
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0),
                             l.open_live.as_ref().map_or(0, |turn| turn.rows().len()),
                             0usize,
                             delta_kind
                         );
                     }
                 }
-                Msg::Queue { steering, follow_up } => {
+                Msg::Queue {
+                    steering,
+                    follow_up,
+                } => {
                     apply_queue(&ui, &steering, &follow_up, sent_thumbs);
                 }
-                Msg::Prompt { session, message, images } => {
+                Msg::Prompt {
+                    session,
+                    message,
+                    images,
+                } => {
                     in_flight.set(true);
-                    let _ = jobs.send(Job::Prompt { session, message, images });
+                    let _ = jobs.send(Job::Prompt {
+                        session,
+                        message,
+                        images,
+                    });
                 }
                 Msg::NewChat(id) => {
                     // PA_SLASH: a look at the command menu in this fresh chat,
@@ -875,8 +926,12 @@ impl Tick {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
                     ui.set_queued_count(0);
-                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
-                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
+                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(
+                        Vec::new(),
+                    ))));
+                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(
+                        Vec::new(),
+                    ))));
                     ui.set_busy(false);
                     status::clear(&ui);
                     ui.set_selected_id(id.clone().into());
@@ -899,9 +954,9 @@ impl Tick {
                     // wall, not a menu. Only the first load seeds that, so a
                     // provider the user unfolds stays unfolded.
                     if !catalog_loaded.get() {
-                        collapsed.borrow_mut().extend(
-                            entries.iter().map(|entry| entry.provider.clone()),
-                        );
+                        collapsed
+                            .borrow_mut()
+                            .extend(entries.iter().map(|entry| entry.provider.clone()));
                     }
                     catalog_loaded.set(true);
                     *catalog.borrow_mut() = entries;
@@ -1024,7 +1079,7 @@ impl Tick {
                     // stays on screen is a message that was never sent
                     if ui.get_composer_text().is_empty() {
                         ui.set_composer_text(text.as_str().into());
-                    ui.set_composer_has_text(!ui.get_composer_text().is_empty());
+                        ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     }
                     pending_user.borrow_mut().take();
                     sheet.take_back_prompt(&text);

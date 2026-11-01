@@ -38,10 +38,10 @@ const APART_TONE: f32 = 10.0;
 const ON_WINDOW: &[Role] = &[];
 const ON_FOLD_HOVER: &[Role] = &[Role::TitleBarFoldFillHover];
 const ON_CLOSE_HOVER: &[Role] = &[Role::TitleBarCloseFillHover];
-const ON_SIDEBAR: &[Role] = &[Role::SidebarSurface];
-const ON_SIDEBAR_ROW: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFill];
-const ON_SIDEBAR_ROW_HOVER: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillHover];
-const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillSelected];
+const ON_SIDEBAR: &[Role] = &[Role::WindowSurface];
+const ON_SIDEBAR_ROW: &[Role] = &[Role::WindowSurface, Role::SidebarRowFill];
+const ON_SIDEBAR_ROW_HOVER: &[Role] = &[Role::WindowSurface, Role::SidebarRowFillHover];
+const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::WindowSurface, Role::SidebarRowFillSelected];
 // The sidebar's controls, and the fields they paint: a quiet chip that only has
 // a field under the pointer, the button that carries New Session, the chip a row
 // offers to rename it, and the pill the folded column shows.
@@ -120,22 +120,34 @@ struct Pair {
 
 const PAIRS: &[Pair] = &[
     Pair {
-        ink: Mark { role: Role::TitleBarGlyph, on: ON_WINDOW },
-        what: "the caption glyphs",
+        ink: Mark {
+            role: Role::ChromeMark,
+            on: ON_WINDOW,
+        },
+        what: "the chrome's marks on the caption",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TitleBarFoldGlyph, on: ON_WINDOW },
-        what: "the fold mark at rest",
+        ink: Mark {
+            role: Role::ChromeMark,
+            on: ON_SIDEBAR,
+        },
+        what: "the chrome's marks on the column",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TitleBarFoldGlyphHover, on: ON_FOLD_HOVER },
+        ink: Mark {
+            role: Role::ChromeMarkHover,
+            on: ON_FOLD_HOVER,
+        },
         what: "the fold mark under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TitleBarCloseInkHover, on: ON_CLOSE_HOVER },
+        ink: Mark {
+            role: Role::TitleBarCloseInkHover,
+            on: ON_CLOSE_HOVER,
+        },
         what: "the close mark on its hover fill",
         floor: MARK,
     },
@@ -143,28 +155,43 @@ const PAIRS: &[Pair] = &[
     // rows is the window naming itself, so it is read as body text on the column
     // and not as a mark.
     Pair {
-        ink: Mark { role: Role::SidebarWordmarkInk, on: ON_SIDEBAR },
+        ink: Mark {
+            role: Role::SidebarWordmarkInk,
+            on: ON_SIDEBAR,
+        },
         what: "the wordmark above the rows",
         floor: BODY,
     },
     // The rest is a session's name, measured in each state it is read in.
     Pair {
-        ink: Mark { role: Role::SidebarNameInk, on: ON_SIDEBAR_ROW },
+        ink: Mark {
+            role: Role::SidebarNameInk,
+            on: ON_SIDEBAR_ROW,
+        },
         what: "a session's name at rest",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNameInk, on: ON_SIDEBAR_ROW_HOVER },
+        ink: Mark {
+            role: Role::SidebarNameInk,
+            on: ON_SIDEBAR_ROW_HOVER,
+        },
         what: "a session's name under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNameInkSelected, on: ON_SIDEBAR_ROW_SELECTED },
+        ink: Mark {
+            role: Role::SidebarNameInkSelected,
+            on: ON_SIDEBAR_ROW_SELECTED,
+        },
         what: "the picked session's name",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNameInkEditing, on: ON_SIDEBAR_ROW },
+        ink: Mark {
+            role: Role::SidebarNameInkEditing,
+            on: ON_SIDEBAR_ROW,
+        },
         what: "a session's name while it is renamed",
         floor: BODY,
     },
@@ -173,17 +200,18 @@ const PAIRS: &[Pair] = &[
     // same story — its chip is transparent until the pointer arrives, so folded
     // the mark rests on the column too.
     Pair {
-        ink: Mark { role: Role::SidebarFoldGlyph, on: ON_SIDEBAR },
-        what: "the sidebar's fold mark at rest",
+        ink: Mark {
+            role: Role::ChromeMarkHover,
+            on: ON_QUIET_CONTROL,
+        },
+        what: "the fold mark on its chip under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarSearchMark, on: ON_SIDEBAR },
-        what: "the sidebar's magnifier",
-        floor: MARK,
-    },
-    Pair {
-        ink: Mark { role: Role::SidebarStripNewSessionMark, on: ON_SIDEBAR },
+        ink: Mark {
+            role: Role::SidebarStripNewSessionMark,
+            on: ON_SIDEBAR,
+        },
         what: "the pen on the folded strip",
         floor: MARK,
     },
@@ -192,12 +220,18 @@ const PAIRS: &[Pair] = &[
     // a shadow drawn as bright as the field would not be a shadow — and the note
     // under these pairs says what is measured instead.
     Pair {
-        ink: Mark { role: Role::BrandMarkBlade, on: ON_SIDEBAR },
+        ink: Mark {
+            role: Role::BrandMarkBlade,
+            on: ON_SIDEBAR,
+        },
         what: "the brand mark's blade",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        ink: Mark {
+            role: Role::BrandMarkWing,
+            on: ON_SIDEBAR,
+        },
         what: "the brand mark's wing",
         floor: MARK,
     },
@@ -208,52 +242,74 @@ const PAIRS: &[Pair] = &[
     // say what they do in words as well, and words are body text on the field
     // they are drawn on.
     Pair {
-        ink: Mark { role: Role::SidebarFoldGlyphHover, on: ON_QUIET_CONTROL },
-        what: "the fold mark on its chip under the pointer",
-        floor: MARK,
-    },
-    Pair {
-        ink: Mark { role: Role::SidebarStripNewSessionMarkHover, on: ON_QUIET_CONTROL },
+        ink: Mark {
+            role: Role::SidebarStripNewSessionMarkHover,
+            on: ON_QUIET_CONTROL,
+        },
         what: "the pen on the folded strip's chip under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionMark, on: ON_PRIMARY_CONTROL },
+        ink: Mark {
+            role: Role::SidebarNewSessionMark,
+            on: ON_PRIMARY_CONTROL,
+        },
         what: "the pen on New Session at rest",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionMarkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        ink: Mark {
+            role: Role::SidebarNewSessionMarkHover,
+            on: ON_PRIMARY_CONTROL_HOVER,
+        },
         what: "the pen on New Session under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionInk, on: ON_PRIMARY_CONTROL },
+        ink: Mark {
+            role: Role::SidebarNewSessionInk,
+            on: ON_PRIMARY_CONTROL,
+        },
         what: "the words on New Session at rest",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        ink: Mark {
+            role: Role::SidebarNewSessionInkHover,
+            on: ON_PRIMARY_CONTROL_HOVER,
+        },
         what: "the words on New Session under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP },
+        ink: Mark {
+            role: Role::SidebarRowRenameMark,
+            on: ON_RENAME_CHIP,
+        },
         what: "the pencil a row offers, at rest",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP_HOVER },
+        ink: Mark {
+            role: Role::SidebarRowRenameMark,
+            on: ON_RENAME_CHIP_HOVER,
+        },
         what: "the pencil a row offers, with the pointer on its chip",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarOpenTipInk, on: ON_OPEN_TIP },
+        ink: Mark {
+            role: Role::SidebarOpenTipInk,
+            on: ON_OPEN_TIP,
+        },
         what: "the words on the pill that opens the column",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SessionCardInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::SessionCardInk,
+            on: ON_PANEL,
+        },
         what: "the words on the card that names a session",
         floor: BODY,
     },
@@ -261,27 +317,42 @@ const PAIRS: &[Pair] = &[
     // them are held to the body floor on whichever field they are read on — a
     // cell's name on the cell, the code it opened and what it printed inside it.
     Pair {
-        ink: Mark { role: Role::TranscriptProseInk, on: ON_TRANSCRIPT },
+        ink: Mark {
+            role: Role::TranscriptProseInk,
+            on: ON_TRANSCRIPT,
+        },
         what: "the transcript's prose",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptMessageInk, on: ON_MESSAGE },
+        ink: Mark {
+            role: Role::TranscriptMessageInk,
+            on: ON_MESSAGE,
+        },
         what: "the message the reader sent",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptLinkInk, on: ON_TRANSCRIPT },
+        ink: Mark {
+            role: Role::TranscriptLinkInk,
+            on: ON_TRANSCRIPT,
+        },
         what: "a link in prose",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        ink: Mark {
+            role: Role::TranscriptCellTitleInk,
+            on: ON_CELL,
+        },
         what: "a cell's name at rest",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL_HOVER },
+        ink: Mark {
+            role: Role::TranscriptCellTitleInk,
+            on: ON_CELL_HOVER,
+        },
         what: "a cell's name under the pointer",
         floor: BODY,
     },
@@ -289,78 +360,120 @@ const PAIRS: &[Pair] = &[
     // read on the cell — and, in a thinking row, on the sheet the row runs across,
     // because a resting thinking row draws no fill of its own.
     Pair {
-        ink: Mark { role: Role::TranscriptCaretMark, on: ON_CELL },
+        ink: Mark {
+            role: Role::TranscriptCaretMark,
+            on: ON_CELL,
+        },
         what: "the caret on a cell",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCaretMark, on: ON_TRANSCRIPT },
+        ink: Mark {
+            role: Role::TranscriptCaretMark,
+            on: ON_TRANSCRIPT,
+        },
         what: "the caret on a thinking row",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellCodeInk, on: ON_OPENED_ROW },
+        ink: Mark {
+            role: Role::TranscriptCellCodeInk,
+            on: ON_OPENED_ROW,
+        },
         what: "the code a cell opened",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellOutputInk, on: ON_OPENED_ROW },
+        ink: Mark {
+            role: Role::TranscriptCellOutputInk,
+            on: ON_OPENED_ROW,
+        },
         what: "what a cell printed",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellSeparatorInk, on: ON_CELL },
+        ink: Mark {
+            role: Role::TranscriptCellSeparatorInk,
+            on: ON_CELL,
+        },
         what: "the dot that parts a cell's meta from its elapsed time",
         floor: MARK,
     },
     // A failure is read in the same two states as a quiet cell, and its field is
     // the one a theme is most likely to leave behind.
     Pair {
-        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
+        ink: Mark {
+            role: Role::TranscriptCellInkFailed,
+            on: ON_FAILED_CELL,
+        },
         what: "a failed cell's words",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL_HOVER },
+        ink: Mark {
+            role: Role::TranscriptCellInkFailed,
+            on: ON_FAILED_CELL_HOVER,
+        },
         what: "a failed cell's words under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptReasonInk, on: ON_FAILED_CELL },
+        ink: Mark {
+            role: Role::TranscriptReasonInk,
+            on: ON_FAILED_CELL,
+        },
         what: "the reason a failed cell opens",
         floor: BODY,
     },
     // The badge is opened for what the alert inside it says, and the alert is a
     // mark on the badge's own red rather than on the cell's field.
     Pair {
-        ink: Mark { role: Role::TranscriptCellBadgeMark, on: ON_BADGE },
+        ink: Mark {
+            role: Role::TranscriptCellBadgeMark,
+            on: ON_BADGE,
+        },
         what: "the alert inside a failed cell's badge",
         floor: MARK,
     },
     // The chip that walks the reader back to the newest row floats over the sheet
     // on a fill of its own; the chevron is the whole of what says it goes down.
     Pair {
-        ink: Mark { role: Role::TranscriptJumpMark, on: ON_JUMP },
+        ink: Mark {
+            role: Role::TranscriptJumpMark,
+            on: ON_JUMP,
+        },
         what: "the chevron that walks back to the newest row",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptThinkingLabelInk, on: ON_TRANSCRIPT },
+        ink: Mark {
+            role: Role::TranscriptThinkingLabelInk,
+            on: ON_TRANSCRIPT,
+        },
         what: "the label a thinking row carries",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptThinkingInk, on: ON_OPENED_ROW },
+        ink: Mark {
+            role: Role::TranscriptThinkingInk,
+            on: ON_OPENED_ROW,
+        },
         what: "the text inside an opened thinking row",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCodeInk, on: ON_CODE_CARD },
+        ink: Mark {
+            role: Role::TranscriptCodeInk,
+            on: ON_CODE_CARD,
+        },
         what: "a fenced block's code",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptTableInk, on: ON_TRANSCRIPT },
+        ink: Mark {
+            role: Role::TranscriptTableInk,
+            on: ON_TRANSCRIPT,
+        },
         what: "a table's text",
         floor: BODY,
     },
@@ -368,62 +481,98 @@ const PAIRS: &[Pair] = &[
     // body text is written rather than read back, so it is held to the body floor
     // on both the field it is typed on and the field a selection lays over it.
     Pair {
-        ink: Mark { role: Role::ComposerDraftInk, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ComposerDraftInk,
+            on: ON_COMPOSER,
+        },
         what: "the draft the reader is writing",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerDraftSelectionInk, on: ON_SELECTION },
+        ink: Mark {
+            role: Role::ComposerDraftSelectionInk,
+            on: ON_SELECTION,
+        },
         what: "the words the reader has selected",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCommandInk, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ComposerCommandInk,
+            on: ON_COMPOSER,
+        },
         what: "the command a draft starts with",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerStatusLineInk, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ComposerStatusLineInk,
+            on: ON_COMPOSER,
+        },
         what: "the composer's status line",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerStatusLineInkBad, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ComposerStatusLineInkBad,
+            on: ON_COMPOSER,
+        },
         what: "the status line when something went wrong",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerAttachInk, on: ON_ATTACH },
+        ink: Mark {
+            role: Role::ComposerAttachInk,
+            on: ON_ATTACH,
+        },
         what: "the plus that attaches a picture",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerAttachInkHover, on: ON_ATTACH_HOVER },
+        ink: Mark {
+            role: Role::ComposerAttachInkHover,
+            on: ON_ATTACH_HOVER,
+        },
         what: "the plus that attaches a picture, under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerAttachmentRemoveInk, on: ON_ATTACHMENT_REMOVE },
+        ink: Mark {
+            role: Role::ComposerAttachmentRemoveInk,
+            on: ON_ATTACHMENT_REMOVE,
+        },
         what: "the × that removes a picture",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerChipInk, on: ON_CHIP },
+        ink: Mark {
+            role: Role::ComposerChipInk,
+            on: ON_CHIP,
+        },
         what: "the model the chip names",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerChipInkHover, on: ON_CHIP_HOVER },
+        ink: Mark {
+            role: Role::ComposerChipInkHover,
+            on: ON_CHIP_HOVER,
+        },
         what: "the model the chip names, pointed at or open",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerChipCaretMark, on: ON_CHIP },
+        ink: Mark {
+            role: Role::ComposerChipCaretMark,
+            on: ON_CHIP,
+        },
         what: "the caret on the composer's chip",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerStopMark, on: ON_STOP_FILL },
+        ink: Mark {
+            role: Role::ComposerStopMark,
+            on: ON_STOP_FILL,
+        },
         what: "the square on the stop disc",
         floor: MARK,
     },
@@ -431,32 +580,50 @@ const PAIRS: &[Pair] = &[
     // figure and every ledger value are held to the body floor, and the small
     // labels and the bar to the mark floor.
     Pair {
-        ink: Mark { role: Role::ComposerCardPercentInk, on: ON_CARD },
+        ink: Mark {
+            role: Role::ComposerCardPercentInk,
+            on: ON_CARD,
+        },
         what: "the share of the context used",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCardUsedInk, on: ON_CARD },
+        ink: Mark {
+            role: Role::ComposerCardUsedInk,
+            on: ON_CARD,
+        },
         what: "what is left of the context",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCardLedgerInk, on: ON_CARD },
+        ink: Mark {
+            role: Role::ComposerCardLedgerInk,
+            on: ON_CARD,
+        },
         what: "a ledger value",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCardCostInk, on: ON_CARD },
+        ink: Mark {
+            role: Role::ComposerCardCostInk,
+            on: ON_CARD,
+        },
         what: "what the session has cost",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCardLabelInk, on: ON_CARD },
+        ink: Mark {
+            role: Role::ComposerCardLabelInk,
+            on: ON_CARD,
+        },
         what: "the card's small labels",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerCardBarFill, on: ON_BAR_TRACK },
+        ink: Mark {
+            role: Role::ComposerCardBarFill,
+            on: ON_BAR_TRACK,
+        },
         what: "the bar that says how full the context is",
         floor: MARK,
     },
@@ -465,17 +632,26 @@ const PAIRS: &[Pair] = &[
     // of what says the control is there: a send disc mixed into the box it sits
     // in leaves a button that cannot be found.
     Pair {
-        ink: Mark { role: Role::ComposerSendFill, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ComposerSendFill,
+            on: ON_COMPOSER,
+        },
         what: "the send disc on the composer's field",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ButtonDangerFill, on: ON_COMPOSER },
+        ink: Mark {
+            role: Role::ButtonDangerFill,
+            on: ON_COMPOSER,
+        },
         what: "the stop disc on the composer's field",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerSendMark, on: ON_SEND_FILL },
+        ink: Mark {
+            role: Role::ComposerSendMark,
+            on: ON_SEND_FILL,
+        },
         what: "the arrow on the send disc",
         floor: MARK,
     },
@@ -485,54 +661,84 @@ const PAIRS: &[Pair] = &[
     // around them are held to the mark floor, because they are read only after
     // the name they qualify has been found.
     Pair {
-        ink: Mark { role: Role::SlashMenuRowInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::SlashMenuRowInk,
+            on: ON_PANEL,
+        },
         what: "a command's name",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SlashMenuRowInkHover, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::SlashMenuRowInkHover,
+            on: ON_PANEL_ROW,
+        },
         what: "the command the pointer or the arrows are on",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SlashMenuHintInk, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::SlashMenuHintInk,
+            on: ON_PANEL_ROW,
+        },
         what: "the argument a command takes",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SlashMenuDescriptionInk, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::SlashMenuDescriptionInk,
+            on: ON_PANEL_ROW,
+        },
         what: "what a command does",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ModelMenuRowInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::ModelMenuRowInk,
+            on: ON_PANEL,
+        },
         what: "a model's name at rest",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ModelMenuRowInkCurrent, on: ON_PANEL_ROW_CURRENT },
+        ink: Mark {
+            role: Role::ModelMenuRowInkCurrent,
+            on: ON_PANEL_ROW_CURRENT,
+        },
         what: "the running model's name",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ModelMenuEffortInk, on: ON_PANEL_ROW_CURRENT },
+        ink: Mark {
+            role: Role::ModelMenuEffortInk,
+            on: ON_PANEL_ROW_CURRENT,
+        },
         what: "the level the running model is at",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ModelMenuHeaderInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::ModelMenuHeaderInk,
+            on: ON_PANEL,
+        },
         what: "a provider's name",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ModelMenuHeaderInkQuiet, on: ON_PANEL },
+        ink: Mark {
+            role: Role::ModelMenuHeaderInkQuiet,
+            on: ON_PANEL,
+        },
         what: "a provider the reader is not signed in to",
         floor: MARK,
     },
     // The caret that opens a provider's models is drawn beside its header rather
     // than on a fill of its own.
     Pair {
-        ink: Mark { role: Role::ModelMenuCaretMark, on: ON_PANEL },
+        ink: Mark {
+            role: Role::ModelMenuCaretMark,
+            on: ON_PANEL,
+        },
         what: "the caret in front of a provider's name",
         floor: MARK,
     },
@@ -540,74 +746,116 @@ const PAIRS: &[Pair] = &[
     // body ink and a tick in the gold the window marks what is live with — and
     // the tick is the half a theme is likeliest to leave behind.
     Pair {
-        ink: Mark { role: Role::ModelMenuCheckMark, on: ON_PANEL_ROW_CURRENT },
+        ink: Mark {
+            role: Role::ModelMenuCheckMark,
+            on: ON_PANEL_ROW_CURRENT,
+        },
         what: "the tick beside the running model",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::EffortLadderCheckMark, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::EffortLadderCheckMark,
+            on: ON_PANEL_ROW,
+        },
         what: "the tick beside the rung the model is on",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::EffortLadderRowInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::EffortLadderRowInk,
+            on: ON_PANEL,
+        },
         what: "a rung of the ladder",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::EffortLadderRowInkCurrent, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::EffortLadderRowInkCurrent,
+            on: ON_PANEL_ROW,
+        },
         what: "the rung the model is on",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::QueueCardCountInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::QueueCardCountInk,
+            on: ON_PANEL,
+        },
         what: "how many messages are waiting",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::QueueCardLaneInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::QueueCardLaneInk,
+            on: ON_PANEL,
+        },
         what: "the name of a lane with nothing to count",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueRowInk, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::QueueRowInk,
+            on: ON_PANEL_ROW,
+        },
         what: "a waiting message",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::QueueCardClearInk, on: ON_PANEL },
+        ink: Mark {
+            role: Role::QueueCardClearInk,
+            on: ON_PANEL,
+        },
         what: "the action that empties both lanes",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueCardClearInkHover, on: ON_PANEL_ROW },
+        ink: Mark {
+            role: Role::QueueCardClearInkHover,
+            on: ON_PANEL_ROW,
+        },
         what: "the action that empties both lanes, under the pointer",
         floor: BODY,
     },
     // A waiting row's three controls are marks on a fill of their own, which is
     // the only thing that says they are controls: the row draws no outline.
     Pair {
-        ink: Mark { role: Role::QueueRowControlMark, on: ON_ROW_CONTROL },
+        ink: Mark {
+            role: Role::QueueRowControlMark,
+            on: ON_ROW_CONTROL,
+        },
         what: "the pencil and the bin on a waiting row",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueRowControlMarkHover, on: ON_ROW_CONTROL_HOVER },
+        ink: Mark {
+            role: Role::QueueRowControlMarkHover,
+            on: ON_ROW_CONTROL_HOVER,
+        },
         what: "the pencil on a waiting row, under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueRowPromoteMark, on: ON_ROW_CONTROL },
+        ink: Mark {
+            role: Role::QueueRowPromoteMark,
+            on: ON_ROW_CONTROL,
+        },
         what: "the arrow that pulls a message into the running turn",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueRowPromoteMarkHover, on: ON_ROW_CONTROL_HOVER },
+        ink: Mark {
+            role: Role::QueueRowPromoteMarkHover,
+            on: ON_ROW_CONTROL_HOVER,
+        },
         what: "that arrow under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::QueueRowDeleteMark, on: ON_ROW_CONTROL_HOVER },
+        ink: Mark {
+            role: Role::QueueRowDeleteMark,
+            on: ON_ROW_CONTROL_HOVER,
+        },
         what: "the bin on a waiting row, under the pointer",
         floor: MARK,
     },
@@ -616,27 +864,42 @@ const PAIRS: &[Pair] = &[
     // the body floor on the strip and on the pill when it is lit; the word
     // beside the count names what is counted and is held to the mark floor.
     Pair {
-        ink: Mark { role: Role::StatusStripWorkingInk, on: ON_STRIP },
+        ink: Mark {
+            role: Role::StatusStripWorkingInk,
+            on: ON_STRIP,
+        },
         what: "the word that says what the turn is doing",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::StatusStripQueueCountInk, on: ON_STRIP },
+        ink: Mark {
+            role: Role::StatusStripQueueCountInk,
+            on: ON_STRIP,
+        },
         what: "how many messages the pill counts",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::StatusStripQueueCountInkHover, on: ON_STRIP_PILL },
+        ink: Mark {
+            role: Role::StatusStripQueueCountInkHover,
+            on: ON_STRIP_PILL,
+        },
         what: "how many messages the pill counts, under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::StatusStripQueueLabelInk, on: ON_STRIP },
+        ink: Mark {
+            role: Role::StatusStripQueueLabelInk,
+            on: ON_STRIP,
+        },
         what: "the word beside the count on the pill",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::StatusStripQueueLabelInkHover, on: ON_STRIP_PILL },
+        ink: Mark {
+            role: Role::StatusStripQueueLabelInkHover,
+            on: ON_STRIP_PILL,
+        },
         what: "the word beside the count, under the pointer",
         floor: MARK,
     },
@@ -645,12 +908,18 @@ const PAIRS: &[Pair] = &[
     // is still open is the one state where a theme can bury the count without
     // touching a colour either of the pairs above has seen.
     Pair {
-        ink: Mark { role: Role::StatusStripQueueCountInk, on: ON_STRIP_PILL },
+        ink: Mark {
+            role: Role::StatusStripQueueCountInk,
+            on: ON_STRIP_PILL,
+        },
         what: "how many messages the pill counts, with its card open",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::StatusStripQueueLabelInk, on: ON_STRIP_PILL },
+        ink: Mark {
+            role: Role::StatusStripQueueLabelInk,
+            on: ON_STRIP_PILL,
+        },
         what: "the word beside the count, with the pill's card open",
         floor: MARK,
     },
@@ -710,20 +979,38 @@ struct Telling {
 /// contrast against the column is recorded in the note above.
 const TELLINGS: &[Telling] = &[
     Telling {
-        a: Mark { role: Role::TagWorking, on: ON_SIDEBAR },
-        b: Mark { role: Role::TagParked, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::TagWorking,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::TagParked,
+            on: ON_SIDEBAR,
+        },
         what: "the working tag and the parked tag",
         floor: APART,
     },
     Telling {
-        a: Mark { role: Role::TagWorking, on: ON_SIDEBAR },
-        b: Mark { role: Role::TagIdle, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::TagWorking,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::TagIdle,
+            on: ON_SIDEBAR,
+        },
         what: "the working tag and the idle tag",
         floor: APART,
     },
     Telling {
-        a: Mark { role: Role::TagParked, on: ON_SIDEBAR },
-        b: Mark { role: Role::TagIdle, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::TagParked,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::TagIdle,
+            on: ON_SIDEBAR,
+        },
         what: "the parked tag and the idle tag",
         floor: APART,
     },
@@ -732,20 +1019,38 @@ const TELLINGS: &[Telling] = &[
     // read in, because a theme that greys one and leaves the other is one
     // careless role away from a transcript where nothing says which cell failed.
     Telling {
-        a: Mark { role: Role::TranscriptCellFillFailed, on: ON_TRANSCRIPT },
-        b: Mark { role: Role::TranscriptCellFill, on: ON_TRANSCRIPT },
+        a: Mark {
+            role: Role::TranscriptCellFillFailed,
+            on: ON_TRANSCRIPT,
+        },
+        b: Mark {
+            role: Role::TranscriptCellFill,
+            on: ON_TRANSCRIPT,
+        },
         what: "a failed cell's field and a quiet cell's field",
         floor: APART_TINT,
     },
     Telling {
-        a: Mark { role: Role::TranscriptCellFillFailedHover, on: ON_TRANSCRIPT },
-        b: Mark { role: Role::TranscriptCellFillHover, on: ON_TRANSCRIPT },
+        a: Mark {
+            role: Role::TranscriptCellFillFailedHover,
+            on: ON_TRANSCRIPT,
+        },
+        b: Mark {
+            role: Role::TranscriptCellFillHover,
+            on: ON_TRANSCRIPT,
+        },
         what: "a failed cell's field and a quiet cell's field under the pointer",
         floor: APART_TINT,
     },
     Telling {
-        a: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
-        b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        a: Mark {
+            role: Role::TranscriptCellInkFailed,
+            on: ON_FAILED_CELL,
+        },
+        b: Mark {
+            role: Role::TranscriptCellTitleInk,
+            on: ON_CELL,
+        },
         what: "a failed cell's name and a quiet cell's name",
         floor: APART,
     },
@@ -755,8 +1060,14 @@ const TELLINGS: &[Telling] = &[
     // once, so the pair is compared the way the reader compares it: this fill
     // against the one they saw a moment ago.
     Telling {
-        a: Mark { role: Role::ComposerSendFill, on: ON_COMPOSER },
-        b: Mark { role: Role::ButtonDangerFill, on: ON_COMPOSER },
+        a: Mark {
+            role: Role::ComposerSendFill,
+            on: ON_COMPOSER,
+        },
+        b: Mark {
+            role: Role::ButtonDangerFill,
+            on: ON_COMPOSER,
+        },
         what: "the send disc and the stop disc",
         floor: APART,
     },
@@ -767,14 +1078,26 @@ const TELLINGS: &[Telling] = &[
     // three patches of nothing without moving a word. The tint floor is the
     // failed cell's, because a control is a field rather than a mark.
     Telling {
-        a: Mark { role: Role::QueueRowControlFill, on: ON_PANEL },
-        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        a: Mark {
+            role: Role::QueueRowControlFill,
+            on: ON_PANEL,
+        },
+        b: Mark {
+            role: Role::PanelSurface,
+            on: ON_WINDOW,
+        },
         what: "a waiting row's buttons and the panel behind them",
         floor: APART_TINT,
     },
     Telling {
-        a: Mark { role: Role::QueueRowControlFill, on: ON_PANEL_ROW },
-        b: Mark { role: Role::PanelRowFillHover, on: ON_PANEL },
+        a: Mark {
+            role: Role::QueueRowControlFill,
+            on: ON_PANEL_ROW,
+        },
+        b: Mark {
+            role: Role::PanelRowFillHover,
+            on: ON_PANEL,
+        },
         what: "a waiting row's buttons and the row they sit on",
         floor: APART_TINT,
     },
@@ -786,14 +1109,26 @@ const TELLINGS: &[Telling] = &[
     // ticket promises will work; one that paints the two alike has taken every
     // menu's highlight away at once and moved no word to say so.
     Telling {
-        a: Mark { role: Role::PanelRowFillHover, on: ON_PANEL },
-        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        a: Mark {
+            role: Role::PanelRowFillHover,
+            on: ON_PANEL,
+        },
+        b: Mark {
+            role: Role::PanelSurface,
+            on: ON_WINDOW,
+        },
         what: "the row the pointer is on and the panel behind it",
         floor: APART_TINT,
     },
     Telling {
-        a: Mark { role: Role::PanelRowFillCurrent, on: ON_PANEL },
-        b: Mark { role: Role::PanelSurface, on: ON_WINDOW },
+        a: Mark {
+            role: Role::PanelRowFillCurrent,
+            on: ON_PANEL,
+        },
+        b: Mark {
+            role: Role::PanelSurface,
+            on: ON_WINDOW,
+        },
         what: "the row a panel marks as current and the panel behind it",
         floor: APART_TINT,
     },
@@ -801,8 +1136,14 @@ const TELLINGS: &[Telling] = &[
     // thing that says how much of the context is gone. A theme that paints them
     // into the ticks it never reached leaves a circle with nothing to read.
     Telling {
-        a: Mark { role: Role::ComposerRingTickLit, on: ON_COMPOSER },
-        b: Mark { role: Role::ComposerRingTickUnlit, on: ON_COMPOSER },
+        a: Mark {
+            role: Role::ComposerRingTickLit,
+            on: ON_COMPOSER,
+        },
+        b: Mark {
+            role: Role::ComposerRingTickUnlit,
+            on: ON_COMPOSER,
+        },
         what: "the context ring's lit ticks and the ones it never reached",
         floor: APART,
     },
@@ -815,26 +1156,50 @@ const TELLINGS: &[Telling] = &[
     // four findings rather than as a mark nobody can read. The floor is the tones'
     // own because these are four readings of one artwork, not four promises.
     Telling {
-        a: Mark { role: Role::BrandMarkBlade, on: ON_SIDEBAR },
-        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::BrandMarkBlade,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::BrandMarkWing,
+            on: ON_SIDEBAR,
+        },
         what: "the mark's blade and the wing under it",
         floor: APART_TONE,
     },
     Telling {
-        a: Mark { role: Role::BrandMarkWingInnerShadow, on: ON_SIDEBAR },
-        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::BrandMarkWingInnerShadow,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::BrandMarkWing,
+            on: ON_SIDEBAR,
+        },
         what: "the mark's stem shadow and the wing it darkens",
         floor: APART_TONE,
     },
     Telling {
-        a: Mark { role: Role::BrandMarkWingShadow, on: ON_SIDEBAR },
-        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::BrandMarkWingShadow,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::BrandMarkWing,
+            on: ON_SIDEBAR,
+        },
         what: "the mark's blade shadow and the wing it darkens",
         floor: APART_TONE,
     },
     Telling {
-        a: Mark { role: Role::BrandMarkStemShadow, on: ON_SIDEBAR },
-        b: Mark { role: Role::BrandMarkStem, on: ON_SIDEBAR },
+        a: Mark {
+            role: Role::BrandMarkStemShadow,
+            on: ON_SIDEBAR,
+        },
+        b: Mark {
+            role: Role::BrandMarkStem,
+            on: ON_SIDEBAR,
+        },
         what: "the mark's blade shadow and the stem it darkens",
         floor: APART_TONE,
     },
@@ -896,7 +1261,9 @@ pub(crate) fn separation(theme: &Resolved) -> Vec<Clash> {
 /// The surface ink sits on: each field in `on` laid over the one before it,
 /// starting from the window's own background, which nothing sits behind.
 fn surface(theme: &Resolved, on: &[Role]) -> Rgba {
-    on.iter().fold(theme.background(), |under, role| theme.get(*role).over(under))
+    on.iter().fold(theme.background(), |under, role| {
+        theme.get(*role).over(under)
+    })
 }
 
 /// The WCAG contrast ratio of ink on the surface behind it: an ink that carries

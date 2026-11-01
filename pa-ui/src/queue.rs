@@ -46,5 +46,7 @@ pub(crate) fn apply_queue(
             .collect()
     };
     ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::from(lane_items(steering)))));
-    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(follow_up)))));
+    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::from(lane_items(
+        follow_up,
+    )))));
 }

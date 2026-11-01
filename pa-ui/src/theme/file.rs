@@ -27,7 +27,10 @@ pub(crate) struct Refusal {
 
 impl Refusal {
     fn new(file: &str, detail: impl Into<String>) -> Self {
-        Self { file: file.to_string(), detail: detail.into() }
+        Self {
+            file: file.to_string(),
+            detail: detail.into(),
+        }
     }
 }
 
@@ -59,9 +62,12 @@ pub(crate) fn load(path: &str) -> Result<Resolved, Refusal> {
 /// but it is compiled in so that selecting it does not depend on where the
 /// window was started. A selection that is not one of these names is a path.
 ///
-/// The names are the subjects the spec promised, not the files' paths: `mono` is
-/// the monochrome pass this branch carried before it was a theme file.
-pub(crate) const BUNDLED: &[(&str, &str)] = &[("mono", include_str!("../../themes/mono.json"))];
+/// The name is the subject the spec promised, not the file's path: `default` is
+/// the monochrome look the monochrome pass carried before it was a theme file.
+pub(crate) const BUNDLED: &[(&str, &str)] = &[(
+    "default",
+    include_str!("../../themes/default.json"),
+)];
 
 /// A bundled theme by name, or the file at the path the reader gave.
 pub(crate) fn resolve(choice: &str) -> Result<Resolved, Refusal> {
@@ -71,16 +77,30 @@ pub(crate) fn resolve(choice: &str) -> Result<Resolved, Refusal> {
     }
 }
 
+/// The theme the window opens on when the reader selects nothing.
+///
+/// It is a bundled name rather than the compiled-in table, because the look the
+/// window ships is a choice like any other.
+pub(crate) const DEFAULT: &str = "default";
+
+/// A selection that names the window's opening theme is no selection at all, so
+/// `PA_THEME` set to the default behaves the same as it being unset.
+pub(crate) fn is_default(choice: &str) -> bool {
+    choice.is_empty() || choice == DEFAULT
+}
+
 /// The window's theme: the one compiled in, with the file or bundled theme the
-/// reader selected laid over it. A selection that cannot be read leaves the
-/// shipped theme in place and comes back as the line to log.
+/// reader selected laid over it. With no selection, it is the bundled theme the
+/// window opens on. A selection that cannot be read leaves that theme in place
+/// and comes back as the line to log.
 pub(crate) fn select(choice: Option<&str>) -> (Resolved, Option<Refusal>) {
-    let Some(choice) = choice.filter(|choice| !choice.is_empty()) else {
-        return (Resolved::shipped(), None);
+    let opening = || resolve(DEFAULT).unwrap_or_else(|_| Resolved::shipped());
+    let Some(choice) = choice.filter(|choice| !is_default(choice)) else {
+        return (opening(), None);
     };
     match resolve(choice) {
         Ok(theme) => (theme, None),
-        Err(refusal) => (Resolved::shipped(), Some(refusal)),
+        Err(refusal) => (opening(), Some(refusal)),
     }
 }
 
@@ -146,7 +166,12 @@ fn patch(file: &str, text: &str) -> Result<Overlay, Refusal> {
     if let Some(block) = fields.get("roles") {
         for (used, value) in entries(file, "roles", block)? {
             let Some(role) = Role::ALL.iter().find(|role| role.name() == used) else {
-                return Err(unknown(file, "role", used, Role::ALL.iter().map(|role| role.name())));
+                return Err(unknown(
+                    file,
+                    "role",
+                    used,
+                    Role::ALL.iter().map(|role| role.name()),
+                ));
             };
             patch.set_role(*role, colour(file, "roles", used, value)?);
         }
@@ -163,16 +188,25 @@ fn entries<'a>(
 ) -> Result<&'a Map<String, Value>, Refusal> {
     match value {
         Value::Object(entries) => Ok(entries),
-        _ => Err(Refusal::new(file, format!("`{block}` is not an object of names to colours"))),
+        _ => Err(Refusal::new(
+            file,
+            format!("`{block}` is not an object of names to colours"),
+        )),
     }
 }
 
 fn colour(file: &str, block: &str, used: &str, value: &Value) -> Result<Rgba, Refusal> {
     let Some(text) = value.as_str() else {
-        return Err(Refusal::new(file, format!("`{block}.{used}` is not a colour string")));
+        return Err(Refusal::new(
+            file,
+            format!("`{block}.{used}` is not a colour string"),
+        ));
     };
     Rgba::parse(text).ok_or_else(|| {
-        Refusal::new(file, format!("`{block}.{used}` is `{text}`; a colour is #rrggbb or #rrggbbaa"))
+        Refusal::new(
+            file,
+            format!("`{block}.{used}` is `{text}`; a colour is #rrggbb or #rrggbbaa"),
+        )
     })
 }
 
@@ -184,7 +218,10 @@ fn unknown<'a>(
     legal: impl Iterator<Item = &'a str>,
 ) -> Refusal {
     match nearest(used, legal) {
-        Some(meant) => Refusal::new(file, format!("unknown {what} `{used}`; nearest is `{meant}`")),
+        Some(meant) => Refusal::new(
+            file,
+            format!("unknown {what} `{used}`; nearest is `{meant}`"),
+        ),
         None => Refusal::new(file, format!("unknown {what} `{used}`")),
     }
 }
@@ -216,8 +253,9 @@ fn edits(a: &str, b: &str) -> usize {
         current[0] = row + 1;
         for (column, to) in b.iter().enumerate() {
             let substitute = above[column] + usize::from(from != to);
-            current[column + 1] =
-                (above[column + 1] + 1).min(current[column] + 1).min(substitute);
+            current[column + 1] = (above[column + 1] + 1)
+                .min(current[column] + 1)
+                .min(substitute);
         }
         std::mem::swap(&mut above, &mut current);
     }

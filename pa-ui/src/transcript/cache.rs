@@ -15,7 +15,6 @@ pub(crate) struct CachedMessage {
     rows: Vec<Row>,
 }
 
-
 /// A message plus every tool result it owns. The result is what a cell row
 /// draws, so a result that arrives late must change the fingerprint.
 pub(crate) fn fingerprint(
@@ -47,7 +46,6 @@ pub(crate) fn fingerprint(
     hasher.finish()
 }
 
-
 /// Drop the cache when it grows past what a very long session could hold, so a
 /// window left open all day cannot creep upward without bound.
 pub(crate) fn cache_put(owner: &str, fingerprint: u64, rows: &[Row]) {
@@ -66,14 +64,12 @@ pub(crate) fn cache_put(owner: &str, fingerprint: u64, rows: &[Row]) {
     });
 }
 
-
 /// Empty the per-message cache. Only a measurement needs this: the cache is
 /// bounded on its own and follows the messages it is keyed by.
 #[cfg(test)]
 pub fn reset_cache() {
     MESSAGE_CACHE.with(|cache| cache.borrow_mut().clear());
 }
-
 
 pub(crate) fn cache_get(owner: &str, fingerprint: u64) -> Option<Vec<Row>> {
     MESSAGE_CACHE.with(|cache| {

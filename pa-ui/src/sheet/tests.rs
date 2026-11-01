@@ -29,15 +29,17 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
     let sheet = Sheet {
         inner: RefCell::new(Inner {
             rows: Vec::new(),
-                heights: Vec::new(),
-                measured: Vec::new(),
-                last_prepend_px: 0.0,
+            heights: Vec::new(),
+            measured: Vec::new(),
+            last_prepend_px: 0.0,
             index: std::collections::HashMap::new(),
             open: None,
             virtual_state: None,
-                drawn: Box::new(Recording(orders.clone())),
+            drawn: Box::new(Recording(orders.clone())),
         }),
-        vstate: Rc::new(RefCell::new(VirtualSlintRows::new(Rc::new(slint::VecModel::default())))),
+        vstate: Rc::new(RefCell::new(VirtualSlintRows::new(Rc::new(
+            slint::VecModel::default(),
+        )))),
     };
     (sheet, orders)
 }
@@ -84,8 +86,14 @@ fn an_open_row_stays_open_when_the_poll_rebuilds_it() {
     // the same two rows arrive again, collapsed, exactly as a poll delivers them
     sheet.merge(vec![code, cell]);
 
-    assert!(sheet.rows()[0].expanded, "the open code block was collapsed by the poll");
-    assert!(!sheet.rows()[1].expanded, "a row the reader never opened starts closed");
+    assert!(
+        sheet.rows()[0].expanded,
+        "the open code block was collapsed by the poll"
+    );
+    assert!(
+        !sheet.rows()[1].expanded,
+        "a row the reader never opened starts closed"
+    );
 }
 
 #[test]
@@ -95,7 +103,13 @@ fn a_merge_never_deletes_a_message_it_was_not_given() {
         row("m1", transcript::KIND_CODE, "rust", "", "one"),
         row("m2", transcript::KIND_CODE, "sql", "", "two"),
     ]);
-    sheet.merge(vec![row("m1", transcript::KIND_CODE, "rust", "", "one, edited")]);
+    sheet.merge(vec![row(
+        "m1",
+        transcript::KIND_CODE,
+        "rust",
+        "",
+        "one, edited",
+    )]);
     assert_eq!(sheet.rows().len(), 2, "the unmentioned message was dropped");
     assert_eq!(sheet.rows()[1].title, "sql");
 }
@@ -105,7 +119,13 @@ fn the_store_copy_replaces_the_answer_where_it_stands() {
     let (sheet, _) = sheet();
     sheet.replace(vec![row("m1", transcript::KIND_USER, "", "", "hi")]);
     sheet.answer_began("m2");
-    sheet.merge(vec![row("m2", transcript::KIND_AGENT, "", "", "half an answer")]);
+    sheet.merge(vec![row(
+        "m2",
+        transcript::KIND_AGENT,
+        "",
+        "",
+        "half an answer",
+    )]);
     assert_eq!(sheet.rows().len(), 2);
 
     // the turn closes and the store's copy of the same message arrives, longer
@@ -127,9 +147,19 @@ fn a_prepended_page_survives_a_later_merge() {
     sheet.prepend(vec![row("m1", transcript::KIND_CODE, "rust", "", "first")]);
     assert_eq!(messages(&sheet), ["m1", "m2"]);
 
-    sheet.merge(vec![row("m2", transcript::KIND_CODE, "rust", "", "second, edited")]);
+    sheet.merge(vec![row(
+        "m2",
+        transcript::KIND_CODE,
+        "rust",
+        "",
+        "second, edited",
+    )]);
 
-    assert_eq!(messages(&sheet), ["m1", "m2"], "the older page was dropped by the merge");
+    assert_eq!(
+        messages(&sheet),
+        ["m1", "m2"],
+        "the older page was dropped by the merge"
+    );
     assert_eq!(sheet.rows()[1].body, "second, edited");
 }
 
@@ -149,7 +179,11 @@ fn one_changed_row_costs_exactly_one_order() {
         row("m2", transcript::KIND_CODE, "sql", "", "two, edited"),
     ]);
 
-    assert_eq!(*orders.borrow(), vec![Order::Set { at: 2 }], "a changed row was removed and re-inserted");
+    assert_eq!(
+        *orders.borrow(),
+        vec![Order::Set { at: 2 }],
+        "a changed row was removed and re-inserted"
+    );
 }
 
 #[test]
@@ -164,7 +198,10 @@ fn a_poll_that_changes_nothing_draws_nothing() {
 
     sheet.merge(page);
 
-    assert!(orders.borrow().is_empty(), "an unchanged poll still told the list to redraw");
+    assert!(
+        orders.borrow().is_empty(),
+        "an unchanged poll still told the list to redraw"
+    );
 }
 
 #[test]
@@ -175,7 +212,13 @@ fn leaving_a_chat_mid_answer_does_not_touch_the_new_one() {
         row("a2", transcript::KIND_AGENT, "", "", "answer a"),
     ]);
     sheet.answer_began("a3");
-    sheet.merge(vec![row("a3", transcript::KIND_AGENT, "", "", "still writing")]);
+    sheet.merge(vec![row(
+        "a3",
+        transcript::KIND_AGENT,
+        "",
+        "",
+        "still writing",
+    )]);
 
     // the reader switches chats while that answer is being written
     let b = vec![
@@ -186,7 +229,11 @@ fn leaving_a_chat_mid_answer_does_not_touch_the_new_one() {
     sheet.replace(b.clone());
     sheet.merge(b.clone());
 
-    assert_eq!(messages(&sheet), ["b1", "b2", "b3"], "the stale answer ate rows from the new chat");
+    assert_eq!(
+        messages(&sheet),
+        ["b1", "b2", "b3"],
+        "the stale answer ate rows from the new chat"
+    );
 }
 
 #[test]
@@ -197,7 +244,17 @@ fn rows_that_arrive_while_an_answer_is_open_land_above_it() {
     sheet.merge(vec![row("live", transcript::KIND_AGENT, "", "", "writing")]);
 
     // a message the store had not published yet arrives mid-answer
-    sheet.merge(vec![row("m2", transcript::KIND_AGENT, "", "", "older news")]);
+    sheet.merge(vec![row(
+        "m2",
+        transcript::KIND_AGENT,
+        "",
+        "",
+        "older news",
+    )]);
 
-    assert_eq!(messages(&sheet), ["m1", "m2", "live"], "the answer drifted above newer rows");
+    assert_eq!(
+        messages(&sheet),
+        ["m1", "m2", "live"],
+        "the answer drifted above newer rows"
+    );
 }

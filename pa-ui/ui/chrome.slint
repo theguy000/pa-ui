@@ -53,8 +53,8 @@ export component TitleBar inherits Rectangle {
             arrow: right-toggle.hot;
             point-left: !root.right-open;
             tint: right-toggle.hot
-                ? Theme.title-bar-fold-glyph-hover
-                : Theme.title-bar-fold-glyph;
+                ? Theme.chrome-mark-hover
+                : Theme.chrome-mark;
         }
     }
 
@@ -68,7 +68,7 @@ export component TitleBar inherits Rectangle {
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: Theme.title-bar-glyph;
+            tint: Theme.chrome-mark;
             commands: "M 0.5 5.5 L 9.5 5.5"; }
     }
 
@@ -80,7 +80,7 @@ export component TitleBar inherits Rectangle {
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: Theme.title-bar-glyph;
+            tint: Theme.chrome-mark;
             commands: root.maximized
                 ? "M 2.5 0.5 L 9.5 0.5 L 9.5 7.5 M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z"
                 : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
@@ -95,7 +95,7 @@ export component TitleBar inherits Rectangle {
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: close-button.hot ? Theme.title-bar-close-ink-hover : Theme.title-bar-glyph;
+            tint: close-button.hot ? Theme.title-bar-close-ink-hover : Theme.chrome-mark;
             commands: "M 0.5 0.5 L 9.5 9.5 M 9.5 0.5 L 0.5 9.5";
         }
     }

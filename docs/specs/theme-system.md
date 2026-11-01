@@ -12,7 +12,7 @@ The window names its colours once, as a small set of roles with meaning (`transc
 
 Selecting a theme is one setting. Wrong names are refused with a message that says what the file said and what was legal, an unreadable colour combination is reported, and the window still opens — on the default theme — rather than ever showing a broken surface.
 
-Two themes ship as evidence the system works: the current look, and a monochrome one. The monochrome pass already running in the working tree becomes that second theme instead of an unmaintainable edit.
+One theme ships as evidence the system works: the monochrome look, embedded as `default`. The monochrome pass that ran in the working tree becomes a theme file instead of an unmaintainable edit.
 
 ## User Stories
 

@@ -46,7 +46,11 @@ pub(crate) struct Break {
 impl Break {
     /// A break at one place in one source.
     pub(crate) fn at(file: &str, line: usize, written: impl Into<String>) -> Self {
-        Self { file: file.to_string(), line, written: written.into() }
+        Self {
+            file: file.to_string(),
+            line,
+            written: written.into(),
+        }
     }
 
     /// Where to look and what is written there, in the shape a compiler prints a
@@ -167,11 +171,11 @@ pub(crate) fn declared_roles(source: &str) -> Vec<&str> {
 }
 
 /// Each line of `source`, numbered from one, as a scan reads it.
-fn code_lines(
-    source: &str,
-    labels: Labels,
-) -> impl Iterator<Item = (usize, String)> + '_ {
-    source.lines().enumerate().map(move |(index, line)| (index + 1, code(line, labels)))
+fn code_lines(source: &str, labels: Labels) -> impl Iterator<Item = (usize, String)> + '_ {
+    source
+        .lines()
+        .enumerate()
+        .map(move |(index, line)| (index + 1, code(line, labels)))
 }
 
 /// One line with its comment gone, and its labels handled as `labels` asks.
@@ -217,12 +221,18 @@ fn code(line: &str, labels: Labels) -> String {
 /// Three, six and eight digits are the lengths Slint reads as a colour, so they
 /// are the lengths a source can hold.
 fn hex_value(text: &str) -> Option<&str> {
-    let digits = text[1..].chars().take_while(|c| c.is_ascii_hexdigit()).count();
+    let digits = text[1..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .count();
     if !matches!(digits, 3 | 6 | 8) {
         return None;
     }
     let rest = &text[1 + digits..];
-    rest.chars().next().is_none_or(|c| !is_ident(c)).then(|| &text[..1 + digits])
+    rest.chars()
+        .next()
+        .is_none_or(|c| !is_ident(c))
+        .then(|| &text[..1 + digits])
 }
 
 /// Whether `c` can be part of a Slint or Rust name.
@@ -243,7 +253,10 @@ fn is_colour_name(word: &str) -> bool {
 /// Whether a word opens a colour built from numbers. Exactly the four Slint reads
 /// as values: a call it cannot parse is a build error rather than a colour.
 fn is_colour_function(word: &str) -> bool {
-    matches!(word.to_ascii_lowercase().as_str(), "rgb" | "rgba" | "hsv" | "hsva")
+    matches!(
+        word.to_ascii_lowercase().as_str(),
+        "rgb" | "rgba" | "hsv" | "hsva"
+    )
 }
 
 /// Whether what follows a word is the bracket that makes it a call.

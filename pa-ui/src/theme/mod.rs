@@ -66,14 +66,12 @@ pub(crate) fn apply(ui: &AppWindow, theme: &Resolved) {
 fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
     match role {
         Role::WindowSurface => global.set_window_surface(value),
-        Role::TitleBarGlyph => global.set_title_bar_glyph(value),
+        Role::ChromeMark => global.set_chrome_mark(value),
+        Role::ChromeMarkHover => global.set_chrome_mark_hover(value),
         Role::TitleBarCaptionFillHover => global.set_title_bar_caption_fill_hover(value),
         Role::TitleBarCloseFillHover => global.set_title_bar_close_fill_hover(value),
         Role::TitleBarCloseInkHover => global.set_title_bar_close_ink_hover(value),
         Role::TitleBarFoldFillHover => global.set_title_bar_fold_fill_hover(value),
-        Role::TitleBarFoldGlyph => global.set_title_bar_fold_glyph(value),
-        Role::TitleBarFoldGlyphHover => global.set_title_bar_fold_glyph_hover(value),
-        Role::SidebarSurface => global.set_sidebar_surface(value),
         Role::SidebarRowFill => global.set_sidebar_row_fill(value),
         Role::SidebarRowFillHover => global.set_sidebar_row_fill_hover(value),
         Role::SidebarRowFillSelected => global.set_sidebar_row_fill_selected(value),
@@ -84,15 +82,12 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TagWorking => global.set_tag_working(value),
         Role::TagParked => global.set_tag_parked(value),
         Role::TagIdle => global.set_tag_idle(value),
-        Role::SidebarFoldGlyph => global.set_sidebar_fold_glyph(value),
-        Role::SidebarFoldGlyphHover => global.set_sidebar_fold_glyph_hover(value),
         Role::SidebarNewSessionMark => global.set_sidebar_new_session_mark(value),
         Role::SidebarNewSessionMarkHover => global.set_sidebar_new_session_mark_hover(value),
         Role::SidebarStripNewSessionMark => global.set_sidebar_strip_new_session_mark(value),
         Role::SidebarStripNewSessionMarkHover => {
             global.set_sidebar_strip_new_session_mark_hover(value)
         }
-        Role::SidebarSearchMark => global.set_sidebar_search_mark(value),
         Role::SidebarWordmarkInk => global.set_sidebar_wordmark_ink(value),
         Role::SidebarRowRenameMark => global.set_sidebar_row_rename_mark(value),
         Role::SidebarRowRenameFill => global.set_sidebar_row_rename_fill(value),
@@ -131,9 +126,7 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptCellFillFailedHover => global.set_transcript_cell_fill_failed_hover(value),
         Role::TranscriptCellInkFailed => global.set_transcript_cell_ink_failed(value),
         Role::TranscriptCellBadgeFill => global.set_transcript_cell_badge_fill(value),
-        Role::TranscriptCellBadgeFillHover => {
-            global.set_transcript_cell_badge_fill_hover(value)
-        }
+        Role::TranscriptCellBadgeFillHover => global.set_transcript_cell_badge_fill_hover(value),
         Role::TranscriptCellBadgeMark => global.set_transcript_cell_badge_mark(value),
         Role::TranscriptReasonEdge => global.set_transcript_reason_edge(value),
         Role::TranscriptReasonInk => global.set_transcript_reason_ink(value),
@@ -253,16 +246,11 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::StatusStripQueueFill => global.set_status_strip_queue_fill(value),
         Role::StatusStripQueueFillHover => global.set_status_strip_queue_fill_hover(value),
         Role::StatusStripQueueCountInk => global.set_status_strip_queue_count_ink(value),
-        Role::StatusStripQueueCountInkHover => {
-            global.set_status_strip_queue_count_ink_hover(value)
-        }
+        Role::StatusStripQueueCountInkHover => global.set_status_strip_queue_count_ink_hover(value),
         Role::StatusStripQueueLabelInk => global.set_status_strip_queue_label_ink(value),
-        Role::StatusStripQueueLabelInkHover => {
-            global.set_status_strip_queue_label_ink_hover(value)
-        }
+        Role::StatusStripQueueLabelInkHover => global.set_status_strip_queue_label_ink_hover(value),
     }
 }
-
 
 /// A second theme for the tests that have to see one theme follow another: the
 /// window turned over, with both inks moved so a role made of either follows it.

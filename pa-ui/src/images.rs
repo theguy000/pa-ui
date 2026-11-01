@@ -53,12 +53,24 @@ pub fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -74,7 +86,6 @@ fn attach(bytes: Vec<u8>) -> Option<Attachment> {
     })
 }
 
-
 /// A PowerShell invocation that never paints a console window: the child is a
 /// console app, and a black box flashing over the composer is not part of the UI.
 #[cfg(windows)]
@@ -83,7 +94,15 @@ fn powershell(script: &str) -> Command {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut command = Command::new("powershell");
     command
-        .args(["-STA", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
+        .args([
+            "-STA",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null());
     command
@@ -139,7 +158,11 @@ pub fn read_clipboard() -> Option<Attachment> {
         .stderr(std::process::Stdio::null())
         .status()
         .ok()?;
-    let bytes = if status.success() { std::fs::read(&path).ok() } else { None };
+    let bytes = if status.success() {
+        std::fs::read(&path).ok()
+    } else {
+        None
+    };
     let _ = std::fs::remove_file(&path);
     bytes.and_then(attach)
 }
@@ -186,7 +209,10 @@ mod tests {
 
     #[test]
     fn sniffing_trusts_the_bytes() {
-        assert_eq!(sniff(&[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0]), Some("image/png"));
+        assert_eq!(
+            sniff(&[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0]),
+            Some("image/png")
+        );
         assert_eq!(sniff(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
         assert_eq!(sniff(b"RIFF____WEBPVP8 "), Some("image/webp"));
         assert_eq!(sniff(b"GIF89a...."), Some("image/gif"));
@@ -368,6 +394,9 @@ mod decode_tests {
     fn decodes_what_the_encoder_writes() {
         assert_eq!(decode_base64("QUJD"), b"ABC");
         assert_eq!(decode_base64("QUJDRA=="), b"ABCD");
-        assert_eq!(decode_base64(&base64(b"a longer payload \x00\x01\xf0")), b"a longer payload \x00\x01\xf0");
+        assert_eq!(
+            decode_base64(&base64(b"a longer payload \x00\x01\xf0")),
+            b"a longer payload \x00\x01\xf0"
+        );
     }
 }

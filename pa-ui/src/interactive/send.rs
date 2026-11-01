@@ -2,7 +2,13 @@
 
 use crate::*;
 
-pub(crate) fn steer(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>, job_tx: &Sender<Job>, pending_user: &Rc<RefCell<Option<String>>>) {
+pub(crate) fn steer(
+    ui: &AppWindow,
+    attachment_model: &Rc<VecModel<slint::Image>>,
+    attachments: &Rc<RefCell<Vec<images::Attachment>>>,
+    job_tx: &Sender<Job>,
+    pending_user: &Rc<RefCell<Option<String>>>,
+) {
     let weak = ui.as_weak();
     let jobs = job_tx.clone();
     let pending_user = pending_user.clone();
@@ -33,7 +39,11 @@ pub(crate) fn steer(ui: &AppWindow, attachment_model: &Rc<VecModel<slint::Image>
             attachment_model.remove(attachment_model.row_count() - 1);
         }
         *pending_user.borrow_mut() = None;
-        let _ = jobs.send(Job::Steer { session, message, images: blocks });
+        let _ = jobs.send(Job::Steer {
+            session,
+            message,
+            images: blocks,
+        });
     });
 }
 
@@ -154,10 +164,7 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
                 ui.set_composer_text("".into());
                 ui.set_composer_has_text(false);
                 ui.set_composer_command("".into());
-                let _ = jobs.send(Job::Rename {
-                    session,
-                    name,
-                });
+                let _ = jobs.send(Job::Rename { session, name });
                 return;
             }
             SlashAction::NotWired(name) => {
@@ -228,6 +235,10 @@ pub(crate) fn send(ui: &AppWindow, handles: &Handles<'_>) {
         }
         status::clear(&ui);
         in_flight_for_send.set(true);
-        let _ = jobs.send(Job::Prompt { session, message, images: blocks });
+        let _ = jobs.send(Job::Prompt {
+            session,
+            message,
+            images: blocks,
+        });
     });
 }

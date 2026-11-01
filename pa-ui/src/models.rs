@@ -40,7 +40,12 @@ pub(crate) fn refresh_model_groups(
                         label: transcript::plain(&model_label(&entry.name, &entry.id)).into(),
                         detail: context_hint(entry.context_window).into(),
                         // only the running model has a level to name
-                        effort: if current { effort.clone() } else { String::new() }.into(),
+                        effort: if current {
+                            effort.clone()
+                        } else {
+                            String::new()
+                        }
+                        .into(),
                         current,
                     }
                 })

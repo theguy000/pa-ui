@@ -77,12 +77,16 @@ mod efficiency_probe {
         eprintln!("[bench] rows on the sheet: {}", sheet.rows().len());
 
         let unchanged = rows.clone();
-        time("a poll where nothing changed", 20, || sheet.merge(unchanged.clone()));
+        time("a poll where nothing changed", 20, || {
+            sheet.merge(unchanged.clone())
+        });
 
         let mut changed = rows.clone();
         let last = changed.len() - 1;
         changed[last].body.push_str(" and one more sentence");
-        time("a poll where one message changed", 20, || sheet.merge(changed.clone()));
+        time("a poll where one message changed", 20, || {
+            sheet.merge(changed.clone())
+        });
 
         let older: Vec<_> = rows.iter().take(60).cloned().collect();
         time("a page of older rows", 20, || {
@@ -136,7 +140,9 @@ mod efficiency_parts {
         let _ = time("StyledText::from_markdown, one row", 2000, || {
             slint::StyledText::from_markdown(&markup)
         });
-        time("message.to_string() (fingerprint input)", 2000, || message.to_string());
+        time("message.to_string() (fingerprint input)", 2000, || {
+            message.to_string()
+        });
         time("one message -> rows (cold rows, warm cache)", 2000, || {
             let (rows, _) = transcript::build(std::slice::from_ref(&message), 1);
             rows

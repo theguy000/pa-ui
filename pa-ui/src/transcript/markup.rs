@@ -2,7 +2,6 @@ use super::*;
 
 use crate::theme::{Resolved, Role};
 
-
 /// Text as the layout engine wants it: no non-breaking or thin spaces.
 ///
 /// Slint lays text out through parley, and parley panics outright when an elide
@@ -25,7 +24,6 @@ pub fn plain(text: &str) -> String {
         })
         .collect()
 }
-
 
 pub fn styled(markup: &str) -> StyledText {
     // Only the narrow spaces are folded here. U+00A0 is the guard that stops a
@@ -58,7 +56,6 @@ pub fn styled(markup: &str) -> StyledText {
     }
 }
 
-
 /// Undo the HTML entities that arrive in pasted source (`&#x20;`, `&amp;`).
 ///
 /// Terminals and chat surfaces agree on these; leaving them encoded shows
@@ -84,7 +81,8 @@ pub fn decode_entities(text: &str) -> String {
             continue;
         };
         let body = &text[index + 1..semi];
-        let decoded = if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X")) {
+        let decoded = if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X"))
+        {
             u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
         } else if let Some(dec) = body.strip_prefix('#') {
             dec.parse::<u32>().ok().and_then(char::from_u32)
@@ -114,7 +112,6 @@ pub fn decode_entities(text: &str) -> String {
     out
 }
 
-
 pub(crate) fn escape(text: &str, out: &mut String) {
     for ch in text.chars() {
         match ch {
@@ -132,7 +129,6 @@ pub(crate) fn escape(text: &str, out: &mut String) {
     }
 }
 
-
 /// Plain text rendered verbatim (thinking, output, notices).
 pub fn plain_markup(text: &str) -> String {
     let decoded = decode_entities(text);
@@ -140,7 +136,6 @@ pub fn plain_markup(text: &str) -> String {
     escape(&decoded, &mut out);
     guard_block_markers(&out)
 }
-
 
 /// `<`, `>` and `&` in the source become entities, so a message that *talks*
 /// about a tag (``</font>``, `<div>`) draws the characters instead of opening a
@@ -158,7 +153,6 @@ pub(crate) fn escape_html(text: &str) -> String {
     }
     out
 }
-
 
 /// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
 /// headings become bold lines, rules become blank lines, quotes lose their `>`.
@@ -197,7 +191,6 @@ pub(crate) fn strong_markers(line: &str) -> usize {
     count
 }
 
-
 /// A `**span**` that runs over a line break is not something the Slint text
 /// parser accepts, so it printed the asterisks instead of the weight. Each line
 /// is rebalanced here: a span still open at the end of a line is closed there
@@ -224,7 +217,6 @@ pub(crate) fn balance_strong(text: &str) -> String {
     out
 }
 
-
 /// A message's markdown, in the renderer's own markup: a heading becomes a bold
 /// line in the heading's ink, a rule becomes a blank line, a quote loses its `>`,
 /// and a backticked word becomes the inline code's ink instead of the renderer's
@@ -246,7 +238,11 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
             out.push_str("**");
             out.push_str(body);
             out.push_str("**</font>");
-        } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
+        } else if trimmed.len() >= 3
+            && trimmed
+                .chars()
+                .all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ')
+        {
             // horizontal rule: nothing to draw
         } else if let Some(rest) = trimmed.strip_prefix("> ") {
             out.push('›');
@@ -260,7 +256,6 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
     // block to CommonMark, and the renderer has no code blocks
     guard_block_markers(&balance_strong(&highlight_inline_code(&out, theme)))
 }
-
 
 /// Inline code, as a colour rather than a box.
 ///
@@ -322,7 +317,6 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
     out
 }
 
-
 /// One piece of a message: the prose between the blocks, a fenced block, or a
 /// table. Slint's markdown renderer handles emphasis, but it has no notion of a
 /// code surface or a table grid, so those are lifted out and drawn here.
@@ -331,7 +325,6 @@ pub(crate) enum Block {
     Code { lang: String, body: String },
     Table(String),
 }
-
 
 /// Split one table row into cells on unescaped pipes, dropping the empty edge
 /// cells a leading or trailing pipe leaves behind.
@@ -367,7 +360,6 @@ pub(crate) fn split_table_row(line: &str) -> Vec<String> {
         .collect()
 }
 
-
 /// The `|---|:--:|` row that turns the line above it into a table header.
 pub(crate) fn is_delimiter_row(line: &str) -> bool {
     let trimmed = line.trim();
@@ -385,7 +377,6 @@ pub(crate) fn is_delimiter_row(line: &str) -> bool {
         })
 }
 
-
 /// `:--` left, `--:` right, `:-:` centred, as GFM reads them.
 pub(crate) fn table_alignment(cell: &str) -> u8 {
     let cell = cell.trim();
@@ -399,7 +390,6 @@ pub(crate) fn table_alignment(cell: &str) -> u8 {
     }
 }
 
-
 pub(crate) fn truncate_to(text: &str, width: usize) -> String {
     let count = text.chars().count();
     if count <= width {
@@ -410,7 +400,6 @@ pub(crate) fn truncate_to(text: &str, width: usize) -> String {
     out
 }
 
-
 /// Draw a pipe table the way the TUI does: a header band, a rule, the rows, and
 /// a box around the whole thing. It is text, not a widget, so it stays copyable
 /// and needs no per-cell model.
@@ -419,7 +408,10 @@ pub(crate) fn render_table(raw: &[&str]) -> Option<String> {
         return None;
     }
     let header = split_table_row(raw[0]);
-    let aligns: Vec<u8> = split_table_row(raw[1]).iter().map(|cell| table_alignment(cell)).collect();
+    let aligns: Vec<u8> = split_table_row(raw[1])
+        .iter()
+        .map(|cell| table_alignment(cell))
+        .collect();
     if header.is_empty() || aligns.len() != header.len() {
         return None;
     }
@@ -488,14 +480,12 @@ pub(crate) fn render_table(raw: &[&str]) -> Option<String> {
     Some(out.join("\n"))
 }
 
-
 pub(crate) fn flush_prose(prose: &mut Vec<String>, out: &mut Vec<Block>) {
     if prose.iter().any(|line| !line.trim().is_empty()) {
         out.push(Block::Prose(prose.join("\n")));
     }
     prose.clear();
 }
-
 
 /// Carve a message into prose, fenced blocks and tables.
 pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
@@ -547,7 +537,6 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
     out
 }
 
-
 /// Highlight a fenced block. Only the python tokenizer exists; anything else is
 /// shown verbatim rather than guessed at.
 #[must_use]
@@ -564,14 +553,12 @@ pub fn highlight_code(lang: &str, code: &str, theme: &Resolved) -> String {
     }
 }
 
-
 pub(crate) const KEYWORDS: &[&str] = &[
     "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
     "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
     "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "False", "try", "while",
     "with", "yield",
 ];
-
 
 /// Open a `<font>` span in a role's colour; the caller closes it.
 ///
@@ -584,13 +571,11 @@ fn open_font(theme: &Resolved, role: Role, out: &mut String) {
     out.push_str("\">");
 }
 
-
 pub(crate) fn wrap(theme: &Resolved, role: Role, text: &str, out: &mut String) {
     open_font(theme, role, out);
     escape(text, out);
     out.push_str("</font>");
 }
-
 
 /// Small python tokenizer -> coloured markup. Not a parser: keywords, strings and
 /// comments, which is what makes a cell scannable.
@@ -689,7 +674,6 @@ pub fn highlight_python(code: &str, theme: &Resolved) -> String {
     guard_block_markers(&out)
 }
 
-
 /// CommonMark reads a 4-space indent as a code block and a leading `#`/`-`/`>`
 /// as a heading/list/quote — both unsupported in Slint. Leading spaces become
 /// NBSP (same advance width, no block syntax) and marker lines get a zero-width
@@ -706,7 +690,10 @@ pub(crate) fn guard_block_markers(markup: &str) -> String {
         }
         let rest = &line[indent..];
         let first = rest.chars().next();
-        if matches!(first, Some('#' | '>' | '-' | '+' | '*' | '=' | '~' | '|' | '0'..='9')) {
+        if matches!(
+            first,
+            Some('#' | '>' | '-' | '+' | '*' | '=' | '~' | '|' | '0'..='9')
+        ) {
             out.push('\u{200b}');
         }
         out.push_str(rest);

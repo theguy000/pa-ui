@@ -37,7 +37,9 @@ fn window_icon() {
 
     match built {
         Ok(status) if status.success() => println!("cargo:rustc-link-arg-bins={}", res.display()),
-        _ => println!("cargo:warning=rc.exe failed on pa-ui/assets/icon.rc - pa-ui.exe will have no icon"),
+        _ => println!(
+            "cargo:warning=rc.exe failed on pa-ui/assets/icon.rc - pa-ui.exe will have no icon"
+        ),
     }
 }
 
@@ -64,7 +66,10 @@ fn windows_sdk_rc() -> Option<PathBuf> {
                 .map(|dir| Path::new(&dir).join("Windows Kits").join("10").join("bin")),
         )
         .chain(std::iter::once(
-            root.join("Program Files (x86)").join("Windows Kits").join("10").join("bin"),
+            root.join("Program Files (x86)")
+                .join("Windows Kits")
+                .join("10")
+                .join("bin"),
         ))
         .find(|dir| dir.is_dir())?;
 

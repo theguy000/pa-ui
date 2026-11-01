@@ -119,8 +119,12 @@ impl VirtualSlintRows {
     }
 
     fn compute_spacers(&self) -> (f32, f32, i32) {
-        let top: f32 = self.heights[..self.win_start.min(self.heights.len())].iter().sum();
-        let bottom: f32 = self.heights[self.win_end.min(self.heights.len())..].iter().sum();
+        let top: f32 = self.heights[..self.win_start.min(self.heights.len())]
+            .iter()
+            .sum();
+        let bottom: f32 = self.heights[self.win_end.min(self.heights.len())..]
+            .iter()
+            .sum();
         (top, bottom, self.win_start as i32)
     }
 }
@@ -331,7 +335,9 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
     }
 
     let (ui_weak2, top2, bottom2, wstart2) = {
-        let Ok(mut vs) = vstate.try_borrow_mut() else { return };
+        let Ok(mut vs) = vstate.try_borrow_mut() else {
+            return;
+        };
         vs.in_slint_call = false;
         let (t, b, w) = vs.compute_spacers();
         (vs.ui.clone(), t, b, w)
@@ -400,7 +406,10 @@ impl Sheet {
     }
 
     pub fn last_prepend_height(&self) -> f32 {
-        self.inner.try_borrow().map(|i| i.last_prepend_px).unwrap_or(0.0)
+        self.inner
+            .try_borrow()
+            .map(|i| i.last_prepend_px)
+            .unwrap_or(0.0)
     }
 
     pub fn on_scroll(&self, content_y: f32, viewport_h: f32) {
@@ -457,7 +466,12 @@ impl Sheet {
                     Some((vs.ui.clone(), None, compensate_scroll, delta))
                 } else {
                     let (top, bottom, wstart) = vs.compute_spacers();
-                    Some((vs.ui.clone(), Some((top, bottom, wstart)), compensate_scroll, delta))
+                    Some((
+                        vs.ui.clone(),
+                        Some((top, bottom, wstart)),
+                        compensate_scroll,
+                        delta,
+                    ))
                 }
             }
         };
@@ -593,7 +607,9 @@ impl Sheet {
 
             inner.rows.splice(0..0, new_rows);
             inner.heights.splice(0..0, new_heights.clone());
-            inner.measured.splice(0..0, std::iter::repeat_n(false, total));
+            inner
+                .measured
+                .splice(0..0, std::iter::repeat_n(false, total));
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
@@ -639,7 +655,9 @@ impl Sheet {
     pub fn toggle(&self, at: usize) {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
-            let Some(row) = inner.rows.get_mut(at) else { return };
+            let Some(row) = inner.rows.get_mut(at) else {
+                return;
+            };
             row.expanded = !row.expanded;
             let est = estimate_row_height(row);
             let drawn = to_slint(row);
@@ -719,13 +737,18 @@ impl Sheet {
             "role": "user",
             "content": [{ "type": "text", "text": text }],
         });
-        let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1).0.into_iter().next()
+        let Some(candidate) = transcript::build(std::slice::from_ref(&echo), 1)
+            .0
+            .into_iter()
+            .next()
         else {
             return;
         };
         let vstate = {
             let mut inner = self.inner.borrow_mut();
-            let Some(last) = inner.rows.last() else { return };
+            let Some(last) = inner.rows.last() else {
+                return;
+            };
             if last.kind != candidate.kind || last.body != candidate.body {
                 return;
             }
@@ -896,7 +919,8 @@ impl Inner {
         if adjusted.len() > had {
             self.insert_rows(start + had, &adjusted[had..]);
             self.shift_from(start + 1, (adjusted.len() - had) as isize);
-            self.index.insert(key.to_string(), start..start + adjusted.len());
+            self.index
+                .insert(key.to_string(), start..start + adjusted.len());
         } else if adjusted.len() < had {
             for at in (start + adjusted.len()..start + had).rev() {
                 self.rows.remove(at);
@@ -915,7 +939,8 @@ impl Inner {
                 self.drawn.remove(at);
             }
             self.shift_from(start + 1, -((had - adjusted.len()) as isize));
-            self.index.insert(key.to_string(), start..start + adjusted.len());
+            self.index
+                .insert(key.to_string(), start..start + adjusted.len());
         }
     }
 }
@@ -987,7 +1012,11 @@ pub(crate) fn dump(rows: &[Row]) {
                 row.title.replace('\n', " "),
                 row.meta.replace('\n', " "),
                 row.elapsed.replace('\n', " "),
-                row.body.replace('\n', " ").chars().take(90).collect::<String>()
+                row.body
+                    .replace('\n', " ")
+                    .chars()
+                    .take(90)
+                    .collect::<String>()
             )
         })
         .collect();

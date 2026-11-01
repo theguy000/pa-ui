@@ -16,7 +16,6 @@ pub(crate) fn scroll_if_parked(ui: &AppWindow) {
     }
 }
 
-
 /// Whether the reader's view must be held still while rows change.
 ///
 /// Two facts, and the conclusion is the opposite of "should we scroll": while
@@ -27,7 +26,6 @@ pub fn should_hold_offset(following: bool, dragging: bool) -> bool {
     !following && !dragging
 }
 
-
 /// The reader's offset, if it is theirs to keep right now.
 pub(crate) fn hold_offset(ui: &AppWindow) -> Option<f32> {
     if !should_hold_offset(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
@@ -35,7 +33,6 @@ pub(crate) fn hold_offset(ui: &AppWindow) -> Option<f32> {
     }
     Some(ui.get_dbg_cy())
 }
-
 
 /// Hold the reader's place across a model mutation.
 ///
@@ -49,7 +46,6 @@ pub(crate) fn pin_offset_across_layout(_ui: &AppWindow, _held: Option<f32>) {
     // here on every streamed token only fights active wheel scrolling.
 }
 
-
 /// Whether the window is allowed to move the view at all right now.
 ///
 /// Two facts and nothing else: does the reader want to follow, and is a hand on
@@ -61,7 +57,6 @@ pub fn may_autoscroll(following: bool, dragging: bool) -> bool {
     following && !dragging
 }
 
-
 /// Move to the newest row because the reader asked for it: a send, or a new
 /// chat. The latch is for corrections nobody asked for; it must never block the
 /// reader's own request.
@@ -70,15 +65,16 @@ pub(crate) fn force_scroll_to_end(ui: &AppWindow) {
     ui.invoke_force_scroll_to_end();
 }
 
-
 pub(crate) fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
     let Some(current) = ui.upgrade() else { return };
-    if !may_autoscroll(current.get_follow_bottom(), current.get_scrollbar_dragging()) {
+    if !may_autoscroll(
+        current.get_follow_bottom(),
+        current.get_scrollbar_dragging(),
+    ) {
         return;
     }
     current.invoke_scroll_to_end();
 }
-
 
 #[cfg(test)]
 mod autoscroll_guard_tests {
@@ -103,7 +99,6 @@ mod autoscroll_guard_tests {
         assert!(may_autoscroll(true, false));
     }
 }
-
 
 #[cfg(test)]
 mod scroll_guard_tests {

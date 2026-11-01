@@ -16,7 +16,6 @@ pub(crate) fn is_command_word(extra: &[(String, String, String)], name: &str) ->
     })
 }
 
-
 /// The menu's rows: the builtin table first, then whatever this session adds on
 /// top of it, both narrowed by the same prefix.
 pub(crate) fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Vec<SlashItem> {
@@ -43,7 +42,6 @@ pub(crate) fn slash_rows(prefix: &str, extra: &[(String, String, String)]) -> Ve
     rows
 }
 
-
 /// The `/command` token under the caret, as byte range `[start, end)`.
 ///
 /// The menu belongs to whichever word the caret sits in: the first or the fifth;
@@ -61,8 +59,6 @@ pub(crate) fn slash_token_at(text: &str, caret: usize) -> (usize, usize) {
         .map_or(text.len(), |(index, _)| caret + index);
     (start, end)
 }
-
-
 
 /// What the window should do with a message that starts with a slash.
 ///
@@ -94,7 +90,6 @@ pub(crate) fn slash_dispatch(text: &str) -> SlashAction {
     }
 }
 
-
 /// The decision above, as a value so the send path stays readable.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SlashAction {
@@ -106,8 +101,6 @@ pub(crate) enum SlashAction {
     Rename(String),
     NotWired(&'static str),
 }
-
-
 
 #[cfg(test)]
 mod slash_menu_tests {
@@ -126,7 +119,10 @@ mod slash_menu_tests {
         use super::{slash_dispatch, SlashAction};
         // the four session commands go down the pipe as written
         assert_eq!(slash_dispatch("/compact"), SlashAction::Send);
-        assert_eq!(slash_dispatch("/refine tighten the notes"), SlashAction::Send);
+        assert_eq!(
+            slash_dispatch("/refine tighten the notes"),
+            SlashAction::Send
+        );
         // a skill is not a builtin: it is the agent's to run too
         assert_eq!(slash_dispatch("/skill:review the diff"), SlashAction::Send);
         assert_eq!(slash_dispatch("just prose"), SlashAction::Send);
@@ -150,7 +146,6 @@ mod slash_menu_tests {
     }
 }
 
-
 #[cfg(test)]
 mod slash_rows_tests {
     use super::slash_rows;
@@ -170,8 +165,15 @@ mod slash_rows_tests {
             ),
         ];
         let all = slash_rows("", &extra);
-        assert!(all.len() == 43, "41 builtins + 2 session commands, got {}", all.len());
-        assert_eq!(all.last().map(|row| row.name.to_string()), Some("template:standup".to_string()));
+        assert!(
+            all.len() == 43,
+            "41 builtins + 2 session commands, got {}",
+            all.len()
+        );
+        assert_eq!(
+            all.last().map(|row| row.name.to_string()),
+            Some("template:standup".to_string())
+        );
     }
 
     #[test]

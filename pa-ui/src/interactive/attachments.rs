@@ -2,38 +2,51 @@
 
 use crate::*;
 
-pub(crate) fn drain(attach_rx: &Rc<Receiver<Vec<images::Attachment>>>, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>) {
+pub(crate) fn drain(
+    attach_rx: &Rc<Receiver<Vec<images::Attachment>>>,
+    attachment_model: &Rc<VecModel<slint::Image>>,
+    attachments: &Rc<RefCell<Vec<images::Attachment>>>,
+) {
     let attach_rx = attach_rx.clone();
     let attachments = attachments.clone();
     let model = attachment_model.clone();
     let drain = Timer::default();
-    drain.start(TimerMode::Repeated, std::time::Duration::from_millis(120), move || {
-        while let Ok(found) = attach_rx.try_recv() {
-            let mut held = attachments.borrow_mut();
-            for attachment in found {
-                let thumb = images::from_wire(&attachment.base64);
-                if thumb.size().width > 0 && thumb.size().height > 0 {
-                    if crate::env_cfg::cfg().debug {
-                        eprintln!(
-                            "[attach] {} ({} base64 chars) {}x{}",
-                            attachment.mime,
-                            attachment.base64.len(),
-                            thumb.size().width,
-                            thumb.size().height
-                        );
+    drain.start(
+        TimerMode::Repeated,
+        std::time::Duration::from_millis(120),
+        move || {
+            while let Ok(found) = attach_rx.try_recv() {
+                let mut held = attachments.borrow_mut();
+                for attachment in found {
+                    let thumb = images::from_wire(&attachment.base64);
+                    if thumb.size().width > 0 && thumb.size().height > 0 {
+                        if crate::env_cfg::cfg().debug {
+                            eprintln!(
+                                "[attach] {} ({} base64 chars) {}x{}",
+                                attachment.mime,
+                                attachment.base64.len(),
+                                thumb.size().width,
+                                thumb.size().height
+                            );
+                        }
+                        held.push(attachment);
+                        model.push(thumb);
+                    } else {
+                        eprintln!("[attach] no thumbnail: decode failed");
                     }
-                    held.push(attachment);
-                    model.push(thumb);
-                } else {
-                    eprintln!("[attach] no thumbnail: decode failed");
                 }
             }
-        }
-    });
+        },
+    );
     std::mem::forget(drain);
 }
 
-pub(crate) fn pick(ui: &AppWindow, attach_tx: &Sender<Vec<images::Attachment>>, attachment_model: &Rc<VecModel<slint::Image>>, attachments: &Rc<RefCell<Vec<images::Attachment>>>) {
+pub(crate) fn pick(
+    ui: &AppWindow,
+    attach_tx: &Sender<Vec<images::Attachment>>,
+    attachment_model: &Rc<VecModel<slint::Image>>,
+    attachments: &Rc<RefCell<Vec<images::Attachment>>>,
+) {
     let tx_pick = attach_tx.clone();
     ui.on_attach_requested(move || {
         let tx = tx_pick.clone();
