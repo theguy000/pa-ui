@@ -1,18 +1,10 @@
-// The sessions column: one session's row, and the dot that says what it is doing.
+// The sessions column: one session's row, and the tag that says what it is doing.
 
 import { SessionItem, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconPencil } from "icons.slint";
 import { Theme } from "theme.slint";
-
-export component StatusDot inherits Rectangle {
-    in property <string> status;
-    width: 5px;
-    height: 5px;
-    border-radius: 2.5px;
-    background: status == "working" ? Theme.tag-working
-        : status == "parked" ? Theme.tag-parked : Theme.tag-idle;
-}
+import { Button, Tag, TagKind } from "primitives.slint";
 
 export component SessionRow inherits Rectangle {
     in property <SessionItem> item;
@@ -104,23 +96,26 @@ export component SessionRow inherits Rectangle {
         Rectangle {
             width: 18px;
             height: 32px;
-            Rectangle {
+            rename := Button {
                 x: 0;
                 y: (parent.height - self.height) / 2;
                 width: 18px;
                 height: 18px;
                 border-radius: 4px;
-                background: edit-touch.has-hover ? #2b2b2b : #1d1d1d;
+                // The chip only appears under the pointer, so its resting fill is
+                // the row's own hover rather than a field of its own; the pointer
+                // on the chip itself lifts it one more step.
+                fill: Theme.sidebar-row-rename-fill;
+                fill-hover: Theme.sidebar-row-rename-fill-hover;
+                enabled: !root.editing;
+                described: "Rename the session";
+                clicked => { root.edit(root.item.id); }
                 visible: !root.editing;
-                opacity: ta.has-hover || edit-touch.has-hover ? 1 : 0;
+                opacity: ta.has-hover || rename.hot ? 1 : 0;
                 animate opacity { duration: 100ms; }
                 IconPencil {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                }
-                edit-touch := TouchArea {
-                    enabled: !root.editing;
-                    clicked => { root.edit(root.item.id); }
                 }
             }
         }
@@ -141,9 +136,15 @@ export component SessionRow inherits Rectangle {
         Rectangle {
             width: 5px;
             height: 32px;
-            StatusDot {
+            // The three words the wire uses for what a session is doing, and the
+            // one tag state each of them names.
+            Tag {
                 y: (parent.height - self.height) / 2;
-                status: root.item.status;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
+                kind: root.item.status == "working" ? TagKind.working
+                    : root.item.status == "parked" ? TagKind.parked : TagKind.idle;
                 opacity: root.editing ? 0 : 1;
             }
         }

@@ -266,6 +266,30 @@ pub(crate) enum Role {
     SidebarSearchMark,
     /// The pencil a session row offers to rename it.
     SidebarRowRenameMark,
+    /// The chip that pencil sits on, at rest: a lift of ink over the column, so
+    /// the control reads as something to press rather than as a bare mark. The
+    /// chip draws no edge, so its fill is the whole of what says it is there.
+    SidebarRowRenameFill,
+    /// That chip with the pointer on it. Opaque, and its own role rather than a
+    /// quiet button's veil: the chip only appears under a pointer that is already
+    /// on the row, so what it is laid on is the row's own fill and not the column,
+    /// and a veil would land a shade lighter on a picked row than on a quiet one.
+    SidebarRowRenameFillHover,
+    /// The label on the column's New Session button at rest. The button carries a
+    /// field of its own, so its words are read on that field rather than on the
+    /// column, and the pointer brightens them.
+    SidebarNewSessionInk,
+    /// That label with the pointer on the button.
+    SidebarNewSessionInkHover,
+    /// The pill the window shows while the column is folded, saying how to open
+    /// it again. The lightest field the window draws, because it floats over the
+    /// transcript's sheet rather than sitting on the column.
+    SidebarOpenTipFill,
+    /// The words on that pill: the near-black the window puts on its lightest
+    /// fills.
+    SidebarOpenTipInk,
+    /// The shadow that lifts the pill off the sheet it floats over.
+    SidebarOpenTipShadow,
     // The brand mark. Its six fills are the artwork's own tones rather than roles
     // another part could borrow: the mark is one drawing, and a tone moved on its
     // own takes the drawing apart.
@@ -567,12 +591,6 @@ pub(crate) enum Role {
     /// than anything else in the window, so a theme that darkens the disc and
     /// leaves this one behind draws a dark mark on it.
     ComposerSendMark,
-    /// What the control is filled with while it stops the turn. Its own role
-    /// and not a thinning of the send's: the two say opposite things, and a
-    /// theme has to be able to move one without the other.
-    ComposerStopFill,
-    /// That fill with the pointer on it.
-    ComposerStopFillHover,
     /// The square the send arrow becomes as the control turns into a stop.
     ComposerStopMark,
     /// The field of a panel that opens over the window: the command list, the
@@ -600,6 +618,13 @@ pub(crate) enum Role {
     /// menu is the only one that fills a row today — the ladder marks its rung
     /// with a check instead, which is this shape's other way of saying it.
     PanelRowFillCurrent,
+    /// The edge of the card that names a session, which hangs off a row beside
+    /// the column. Its own role although it ships a shade under the panels'
+    /// edge: it is drawn against the window rather than against another panel,
+    /// and it is dimmer because it is nearer the reader than a menu is.
+    SessionCardEdge,
+    /// The words on that card.
+    SessionCardInk,
     /// A command's name at rest: quiet ink, because the list is a column to scan.
     SlashMenuRowInk,
     /// That name while the row is the one the arrows or the pointer is on. The
@@ -722,10 +747,33 @@ pub(crate) enum Role {
     StatusStripQueueLabelInk,
     /// That word with the pointer on it.
     StatusStripQueueLabelInkHover,
+    // The field a control paints, in the three characters a control comes in.
+    // These are named for the shape and not for the part because the shape is
+    // what they belong to: a quiet control is quiet wherever it is drawn, and the
+    // column already draws five of them. A part whose field is genuinely its own
+    // — the disc that sends, the pill that opens the column, a waiting row's
+    // buttons — names that role at the call site instead, and the shape, the
+    // states and the hit area are shared either way.
+    /// A quiet control at rest: a veil at no strength, because a control with no
+    /// field reads as part of the column under it until the pointer arrives.
+    ButtonQuietFill,
+    /// That control with the pointer on it.
+    ButtonQuietFillHover,
+    /// The field a part's main action paints at rest: lifted off its column, so
+    /// the one control the part exists for is found without being pointed at.
+    ButtonPrimaryFill,
+    /// That field with the pointer on it.
+    ButtonPrimaryFillHover,
+    /// The field the control that stops a turn paints. Warm, and apart from the
+    /// send disc's: the two say opposite things, and a theme has to be able to
+    /// move one without the other.
+    ButtonDangerFill,
+    /// That field with the pointer on it.
+    ButtonDangerFillHover,
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 172] = [
+    pub(crate) const ALL: [Role; 185] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -752,6 +800,13 @@ impl Role {
         Role::SidebarStripNewSessionMarkHover,
         Role::SidebarSearchMark,
         Role::SidebarRowRenameMark,
+        Role::SidebarRowRenameFill,
+        Role::SidebarRowRenameFillHover,
+        Role::SidebarNewSessionInk,
+        Role::SidebarNewSessionInkHover,
+        Role::SidebarOpenTipFill,
+        Role::SidebarOpenTipInk,
+        Role::SidebarOpenTipShadow,
         Role::BrandMarkBlade,
         Role::BrandMarkWing,
         Role::BrandMarkWingInnerShadow,
@@ -851,8 +906,6 @@ impl Role {
         Role::ComposerSendFill,
         Role::ComposerSendFillHover,
         Role::ComposerSendMark,
-        Role::ComposerStopFill,
-        Role::ComposerStopFillHover,
         Role::ComposerStopMark,
         Role::PanelSurface,
         Role::PanelEdge,
@@ -860,6 +913,8 @@ impl Role {
         Role::PanelShadowNested,
         Role::PanelRowFillHover,
         Role::PanelRowFillCurrent,
+        Role::SessionCardEdge,
+        Role::SessionCardInk,
         Role::SlashMenuRowInk,
         Role::SlashMenuRowInkHover,
         Role::SlashMenuHintInk,
@@ -898,6 +953,12 @@ impl Role {
         Role::StatusStripQueueCountInkHover,
         Role::StatusStripQueueLabelInk,
         Role::StatusStripQueueLabelInkHover,
+        Role::ButtonQuietFill,
+        Role::ButtonQuietFillHover,
+        Role::ButtonPrimaryFill,
+        Role::ButtonPrimaryFillHover,
+        Role::ButtonDangerFill,
+        Role::ButtonDangerFillHover,
     ];
 
     /// The name a theme file and the theme global both use.
@@ -929,6 +990,13 @@ impl Role {
             Role::SidebarStripNewSessionMarkHover => "sidebar-strip-new-session-mark-hover",
             Role::SidebarSearchMark => "sidebar-search-mark",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
+            Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
+            Role::SidebarRowRenameFillHover => "sidebar-row-rename-fill-hover",
+            Role::SidebarNewSessionInk => "sidebar-new-session-ink",
+            Role::SidebarNewSessionInkHover => "sidebar-new-session-ink-hover",
+            Role::SidebarOpenTipFill => "sidebar-open-tip-fill",
+            Role::SidebarOpenTipInk => "sidebar-open-tip-ink",
+            Role::SidebarOpenTipShadow => "sidebar-open-tip-shadow",
             Role::BrandMarkBlade => "brand-mark-blade",
             Role::BrandMarkWing => "brand-mark-wing",
             Role::BrandMarkWingInnerShadow => "brand-mark-wing-inner-shadow",
@@ -1028,8 +1096,6 @@ impl Role {
             Role::ComposerSendFill => "composer-send-fill",
             Role::ComposerSendFillHover => "composer-send-fill-hover",
             Role::ComposerSendMark => "composer-send-mark",
-            Role::ComposerStopFill => "composer-stop-fill",
-            Role::ComposerStopFillHover => "composer-stop-fill-hover",
             Role::ComposerStopMark => "composer-stop-mark",
             Role::PanelSurface => "panel-surface",
             Role::PanelEdge => "panel-edge",
@@ -1037,6 +1103,8 @@ impl Role {
             Role::PanelShadowNested => "panel-shadow-nested",
             Role::PanelRowFillHover => "panel-row-fill-hover",
             Role::PanelRowFillCurrent => "panel-row-fill-current",
+            Role::SessionCardEdge => "session-card-edge",
+            Role::SessionCardInk => "session-card-ink",
             Role::SlashMenuRowInk => "slash-menu-row-ink",
             Role::SlashMenuRowInkHover => "slash-menu-row-ink-hover",
             Role::SlashMenuHintInk => "slash-menu-hint-ink",
@@ -1075,6 +1143,12 @@ impl Role {
             Role::StatusStripQueueCountInkHover => "status-strip-queue-count-ink-hover",
             Role::StatusStripQueueLabelInk => "status-strip-queue-label-ink",
             Role::StatusStripQueueLabelInkHover => "status-strip-queue-label-ink-hover",
+            Role::ButtonQuietFill => "button-quiet-fill",
+            Role::ButtonQuietFillHover => "button-quiet-fill-hover",
+            Role::ButtonPrimaryFill => "button-primary-fill",
+            Role::ButtonPrimaryFillHover => "button-primary-fill-hover",
+            Role::ButtonDangerFill => "button-danger-fill",
+            Role::ButtonDangerFillHover => "button-danger-fill-hover",
         }
     }
 
@@ -1121,6 +1195,13 @@ impl Role {
             Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
             Role::SidebarSearchMark => Derivation::Palette(Palette::QuietInk),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
+            Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
+            Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2b2b2b")),
+            Role::SidebarNewSessionInk => Derivation::Palette(Palette::Ink),
+            Role::SidebarNewSessionInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
+            Role::SidebarOpenTipFill => Derivation::Fixed(Rgba::hex("#e3e3e3")),
+            Role::SidebarOpenTipInk => Derivation::Fixed(Rgba::hex("#1f1f1f")),
+            Role::SidebarOpenTipShadow => Derivation::Fixed(Rgba::hex("#00000066")),
             Role::BrandMarkBlade => Derivation::Palette(Palette::Brand),
             Role::BrandMarkWing => Derivation::Mix(Palette::Brand, Palette::Background, 0.6597),
             Role::BrandMarkWingInnerShadow => {
@@ -1294,9 +1375,15 @@ impl Role {
             Role::ComposerSendFill => Derivation::Fixed(Rgba::hex("#e6e6e6")),
             Role::ComposerSendFillHover => Derivation::Fixed(Rgba::hex("#f2f2f2")),
             Role::ComposerSendMark => Derivation::Fixed(Rgba::hex("#131313")),
-            Role::ComposerStopFill => Derivation::Fixed(Rgba::hex("#a2543f")),
-            Role::ComposerStopFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
             Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
+            Role::ButtonQuietFill => Derivation::Veil(Palette::Background, 0x00),
+            Role::ButtonQuietFillHover => Derivation::Veil(Palette::Ink, 0x1f),
+            Role::ButtonPrimaryFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
+            Role::ButtonPrimaryFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+            }
+            Role::ButtonDangerFill => Derivation::Fixed(Rgba::hex("#a2543f")),
+            Role::ButtonDangerFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
             Role::PanelSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
             Role::PanelEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
             Role::PanelShadow => Derivation::Fixed(Rgba::hex("#00000080")),
@@ -1307,6 +1394,8 @@ impl Role {
             Role::PanelRowFillCurrent => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
             }
+            Role::SessionCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
+            Role::SessionCardInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9764),
             Role::SlashMenuRowInk => Derivation::Palette(Palette::QuietInk),
             Role::SlashMenuRowInkHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)

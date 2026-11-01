@@ -3,6 +3,7 @@
 
 import { IconCaret } from "icons.slint";
 import { Theme } from "theme.slint";
+import { Button } from "primitives.slint";
 
 // One line of the context ledger: the label, then the value flush right in a
 // fixed slot so the whole column of numbers has one edge to line up on.
@@ -110,7 +111,7 @@ export component ContextCard inherits Rectangle {
     }
 }
 
-export component Chip inherits Rectangle {
+export component Chip inherits Button {
     in property <string> label;
     in property <bool> open;
     callback toggled;
@@ -120,15 +121,20 @@ export component Chip inherits Rectangle {
     border-width: 1px;
     // The resting state is what the old hover state was: a chip that only
     // appears under the pointer reads as decoration, not as a control.
-    background: ct.has-hover || open ? Theme.composer-chip-fill-hover : Theme.composer-chip-fill;
-    border-color: ct.has-hover || open ? Theme.composer-chip-edge-hover : Theme.composer-chip-edge;
+    fill: Theme.composer-chip-fill;
+    fill-hover: Theme.composer-chip-fill-hover;
+    border-color: root.on ? Theme.composer-chip-edge-hover : Theme.composer-chip-edge;
+    lit: root.open;
+    fade: 0ms;
+    described: root.label;
+    clicked => { root.toggled(); }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 6px;
         Text {
             text: root.label;
-            color: ct.has-hover || open ? Theme.composer-chip-ink-hover : Theme.composer-chip-ink;
+            color: root.on ? Theme.composer-chip-ink-hover : Theme.composer-chip-ink;
             font-size: 10px;
             vertical-alignment: center;
         }
@@ -141,10 +147,6 @@ export component Chip inherits Rectangle {
                 tint: Theme.composer-chip-caret-mark;
             }
         }
-    }
-    ct := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.toggled(); }
     }
 }
 
