@@ -7,6 +7,23 @@
 
 use super::*;
 
+/// The roles a file moved, beside the roles whose names claim a part of the
+/// window: a file that names one part must move exactly that part and nothing
+/// else, and the two lists are what says so.
+fn moved_and_claimed(
+    theme: &Resolved,
+    claimed: impl Fn(&str) -> bool,
+) -> (Vec<&'static str>, Vec<&'static str>) {
+    let shipped = Resolved::shipped();
+    let moved = Role::ALL
+        .iter()
+        .filter(|role| theme.get(**role) != shipped.get(**role))
+        .map(|role| role.name())
+        .collect();
+    let named = Role::ALL.iter().map(|role| role.name()).filter(|name| claimed(name)).collect();
+    (moved, named)
+}
+
 /// The title bar as the window drew it before there was a theme: the values
 /// read off `ui/chrome.slint` and `ui/icons.slint`, not out of this crate.
 #[test]
@@ -49,6 +66,213 @@ fn the_shipped_theme_draws_todays_sidebar() {
     assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#6f9f5f"));
 }
 
+/// The transcript as the window drew it before there was a theme: the values
+/// read off `ui/transcript.slint` and the column and failure reason in
+/// `ui/app.slint`, not out of this crate.
+#[test]
+fn the_shipped_theme_draws_todays_transcript() {
+    let theme = Resolved::shipped();
+
+    // The field the rows are drawn on, and the field the reader's own message
+    // gets: both a lift of the window's ink over its background.
+    assert_eq!(theme.get(Role::TranscriptSurface), Rgba::hex("#131313"));
+    assert_eq!(theme.get(Role::TranscriptMessageFill), Rgba::hex("#292929"));
+    assert_eq!(theme.get(Role::TranscriptMessageInk), Rgba::hex("#e5e5e5"));
+
+    // Prose, and the ink a row steps back to.
+    assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d1d1d1"));
+    assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::TranscriptNoticeInk), Rgba::hex("#4c4c4c"));
+
+    // A cell in each state it is drawn in.
+    assert_eq!(theme.get(Role::TranscriptCellFill), Rgba::hex("#151515"));
+    assert_eq!(theme.get(Role::TranscriptCellFillHover), Rgba::hex("#191919"));
+    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#8b8b8b"));
+    assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4c4c4c"));
+    assert_eq!(theme.get(Role::TranscriptCellSeparatorInk), Rgba::hex("#ffffff"));
+    assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d1d1d1"));
+    assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909090"));
+
+    // And the two panels a row opens, which sit below the field they open on.
+    assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#101010"));
+    assert_eq!(theme.get(Role::TranscriptCellEdgeExpanded), Rgba::hex("#242424"));
+    assert_eq!(theme.get(Role::TranscriptThinkingEdgeExpanded), Rgba::hex("#1f1f1f"));
+    assert_eq!(theme.get(Role::TranscriptCellRule), Rgba::hex("#1f1f1f"));
+
+    // A thinking row: it draws no fill of its own until the pointer arrives.
+    assert_eq!(theme.get(Role::TranscriptThinkingFill).a, 0, "a resting thinking row is not a fill");
+    assert_eq!(theme.get(Role::TranscriptThinkingFillHover), Rgba::hex("#1b1b1b"));
+    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#6b6b6b"));
+    assert_eq!(theme.get(Role::TranscriptThinkingInk), Rgba::hex("#7f7f7f"));
+
+    // A fenced block, the table's text, and the field behind a picture.
+    assert_eq!(theme.get(Role::TranscriptCodeFill), Rgba::hex("#0e0e0e"));
+    assert_eq!(theme.get(Role::TranscriptCodeInk), Rgba::hex("#b7b7b7"));
+    assert_eq!(theme.get(Role::TranscriptCodeLabelInk), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::TranscriptTableInk), Rgba::hex("#aaaaaa"));
+    assert_eq!(theme.get(Role::TranscriptImageFill), Rgba::hex("#1b1b1b"));
+
+    // The transcript's own chrome, and the chip that walks back to the floor.
+    assert_eq!(theme.get(Role::TranscriptScrollThumb), Rgba::hex("#313131"));
+    assert_eq!(theme.get(Role::TranscriptScrollThumbHover), Rgba::hex("#454545"));
+    assert_eq!(theme.get(Role::TranscriptScrollThumbPressed), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::TranscriptJumpFill), Rgba::hex("#1c1c1c"));
+    assert_eq!(theme.get(Role::TranscriptJumpFillHover), Rgba::hex("#2f2f2f"));
+    assert_eq!(theme.get(Role::TranscriptJumpEdge), Rgba::hex("#363636"));
+}
+
+/// What a failure is drawn in: a warmed red the palette has no word for, and the
+/// fields it is read on. The reason the badge opens is drawn in the failed
+/// cell's own field, so it adds only its edge and its ink.
+#[test]
+fn the_shipped_theme_draws_todays_failure() {
+    let theme = Resolved::shipped();
+
+    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
+    assert_eq!(theme.get(Role::TranscriptCellFillFailedHover), Rgba::hex("#241713"));
+    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
+    assert_eq!(theme.get(Role::TranscriptCellBadgeFill), Rgba::hex("#6b342b"));
+    assert_eq!(theme.get(Role::TranscriptCellBadgeFillHover), Rgba::hex("#8d4235"));
+    assert_eq!(theme.get(Role::TranscriptReasonEdge), Rgba::hex("#6b342b"));
+    assert_eq!(theme.get(Role::TranscriptReasonInk), Rgba::hex("#e0b6ad"));
+}
+
+/// The transcript is made of the base values like every other part: a file that
+/// moves the field and the ink carries the sheet of rows with it, which is what
+/// makes a light transcript possible without naming every role by hand.
+#[test]
+fn a_theme_that_moves_the_base_values_moves_the_transcript_with_them() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020" } }"##,
+    )
+    .expect("a file that names only base values");
+
+    let shipped = Resolved::shipped();
+    for field in [
+        Role::TranscriptSurface,
+        Role::TranscriptCellFill,
+        Role::TranscriptRowFillExpanded,
+        Role::TranscriptCodeFill,
+    ] {
+        assert_ne!(theme.get(field), shipped.get(field), "{} follows the field", field.name());
+        assert!(theme.get(field).r > 0x80, "{} is a field of a light window", field.name());
+    }
+    for ink in [Role::TranscriptProseInk, Role::TranscriptMessageInk, Role::TranscriptCodeInk] {
+        assert_ne!(theme.get(ink), shipped.get(ink), "{} follows the ink", ink.name());
+        assert!(theme.get(ink).r < 0x80, "{} is ink on a light window", ink.name());
+    }
+}
+
+/// The failure keeps the colours it is drawn in, because the palette has no word
+/// for them: a theme that wants a failed cell to read on its own field has to
+/// name the roles, and the check tells it which when it does not.
+#[test]
+fn the_theme_that_names_only_base_values_leaves_the_failure_where_it_was() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020", "danger": "#7a1f18" } }"##,
+    )
+    .expect("a file that names only base values");
+
+    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
+    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
+}
+
+/// A failed cell is distinguishable because of its field's tint and the red its
+/// name is written in. A theme that paints both like a quiet cell has taken the
+/// failure away, and is told which of the two it lost.
+#[test]
+fn a_theme_that_paints_a_failed_cell_like_a_quiet_one_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "transcript-cell-fill-failed": "#151515",
+                        "transcript-cell-ink-failed": "#8b8b8b" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+
+    assert_eq!(named.len(), 2, "{named:?}");
+    assert!(named.contains(&"a failed cell's field and a quiet cell's field"), "{named:?}");
+    assert!(named.contains(&"a failed cell's name and a quiet cell's name"), "{named:?}");
+}
+
+/// A file that names the transcript's colours repaints the transcript and moves
+/// nothing else in the map.
+#[test]
+fn a_theme_that_names_the_transcript_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "transcript-surface": "#1a1226",
+               "transcript-prose-ink": "#eee6ff",
+               "transcript-message-fill": "#2b1f3d",
+               "transcript-message-ink": "#ffffff",
+               "transcript-link-ink": "#c9a7ff",
+               "transcript-notice-ink": "#8a7fa0",
+               "transcript-cell-fill": "#241a33",
+               "transcript-cell-fill-hover": "#2f2242",
+               "transcript-cell-title-ink": "#cfc0e8",
+               "transcript-cell-meta-ink": "#8a7fa0",
+               "transcript-cell-separator-ink": "#ffe9f4",
+               "transcript-cell-code-ink": "#eee6ff",
+               "transcript-cell-output-ink": "#b9a9d6",
+               "transcript-cell-rule": "#3a2a52",
+               "transcript-cell-edge-expanded": "#3a2a52",
+               "transcript-thinking-edge-expanded": "#33254a",
+               "transcript-cell-fill-failed": "#3d1f24",
+               "transcript-cell-fill-failed-hover": "#4a262c",
+               "transcript-cell-ink-failed": "#ff9f8f",
+               "transcript-cell-badge-fill": "#8a3428",
+               "transcript-cell-badge-fill-hover": "#a5402f",
+               "transcript-reason-edge": "#8a3428",
+               "transcript-reason-ink": "#ffd0c4",
+               "transcript-row-fill-expanded": "#140f1c",
+               "transcript-thinking-fill": "#1c1526",
+               "transcript-thinking-fill-hover": "#251c33",
+               "transcript-thinking-label-ink": "#9a8fb0",
+               "transcript-thinking-ink": "#b0a3c8",
+               "transcript-code-fill": "#120d1a",
+               "transcript-code-ink": "#ded2f2",
+               "transcript-code-label-ink": "#7d7193",
+               "transcript-table-ink": "#c8bae0",
+               "transcript-image-fill": "#241a33",
+               "transcript-scroll-thumb": "#4a3a63",
+               "transcript-scroll-thumb-hover": "#5f4d7d",
+               "transcript-scroll-thumb-pressed": "#7a6699",
+               "transcript-jump-fill": "#251c33",
+               "transcript-jump-fill-hover": "#3a2c50",
+               "transcript-jump-edge": "#4a3a63" } }"##,
+    )
+    .expect("a file that repaints the transcript");
+
+    // The file names every colour the transcript has, and nothing else moves.
+    let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("transcript-"));
+    assert_eq!(moved, claimed);
+}
+
+/// The transcript's prose is the one thing a reader is here to read, so a theme
+/// that paints it into its own field is told, by name, which pair it buried.
+#[test]
+fn a_theme_that_buries_the_transcripts_prose_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "transcript-prose-ink": "#202020" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let findings = contrast(&theme);
+
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].what, "the transcript's prose");
+}
+
 /// A file that names the sidebar's colours repaints the sidebar and moves
 /// nothing else in the map.
 #[test]
@@ -72,18 +296,10 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
     .expect("a file that repaints the sidebar");
 
     // The file names every colour the sidebar has, and nothing else moves.
-    let shipped = Resolved::shipped();
-    let moved: Vec<&str> = Role::ALL
-        .iter()
-        .filter(|role| theme.get(**role) != shipped.get(**role))
-        .map(|role| role.name())
-        .collect();
-    let sidebar: Vec<&str> = Role::ALL
-        .iter()
-        .map(|role| role.name())
-        .filter(|name| name.starts_with("sidebar-") || name.starts_with("tag-"))
-        .collect();
-    assert_eq!(moved, sidebar);
+    let (moved, claimed) = moved_and_claimed(&theme, |name| {
+        name.starts_with("sidebar-") || name.starts_with("tag-")
+    });
+    assert_eq!(moved, claimed);
 
     assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#f5f5f5"));
     assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#2f7d3a"));
@@ -169,8 +385,11 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
 /// A base value carries a theme far, and the places it does not carry are the
 /// ones the check names: on a light background the fold mark's veil of quiet
 /// ink steps *towards* the field rather than away from it, and the session
-/// names — made of quiet ink, which this file never moved — go with it. Those
-/// are roles to override, not a file to refuse, and the author is told which.
+/// names — made of quiet ink, which this file never moved — go with it. The
+/// transcript's secondary ink is made of the same quiet ink faded towards the
+/// field, so it stays pale on a pale column while its prose, made of the ink,
+/// follows the file all the way. Those are roles to override, not a file to
+/// refuse, and the author is told which.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -185,7 +404,19 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
 
     assert_eq!(
         named,
-        ["a session's name at rest", "a session's name under the pointer", "the fold mark at rest"]
+        [
+            "a cell's name at rest",
+            "a cell's name under the pointer",
+            "a link in prose",
+            "a session's name at rest",
+            "a session's name under the pointer",
+            "a table's text",
+            "the dot that parts a cell's meta from its elapsed time",
+            "the fold mark at rest",
+            "the label a thinking row carries",
+            "the text inside an opened thinking row",
+            "what a cell printed"
+        ]
     );
 }
 
@@ -315,10 +546,11 @@ fn the_shipped_theme_clears_every_floor_it_declares() {
     assert!(findings.is_empty(), "{findings:?}");
 }
 
-/// The sidebar ticket's other half: a reader tells the three tags apart in the
-/// theme that ships, and in every theme the suite is given.
+/// The other half of both tickets that could not move a pixel: a reader tells
+/// the three tags apart and a failed cell from a quiet one in the theme that
+/// ships, and in every theme the suite is given.
 #[test]
-fn the_shipped_themes_tags_stay_apart() {
+fn the_shipped_themes_marks_stay_apart() {
     let clashes = separation(&Resolved::shipped());
 
     assert!(clashes.is_empty(), "{clashes:?}");
