@@ -14,7 +14,8 @@ pub struct Config {
     pub queue_preset: bool,
     pub menu: bool,
     pub canvas: bool,
-    /// The theme file the window draws with, if the reader selected one.
+    /// The theme file or bundled theme name the window draws with, if the
+    /// reader selected one.
     pub theme: Option<String>,
 }
 

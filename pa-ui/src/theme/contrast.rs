@@ -6,7 +6,7 @@
 //! still the theme its author asked for — and it is the same check whether a
 //! script asks for it or the suite runs it over the themes that ship.
 
-use super::file::load;
+use super::file::resolve;
 use super::{Resolved, Rgba, Role};
 
 /// A mark or a line that carries meaning clears 3:1 on the surface under it.
@@ -966,7 +966,7 @@ pub(crate) fn check_cli(mut args: impl Iterator<Item = String>) -> Option<(i32, 
     if args.next().as_deref() != Some(FLAG) {
         return None;
     }
-    let usage = format!("usage: pa-ui {FLAG} <theme file>\n");
+    let usage = format!("usage: pa-ui {FLAG} <theme file or bundled name>\n");
     let Some(path) = args.next() else {
         return Some((2, usage));
     };
@@ -974,7 +974,7 @@ pub(crate) fn check_cli(mut args: impl Iterator<Item = String>) -> Option<(i32, 
         return Some((2, usage));
     }
 
-    let theme = match load(&path) {
+    let theme = match resolve(&path) {
         Ok(theme) => theme,
         Err(refusal) => return Some((2, format!("{refusal}\n"))),
     };

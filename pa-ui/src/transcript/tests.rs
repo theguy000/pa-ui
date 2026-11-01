@@ -160,7 +160,7 @@ mod strong_tests {
         // balanced markers and must not add any
         assert_eq!(
             markdown_markup("# Title", &crate::theme::Resolved::shipped()),
-            "<font color=\"#b2b2b2\">**Title**</font>"
+            "<font color=\"#b3b2ad\">**Title**</font>"
         );
     }
 }
@@ -395,17 +395,17 @@ mod theme_tests {
 
         assert_eq!(
             markdown_markup("# Title", &shipped),
-            "<font color=\"#b2b2b2\">**Title**</font>"
+            "<font color=\"#b3b2ad\">**Title**</font>"
         );
         assert_eq!(
             markdown_markup("a `b` c", &shipped),
-            "a **<font color=\"#8f8f8f\">b</font>** c"
+            "a **<font color=\"#8f9088\">b</font>** c"
         );
         assert_eq!(
             highlight_python("return 'x'", &shipped),
-            "<font color=\"#acacac\">return</font> <font color=\"#aaaaaa\">'x'</font>"
+            "<font color=\"#acada4\">return</font> <font color=\"#aaaba2\">'x'</font>"
         );
-        assert_eq!(highlight_python("# why", &shipped), "<font color=\"#606060\"># why</font>\n");
+        assert_eq!(highlight_python("# why", &shipped), "<font color=\"#60615b\"># why</font>\n");
     }
 }
 

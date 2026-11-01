@@ -53,14 +53,32 @@ pub(crate) fn load(path: &str) -> Result<Resolved, Refusal> {
     from_text(path, &text)
 }
 
-/// The window's theme: the one compiled in, with the file the reader selected
-/// laid over it. A selection that cannot be read leaves the shipped theme in
-/// place and comes back as the line to log.
+/// The themes that travel with the window, by the name a reader selects them by.
+///
+/// A bundled theme is a file like any other - the same parser, the same checks -
+/// but it is compiled in so that selecting it does not depend on where the
+/// window was started. A selection that is not one of these names is a path.
+///
+/// The names are the subjects the spec promised, not the files' paths: `mono` is
+/// the monochrome pass this branch carried before it was a theme file.
+pub(crate) const BUNDLED: &[(&str, &str)] = &[("mono", include_str!("../../themes/mono.json"))];
+
+/// A bundled theme by name, or the file at the path the reader gave.
+pub(crate) fn resolve(choice: &str) -> Result<Resolved, Refusal> {
+    match BUNDLED.iter().find(|(name, _)| *name == choice) {
+        Some((name, text)) => from_text(name, text),
+        None => load(choice),
+    }
+}
+
+/// The window's theme: the one compiled in, with the file or bundled theme the
+/// reader selected laid over it. A selection that cannot be read leaves the
+/// shipped theme in place and comes back as the line to log.
 pub(crate) fn select(choice: Option<&str>) -> (Resolved, Option<Refusal>) {
     let Some(choice) = choice.filter(|choice| !choice.is_empty()) else {
         return (Resolved::shipped(), None);
     };
-    match load(choice) {
+    match resolve(choice) {
         Ok(theme) => (theme, None),
         Err(refusal) => (Resolved::shipped(), Some(refusal)),
     }
