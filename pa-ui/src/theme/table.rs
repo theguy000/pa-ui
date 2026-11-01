@@ -184,6 +184,13 @@ pub(crate) enum Derivation {
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
+    /// The window's own field, under everything: the caption paints none of its
+    /// own and is read against this, the right column shows it while it is blank,
+    /// and the sidebar's field ships the same value so the column reads as part of
+    /// the window rather than as a slab laid on it. Its own role all the same: a
+    /// theme that wants a lighter column than window, or a window one shade off
+    /// its column, has to be able to say so.
+    WindowSurface,
     /// The minimise, maximise and close marks at rest: ink stepped back a
     /// little, so a row of three does not shout from the corner.
     TitleBarGlyph,
@@ -264,6 +271,10 @@ pub(crate) enum Role {
     /// The magnifier in the column's header, and again in its folded strip.
     /// Drawn and inert until search exists, and read at the quiet ink both draw.
     SidebarSearchMark,
+    /// The product's name beside the brand mark, at the top of the column. The one
+    /// piece of lettering in the column that is not a session's, so it is read at
+    /// body ink while the names under it step back.
+    SidebarWordmarkInk,
     /// The pencil a session row offers to rename it.
     SidebarRowRenameMark,
     /// The chip that pencil sits on, at rest: a lift of ink over the column, so
@@ -773,7 +784,8 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 185] = [
+    pub(crate) const ALL: [Role; 187] = [
+        Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -799,6 +811,7 @@ impl Role {
         Role::SidebarStripNewSessionMark,
         Role::SidebarStripNewSessionMarkHover,
         Role::SidebarSearchMark,
+        Role::SidebarWordmarkInk,
         Role::SidebarRowRenameMark,
         Role::SidebarRowRenameFill,
         Role::SidebarRowRenameFillHover,
@@ -964,6 +977,7 @@ impl Role {
     /// The name a theme file and the theme global both use.
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Role::WindowSurface => "window-surface",
             Role::TitleBarGlyph => "title-bar-glyph",
             Role::TitleBarCaptionFillHover => "title-bar-caption-fill-hover",
             Role::TitleBarCloseFillHover => "title-bar-close-fill-hover",
@@ -989,6 +1003,7 @@ impl Role {
             Role::SidebarStripNewSessionMark => "sidebar-strip-new-session-mark",
             Role::SidebarStripNewSessionMarkHover => "sidebar-strip-new-session-mark-hover",
             Role::SidebarSearchMark => "sidebar-search-mark",
+            Role::SidebarWordmarkInk => "sidebar-wordmark-ink",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
             Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
             Role::SidebarRowRenameFillHover => "sidebar-row-rename-fill-hover",
@@ -1167,6 +1182,7 @@ impl Role {
     /// together when a theme moves both.
     fn derivation(self) -> Derivation {
         match self {
+            Role::WindowSurface => Derivation::Palette(Palette::Background),
             Role::TitleBarGlyph => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
             Role::TitleBarCaptionFillHover => Derivation::Veil(Palette::Ink, 0x14),
             Role::TitleBarCloseFillHover => Derivation::Palette(Palette::Danger),
@@ -1194,6 +1210,7 @@ impl Role {
             Role::SidebarStripNewSessionMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
             Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
             Role::SidebarSearchMark => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
             Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
             Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2b2b2b")),

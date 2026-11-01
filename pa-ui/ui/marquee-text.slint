@@ -15,7 +15,11 @@
 // popup has nowhere else to send the reader.
 export component MarqueeText inherits Rectangle {
     in property <string> text;
-    in property <brush> text-color: #e5e5e5;
+    // Who draws it names the colour, and must: the column passes a session's name
+    // inks and the window passes a failed cell's reason ink, because a string that
+    // travels is still the body text of the part it belongs to, and this component
+    // belongs to two.
+    in property <brush> text-color;
     in property <length> font-size: 12px;
 
     // the reader's ask: may the text move?

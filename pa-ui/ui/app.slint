@@ -80,7 +80,7 @@ export component AppWindow inherits Window {
     min-height: 560px;
     preferred-width: 1180px;
     preferred-height: 820px;
-    background: #111111;
+    background: Theme.window-surface;
     default-font-family: "Segoe UI";
 
     in property <[SessionItem]> sessions;
@@ -661,7 +661,7 @@ export component AppWindow inherits Window {
                             x: 32px;
                             y: (parent.height - self.height) / 2;
                             text: "Prime Agent";
-                            color: #e5e5e5;
+                            color: Theme.sidebar-wordmark-ink;
                             font-size: 14px;
                             font-weight: 600;
                         }
@@ -1409,7 +1409,7 @@ export component AppWindow inherits Window {
             // Blank by request: the column, its width and its fold, nothing else.
             if root.right-open : Rectangle {
                 width: 320px;
-                background: #111111;
+                background: Theme.window-surface;
             }
         }
     }

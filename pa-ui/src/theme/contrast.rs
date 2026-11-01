@@ -139,8 +139,15 @@ const PAIRS: &[Pair] = &[
         what: "the close mark on its hover fill",
         floor: MARK,
     },
-    // A session's name is the sidebar's one piece of body text, measured in
-    // each state it is read in.
+    // The column carries two kinds of body text. The product's name above the
+    // rows is the window naming itself, so it is read as body text on the column
+    // and not as a mark.
+    Pair {
+        ink: Mark { role: Role::SidebarWordmarkInk, on: ON_SIDEBAR },
+        what: "the wordmark above the rows",
+        floor: BODY,
+    },
+    // The rest is a session's name, measured in each state it is read in.
     Pair {
         ink: Mark { role: Role::SidebarNameInk, on: ON_SIDEBAR_ROW },
         what: "a session's name at rest",
