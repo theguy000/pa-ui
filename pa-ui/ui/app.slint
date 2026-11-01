@@ -785,7 +785,7 @@ export component AppWindow inherits Window {
             center-column := Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
-                background: #131313;
+                background: Theme.transcript-surface;
                 border-top-left-radius: 10px;
                 border-top-right-radius: root.right-open ? 10px : 0px;
                 clip: true;
@@ -912,7 +912,9 @@ export component AppWindow inherits Window {
                                 width: 6px;
                                 height: root.thumb-height;
                                 border-radius: 3px;
-                                background: bar-touch.pressed ? #585858 : bar-touch.has-hover ? #454545 : #313131;
+                                background: bar-touch.pressed ? Theme.transcript-scroll-thumb-pressed
+                                    : bar-touch.has-hover ? Theme.transcript-scroll-thumb-hover
+                                    : Theme.transcript-scroll-thumb;
                                 animate background { duration: 120ms; }
                             }
 
@@ -962,8 +964,9 @@ export component AppWindow inherits Window {
                         width: 28px;
                         height: 28px;
                         border-radius: 14px;
-                        background: jump-touch.has-hover ? #2f2f2f : #1c1c1c;
-                        border-color: #363636;
+                        background: jump-touch.has-hover ? Theme.transcript-jump-fill-hover
+                            : Theme.transcript-jump-fill;
+                        border-color: Theme.transcript-jump-edge;
                         border-width: 1px;
                         IconChevronDown {
                             x: (parent.width - self.width) / 2;
@@ -1638,8 +1641,8 @@ export component AppWindow inherits Window {
         y: root.reason-y + 4px;
         width: min(reason-text.preferred-width + 20px, 440px);
         height: reason-text.height + 16px;
-        background: #1d1412;
-        border-color: #6b342b;
+        background: Theme.transcript-cell-fill-failed;
+        border-color: Theme.transcript-reason-edge;
         border-width: 1px;
         border-radius: 6px;
 
@@ -1648,7 +1651,7 @@ export component AppWindow inherits Window {
             y: 8px;
             width: parent.width - 20px;
             text: root.reason-text;
-            text-color: #e0b6ad;
+            text-color: Theme.transcript-reason-ink;
             font-size: 10px;
             active: root.reason-open;
             loop: true;

@@ -20,13 +20,43 @@ const BODY: f32 = 4.5;
 /// closest, so this is the room they have to lose before they collapse.
 const APART: f32 = 20.0;
 
+/// How far apart two fields have to be before a row still reads as the one that
+/// failed. A field is not a mark: the tint that tells a failed cell from a quiet
+/// one is meant to be seen before the name in it is read, and the window drew it
+/// 5 apart. Anything less and the row has become a quiet cell with a red line.
+const APART_TINT: f32 = 3.0;
+
+// The fields each part is read on, nearest last, named once because most of them
+// are read on again and again.
+const ON_WINDOW: &[Role] = &[];
+const ON_FOLD_HOVER: &[Role] = &[Role::TitleBarFoldFillHover];
+const ON_CLOSE_HOVER: &[Role] = &[Role::TitleBarCloseFillHover];
+const ON_SIDEBAR: &[Role] = &[Role::SidebarSurface];
+const ON_SIDEBAR_ROW: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFill];
+const ON_SIDEBAR_ROW_HOVER: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillHover];
+const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillSelected];
+const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
+const ON_MESSAGE: &[Role] = &[Role::TranscriptSurface, Role::TranscriptMessageFill];
+const ON_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFill];
+const ON_CELL_HOVER: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillHover];
+const ON_FAILED_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillFailed];
+const ON_FAILED_CELL_HOVER: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptCellFillFailedHover];
+const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
+const ON_CODE_CARD: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCodeFill];
+
+/// One colour as the reader sees it: a role, and the fields it is drawn on.
+struct Mark {
+    role: Role,
+    /// The fields under it, nearest last: a row's fill laid over its column's
+    /// surface, and no more. `ON_WINDOW` is empty because there is nothing under
+    /// the window: the caption draws no field and its marks sit on that.
+    on: &'static [Role],
+}
+
 /// One place the window puts ink on a surface.
 struct Pair {
-    ink: Role,
-    /// The fields under the ink, the nearest last: a row's fill laid over its
-    /// column's surface, and no more. Empty is the window's own background,
-    /// which is what the caption's marks sit on — the caption draws no field.
-    on: &'static [Role],
+    ink: Mark,
     /// Named the way a theme author would say it, since it is what they see
     /// when the pair fails.
     what: &'static str,
@@ -37,72 +67,166 @@ struct Pair {
 
 const PAIRS: &[Pair] = &[
     Pair {
-        ink: Role::TitleBarGlyph,
-        on: &[],
+        ink: Mark { role: Role::TitleBarGlyph, on: ON_WINDOW },
         what: "the caption glyphs",
         floor: MARK,
     },
     Pair {
-        ink: Role::TitleBarFoldGlyph,
-        on: &[],
+        ink: Mark { role: Role::TitleBarFoldGlyph, on: ON_WINDOW },
         what: "the fold mark at rest",
         floor: MARK,
     },
     Pair {
-        ink: Role::TitleBarFoldGlyphHover,
-        on: &[Role::TitleBarFoldFillHover],
+        ink: Mark { role: Role::TitleBarFoldGlyphHover, on: ON_FOLD_HOVER },
         what: "the fold mark under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Role::TitleBarCloseInkHover,
-        on: &[Role::TitleBarCloseFillHover],
+        ink: Mark { role: Role::TitleBarCloseInkHover, on: ON_CLOSE_HOVER },
         what: "the close mark on its hover fill",
         floor: MARK,
     },
     // A session's name is the sidebar's one piece of body text, measured in
     // each state it is read in.
     Pair {
-        ink: Role::SidebarNameInk,
-        on: &[Role::SidebarSurface, Role::SidebarRowFill],
+        ink: Mark { role: Role::SidebarNameInk, on: ON_SIDEBAR_ROW },
         what: "a session's name at rest",
         floor: BODY,
     },
     Pair {
-        ink: Role::SidebarNameInk,
-        on: &[Role::SidebarSurface, Role::SidebarRowFillHover],
+        ink: Mark { role: Role::SidebarNameInk, on: ON_SIDEBAR_ROW_HOVER },
         what: "a session's name under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Role::SidebarNameInkSelected,
-        on: &[Role::SidebarSurface, Role::SidebarRowFillSelected],
+        ink: Mark { role: Role::SidebarNameInkSelected, on: ON_SIDEBAR_ROW_SELECTED },
         what: "the picked session's name",
         floor: BODY,
     },
     Pair {
-        ink: Role::SidebarNameInkEditing,
-        on: &[Role::SidebarSurface, Role::SidebarRowFill],
+        ink: Mark { role: Role::SidebarNameInkEditing, on: ON_SIDEBAR_ROW },
         what: "a session's name while it is renamed",
         floor: BODY,
     },
-    // Two sidebar colours are deliberately left out of this list rather than
-    // gated, and both for the same reason: the window already drew them this
-    // way, and a role that has to resolve to today's pixel cannot be moved here.
-    //   - the age sits at 2.7:1 on the column, under both floors: the window's
-    //     miss, not a design that wants keeping.
+    // The transcript. Its rows are what the reader came for, so the words in
+    // them are held to the body floor on whichever field they are read on — a
+    // cell's name on the cell, the code it opened and what it printed inside it.
+    Pair {
+        ink: Mark { role: Role::TranscriptProseInk, on: ON_TRANSCRIPT },
+        what: "the transcript's prose",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptMessageInk, on: ON_MESSAGE },
+        what: "the message the reader sent",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptLinkInk, on: ON_TRANSCRIPT },
+        what: "a link in prose",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        what: "a cell's name at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL_HOVER },
+        what: "a cell's name under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellCodeInk, on: ON_OPENED_ROW },
+        what: "the code a cell opened",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellOutputInk, on: ON_OPENED_ROW },
+        what: "what a cell printed",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellSeparatorInk, on: ON_CELL },
+        what: "the dot that parts a cell's meta from its elapsed time",
+        floor: MARK,
+    },
+    // A failure is read in the same two states as a quiet cell, and its field is
+    // the one a theme is most likely to leave behind.
+    Pair {
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
+        what: "a failed cell's words",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL_HOVER },
+        what: "a failed cell's words under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptReasonInk, on: ON_FAILED_CELL },
+        what: "the reason a failed cell opens",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptThinkingLabelInk, on: ON_TRANSCRIPT },
+        what: "the label a thinking row carries",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptThinkingInk, on: ON_OPENED_ROW },
+        what: "the text inside an opened thinking row",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCodeInk, on: ON_CODE_CARD },
+        what: "a fenced block's code",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptTableInk, on: ON_TRANSCRIPT },
+        what: "a table's text",
+        floor: BODY,
+    },
+    // The colours below are recorded rather than checked, and all for the same
+    // reason: the window already drew them this way and a role that has to
+    // resolve to today's pixel cannot be moved here. A theme that wants any of
+    // them read high overrides its role, where its own value is measured.
+    //   - the sidebar's age sits at 2.7:1 on the column, under both floors: the
+    //     window's miss, not a design that wants keeping.
     //   - the parked tag sits at 2.2:1, which is how a session meant to recede
     //     was drawn; the working tag lands at 5.8:1 and the idle at 6.1:1.
-    // A theme that wants either read high overrides its role, where its own
-    // value is measured.
+    //   - a cell's meta and elapsed figures sit at 2.1:1 on the cell, and the
+    //     label a thinking row carries at 3.2:1 once its own hover chip is under
+    //     it: both are the dimmest ink the transcript has.
+    //   - a notice line sits at 2.2:1 on the column.
+    //   - the language in a block's corner sits at 2.7:1 on the code card.
+    //   - the failure badge is a disc of the failure's red on the failed cell's
+    //     field, 1.9:1, and the jump chip's edge is 1.5:1 on the column. One is
+    //     a mark with a glyph drawn inside it and the other a line whose whole
+    //     job is to say "control": neither is a word.
+    // The transcript's other hairlines and its scrollbar's thumb are no ink on a
+    // surface at all, so no floor of this kind describes them.
+    //
+    // And one thing no floor here can see: the failure's six colours are fixed
+    // values, so a theme that moves the field and the ink and stops there keeps
+    // a failed cell drawn for a dark window. The separation below still holds —
+    // a near-black cell is a long way from a light one — so nothing refuses it;
+    // naming the failure roles is how a theme makes its own.
 ];
 
 /// Two marks a reader has to tell apart, because nothing but their colour says
 /// which is which.
 struct Telling {
-    a: Role,
-    b: Role,
+    a: Mark,
+    b: Mark,
+    /// They are named as two sides rather than one with a shared field because
+    /// the fields differ: a failed cell and a quiet one are told apart by what
+    /// is on them.
     what: &'static str,
+    /// What the pair carries decides its floor: a state the reader has to know
+    /// gets more room than a tint the reader has to notice.
+    floor: f32,
 }
 
 /// The three tags carry a session's state and nothing else does, so a theme
@@ -111,12 +235,45 @@ struct Telling {
 /// contrast against the column is recorded in the note above.
 const TELLINGS: &[Telling] = &[
     Telling {
-        a: Role::TagWorking,
-        b: Role::TagParked,
+        a: Mark { role: Role::TagWorking, on: ON_SIDEBAR },
+        b: Mark { role: Role::TagParked, on: ON_SIDEBAR },
         what: "the working tag and the parked tag",
+        floor: APART,
     },
-    Telling { a: Role::TagWorking, b: Role::TagIdle, what: "the working tag and the idle tag" },
-    Telling { a: Role::TagParked, b: Role::TagIdle, what: "the parked tag and the idle tag" },
+    Telling {
+        a: Mark { role: Role::TagWorking, on: ON_SIDEBAR },
+        b: Mark { role: Role::TagIdle, on: ON_SIDEBAR },
+        what: "the working tag and the idle tag",
+        floor: APART,
+    },
+    Telling {
+        a: Mark { role: Role::TagParked, on: ON_SIDEBAR },
+        b: Mark { role: Role::TagIdle, on: ON_SIDEBAR },
+        what: "the parked tag and the idle tag",
+        floor: APART,
+    },
+    // A cell that failed says so twice: its field is warmed and its name is
+    // written in the failure's red. Both are measured in each state the row is
+    // read in, because a theme that greys one and leaves the other is one
+    // careless role away from a transcript where nothing says which cell failed.
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillFailed, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFill, on: ON_TRANSCRIPT },
+        what: "a failed cell's field and a quiet cell's field",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillFailedHover, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFillHover, on: ON_TRANSCRIPT },
+        what: "a failed cell's field and a quiet cell's field under the pointer",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
+        b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        what: "a failed cell's name and a quiet cell's name",
+        floor: APART,
+    },
 ];
 
 /// One ink-on-surface pair a theme left under its floor.
@@ -134,6 +291,7 @@ pub(crate) struct Clash {
     pub(crate) what: &'static str,
     /// How far apart the two are, as a CIE76 distance.
     pub(crate) apart: f32,
+    pub(crate) floor: f32,
 }
 
 /// The ink-on-surface pairs this theme leaves under their floor. Empty is the
@@ -143,7 +301,7 @@ pub(crate) fn contrast(theme: &Resolved) -> Vec<Finding> {
     PAIRS
         .iter()
         .filter_map(|pair| {
-            let ratio = ratio(theme.get(pair.ink), surface(theme, pair.on));
+            let ratio = ratio(theme.get(pair.ink.role), surface(theme, pair.ink.on));
             (ratio < pair.floor).then_some(Finding {
                 what: pair.what,
                 ratio,
@@ -155,15 +313,18 @@ pub(crate) fn contrast(theme: &Resolved) -> Vec<Finding> {
 
 /// The marks this theme pulled too close to each other to be told apart.
 pub(crate) fn separation(theme: &Resolved) -> Vec<Clash> {
-    // Each tag read as the reader sees it: on the column, which is where the
-    // sidebar draws them. A tag carrying an alpha is laid on that field.
-    let column = surface(theme, &[Role::SidebarSurface]);
-    let seen = |role| theme.get(role).over(column);
+    // Each side read as the reader sees it: a colour carrying an alpha is laid
+    // on the fields under it, in the order the window draws them.
+    let seen = |mark: &Mark| theme.get(mark.role).over(surface(theme, mark.on));
     TELLINGS
         .iter()
         .filter_map(|telling| {
-            let apart = distance(seen(telling.a), seen(telling.b));
-            (apart < APART).then_some(Clash { what: telling.what, apart })
+            let apart = distance(seen(&telling.a), seen(&telling.b));
+            (apart < telling.floor).then_some(Clash {
+                what: telling.what,
+                apart,
+                floor: telling.floor,
+            })
         })
         .collect()
 }
@@ -258,10 +419,12 @@ pub(crate) fn check_cli(mut args: impl Iterator<Item = String>) -> Option<(i32, 
     let clashes = separation(&theme);
     if findings.is_empty() && clashes.is_empty() {
         let pairs = PAIRS.len();
-        let tags = TELLINGS.len();
+        let marks = TELLINGS.len();
         return Some((
             0,
-            format!("theme `{path}`: {pairs} ink-on-surface pairs and {tags} tag pairs clear their floor\n"),
+            format!(
+                "theme `{path}`: {pairs} ink-on-surface pairs and {marks} separations clear their floors\n"
+            ),
         ));
     }
     let short = findings.len() + clashes.len();
@@ -275,7 +438,10 @@ pub(crate) fn check_cli(mut args: impl Iterator<Item = String>) -> Option<(i32, 
         report.push_str(&format!("  {what}: {ratio:.1}:1, floor {floor:.1}:1\n"));
     }
     for clash in &clashes {
-        report.push_str(&format!("  {}: {:.1} apart, floor {APART:.0}\n", clash.what, clash.apart));
+        report.push_str(&format!(
+            "  {}: {:.1} apart, floor {:.0}\n",
+            clash.what, clash.apart, clash.floor
+        ));
     }
     Some((1, report))
 }
