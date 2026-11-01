@@ -125,4 +125,64 @@ export global Theme {
     in-out property <color> composer-stop-fill;
     in-out property <color> composer-stop-fill-hover;
     in-out property <color> composer-stop-mark;
+    // the four panels that open over the window — the command list, the model
+    // menu, the ladder that drops off one of its rows and the queue card — share
+    // one field, one edge and the two row states a panel can draw; the shadows
+    // are apart because the ladder is drawn on a panel rather than on the window
+    in-out property <color> panel-surface;
+    in-out property <color> panel-edge;
+    in-out property <color> panel-shadow;
+    in-out property <color> panel-shadow-nested;
+    in-out property <color> panel-row-fill-hover;
+    in-out property <color> panel-row-fill-current;
+    // the command list: a command's name in the two states a row has, the
+    // argument it takes, and the sentence that says what it does
+    in-out property <color> slash-menu-row-ink;
+    in-out property <color> slash-menu-row-ink-hover;
+    in-out property <color> slash-menu-hint-ink;
+    in-out property <color> slash-menu-description-ink;
+    // the model menu: a provider's name signed in and not, the figure beside it,
+    // a model's name in the two states its row has, the context window beside
+    // every row but the running one, and the level the running one carries
+    in-out property <color> model-menu-header-ink;
+    in-out property <color> model-menu-header-ink-quiet;
+    in-out property <color> model-menu-count-ink;
+    in-out property <color> model-menu-row-ink;
+    in-out property <color> model-menu-row-ink-current;
+    in-out property <color> model-menu-detail-ink;
+    in-out property <color> model-menu-effort-ink;
+    // the ladder: a rung, and the rung the model is on
+    in-out property <color> effort-ladder-row-ink;
+    in-out property <color> effort-ladder-row-ink-current;
+    // the queue card: the count over its first lane, the name of a lane with
+    // nothing to count, a waiting message, and the action that empties both
+    in-out property <color> queue-card-count-ink;
+    in-out property <color> queue-card-lane-ink;
+    in-out property <color> queue-row-ink;
+    in-out property <color> queue-card-clear-ink;
+    in-out property <color> queue-card-clear-ink-hover;
+    // a waiting row's three controls: the fill they sit on in both states, the
+    // pencil and the bin at rest, the pencil and the arrow under the pointer,
+    // and the warmth the bin turns where nothing else on the row is warm
+    in-out property <color> queue-row-control-fill;
+    in-out property <color> queue-row-control-fill-hover;
+    in-out property <color> queue-row-control-mark;
+    in-out property <color> queue-row-control-mark-hover;
+    in-out property <color> queue-row-promote-mark;
+    in-out property <color> queue-row-promote-mark-hover;
+    in-out property <color> queue-row-delete-mark;
+    // the status strip: its field and the outline of its rounded top, the word
+    // that says what the turn is doing and how long it has been at it, and the
+    // pill that opens the queue: a fill that stays lit while its card is open,
+    // and the number and the word beside it, which brighten for the pointer
+    in-out property <color> status-strip-surface;
+    in-out property <color> status-strip-edge;
+    in-out property <color> status-strip-working-ink;
+    in-out property <color> status-strip-elapsed-ink;
+    in-out property <color> status-strip-queue-fill;
+    in-out property <color> status-strip-queue-fill-hover;
+    in-out property <color> status-strip-queue-count-ink;
+    in-out property <color> status-strip-queue-count-ink-hover;
+    in-out property <color> status-strip-queue-label-ink;
+    in-out property <color> status-strip-queue-label-ink-hover;
 }

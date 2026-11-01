@@ -3,6 +3,8 @@
 // The corner of the strip is the one that grows, so while a turn runs you see two
 // rounded tops - a small one above the input's.
 
+import { Theme } from "theme.slint";
+
 export component BusyStrip inherits Rectangle {
     in property <length> strip-x;
     in property <length> box-y;
@@ -44,7 +46,7 @@ export component BusyStrip inherits Rectangle {
         y: 0;
         width: parent.width;
         height: parent.height + 24px;
-        background: #2e2e2e;
+        background: Theme.status-strip-edge;
         border-radius: 12px;
     }
     Rectangle {
@@ -52,7 +54,7 @@ export component BusyStrip inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: parent.height + 24px;
-        background: #191919;
+        background: Theme.status-strip-surface;
         border-radius: 11px;
     }
     }
@@ -68,7 +70,7 @@ export component BusyStrip inherits Rectangle {
                         x: 14px;
                         visible: root.strip-h > 1px;
                         text: root.spinner;
-                        color: #c9a86a;
+                        color: Theme.status-strip-working-ink;
                         font-family: "Cascadia Code";
                         font-size: 19px;
                         height: parent.height;
@@ -79,7 +81,7 @@ export component BusyStrip inherits Rectangle {
                         x: spin.x + spin.width + 4px;
                         visible: root.strip-h > 1px;
                         text: root.label;
-                        color: #c9a86a;
+                        color: Theme.status-strip-working-ink;
                         font-family: "Cascadia Code";
                         font-size: 11px;
                         height: parent.height;
@@ -90,7 +92,7 @@ export component BusyStrip inherits Rectangle {
                         x: lbl.x + lbl.width + 8px;
                         visible: root.strip-h > 1px;
                         text: root.elapsed;
-                        color: #585858;
+                        color: Theme.status-strip-elapsed-ink;
                         font-family: "Cascadia Code";
                         font-size: 11px;
                         height: parent.height;
@@ -108,7 +110,9 @@ export component BusyStrip inherits Rectangle {
                         width: lane-row.preferred-width + 16px;
                         height: 18px;
                         border-radius: 6px;
-                        background: lane-touch.has-hover || root.queue-open ? #202020 : transparent;
+                        background: lane-touch.has-hover || root.queue-open
+                            ? Theme.status-strip-queue-fill-hover
+                            : Theme.status-strip-queue-fill;
 
                         lane-row := HorizontalLayout {
                             // full width with centred alignment: the
@@ -123,13 +127,17 @@ export component BusyStrip inherits Rectangle {
                             alignment: center;
                             Text {
                                 text: root.queued;
-                                color: lane-touch.has-hover ? #e5e5e5 : #b0b0b0;
+                                color: lane-touch.has-hover
+                                    ? Theme.status-strip-queue-count-ink-hover
+                                    : Theme.status-strip-queue-count-ink;
                                 font-size: 10px;
                                 vertical-alignment: center;
                             }
                             Text {
                                 text: "queued";
-                                color: lane-touch.has-hover ? #b0b0b0 : #6d6d6d;
+                                color: lane-touch.has-hover
+                                    ? Theme.status-strip-queue-label-ink-hover
+                                    : Theme.status-strip-queue-label-ink;
                                 font-size: 10px;
                                 vertical-alignment: center;
                             }

@@ -556,6 +556,262 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
     assert!(glyph.r < 0x60, "the caption glyphs follow the ink: {glyph:?}");
 }
 
+/// The four panels that open over the window as the window drew them before
+/// there was a theme: the values read off `ui/menus.slint`, the queue card in
+/// `ui/app.slint` and the waiting rows in `ui/transcript.slint`, not out of this
+/// crate.
+#[test]
+fn the_shipped_theme_draws_todays_menus() {
+    let theme = Resolved::shipped();
+
+    // The shape all four share: a field a step over the window's background, the
+    // hairline that parts it from the sheet, and the shadow that lifts it.
+    assert_eq!(theme.get(Role::PanelSurface), Rgba::hex("#181818"));
+    assert_eq!(theme.get(Role::PanelEdge), Rgba::hex("#2e2e2e"));
+    assert_eq!(theme.get(Role::PanelShadow), Rgba::hex("#00000080"));
+    // The ladder hangs off the model menu rather than off the window, and its
+    // shadow is the shallower one.
+    assert_eq!(theme.get(Role::PanelShadowNested), Rgba::hex("#00000060"));
+    assert_eq!(theme.get(Role::PanelRowFillHover), Rgba::hex("#202020"));
+    assert_eq!(theme.get(Role::PanelRowFillCurrent), Rgba::hex("#242424"));
+
+    // The command list: a name in the two states its row has, the argument only
+    // the highlighted row shows, and the sentence that says what it does.
+    assert_eq!(theme.get(Role::SlashMenuRowInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::SlashMenuRowInkHover), Rgba::hex("#c1c1c1"));
+    assert_eq!(theme.get(Role::SlashMenuHintInk), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::SlashMenuDescriptionInk), Rgba::hex("#6d6d6d"));
+
+    // The model menu: a provider signed in and not, the figure beside it, a
+    // model in both states its row has, and the two things the right of a row
+    // can carry.
+    assert_eq!(theme.get(Role::ModelMenuHeaderInk), Rgba::hex("#d8d8d8"));
+    assert_eq!(theme.get(Role::ModelMenuHeaderInkQuiet), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::ModelMenuCountInk), Rgba::hex("#585858"));
+    assert_eq!(theme.get(Role::ModelMenuRowInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::ModelMenuDetailInk), Rgba::hex("#585858"));
+    // The level the running model carries is the gold the sidebar's working tag
+    // is drawn in: they say the same thing.
+    assert_eq!(theme.get(Role::ModelMenuEffortInk), Rgba::hex("#a18e41"));
+
+    // The ladder's rungs.
+    assert_eq!(theme.get(Role::EffortLadderRowInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::EffortLadderRowInkCurrent), Rgba::hex("#e5e5e5"));
+
+    // The queue card: the count over the first lane, the second lane's own name,
+    // a waiting message, and the action that empties both.
+    assert_eq!(theme.get(Role::QueueCardCountInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::QueueCardLaneInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::QueueRowInk), Rgba::hex("#d8d8d8"));
+    assert_eq!(theme.get(Role::QueueCardClearInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::QueueCardClearInkHover), Rgba::hex("#d8d8d8"));
+
+    // A waiting row's three controls: a fill in the two states it has, and the
+    // marks on it. The bin is the one mark that changes colour rather than
+    // weight as the pointer arrives.
+    assert_eq!(theme.get(Role::QueueRowControlFill), Rgba::hex("#2e2e2e"));
+    assert_eq!(theme.get(Role::QueueRowControlFillHover), Rgba::hex("#3a3a3a"));
+    assert_eq!(theme.get(Role::QueueRowControlMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::QueueRowControlMarkHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#8f8f8f"));
+    assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#cdcdcd"));
+    assert_eq!(theme.get(Role::QueueRowDeleteMark), Rgba::hex("#f3ded8"));
+}
+
+/// The status strip as the window drew it before there was a theme: the values
+/// read off `ui/status-strip.slint` and the `busy-h` it is drawn at in
+/// `ui/app.slint`, not out of this crate.
+#[test]
+fn the_shipped_theme_draws_todays_status_strip() {
+    let theme = Resolved::shipped();
+
+    // The strip is an outline with a fill inset by exactly its stroke, which is
+    // why the two are separate roles although the panels' edge ships this value.
+    assert_eq!(theme.get(Role::StatusStripEdge), Rgba::hex("#2e2e2e"));
+    assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#191919"));
+
+    // What the turn is doing, and how long it has been at it.
+    assert_eq!(theme.get(Role::StatusStripWorkingInk), Rgba::hex("#c9a86a"));
+    assert_eq!(theme.get(Role::StatusStripElapsedInk), Rgba::hex("#585858"));
+
+    // The pill that opens the queue: at rest it draws nothing of its own, and
+    // the number and the word beside it brighten together.
+    assert_eq!(theme.get(Role::StatusStripQueueFill).a, 0, "a resting pill is not a fill");
+    assert_eq!(theme.get(Role::StatusStripQueueFillHover), Rgba::hex("#202020"));
+    assert_eq!(theme.get(Role::StatusStripQueueCountInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::StatusStripQueueCountInkHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::StatusStripQueueLabelInk), Rgba::hex("#6d6d6d"));
+    assert_eq!(theme.get(Role::StatusStripQueueLabelInkHover), Rgba::hex("#b0b0b0"));
+}
+
+/// The panels and the strip are made of the base values like every other part: a
+/// file that moves the window's colours carries them with it, which is what
+/// makes a light set of menus possible without naming every role by hand.
+#[test]
+fn a_theme_that_moves_the_base_values_moves_the_panels_and_the_strip_with_them() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020" } }"##,
+    )
+    .expect("a file that names only base values");
+
+    let shipped = Resolved::shipped();
+    for field in [
+        Role::PanelSurface,
+        Role::PanelEdge,
+        Role::StatusStripSurface,
+        Role::StatusStripEdge,
+    ] {
+        assert_ne!(theme.get(field), shipped.get(field), "{} follows the field", field.name());
+        assert!(theme.get(field).r > 0x80, "{} is a field of a light window", field.name());
+    }
+    // The running model's name and the strip's word for the turn follow the ink;
+    // the rows are a lift of it over the background, so on a light window they
+    // step darker than the panel rather than lighter.
+    assert_eq!(theme.get(Role::ModelMenuRowInkCurrent), Rgba::hex("#202020"));
+    let hover = theme.get(Role::PanelRowFillHover);
+    assert!(hover.r < 0xf5 && hover.r > 0x20, "{hover:?}");
+}
+
+/// A file that names the panels' colours repaints the four panels and moves
+/// nothing else in the map — not the strip, which is a surface of its own.
+#[test]
+fn a_theme_that_names_the_panel_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "panel-surface": "#1a1226",
+               "panel-edge": "#3a2a52",
+               "panel-shadow": "#00000099",
+               "panel-shadow-nested": "#0000004d",
+               "panel-row-fill-hover": "#2f2242",
+               "panel-row-fill-current": "#3a2c50",
+               "slash-menu-row-ink": "#cfc0e8",
+               "slash-menu-row-ink-hover": "#eee6ff",
+               "slash-menu-hint-ink": "#c9a7ff",
+               "slash-menu-description-ink": "#9a8fb0",
+               "model-menu-header-ink": "#eee6ff",
+               "model-menu-header-ink-quiet": "#8a7fa0",
+               "model-menu-count-ink": "#9a8fb0",
+               "model-menu-row-ink": "#cfc0e8",
+               "model-menu-row-ink-current": "#ffffff",
+               "model-menu-detail-ink": "#9a8fb0",
+               "model-menu-effort-ink": "#c9a7ff",
+               "effort-ladder-row-ink": "#cfc0e8",
+               "effort-ladder-row-ink-current": "#ffffff",
+               "queue-card-count-ink": "#cfc0e8",
+               "queue-card-lane-ink": "#9a8fb0",
+               "queue-row-ink": "#eee6ff",
+               "queue-card-clear-ink": "#9a8fb0",
+               "queue-card-clear-ink-hover": "#eee6ff",
+               "queue-row-control-fill": "#3a2a52",
+               "queue-row-control-fill-hover": "#5f4d7d",
+               "queue-row-control-mark": "#cfc0e8",
+               "queue-row-control-mark-hover": "#ffffff",
+               "queue-row-promote-mark": "#c9a7ff",
+               "queue-row-promote-mark-hover": "#eee6ff",
+               "queue-row-delete-mark": "#ff9f8f" } }"##,
+    )
+    .expect("a file that repaints the panels");
+
+    // The file names every colour the four panels have, and nothing else moves.
+    let (moved, claimed) = moved_and_claimed(&theme, |name| {
+        name.starts_with("panel-")
+            || name.starts_with("slash-menu-")
+            || name.starts_with("model-menu-")
+            || name.starts_with("effort-ladder-")
+            || name.starts_with("queue-card-")
+            || name.starts_with("queue-row-")
+    });
+    assert_eq!(moved, claimed);
+}
+
+/// The strip is its own surface, so a file that names it repaints the strip and
+/// leaves the four panels — and every other part — where they were.
+#[test]
+fn a_theme_that_names_the_status_strip_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "status-strip-surface": "#1a1226",
+               "status-strip-edge": "#3a2a52",
+               "status-strip-working-ink": "#c9a7ff",
+               "status-strip-elapsed-ink": "#9a8fb0",
+               "status-strip-queue-fill": "#2f2242",
+               "status-strip-queue-fill-hover": "#3a2c50",
+               "status-strip-queue-count-ink": "#cfc0e8",
+               "status-strip-queue-count-ink-hover": "#ffffff",
+               "status-strip-queue-label-ink": "#9a8fb0",
+               "status-strip-queue-label-ink-hover": "#cfc0e8" } }"##,
+    )
+    .expect("a file that repaints the strip");
+
+    // The file names every colour the strip has, and nothing else moves.
+    let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("status-strip-"));
+    assert_eq!(moved, claimed);
+
+    assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#1a1226"));
+    // The panels are not the strip: the same file leaves their surface alone.
+    assert_eq!(theme.get(Role::PanelSurface), Resolved::shipped().get(Role::PanelSurface));
+}
+
+/// The ticket's second promise, in the unit that can keep it: the strip's tags —
+/// the word that says what the turn is doing, and the count and the word the
+/// queue pill carries — are read on the strip, so a theme that paints any of
+/// them into it is told which one it buried.
+#[test]
+fn a_theme_that_paints_the_strips_tags_into_the_strip_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "status-strip-working-ink": "#191919",
+                        "status-strip-queue-count-ink": "#191919",
+                        "status-strip-queue-label-ink": "#191919" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
+    named.sort_unstable();
+
+    assert_eq!(
+        named,
+        [
+            "how many messages the pill counts",
+            "how many messages the pill counts, with its card open",
+            "the word beside the count on the pill",
+            "the word beside the count, with the pill's card open",
+            "the word that says what the turn is doing"
+        ]
+    );
+}
+
+/// A waiting row's controls draw no outline: the fill is the whole of what says
+/// they are controls. A theme that tints the panel — or the row's own hover —
+/// and leaves the fills behind is told, in both rows it can happen on.
+#[test]
+fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
+    let painted = |fill: &str| {
+        let theme = from_text(
+            "mine.json",
+            &format!(
+                r##"{{ "name": "mine", "version": 1,
+                       "roles": {{ "queue-row-control-fill": "{fill}" }} }}"##
+            ),
+        )
+        .expect("a theme that loads");
+        separation(&theme).into_iter().map(|clash| clash.what).collect::<Vec<&str>>()
+    };
+
+    // The panel's own field.
+    assert_eq!(painted("#181818"), ["a waiting row's buttons and the panel behind them"]);
+    // The fill a row takes when the pointer is on it.
+    assert_eq!(painted("#202020"), ["a waiting row's buttons and the row they sit on"]);
+}
+
 /// A base value carries a theme far, and the places it does not carry are the
 /// ones the check names: on a light background the fold mark's veil of quiet
 /// ink steps *towards* the field rather than away from it, and the session
@@ -565,8 +821,11 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
 /// follows the file all the way. The composer is the same story twice over: the
 /// chip's name, the plus and the line under the draft are quiet ink faded
 /// towards a field that has just gone light, and the gold of a command word and
-/// the white of a selection are fixed values no palette entry moves. Those are
-/// roles to override, not a file to refuse, and the author is told which.
+/// the white of a selection are fixed values no palette entry moves. The four
+/// panels and the strip tell it again — every word made of the quiet ink stays
+/// pale on fields that have gone light, and the gold of the running model's
+/// level and of the strip's spinner stays gold. Those are roles to override, not
+/// a file to refuse, and the author is told which.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -584,26 +843,45 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
         [
             "a cell's name at rest",
             "a cell's name under the pointer",
+            "a command's name",
             "a ledger value",
             "a link in prose",
+            "a model's name at rest",
+            "a provider the reader is not signed in to",
+            "a rung of the ladder",
             "a session's name at rest",
             "a session's name under the pointer",
             "a table's text",
+            "how many messages are waiting",
+            "how many messages the pill counts",
+            "how many messages the pill counts, with its card open",
+            "the action that empties both lanes",
+            "the argument a command takes",
+            "the arrow that pulls a message into the running turn",
             "the bar that says how full the context is",
+            "the bin on a waiting row, under the pointer",
             "the card's small labels",
             "the command a draft starts with",
             "the composer's status line",
             "the dot that parts a cell's meta from its elapsed time",
             "the fold mark at rest",
             "the label a thinking row carries",
+            "the level the running model is at",
             "the model the chip names",
+            "the name of a lane with nothing to count",
+            "the pencil and the bin on a waiting row",
             "the plus that attaches a picture",
             "the plus that attaches a picture, under the pointer",
             "the send disc on the composer's field",
             "the status line when something went wrong",
             "the text inside an opened thinking row",
+            "the word beside the count on the pill",
+            "the word beside the count, under the pointer",
+            "the word beside the count, with the pill's card open",
+            "the word that says what the turn is doing",
             "the words the reader has selected",
             "what a cell printed",
+            "what a command does",
             "what is left of the context"
         ]
     );
