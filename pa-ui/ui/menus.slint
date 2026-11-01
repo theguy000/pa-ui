@@ -181,6 +181,7 @@ export component ModelMenu inherits Rectangle {
                     x: 6px;
                     y: (26px - self.height) / 2;
                     up: !group.open;
+                    tint: Theme.model-menu-caret-mark;
                 }
                 Text {
                     x: 22px;
@@ -369,6 +370,7 @@ export component EffortLadder inherits Rectangle {
             if item.current : IconCheck {
                 x: parent.width - 24px;
                 y: (parent.height - self.height) / 2;
+                tint: Theme.effort-ladder-check-mark;
             }
     }
 }

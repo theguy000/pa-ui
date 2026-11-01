@@ -66,6 +66,209 @@ fn the_shipped_theme_draws_todays_sidebar() {
     assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#6f9f5f"));
 }
 
+/// The glyphs as the window drew them before there was a theme: the values read
+/// off `ui/icons.slint`, and the tints six UI sources passed beside them, not out
+/// of this crate.
+///
+/// A glyph defaults to the role of the part it rests in, and a part that draws
+/// the same shape somewhere else names its own — the two folds, the pen in the
+/// folded strip, the caret in the model menu and on the chip. Both roles are here.
+#[test]
+fn the_shipped_theme_draws_todays_glyphs() {
+    let theme = Resolved::shipped();
+
+    // The sidebar: its fold in the header, the pen on New Session in the header
+    // and in the folded strip, the magnifier both carry, and the pencil a row
+    // offers to rename it.
+    assert_eq!(theme.get(Role::SidebarFoldGlyph), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::SidebarFoldGlyphHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarNewSessionMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::SidebarNewSessionMarkHover), Rgba::hex("#e5e5e5"));
+    // The strip's own pen reads a step above the button's: folded, the mark is
+    // the whole control.
+    assert_eq!(theme.get(Role::SidebarStripNewSessionMark), Rgba::hex("#d7d7d7"));
+    assert_eq!(theme.get(Role::SidebarStripNewSessionMarkHover), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarSearchMark), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::SidebarRowRenameMark), Rgba::hex("#8b8b8b"));
+
+    // The transcript: the caret on a row that opens — a thinking row and a cell
+    // draw the same shape — the chevron on the chip that walks back to the
+    // newest row, and the alert inside a failed cell's badge.
+    assert_eq!(theme.get(Role::TranscriptCaretMark), Rgba::hex("#7b7b7b"));
+    assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#b2b2b2"));
+    assert_eq!(theme.get(Role::TranscriptCellBadgeMark), Rgba::hex("#f3ded8"));
+
+    // The panels the caret and the tick are drawn in: the model menu's own
+    // caret, its tick beside the running model, and the tick the ladder draws
+    // on its current rung.
+    assert_eq!(theme.get(Role::ModelMenuCaretMark), Rgba::hex("#7b7b7b"));
+    assert_eq!(theme.get(Role::ModelMenuCheckMark), Rgba::hex("#a18e41"));
+    assert_eq!(theme.get(Role::EffortLadderCheckMark), Rgba::hex("#a18e41"));
+
+    // And the caret beside the composer's chip, which opens the model menu.
+    assert_eq!(theme.get(Role::ComposerChipCaretMark), Rgba::hex("#7b7b7b"));
+}
+
+/// The brand mark's six fills as the artwork drew them before they were roles:
+/// the wing and the stem, the three shadows they cast, and the blade over them
+/// all.
+///
+/// Five of the six are the brand tone mixed towards the column the mark is cut
+/// from, and the shares are the artwork's own proportions, so the values here are
+/// what those proportions come to on the field the window ships.
+#[test]
+fn the_shipped_theme_draws_todays_brand_mark() {
+    let theme = Resolved::shipped();
+
+    assert_eq!(theme.get(Role::BrandMarkBlade), Rgba::hex("#ffffff"));
+    assert_eq!(theme.get(Role::BrandMarkWing), Rgba::hex("#aeaeae"));
+    assert_eq!(theme.get(Role::BrandMarkWingInnerShadow), Rgba::hex("#838383"));
+    assert_eq!(theme.get(Role::BrandMarkWingShadow), Rgba::hex("#5a5a5a"));
+    assert_eq!(theme.get(Role::BrandMarkStem), Rgba::hex("#636363"));
+    assert_eq!(theme.get(Role::BrandMarkStemShadow), Rgba::hex("#333333"));
+}
+
+/// Every glyph the palette makes follows the inks it is made of, and the mark
+/// follows the brand tone and the field under it: a reader who moves the ink and
+/// the brand sees the whole window's marks move without naming one of them.
+#[test]
+fn a_theme_that_moves_the_inks_repaints_the_glyphs_and_the_mark() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020",
+                          "quiet-ink": "#3a3a3a", "brand": "#1a1a1a" } }"##,
+    )
+    .expect("a file that names only base values");
+    let shipped = Resolved::shipped();
+
+    for role in [
+        Role::SidebarFoldGlyph,
+        Role::SidebarFoldGlyphHover,
+        Role::SidebarNewSessionMark,
+        Role::SidebarNewSessionMarkHover,
+        Role::SidebarStripNewSessionMark,
+        Role::SidebarStripNewSessionMarkHover,
+        Role::SidebarSearchMark,
+        Role::SidebarRowRenameMark,
+        Role::TranscriptCaretMark,
+        Role::TranscriptJumpMark,
+        Role::ModelMenuCaretMark,
+        Role::ComposerChipCaretMark,
+        Role::BrandMarkBlade,
+        Role::BrandMarkWing,
+        Role::BrandMarkWingInnerShadow,
+        Role::BrandMarkWingShadow,
+        Role::BrandMarkStem,
+        Role::BrandMarkStemShadow,
+    ] {
+        assert_ne!(theme.get(role), shipped.get(role), "{} did not follow", role.name());
+    }
+
+    // Three glyphs are the exception every part with a hue has: the alert inside
+    // a failed cell's badge and the two ticks that mark what is running are drawn
+    // in colours no palette word describes, so they stay values a theme names
+    // outright rather than being mixed out of the ink. The check measures each of
+    // them where it is drawn.
+    for role in [Role::TranscriptCellBadgeMark, Role::ModelMenuCheckMark, Role::EffortLadderCheckMark]
+    {
+        assert_eq!(theme.get(role), shipped.get(role), "{} is not made of the inks", role.name());
+    }
+}
+
+/// The mark is one drawing cut from the column, so a theme that turns the window
+/// over turns the mark over with it: the blade goes dark, the shadows go light,
+/// and every tone keeps its distance from the one it is laid on.
+#[test]
+fn an_inverted_theme_keeps_the_brand_marks_tones_apart() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#1a1a1a",
+                          "quiet-ink": "#3a3a3a", "brand": "#1a1a1a" } }"##,
+    )
+    .expect("a file that turns the window light");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+    assert!(!named.iter().any(|what| what.starts_with("the mark's")), "{named:?}");
+
+    // Turned over rather than merely paler: the tone that was the lightest is
+    // now the darkest, and the shadow that was the darkest is now the lightest.
+    let blade = theme.get(Role::BrandMarkBlade);
+    let shadow = theme.get(Role::BrandMarkStemShadow);
+    assert!(blade.r < shadow.r, "{blade:?} {shadow:?}");
+
+    // And the two glyphs no palette word describes pay for it where the reader
+    // can hear about it: the gold of the tick that says what is running stays
+    // gold, so on a light panel the ratio check names it. A theme that wants the
+    // two read high names them — the same trade the sidebar's tags make.
+    let findings: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
+    assert!(findings.contains(&"the tick beside the running model"), "{findings:?}");
+}
+
+/// The other side of the mark's bargain: it is artwork cut from the field, not ink
+/// laid on it, so a file that moves only the inks leaves it exactly where it was.
+/// What turns the mark over is the field it is cut from and the brand tone, which
+/// is why an inversion that names both leaves the drawing whole.
+#[test]
+fn a_theme_that_moves_only_the_inks_leaves_the_mark_alone() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "ink": "#f0f0f0", "quiet-ink": "#d0d0d0" } }"##,
+    )
+    .expect("a file that moves only the inks");
+    let shipped = Resolved::shipped();
+
+    for role in [
+        Role::BrandMarkBlade,
+        Role::BrandMarkWing,
+        Role::BrandMarkWingInnerShadow,
+        Role::BrandMarkWingShadow,
+        Role::BrandMarkStem,
+        Role::BrandMarkStemShadow,
+    ] {
+        assert_eq!(theme.get(role), shipped.get(role), "{} follows the field", role.name());
+    }
+}
+
+/// The other half of the same promise: a theme that turns the window light and
+/// leaves the brand tone white mixes every shadow into the field it is cut from,
+/// and the mark flattens into a shape nobody can read. Nothing refuses the file —
+/// a theme is the theme its author asked for — and the check names all four
+/// places the drawing came apart.
+#[test]
+fn a_theme_that_leaves_the_brand_tone_behind_flattens_the_mark() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020" } }"##,
+    )
+    .expect("a file that turns the window light");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+    let flattened: Vec<&&str> =
+        named.iter().filter(|what| what.starts_with("the mark's")).collect();
+
+    assert_eq!(flattened.len(), 4, "{named:?}");
+}
+
+/// A file may name a single glyph's role: it moves that glyph and leaves the rest
+/// of the window where it was, which is how a reader fixes the one mark that
+/// looks wrong under their field.
+#[test]
+fn a_theme_that_names_a_glyphs_role_moves_that_glyph_alone() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1, "roles": { "transcript-caret-mark": "#c81e1e" } }"##,
+    )
+    .expect("a file that names one glyph");
+
+    let (moved, claimed) = moved_and_claimed(&theme, |name| name == "transcript-caret-mark");
+
+    assert_eq!(moved, claimed);
+}
+
 /// The transcript as the window drew it before there was a theme: the values
 /// read off `ui/transcript.slint` and the column and failure reason in
 /// `ui/app.slint`, not out of this crate.
@@ -297,6 +500,7 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
                "composer-chip-edge-hover": "#4a3a63",
                "composer-chip-ink": "#cfc0e8",
                "composer-chip-ink-hover": "#eee6ff",
+               "composer-chip-caret-mark": "#a99bc4",
                "composer-send-fill": "#c9a7ff",
                "composer-send-fill-hover": "#ded2f2",
                "composer-send-mark": "#140f1c",
@@ -389,6 +593,7 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-message-ink": "#ffffff",
                "transcript-link-ink": "#c9a7ff",
                "transcript-notice-ink": "#8a7fa0",
+               "transcript-caret-mark": "#a99bc4",
                "transcript-cell-fill": "#241a33",
                "transcript-cell-fill-hover": "#2f2242",
                "transcript-cell-title-ink": "#cfc0e8",
@@ -404,6 +609,7 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-cell-ink-failed": "#ff9f8f",
                "transcript-cell-badge-fill": "#8a3428",
                "transcript-cell-badge-fill-hover": "#a5402f",
+               "transcript-cell-badge-mark": "#ffe9e2",
                "transcript-reason-edge": "#8a3428",
                "transcript-reason-ink": "#ffd0c4",
                "transcript-row-fill-expanded": "#140f1c",
@@ -421,7 +627,8 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-scroll-thumb-pressed": "#7a6699",
                "transcript-jump-fill": "#251c33",
                "transcript-jump-fill-hover": "#3a2c50",
-               "transcript-jump-edge": "#4a3a63" } }"##,
+               "transcript-jump-edge": "#4a3a63",
+               "transcript-jump-mark": "#d8ccee" } }"##,
     )
     .expect("a file that repaints the transcript");
 
@@ -465,7 +672,15 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-age-ink": "#6a6a6a",
                "tag-working": "#8a6d00",
                "tag-parked": "#8a8a8a",
-               "tag-idle": "#2f7d3a" } }"##,
+               "tag-idle": "#2f7d3a",
+               "sidebar-fold-glyph": "#4a4a4a",
+               "sidebar-fold-glyph-hover": "#101010",
+               "sidebar-new-session-mark": "#4a4a4a",
+               "sidebar-new-session-mark-hover": "#101010",
+               "sidebar-strip-new-session-mark": "#303030",
+               "sidebar-strip-new-session-mark-hover": "#101010",
+               "sidebar-search-mark": "#4a4a4a",
+               "sidebar-row-rename-mark": "#5a5a5a" } }"##,
     )
     .expect("a file that repaints the sidebar");
 
@@ -695,13 +910,16 @@ fn a_theme_that_names_the_panel_roles_moves_only_those() {
                "slash-menu-description-ink": "#9a8fb0",
                "model-menu-header-ink": "#eee6ff",
                "model-menu-header-ink-quiet": "#8a7fa0",
+               "model-menu-caret-mark": "#a99bc4",
                "model-menu-count-ink": "#9a8fb0",
                "model-menu-row-ink": "#cfc0e8",
                "model-menu-row-ink-current": "#ffffff",
+               "model-menu-check-mark": "#c9a7ff",
                "model-menu-detail-ink": "#9a8fb0",
                "model-menu-effort-ink": "#c9a7ff",
                "effort-ladder-row-ink": "#cfc0e8",
                "effort-ladder-row-ink-current": "#ffffff",
+               "effort-ladder-check-mark": "#c9a7ff",
                "queue-card-count-ink": "#cfc0e8",
                "queue-card-lane-ink": "#9a8fb0",
                "queue-row-ink": "#eee6ff",
@@ -824,8 +1042,13 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// the white of a selection are fixed values no palette entry moves. The four
 /// panels and the strip tell it again — every word made of the quiet ink stays
 /// pale on fields that have gone light, and the gold of the running model's
-/// level and of the strip's spinner stays gold. Those are roles to override, not
-/// a file to refuse, and the author is told which.
+/// level and of the strip's spinner stays gold. The glyphs tell it a third time:
+/// the column's fold and its magnifier are quiet ink and the carets are made of
+/// the ink, so they stay legible; and the brand mark, whose blade and wing are
+/// the brand tone this file never moved, washes into the column it is cut from —
+/// which is the distance check's finding, not a ratio's, but the blade and the
+/// wing are still read on the column and still named here. Those are roles to
+/// override, not a file to refuse, and the author is told which.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -860,7 +1083,11 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the arrow that pulls a message into the running turn",
             "the bar that says how full the context is",
             "the bin on a waiting row, under the pointer",
+            "the brand mark's blade",
+            "the brand mark's wing",
             "the card's small labels",
+            "the caret in front of a provider's name",
+            "the caret on the composer's chip",
             "the command a draft starts with",
             "the composer's status line",
             "the dot that parts a cell's meta from its elapsed time",
@@ -873,8 +1100,12 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the plus that attaches a picture",
             "the plus that attaches a picture, under the pointer",
             "the send disc on the composer's field",
+            "the sidebar's fold mark at rest",
+            "the sidebar's magnifier",
             "the status line when something went wrong",
             "the text inside an opened thinking row",
+            "the tick beside the rung the model is on",
+            "the tick beside the running model",
             "the word beside the count on the pill",
             "the word beside the count, under the pointer",
             "the word beside the count, with the pill's card open",

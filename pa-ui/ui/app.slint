@@ -551,9 +551,9 @@ export component AppWindow inherits Window {
     VerticalLayout {
 
         HorizontalLayout {
-            // Folded: the column keeps only its controls. The session rows cannot survive
-            // at 48px - there is no room for a name - and the caption bar already carries
-            // the mark, so drawing it again 30px lower would say the same thing twice.
+            // Folded: the column keeps only its controls. The session rows cannot
+            // survive at 48px - there is no room for a name - so the strip keeps the
+            // mark and the three controls and drops the rows.
             if !root.sidebar-open : Rectangle {
                 width: 48px;
                 background: Theme.sidebar-surface;
@@ -581,7 +581,7 @@ export component AppWindow inherits Window {
                                     y: (parent.height - self.height) / 2;
                                     arrow: true;
                                     point-left: false;
-                                    tint: #e5e5e5;
+                                    tint: Theme.sidebar-fold-glyph-hover;
                                 }
                                 strip-panel-touch := TouchArea {
                                     changed has-hover => { root.open-sidebar-tip = self.has-hover; }
@@ -607,7 +607,9 @@ export component AppWindow inherits Window {
                                 IconNewChat {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
-                                    tint: strip-new-touch.has-hover ? #e5e5e5 : #d7d7d7;
+                                    tint: strip-new-touch.has-hover
+                                        ? Theme.sidebar-strip-new-session-mark-hover
+                                        : Theme.sidebar-strip-new-session-mark;
                                 }
                                 strip-new-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -632,7 +634,6 @@ export component AppWindow inherits Window {
                                 IconSearch {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
-                                    tint: #b0b0b0;
                                 }
                             }
                         }
@@ -679,7 +680,6 @@ export component AppWindow inherits Window {
                             IconSearch {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
-                                tint: #b0b0b0;
                             }
                         }
 
@@ -697,7 +697,9 @@ export component AppWindow inherits Window {
                                 y: (parent.height - self.height) / 2;
                                 arrow: panel-touch.has-hover;
                                 point-left: root.sidebar-open;
-                                tint: panel-touch.has-hover ? #e5e5e5 : #b0b0b0;
+                                tint: panel-touch.has-hover
+                                    ? Theme.sidebar-fold-glyph-hover
+                                    : Theme.sidebar-fold-glyph;
                             }
                             panel-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -719,7 +721,9 @@ export component AppWindow inherits Window {
                         IconNewChat {
                             x: 9px;
                             y: (parent.height - self.height) / 2;
-                            tint: new-session-touch.has-hover ? #e5e5e5 : #b0b0b0;
+                            tint: new-session-touch.has-hover
+                                ? Theme.sidebar-new-session-mark-hover
+                                : Theme.sidebar-new-session-mark;
                         }
 
                         Text {

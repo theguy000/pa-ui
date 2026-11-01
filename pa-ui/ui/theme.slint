@@ -31,6 +31,27 @@ export global Theme {
     in-out property <color> tag-working;
     in-out property <color> tag-parked;
     in-out property <color> tag-idle;
+    // the marks the column's controls draw: its fold in the header at rest and
+    // pointed at, the pen on New Session in the header and in the folded strip and
+    // in both of their states, the magnifier both carry, and the pencil a row
+    // offers to rename it
+    in-out property <color> sidebar-fold-glyph;
+    in-out property <color> sidebar-fold-glyph-hover;
+    in-out property <color> sidebar-new-session-mark;
+    in-out property <color> sidebar-new-session-mark-hover;
+    in-out property <color> sidebar-strip-new-session-mark;
+    in-out property <color> sidebar-strip-new-session-mark-hover;
+    in-out property <color> sidebar-search-mark;
+    in-out property <color> sidebar-row-rename-mark;
+    // the brand mark's six fills: the blade, the wing it crosses, the shadow on
+    // the wing's inner edge, the shadow the blade casts on the wing, the stem, and
+    // the shadow the blade casts on it
+    in-out property <color> brand-mark-blade;
+    in-out property <color> brand-mark-wing;
+    in-out property <color> brand-mark-wing-inner-shadow;
+    in-out property <color> brand-mark-wing-shadow;
+    in-out property <color> brand-mark-stem;
+    in-out property <color> brand-mark-stem-shadow;
     // the transcript: the field the rows are drawn on, the prose and the
     // reader's own message, a cell in each state it is drawn in and the failure
     // it can carry, the body a row opens onto, a thought, a code block, a table,
@@ -41,6 +62,7 @@ export global Theme {
     in-out property <color> transcript-message-ink;
     in-out property <color> transcript-link-ink;
     in-out property <color> transcript-notice-ink;
+    in-out property <color> transcript-caret-mark;
     in-out property <color> transcript-cell-fill;
     in-out property <color> transcript-cell-fill-hover;
     in-out property <color> transcript-cell-title-ink;
@@ -56,6 +78,7 @@ export global Theme {
     in-out property <color> transcript-cell-ink-failed;
     in-out property <color> transcript-cell-badge-fill;
     in-out property <color> transcript-cell-badge-fill-hover;
+    in-out property <color> transcript-cell-badge-mark;
     in-out property <color> transcript-reason-edge;
     in-out property <color> transcript-reason-ink;
     in-out property <color> transcript-row-fill-expanded;
@@ -74,6 +97,7 @@ export global Theme {
     in-out property <color> transcript-jump-fill;
     in-out property <color> transcript-jump-fill-hover;
     in-out property <color> transcript-jump-edge;
+    in-out property <color> transcript-jump-mark;
     // the composer: the box the reader writes in and its edge, the bar that grows
     // it, the draft and the field behind what is selected in it, the command word
     // and the pictures the draft carries, the line under it, the context ring and
@@ -119,6 +143,7 @@ export global Theme {
     in-out property <color> composer-chip-edge-hover;
     in-out property <color> composer-chip-ink;
     in-out property <color> composer-chip-ink-hover;
+    in-out property <color> composer-chip-caret-mark;
     in-out property <color> composer-send-fill;
     in-out property <color> composer-send-fill-hover;
     in-out property <color> composer-send-mark;
@@ -146,14 +171,17 @@ export global Theme {
     // every row but the running one, and the level the running one carries
     in-out property <color> model-menu-header-ink;
     in-out property <color> model-menu-header-ink-quiet;
+    in-out property <color> model-menu-caret-mark;
     in-out property <color> model-menu-count-ink;
     in-out property <color> model-menu-row-ink;
     in-out property <color> model-menu-row-ink-current;
+    in-out property <color> model-menu-check-mark;
     in-out property <color> model-menu-detail-ink;
     in-out property <color> model-menu-effort-ink;
-    // the ladder: a rung, and the rung the model is on
+    // the ladder: a rung, the rung the model is on, and the tick beside it
     in-out property <color> effort-ladder-row-ink;
     in-out property <color> effort-ladder-row-ink-current;
+    in-out property <color> effort-ladder-check-mark;
     // the queue card: the count over its first lane, the name of a lane with
     // nothing to count, a waiting message, and the action that empties both
     in-out property <color> queue-card-count-ink;

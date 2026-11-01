@@ -26,6 +26,13 @@ const APART: f32 = 20.0;
 /// 5 apart. Anything less and the row has become a quiet cell with a red line.
 const APART_TINT: f32 = 3.0;
 
+/// How far apart the brand mark's tones have to be before the drawing still
+/// reads as one cut mark rather than as a flat blob. The artwork is shading
+/// rather than two meanings, so the floor is a step under the tags': the tones
+/// it ships sit 16 apart at their closest, and a shadow that comes within 10 of
+/// the shape it darkens has stopped shading it.
+const APART_TONE: f32 = 10.0;
+
 // The fields each part is read on, nearest last, named once because most of them
 // are read on again and again.
 const ON_WINDOW: &[Role] = &[];
@@ -44,6 +51,14 @@ const ON_FAILED_CELL_HOVER: &[Role] =
     &[Role::TranscriptSurface, Role::TranscriptCellFillFailedHover];
 const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
 const ON_CODE_CARD: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCodeFill];
+// The chip that walks back to the newest row, and the badge a failed cell
+// carries: a mark drawn on a fill that is itself laid on a field.
+const ON_JUMP: &[Role] = &[Role::TranscriptSurface, Role::TranscriptJumpFill];
+const ON_BADGE: &[Role] = &[
+    Role::TranscriptSurface,
+    Role::TranscriptCellFillFailed,
+    Role::TranscriptCellBadgeFill,
+];
 // The composer's own fields: the box the reader writes in, the chip that names
 // the model, and the card the context ring opens.
 const ON_COMPOSER: &[Role] = &[Role::ComposerSurface];
@@ -137,6 +152,39 @@ const PAIRS: &[Pair] = &[
         what: "a session's name while it is renamed",
         floor: BODY,
     },
+    // The column's controls draw a mark and nothing else, so the mark is read on
+    // the column itself: there is no field between them. The strip's pen is the
+    // same story — its chip is transparent until the pointer arrives, so folded
+    // the mark rests on the column too.
+    Pair {
+        ink: Mark { role: Role::SidebarFoldGlyph, on: ON_SIDEBAR },
+        what: "the sidebar's fold mark at rest",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarSearchMark, on: ON_SIDEBAR },
+        what: "the sidebar's magnifier",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarStripNewSessionMark, on: ON_SIDEBAR },
+        what: "the pen on the folded strip",
+        floor: MARK,
+    },
+    // The mark's two lit tones are what says it is there at all, so both are read
+    // on the column it is cut from. Its shadows are not offered to this floor —
+    // a shadow drawn as bright as the field would not be a shadow — and the note
+    // under these pairs says what is measured instead.
+    Pair {
+        ink: Mark { role: Role::BrandMarkBlade, on: ON_SIDEBAR },
+        what: "the brand mark's blade",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        what: "the brand mark's wing",
+        floor: MARK,
+    },
     // The transcript. Its rows are what the reader came for, so the words in
     // them are held to the body floor on whichever field they are read on — a
     // cell's name on the cell, the code it opened and what it printed inside it.
@@ -164,6 +212,19 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL_HOVER },
         what: "a cell's name under the pointer",
         floor: BODY,
+    },
+    // The caret beside that name is the whole of what says the row opens, so it is
+    // read on the cell — and, in a thinking row, on the sheet the row runs across,
+    // because a resting thinking row draws no fill of its own.
+    Pair {
+        ink: Mark { role: Role::TranscriptCaretMark, on: ON_CELL },
+        what: "the caret on a cell",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCaretMark, on: ON_TRANSCRIPT },
+        what: "the caret on a thinking row",
+        floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::TranscriptCellCodeInk, on: ON_OPENED_ROW },
@@ -196,6 +257,20 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::TranscriptReasonInk, on: ON_FAILED_CELL },
         what: "the reason a failed cell opens",
         floor: BODY,
+    },
+    // The badge is opened for what the alert inside it says, and the alert is a
+    // mark on the badge's own red rather than on the cell's field.
+    Pair {
+        ink: Mark { role: Role::TranscriptCellBadgeMark, on: ON_BADGE },
+        what: "the alert inside a failed cell's badge",
+        floor: MARK,
+    },
+    // The chip that walks the reader back to the newest row floats over the sheet
+    // on a fill of its own; the chevron is the whole of what says it goes down.
+    Pair {
+        ink: Mark { role: Role::TranscriptJumpMark, on: ON_JUMP },
+        what: "the chevron that walks back to the newest row",
+        floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::TranscriptThinkingLabelInk, on: ON_TRANSCRIPT },
@@ -269,6 +344,11 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::ComposerChipInkHover, on: ON_CHIP_HOVER },
         what: "the model the chip names, pointed at or open",
         floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::ComposerChipCaretMark, on: ON_CHIP },
+        what: "the caret on the composer's chip",
+        floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::ComposerStopMark, on: ON_STOP_FILL },
@@ -375,6 +455,26 @@ const PAIRS: &[Pair] = &[
     Pair {
         ink: Mark { role: Role::ModelMenuHeaderInkQuiet, on: ON_PANEL },
         what: "a provider the reader is not signed in to",
+        floor: MARK,
+    },
+    // The caret that opens a provider's models is drawn beside its header rather
+    // than on a fill of its own.
+    Pair {
+        ink: Mark { role: Role::ModelMenuCaretMark, on: ON_PANEL },
+        what: "the caret in front of a provider's name",
+        floor: MARK,
+    },
+    // The two panels that mark the running model draw it twice — a name in the
+    // body ink and a tick in the gold the window marks what is live with — and
+    // the tick is the half a theme is likeliest to leave behind.
+    Pair {
+        ink: Mark { role: Role::ModelMenuCheckMark, on: ON_PANEL_ROW_CURRENT },
+        what: "the tick beside the running model",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::EffortLadderCheckMark, on: ON_PANEL_ROW },
+        what: "the tick beside the rung the model is on",
         floor: MARK,
     },
     Pair {
@@ -506,11 +606,22 @@ const PAIRS: &[Pair] = &[
     // The transcript's other hairlines and its scrollbar's thumb are no ink on a
     // surface at all, so no floor of this kind describes them.
     //
-    // And one thing no floor here can see: the failure's six colours are fixed
-    // values, so a theme that moves the field and the ink and stops there keeps
-    // a failed cell drawn for a dark window. The separation below still holds —
-    // a near-black cell is a long way from a light one — so nothing refuses it;
-    // naming the failure roles is how a theme makes its own.
+    // And two things no floor here can see:
+    //   - the failure's six colours are fixed values, so a theme that moves the
+    //     field and the ink and stops there keeps a failed cell drawn for a dark
+    //     window. The separation below still holds — a near-black cell is a long
+    //     way from a light one — so nothing refuses it; naming the failure roles
+    //     is how a theme makes its own.
+    //   - the sidebar's other five marks — the pen on New Session in the button
+    //     and in the strip under the pointer, the fold's mark under the pointer,
+    //     and the pencil a row offers to rename it — are drawn on chips that are
+    //     not roles yet, so there is no field to measure them on. The ticket that
+    //     gives the sidebar's buttons a fill hands them theirs.
+    //
+    // The brand mark is artwork rather than ink, and only its blade and its wing
+    // are held to a floor on the column (18.9:1 and 8.5:1): its shadows sit at
+    // 2.7:1 and 1.5:1, which is what a shadow is. What has to survive is the
+    // drawing, and that is measured as distance, below.
 ];
 
 /// Two marks a reader has to tell apart, because nothing but their colour says
@@ -628,6 +739,38 @@ const TELLINGS: &[Telling] = &[
         b: Mark { role: Role::ComposerRingTickUnlit, on: ON_COMPOSER },
         what: "the context ring's lit ticks and the ones it never reached",
         floor: APART,
+    },
+    // The brand mark is one drawing in six tones, and each tone is there to stand
+    // off the shape it is laid on: the blade off the wing, the stem's shadow off
+    // the wing, the blade's shadow off the wing and off the stem. A theme that
+    // turns the window over turns all six with it, because five of them are made
+    // of the brand tone and the field; a theme that turns the field and leaves the
+    // brand tone behind is the one this set exists to catch, and it catches it as
+    // four findings rather than as a mark nobody can read. The floor is the tones'
+    // own because these are four readings of one artwork, not four promises.
+    Telling {
+        a: Mark { role: Role::BrandMarkBlade, on: ON_SIDEBAR },
+        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        what: "the mark's blade and the wing under it",
+        floor: APART_TONE,
+    },
+    Telling {
+        a: Mark { role: Role::BrandMarkWingInnerShadow, on: ON_SIDEBAR },
+        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        what: "the mark's stem shadow and the wing it darkens",
+        floor: APART_TONE,
+    },
+    Telling {
+        a: Mark { role: Role::BrandMarkWingShadow, on: ON_SIDEBAR },
+        b: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
+        what: "the mark's blade shadow and the wing it darkens",
+        floor: APART_TONE,
+    },
+    Telling {
+        a: Mark { role: Role::BrandMarkStemShadow, on: ON_SIDEBAR },
+        b: Mark { role: Role::BrandMarkStem, on: ON_SIDEBAR },
+        what: "the mark's blade shadow and the stem it darkens",
+        floor: APART_TONE,
     },
 ];
 
