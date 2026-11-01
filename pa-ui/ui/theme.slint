@@ -9,6 +9,7 @@
 // change.
 
 export global Theme {
+    // the caption
     in-out property <color> title-bar-glyph;
     in-out property <color> title-bar-caption-fill-hover;
     in-out property <color> title-bar-close-fill-hover;
@@ -16,4 +17,18 @@ export global Theme {
     in-out property <color> title-bar-fold-fill-hover;
     in-out property <color> title-bar-fold-glyph;
     in-out property <color> title-bar-fold-glyph-hover;
+    // the sidebar: its field, a session row's three states, the inks a row
+    // carries — a name in each of its states, and an age — and the tags that
+    // say what a session is doing
+    in-out property <color> sidebar-surface;
+    in-out property <color> sidebar-row-fill;
+    in-out property <color> sidebar-row-fill-hover;
+    in-out property <color> sidebar-row-fill-selected;
+    in-out property <color> sidebar-name-ink;
+    in-out property <color> sidebar-name-ink-selected;
+    in-out property <color> sidebar-name-ink-editing;
+    in-out property <color> sidebar-age-ink;
+    in-out property <color> tag-working;
+    in-out property <color> tag-parked;
+    in-out property <color> tag-idle;
 }

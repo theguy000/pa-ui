@@ -44,5 +44,16 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TitleBarFoldFillHover => global.set_title_bar_fold_fill_hover(value),
         Role::TitleBarFoldGlyph => global.set_title_bar_fold_glyph(value),
         Role::TitleBarFoldGlyphHover => global.set_title_bar_fold_glyph_hover(value),
+        Role::SidebarSurface => global.set_sidebar_surface(value),
+        Role::SidebarRowFill => global.set_sidebar_row_fill(value),
+        Role::SidebarRowFillHover => global.set_sidebar_row_fill_hover(value),
+        Role::SidebarRowFillSelected => global.set_sidebar_row_fill_selected(value),
+        Role::SidebarNameInk => global.set_sidebar_name_ink(value),
+        Role::SidebarNameInkSelected => global.set_sidebar_name_ink_selected(value),
+        Role::SidebarNameInkEditing => global.set_sidebar_name_ink_editing(value),
+        Role::SidebarAgeInk => global.set_sidebar_age_ink(value),
+        Role::TagWorking => global.set_tag_working(value),
+        Role::TagParked => global.set_tag_parked(value),
+        Role::TagIdle => global.set_tag_idle(value),
     }
 }

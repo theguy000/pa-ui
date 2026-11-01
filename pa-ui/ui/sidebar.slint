@@ -3,13 +3,15 @@
 import { SessionItem, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconPencil } from "icons.slint";
+import { Theme } from "theme.slint";
 
 export component StatusDot inherits Rectangle {
     in property <string> status;
     width: 5px;
     height: 5px;
     border-radius: 2.5px;
-    background: status == "working" ? #a18e41 : status == "parked" ? #4a4d44 : #6f9f5f;
+    background: status == "working" ? Theme.tag-working
+        : status == "parked" ? Theme.tag-parked : Theme.tag-idle;
 }
 
 export component SessionRow inherits Rectangle {
@@ -28,7 +30,8 @@ export component SessionRow inherits Rectangle {
 
     height: 32px;
     border-radius: 6px;
-    background: selected ? #1d1d1d : (ta.has-hover ? #181818 : transparent);
+    background: selected ? Theme.sidebar-row-fill-selected
+        : (ta.has-hover ? Theme.sidebar-row-fill-hover : Theme.sidebar-row-fill);
 
     ta := TouchArea {
         x: 0;
@@ -72,7 +75,8 @@ export component SessionRow inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
                 text: root.item.name;
-                text-color: root.selected ? #e5e5e5 : #b0b0b0;
+                text-color: root.selected ? Theme.sidebar-name-ink-selected
+                    : Theme.sidebar-name-ink;
                 font-size: Type.item;
                 active: ta.has-hover;
             }
@@ -81,7 +85,7 @@ export component SessionRow inherits Rectangle {
                 text: root.draft;
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
-                color: #e5e5e5;
+                color: Theme.sidebar-name-ink-editing;
                 font-size: Type.item;
                 single-line: true;
                 edited => { root.draft = self.text; }
@@ -126,7 +130,7 @@ export component SessionRow inherits Rectangle {
             height: 32px;
             age-text := Text {
                 text: root.item.age;
-                color: #585858;
+                color: Theme.sidebar-age-ink;
                 font-size: 10px;
                 height: parent.height;
                 vertical-alignment: center;

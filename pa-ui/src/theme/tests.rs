@@ -26,6 +26,126 @@ fn the_shipped_theme_draws_todays_title_bar() {
     assert_eq!(on_background(Role::TitleBarFoldFillHover), Rgba::hex("#2b2b2b"));
 }
 
+/// The sidebar as the window drew it before there was a theme: the values read
+/// off `ui/sidebar.slint` and the column in `ui/app.slint`, not out of this
+/// crate.
+#[test]
+fn the_shipped_theme_draws_todays_sidebar() {
+    let theme = Resolved::shipped();
+
+    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#111111"));
+    // A row at rest draws no fill of its own: the column runs through it.
+    assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
+    assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#181818"));
+    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1d1d1d"));
+    assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b0b0"));
+    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarAgeInk), Rgba::hex("#585858"));
+    // The three tags are the one part of the sidebar whose value no palette
+    // entry can describe, so the window keeps them and a theme names them.
+    assert_eq!(theme.get(Role::TagWorking), Rgba::hex("#a18e41"));
+    assert_eq!(theme.get(Role::TagParked), Rgba::hex("#4a4d44"));
+    assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#6f9f5f"));
+}
+
+/// A file that names the sidebar's colours repaints the sidebar and moves
+/// nothing else in the map.
+#[test]
+fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "sidebar-surface": "#f5f5f5",
+               "sidebar-row-fill": "#eeeeee",
+               "sidebar-row-fill-hover": "#e4e4e4",
+               "sidebar-row-fill-selected": "#dadada",
+               "sidebar-name-ink": "#303030",
+               "sidebar-name-ink-selected": "#101010",
+               "sidebar-name-ink-editing": "#101010",
+               "sidebar-age-ink": "#6a6a6a",
+               "tag-working": "#8a6d00",
+               "tag-parked": "#8a8a8a",
+               "tag-idle": "#2f7d3a" } }"##,
+    )
+    .expect("a file that repaints the sidebar");
+
+    // The file names every colour the sidebar has, and nothing else moves.
+    let shipped = Resolved::shipped();
+    let moved: Vec<&str> = Role::ALL
+        .iter()
+        .filter(|role| theme.get(**role) != shipped.get(**role))
+        .map(|role| role.name())
+        .collect();
+    let sidebar: Vec<&str> = Role::ALL
+        .iter()
+        .map(|role| role.name())
+        .filter(|name| name.starts_with("sidebar-") || name.starts_with("tag-"))
+        .collect();
+    assert_eq!(moved, sidebar);
+
+    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#f5f5f5"));
+    assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#2f7d3a"));
+}
+
+/// The sidebar is made of the base values like every other part: a file that
+/// moves the window's own colours carries the column and its rows with it,
+/// which is what makes a light theme possible without naming every sidebar
+/// role by hand.
+#[test]
+fn a_theme_that_moves_the_base_values_moves_the_sidebar_with_them() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020" } }"##,
+    )
+    .expect("a file that names only base values");
+
+    assert_eq!(theme.get(Role::SidebarSurface), Rgba::hex("#f5f5f5"));
+    assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#202020"));
+    // The row fills are a mix of ink and background, so on a light window a
+    // hover steps darker than the field rather than lighter.
+    let hover = theme.get(Role::SidebarRowFillHover);
+    assert!(hover.r < 0xf5 && hover.r > 0x20, "{hover:?}");
+}
+
+/// The three tags are told apart by colour alone, so a theme that paints two of
+/// them alike has taken a meaning away. The check names the pair.
+#[test]
+fn a_theme_that_paints_the_working_tag_like_the_idle_one_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1, "roles": { "tag-idle": "#a18e41" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let clashes = separation(&theme);
+
+    assert_eq!(clashes.len(), 1, "{clashes:?}");
+    assert_eq!(clashes[0].what, "the working tag and the idle tag");
+    assert!(clashes[0].apart < 0.5, "{clashes:?}");
+}
+
+/// Not only an exact copy: three greys a few steps apart, the way a monochrome
+/// theme collapses the tags when nobody looks, are three clashes and not none.
+#[test]
+fn three_tags_that_barely_differ_are_three_findings() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "tag-working": "#9a9a9a", "tag-parked": "#8a8a8a", "tag-idle": "#7a7a7a" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+
+    assert_eq!(named.len(), 3, "{named:?}");
+    assert!(named.contains(&"the working tag and the parked tag"), "{named:?}");
+    assert!(named.contains(&"the working tag and the idle tag"), "{named:?}");
+    assert!(named.contains(&"the parked tag and the idle tag"), "{named:?}");
+}
+
 /// A theme that only moves base values: every role it never mentions still
 /// comes out with a value, and the ones made of the base follow it.
 #[test]
@@ -48,8 +168,9 @@ fn a_sparse_palette_resolves_every_role_it_does_not_mention() {
 
 /// A base value carries a theme far, and the places it does not carry are the
 /// ones the check names: on a light background the fold mark's veil of quiet
-/// ink steps *towards* the field rather than away from it, and disappears. That
-/// is a role to override, not a file to refuse, and the author is told which.
+/// ink steps *towards* the field rather than away from it, and the session
+/// names — made of quiet ink, which this file never moved — go with it. Those
+/// are roles to override, not a file to refuse, and the author is told which.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -59,10 +180,13 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     )
     .expect("a file that names only base values");
 
-    let findings = contrast(&theme);
+    let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
+    named.sort_unstable();
 
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].what, "the fold mark at rest");
+    assert_eq!(
+        named,
+        ["a session's name at rest", "a session's name under the pointer", "the fold mark at rest"]
+    );
 }
 
 /// Touching one role by name: the palette would have given the close button the
@@ -189,6 +313,15 @@ fn the_shipped_theme_clears_every_floor_it_declares() {
     let findings = contrast(&Resolved::shipped());
 
     assert!(findings.is_empty(), "{findings:?}");
+}
+
+/// The sidebar ticket's other half: a reader tells the three tags apart in the
+/// theme that ships, and in every theme the suite is given.
+#[test]
+fn the_shipped_themes_tags_stay_apart() {
+    let clashes = separation(&Resolved::shipped());
+
+    assert!(clashes.is_empty(), "{clashes:?}");
 }
 
 /// A theme may be ugly and still load. What it cannot do is load quietly: the
