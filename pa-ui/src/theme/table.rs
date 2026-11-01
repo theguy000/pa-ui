@@ -97,11 +97,16 @@ pub(crate) enum Palette {
     QuietInk,
     /// A stop, a failure, a delete.
     Danger,
+    /// The brand mark's strongest tone: the blade at the top. It is the mark's
+    /// own colour rather than the window's, which is why it is a base value and
+    /// not the ink: the mark ships white because it was cut for a dark tile, and
+    /// a theme that turns the window light turns the mark over by naming it.
+    Brand,
 }
 
 impl Palette {
-    pub(crate) const ALL: [Palette; 4] =
-        [Palette::Background, Palette::Ink, Palette::QuietInk, Palette::Danger];
+    pub(crate) const ALL: [Palette; 5] =
+        [Palette::Background, Palette::Ink, Palette::QuietInk, Palette::Danger, Palette::Brand];
 
     /// The name a theme file uses.
     pub(crate) fn name(self) -> &'static str {
@@ -110,6 +115,7 @@ impl Palette {
             Palette::Ink => "ink",
             Palette::QuietInk => "quiet-ink",
             Palette::Danger => "danger",
+            Palette::Brand => "brand",
         }
     }
 
@@ -121,6 +127,7 @@ impl Palette {
             Palette::Ink => "#e5e5e5",
             Palette::QuietInk => "#b0b0b0",
             Palette::Danger => "#c42b1c",
+            Palette::Brand => "#ffffff",
         })
     }
 }
@@ -153,9 +160,14 @@ pub(crate) enum Derivation {
 /// overrides, so this list is the window's colour glossary: the test in
 /// `tests.rs` holds it and `ui/theme.slint` to the same set.
 // Every variant is prefixed with the part of the window it paints, because that
-// prefix is the role's name in a theme file. The caption, the sidebar, the
-// transcript, the composer, the panels that open over them and the status strip
-// are the parts the table has reached so far.
+// prefix is the role's name in a theme file. The caption, the sidebar, the brand
+// mark, the transcript, the composer, the panels that open over them and the
+// status strip are the parts the table has reached so far — and a mark drawn
+// inside one of them is named for the part it is drawn in rather than for the
+// shape of the glyph, because that is what a theme author goes looking for. The
+// one exception is the brand mark, which is a single drawing: its fills are named
+// for the shapes they paint, because moving one of them on its own takes the
+// drawing apart and there is no part to blame it on.
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
@@ -215,6 +227,53 @@ pub(crate) enum Role {
     TagParked,
     /// A session that is live and between turns, ready for the next prompt.
     TagIdle,
+    /// The column's own fold, at the right of its header, at rest. The mark is
+    /// the whole of what says the control folds the column, so it is read on the
+    /// column it sits on rather than on a field of its own.
+    SidebarFoldGlyph,
+    /// That mark with the pointer on it — and the one the folded strip draws on
+    /// the control that opens the column again, which draws its arrow only while
+    /// the pointer is on it and so is always drawn in this state.
+    SidebarFoldGlyphHover,
+    /// The pen on the New Session button at rest: quiet ink, because the label
+    /// beside it carries the words.
+    SidebarNewSessionMark,
+    /// That pen with the pointer on the button.
+    SidebarNewSessionMarkHover,
+    /// The same pen in the column's folded strip, where the mark is the whole
+    /// control and the label has nowhere to go. It therefore reads a step above
+    /// the button's quiet ink, at the weight the caption's own marks do.
+    SidebarStripNewSessionMark,
+    /// That pen with the pointer on the strip's control. Its own role rather than
+    /// the button's hover: a theme that moves the strip's pen would have it spring
+    /// back to the button's colour under the pointer.
+    SidebarStripNewSessionMarkHover,
+    /// The magnifier in the column's header, and again in its folded strip.
+    /// Drawn and inert until search exists, and read at the quiet ink both draw.
+    SidebarSearchMark,
+    /// The pencil a session row offers to rename it.
+    SidebarRowRenameMark,
+    // The brand mark. Its six fills are the artwork's own tones rather than roles
+    // another part could borrow: the mark is one drawing, and a tone moved on its
+    // own takes the drawing apart.
+    //
+    // Five of the six are the palette's brand tone mixed towards the field the
+    // mark is cut from, so a theme that turns the window over turns the mark over
+    // with it: the blade goes dark, the shadows go light, and every tone keeps its
+    // distance from the one it is drawn on. The shares are the artwork's own
+    // proportions, read off the six values it shipped with.
+    /// The blade across the top of the mark: the brand tone itself.
+    BrandMarkBlade,
+    /// The lower wing the mark's stem hangs from.
+    BrandMarkWing,
+    /// The shadow the stem casts across the wing's inner edge.
+    BrandMarkWingInnerShadow,
+    /// The shadow the blade casts on the wing.
+    BrandMarkWingShadow,
+    /// The extended vertical stem.
+    BrandMarkStem,
+    /// The shadow the blade casts on the stem.
+    BrandMarkStemShadow,
     /// The field the transcript is drawn on: the window's own background lifted
     /// by a step of ink, so the sheet of rows reads above the columns beside it.
     /// The composer floats inside the same field, so a theme that moves this
@@ -234,6 +293,10 @@ pub(crate) enum Role {
     /// The line a notice row carries. A notice is the quietest thing the
     /// transcript says, and it is drawn to recede.
     TranscriptNoticeInk,
+    /// The caret that says a row opens, in the header of a thinking row and of a
+    /// cell. One role although two kinds of row draw it: it says the same thing
+    /// and it is read on the same sheet.
+    TranscriptCaretMark,
     /// The field of a cell at rest: a lift of ink over the transcript, one step
     /// up from the column so the cell reads as a thing on the sheet.
     TranscriptCellFill,
@@ -278,6 +341,10 @@ pub(crate) enum Role {
     TranscriptCellBadgeFill,
     /// The badge with the pointer on it.
     TranscriptCellBadgeFillHover,
+    /// The alert inside that badge: the failure's own warm white, which the badge
+    /// is opened for. No palette entry describes it, so — like the failed cell's
+    /// fill and its ink — it is a fixed value a theme names outright.
+    TranscriptCellBadgeMark,
     /// The edge of the reason the badge opens, which is drawn at the window's
     /// root so no row paints over it. Its field is the failed cell's own, so the
     /// popup adds this edge and the ink below and nothing else.
@@ -327,6 +394,8 @@ pub(crate) enum Role {
     /// Its edge, which is the whole of what makes it read as a control while it
     /// is not being pointed at.
     TranscriptJumpEdge,
+    /// The chevron on that chip, drawn on the chip's own fill.
+    TranscriptJumpMark,
     /// The composer's own field. A shade below the window's background, so the
     /// box reads as a well in the band it sits on — and that band is the
     /// transcript's sheet, which is why the two fields are separate roles.
@@ -437,6 +506,11 @@ pub(crate) enum Role {
     ComposerChipInk,
     /// The model's name while the chip is pointed at or open.
     ComposerChipInkHover,
+    /// The caret beside that name, which says the chip opens the model menu. Read
+    /// on the chip's own fill in both states the chip has, and its own role rather
+    /// than the transcript's: a theme that repaints the cards the reader opens
+    /// must reach this one too.
+    ComposerChipCaretMark,
     /// What the control is filled with while it sends. The lightest thing in
     /// the composer: with no hue to spend, the primary action spends contrast
     /// and carries the near-black arrow below. A value above the palette's ink,
@@ -501,6 +575,9 @@ pub(crate) enum Role {
     /// A provider the reader is not signed in to. Nothing behind the header can
     /// be picked, so the name steps back to what the window says beside it.
     ModelMenuHeaderInkQuiet,
+    /// The caret in front of a provider's name, which says the header opens and
+    /// closes the models under it.
+    ModelMenuCaretMark,
     /// The figure beside a header, and the words that stand in its place. The
     /// window draws it at 2.5:1 on the panel and this table keeps that because
     /// no pixel may move here; `contrast.rs` records the miss rather than
@@ -511,6 +588,11 @@ pub(crate) enum Role {
     /// The running model's name, at the ink body text gets: it is the one row
     /// the menu exists to confirm.
     ModelMenuRowInkCurrent,
+    /// The tick beside that name, which marks the row as well as tinting it. Gold,
+    /// the same gold the working tag and the running model's level are drawn in,
+    /// because the three say the same thing: this is what is running. No palette
+    /// entry describes it, so a theme names it outright.
+    ModelMenuCheckMark,
     /// The context window beside a model's name, for every row but the running
     /// one — which carries its level there instead.
     ModelMenuDetailInk,
@@ -522,6 +604,10 @@ pub(crate) enum Role {
     /// The rung the model is on: the ink body text gets, beside the check that
     /// marks it.
     EffortLadderRowInkCurrent,
+    /// The tick beside that rung. Its own role although it ships the model menu's
+    /// gold: the ladder hangs off the menu, and a theme that repaints one of the
+    /// two panels must reach the tick drawn on it.
+    EffortLadderCheckMark,
     /// The count of waiting messages over the queue card's first lane.
     QueueCardCountInk,
     /// The name of a lane that carries nothing to count — "runs next" over the
@@ -595,7 +681,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 144] = [
+    pub(crate) const ALL: [Role; 165] = [
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
         Role::TitleBarCloseFillHover,
@@ -614,12 +700,27 @@ impl Role {
         Role::TagWorking,
         Role::TagParked,
         Role::TagIdle,
+        Role::SidebarFoldGlyph,
+        Role::SidebarFoldGlyphHover,
+        Role::SidebarNewSessionMark,
+        Role::SidebarNewSessionMarkHover,
+        Role::SidebarStripNewSessionMark,
+        Role::SidebarStripNewSessionMarkHover,
+        Role::SidebarSearchMark,
+        Role::SidebarRowRenameMark,
+        Role::BrandMarkBlade,
+        Role::BrandMarkWing,
+        Role::BrandMarkWingInnerShadow,
+        Role::BrandMarkWingShadow,
+        Role::BrandMarkStem,
+        Role::BrandMarkStemShadow,
         Role::TranscriptSurface,
         Role::TranscriptProseInk,
         Role::TranscriptMessageFill,
         Role::TranscriptMessageInk,
         Role::TranscriptLinkInk,
         Role::TranscriptNoticeInk,
+        Role::TranscriptCaretMark,
         Role::TranscriptCellFill,
         Role::TranscriptCellFillHover,
         Role::TranscriptCellTitleInk,
@@ -635,6 +736,7 @@ impl Role {
         Role::TranscriptCellInkFailed,
         Role::TranscriptCellBadgeFill,
         Role::TranscriptCellBadgeFillHover,
+        Role::TranscriptCellBadgeMark,
         Role::TranscriptReasonEdge,
         Role::TranscriptReasonInk,
         Role::TranscriptRowFillExpanded,
@@ -653,6 +755,7 @@ impl Role {
         Role::TranscriptJumpFill,
         Role::TranscriptJumpFillHover,
         Role::TranscriptJumpEdge,
+        Role::TranscriptJumpMark,
         Role::ComposerSurface,
         Role::ComposerEdge,
         Role::ComposerHandleFill,
@@ -693,6 +796,7 @@ impl Role {
         Role::ComposerChipEdgeHover,
         Role::ComposerChipInk,
         Role::ComposerChipInkHover,
+        Role::ComposerChipCaretMark,
         Role::ComposerSendFill,
         Role::ComposerSendFillHover,
         Role::ComposerSendMark,
@@ -711,13 +815,16 @@ impl Role {
         Role::SlashMenuDescriptionInk,
         Role::ModelMenuHeaderInk,
         Role::ModelMenuHeaderInkQuiet,
+        Role::ModelMenuCaretMark,
         Role::ModelMenuCountInk,
         Role::ModelMenuRowInk,
         Role::ModelMenuRowInkCurrent,
+        Role::ModelMenuCheckMark,
         Role::ModelMenuDetailInk,
         Role::ModelMenuEffortInk,
         Role::EffortLadderRowInk,
         Role::EffortLadderRowInkCurrent,
+        Role::EffortLadderCheckMark,
         Role::QueueCardCountInk,
         Role::QueueCardLaneInk,
         Role::QueueCardClearInk,
@@ -763,12 +870,27 @@ impl Role {
             Role::TagWorking => "tag-working",
             Role::TagParked => "tag-parked",
             Role::TagIdle => "tag-idle",
+            Role::SidebarFoldGlyph => "sidebar-fold-glyph",
+            Role::SidebarFoldGlyphHover => "sidebar-fold-glyph-hover",
+            Role::SidebarNewSessionMark => "sidebar-new-session-mark",
+            Role::SidebarNewSessionMarkHover => "sidebar-new-session-mark-hover",
+            Role::SidebarStripNewSessionMark => "sidebar-strip-new-session-mark",
+            Role::SidebarStripNewSessionMarkHover => "sidebar-strip-new-session-mark-hover",
+            Role::SidebarSearchMark => "sidebar-search-mark",
+            Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
+            Role::BrandMarkBlade => "brand-mark-blade",
+            Role::BrandMarkWing => "brand-mark-wing",
+            Role::BrandMarkWingInnerShadow => "brand-mark-wing-inner-shadow",
+            Role::BrandMarkWingShadow => "brand-mark-wing-shadow",
+            Role::BrandMarkStem => "brand-mark-stem",
+            Role::BrandMarkStemShadow => "brand-mark-stem-shadow",
             Role::TranscriptSurface => "transcript-surface",
             Role::TranscriptProseInk => "transcript-prose-ink",
             Role::TranscriptMessageFill => "transcript-message-fill",
             Role::TranscriptMessageInk => "transcript-message-ink",
             Role::TranscriptLinkInk => "transcript-link-ink",
             Role::TranscriptNoticeInk => "transcript-notice-ink",
+            Role::TranscriptCaretMark => "transcript-caret-mark",
             Role::TranscriptCellFill => "transcript-cell-fill",
             Role::TranscriptCellFillHover => "transcript-cell-fill-hover",
             Role::TranscriptCellTitleInk => "transcript-cell-title-ink",
@@ -784,6 +906,7 @@ impl Role {
             Role::TranscriptCellInkFailed => "transcript-cell-ink-failed",
             Role::TranscriptCellBadgeFill => "transcript-cell-badge-fill",
             Role::TranscriptCellBadgeFillHover => "transcript-cell-badge-fill-hover",
+            Role::TranscriptCellBadgeMark => "transcript-cell-badge-mark",
             Role::TranscriptReasonEdge => "transcript-reason-edge",
             Role::TranscriptReasonInk => "transcript-reason-ink",
             Role::TranscriptRowFillExpanded => "transcript-row-fill-expanded",
@@ -802,6 +925,7 @@ impl Role {
             Role::TranscriptJumpFill => "transcript-jump-fill",
             Role::TranscriptJumpFillHover => "transcript-jump-fill-hover",
             Role::TranscriptJumpEdge => "transcript-jump-edge",
+            Role::TranscriptJumpMark => "transcript-jump-mark",
             Role::ComposerSurface => "composer-surface",
             Role::ComposerEdge => "composer-edge",
             Role::ComposerHandleFill => "composer-handle-fill",
@@ -842,6 +966,7 @@ impl Role {
             Role::ComposerChipEdgeHover => "composer-chip-edge-hover",
             Role::ComposerChipInk => "composer-chip-ink",
             Role::ComposerChipInkHover => "composer-chip-ink-hover",
+            Role::ComposerChipCaretMark => "composer-chip-caret-mark",
             Role::ComposerSendFill => "composer-send-fill",
             Role::ComposerSendFillHover => "composer-send-fill-hover",
             Role::ComposerSendMark => "composer-send-mark",
@@ -860,13 +985,16 @@ impl Role {
             Role::SlashMenuDescriptionInk => "slash-menu-description-ink",
             Role::ModelMenuHeaderInk => "model-menu-header-ink",
             Role::ModelMenuHeaderInkQuiet => "model-menu-header-ink-quiet",
+            Role::ModelMenuCaretMark => "model-menu-caret-mark",
             Role::ModelMenuCountInk => "model-menu-count-ink",
             Role::ModelMenuRowInk => "model-menu-row-ink",
             Role::ModelMenuRowInkCurrent => "model-menu-row-ink-current",
+            Role::ModelMenuCheckMark => "model-menu-check-mark",
             Role::ModelMenuDetailInk => "model-menu-detail-ink",
             Role::ModelMenuEffortInk => "model-menu-effort-ink",
             Role::EffortLadderRowInk => "effort-ladder-row-ink",
             Role::EffortLadderRowInkCurrent => "effort-ladder-row-ink-current",
+            Role::EffortLadderCheckMark => "effort-ladder-check-mark",
             Role::QueueCardCountInk => "queue-card-count-ink",
             Role::QueueCardLaneInk => "queue-card-lane-ink",
             Role::QueueCardClearInk => "queue-card-clear-ink",
@@ -927,6 +1055,22 @@ impl Role {
             Role::TagWorking => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::TagParked => Derivation::Fixed(Rgba::hex("#4a4d44")),
             Role::TagIdle => Derivation::Fixed(Rgba::hex("#6f9f5f")),
+            Role::SidebarFoldGlyph => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarFoldGlyphHover => Derivation::Palette(Palette::Ink),
+            Role::SidebarNewSessionMark => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarNewSessionMarkHover => Derivation::Palette(Palette::Ink),
+            Role::SidebarStripNewSessionMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
+            Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
+            Role::SidebarSearchMark => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
+            Role::BrandMarkBlade => Derivation::Palette(Palette::Brand),
+            Role::BrandMarkWing => Derivation::Mix(Palette::Brand, Palette::Background, 0.6597),
+            Role::BrandMarkWingInnerShadow => {
+                Derivation::Mix(Palette::Brand, Palette::Background, 0.479)
+            }
+            Role::BrandMarkWingShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.3067),
+            Role::BrandMarkStem => Derivation::Mix(Palette::Brand, Palette::Background, 0.3445),
+            Role::BrandMarkStemShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.1429),
             Role::TranscriptSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0094),
             Role::TranscriptProseInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
             Role::TranscriptMessageFill => {
@@ -937,6 +1081,7 @@ impl Role {
             Role::TranscriptNoticeInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
+            Role::TranscriptCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
             Role::TranscriptCellFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0189),
             Role::TranscriptCellFillHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0377)
@@ -964,6 +1109,7 @@ impl Role {
             Role::TranscriptCellInkFailed => Derivation::Fixed(Rgba::hex("#c98a7f")),
             Role::TranscriptCellBadgeFill => Derivation::Fixed(Rgba::hex("#6b342b")),
             Role::TranscriptCellBadgeFillHover => Derivation::Fixed(Rgba::hex("#8d4235")),
+            Role::TranscriptCellBadgeMark => Derivation::Fixed(Rgba::hex("#f3ded8")),
             Role::TranscriptReasonEdge => Derivation::Fixed(Rgba::hex("#6b342b")),
             Role::TranscriptReasonInk => Derivation::Fixed(Rgba::hex("#e0b6ad")),
             Role::TranscriptRowFillExpanded => Derivation::Shade(Palette::Background, 0x0a),
@@ -1000,6 +1146,7 @@ impl Role {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.1415)
             }
             Role::TranscriptJumpEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1745),
+            Role::TranscriptJumpMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.7594),
             Role::ComposerSurface => Derivation::Shade(Palette::Background, 0x0a),
             Role::ComposerEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
             Role::ComposerHandleFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
@@ -1064,6 +1211,7 @@ impl Role {
             Role::ComposerChipEdgeHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
             Role::ComposerChipInk => Derivation::Palette(Palette::QuietInk),
             Role::ComposerChipInkHover => Derivation::Palette(Palette::Ink),
+            Role::ComposerChipCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
             Role::ComposerSendFill => Derivation::Fixed(Rgba::hex("#e6e6e6")),
             Role::ComposerSendFillHover => Derivation::Fixed(Rgba::hex("#f2f2f2")),
             Role::ComposerSendMark => Derivation::Fixed(Rgba::hex("#131313")),
@@ -1094,17 +1242,20 @@ impl Role {
             Role::ModelMenuHeaderInkQuiet => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
             }
+            Role::ModelMenuCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
             Role::ModelMenuCountInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
             }
             Role::ModelMenuRowInk => Derivation::Palette(Palette::QuietInk),
             Role::ModelMenuRowInkCurrent => Derivation::Palette(Palette::Ink),
+            Role::ModelMenuCheckMark => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::ModelMenuDetailInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.4465)
             }
             Role::ModelMenuEffortInk => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::EffortLadderRowInk => Derivation::Palette(Palette::QuietInk),
             Role::EffortLadderRowInkCurrent => Derivation::Palette(Palette::Ink),
+            Role::EffortLadderCheckMark => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::QueueCardCountInk => Derivation::Palette(Palette::QuietInk),
             Role::QueueCardLaneInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
             Role::QueueRowInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9387),
