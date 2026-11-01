@@ -1,0 +1,19 @@
+// The window's colours, as src/theme/ resolved them.
+//
+// A component asks for a role here and never for a value: a colour written in a
+// component is a colour no theme can reach. What each name means lives beside
+// the table that decides its value, in src/theme/table.rs.
+//
+// `in-out` although nothing reassigns any of it yet: the window assigns this
+// once, before it runs, and a reload that lands later needs no component to
+// change.
+
+export global Theme {
+    in-out property <color> title-bar-glyph;
+    in-out property <color> title-bar-caption-fill-hover;
+    in-out property <color> title-bar-close-fill-hover;
+    in-out property <color> title-bar-close-ink-hover;
+    in-out property <color> title-bar-fold-fill-hover;
+    in-out property <color> title-bar-fold-glyph;
+    in-out property <color> title-bar-fold-glyph-hover;
+}

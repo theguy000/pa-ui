@@ -2,10 +2,11 @@
 // theme. Geometry must agree with HEIGHT and BUTTON in src/titlebar.rs.
 
 import { CaptionGlyph, PanelIcon } from "icons.slint";
+import { Theme } from "theme.slint";
 
 export component CaptionButton inherits Rectangle {
     in property <bool> hover;
-    in property <color> hover-fill: #ffffff12;
+    in property <color> hover-fill: Theme.title-bar-caption-fill-hover;
     width: 46px;
     height: 100%;
     background: hover ? hover-fill : transparent;
@@ -23,6 +24,8 @@ export component TitleBar inherits Rectangle {
 
     height: 32px;
     width: 100%;
+    // No field of its own: the window's background runs under the bar, and the
+    // sidebar's header band sits inside this height.
     background: transparent;
 
     // The right column's fold lives in the chrome, not in the column: the column is
@@ -33,14 +36,14 @@ export component TitleBar inherits Rectangle {
         width: 26px;
         height: 26px;
         border-radius: 13px;
-        background: right-touch.has-hover ? #2b2b2b : transparent;
+        background: right-touch.has-hover ? Theme.title-bar-fold-fill-hover : transparent;
         PanelIcon {
             x: 5px;
             y: 5px;
             folded-edge-right: true;
             arrow: right-touch.has-hover;
             point-left: !root.right-open;
-            tint: right-touch.has-hover ? #e5e5e5 : #6f6f6f;
+            tint: right-touch.has-hover ? Theme.title-bar-fold-glyph-hover : Theme.title-bar-fold-glyph;
         }
         right-touch := TouchArea {
             mouse-cursor: pointer;
@@ -57,7 +60,9 @@ export component TitleBar inherits Rectangle {
         min-touch := TouchArea { clicked => { root.minimize(); } }
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2; commands: "M 0.5 5.5 L 9.5 5.5"; }
+            y: (parent.height - self.height) / 2;
+            tint: Theme.title-bar-glyph;
+            commands: "M 0.5 5.5 L 9.5 5.5"; }
     }
 
     max-button := CaptionButton {
@@ -66,6 +71,7 @@ export component TitleBar inherits Rectangle {
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
+            tint: Theme.title-bar-glyph;
             commands: root.maximized
                 ? "M 2.5 0.5 L 9.5 0.5 L 9.5 7.5 M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z"
                 : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
@@ -75,12 +81,12 @@ export component TitleBar inherits Rectangle {
     close-button := CaptionButton {
         x: parent.width - 46px;
         hover: close-touch.has-hover;
-        hover-fill: #c42b1c;
+        hover-fill: Theme.title-bar-close-fill-hover;
         close-touch := TouchArea { clicked => { root.close(); } }
         CaptionGlyph {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            tint: close-touch.has-hover ? #ffffff : #d7d7d7;
+            tint: close-touch.has-hover ? Theme.title-bar-close-ink-hover : Theme.title-bar-glyph;
             commands: "M 0.5 0.5 L 9.5 9.5 M 9.5 0.5 L 0.5 9.5";
         }
     }

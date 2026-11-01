@@ -9,6 +9,11 @@ import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SlashMenu } from "menus.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
+// The theme global lives in its own source, next to nothing else. It is
+// re-exported here because the window's Rust side reaches it through this
+// file: only a global the compiled file exports becomes a global in Rust.
+import { Theme } from "theme.slint";
+export { Theme }
 
 export component AppWindow inherits Window {
     // the failure reason of a cell, drawn here so no row can paint over it
