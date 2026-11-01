@@ -8,10 +8,11 @@ import { ScrollView } from "std-widgets.slint";
 import { EffortItem, ModelGroup, SlashItem } from "types.slint";
 import { IconCaret, IconCheck } from "icons.slint";
 import { Theme } from "theme.slint";
+import { Panel } from "primitives.slint";
 
 // The command list above the composer. `index` is the highlighted row; arrowing
 // past the fold pulls the list after it.
-export component SlashMenu inherits Rectangle {
+export component SlashMenu inherits Panel {
     in property <[SlashItem]> items;
     in-out property <int> index;
     in property <length> anchor-x;
@@ -24,12 +25,7 @@ export component SlashMenu inherits Rectangle {
     width: min(460px, root.anchor-w - 24px);
     // ten rows at a time; the list scrolls and the highlight pulls it along
     height: min(312px, 12px + root.items.length * 30px);
-    background: Theme.panel-surface;
-    border-color: Theme.panel-edge;
-    border-width: 1px;
     border-radius: 10px;
-    drop-shadow-blur: 12px;
-    drop-shadow-color: Theme.panel-shadow;
 
     slash-list := ScrollView {
         x: 6px;
@@ -108,7 +104,7 @@ export component SlashMenu inherits Rectangle {
 
 // The provider/model catalog. A group with `open: false` carries no models, so a
 // long catalog costs one header each.
-export component ModelMenu inherits Rectangle {
+export component ModelMenu inherits Panel {
     in property <[ModelGroup]> groups;
     in property <length> measured-height;
     in property <length> anchor-x;
@@ -124,12 +120,7 @@ export component ModelMenu inherits Rectangle {
     y: root.anchor-y - self.height - 6px;
     width: 300px;
     height: max(64px, min(340px, root.measured-height));
-    background: Theme.panel-surface;
-    border-color: Theme.panel-edge;
-    border-width: 1px;
     border-radius: 10px;
-    drop-shadow-blur: 12px;
-    drop-shadow-color: Theme.panel-shadow;
 
     menu-scroll := ScrollView {
         x: 6px;
@@ -291,7 +282,7 @@ export component ModelMenu inherits Rectangle {
 // The thinking ladder, hung to the left of the model menu: the menu sits on the
 // composer's right edge, so there is no room on its right for a second column. It
 // tracks the hovered row's y and stays inside the menu's band.
-export component EffortLadder inherits Rectangle {
+export component EffortLadder inherits Panel {
     in property <[EffortItem]> items;
     in property <length> row-y;
     in property <length> measured-height;
@@ -311,12 +302,11 @@ export component EffortLadder inherits Rectangle {
     );
     width: 132px;
     height: 10px + root.items.length * 26px;
-    background: Theme.panel-surface;
-    border-color: Theme.panel-edge;
-    border-width: 1px;
     border-radius: 8px;
+    // The ladder is drawn on the model menu rather than on the window, so what is
+    // under it has already been lifted once and its shadow is the shallower one.
+    shadow: Theme.panel-shadow-nested;
     drop-shadow-blur: 10px;
-    drop-shadow-color: Theme.panel-shadow-nested;
 
     // the ladder answers for its own surface, or moving onto it would
     // count as leaving the row it hangs from

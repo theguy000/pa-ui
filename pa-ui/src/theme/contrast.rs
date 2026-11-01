@@ -42,6 +42,15 @@ const ON_SIDEBAR: &[Role] = &[Role::SidebarSurface];
 const ON_SIDEBAR_ROW: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFill];
 const ON_SIDEBAR_ROW_HOVER: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillHover];
 const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillSelected];
+// The sidebar's controls, and the fields they paint: a quiet chip that only has
+// a field under the pointer, the button that carries New Session, the chip a row
+// offers to rename it, and the pill the folded column shows.
+const ON_QUIET_CONTROL: &[Role] = &[Role::ButtonQuietFillHover];
+const ON_PRIMARY_CONTROL: &[Role] = &[Role::ButtonPrimaryFill];
+const ON_PRIMARY_CONTROL_HOVER: &[Role] = &[Role::ButtonPrimaryFillHover];
+const ON_RENAME_CHIP: &[Role] = &[Role::SidebarRowRenameFill];
+const ON_RENAME_CHIP_HOVER: &[Role] = &[Role::SidebarRowRenameFillHover];
+const ON_OPEN_TIP: &[Role] = &[Role::SidebarOpenTipFill];
 const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
 const ON_MESSAGE: &[Role] = &[Role::TranscriptSurface, Role::TranscriptMessageFill];
 const ON_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFill];
@@ -75,7 +84,7 @@ const ON_BAR_TRACK: &[Role] = &[Role::ComposerCardSurface, Role::ComposerCardBar
 const ON_CHIP: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFill];
 const ON_CHIP_HOVER: &[Role] = &[Role::ComposerSurface, Role::ComposerChipFillHover];
 const ON_SEND_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerSendFill];
-const ON_STOP_FILL: &[Role] = &[Role::ComposerSurface, Role::ComposerStopFill];
+const ON_STOP_FILL: &[Role] = &[Role::ComposerSurface, Role::ButtonDangerFill];
 // The four panels that open over the window, each word read on the panel it is
 // drawn on and — where a row carries it — on the fill that row takes.
 const ON_PANEL: &[Role] = &[Role::PanelSurface];
@@ -184,6 +193,62 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::BrandMarkWing, on: ON_SIDEBAR },
         what: "the brand mark's wing",
         floor: MARK,
+    },
+    // The column's controls paint a field of their own, so a mark that sits on
+    // one is read on it rather than on the column: the chip that lights under the
+    // pointer, the button that carries New Session, the corner chip a row offers
+    // to rename it, and the pill the folded column shows. The two filled buttons
+    // say what they do in words as well, and words are body text on the field
+    // they are drawn on.
+    Pair {
+        ink: Mark { role: Role::SidebarFoldGlyphHover, on: ON_QUIET_CONTROL },
+        what: "the fold mark on its chip under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarStripNewSessionMarkHover, on: ON_QUIET_CONTROL },
+        what: "the pen on the folded strip's chip under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNewSessionMark, on: ON_PRIMARY_CONTROL },
+        what: "the pen on New Session at rest",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNewSessionMarkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        what: "the pen on New Session under the pointer",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNewSessionInk, on: ON_PRIMARY_CONTROL },
+        what: "the words on New Session at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        what: "the words on New Session under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP },
+        what: "the pencil a row offers, at rest",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP_HOVER },
+        what: "the pencil a row offers, with the pointer on its chip",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarOpenTipInk, on: ON_OPEN_TIP },
+        what: "the words on the pill that opens the column",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SessionCardInk, on: ON_PANEL },
+        what: "the words on the card that names a session",
+        floor: BODY,
     },
     // The transcript. Its rows are what the reader came for, so the words in
     // them are held to the body floor on whichever field they are read on — a
@@ -398,7 +463,7 @@ const PAIRS: &[Pair] = &[
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::ComposerStopFill, on: ON_COMPOSER },
+        ink: Mark { role: Role::ButtonDangerFill, on: ON_COMPOSER },
         what: "the stop disc on the composer's field",
         floor: MARK,
     },
@@ -606,17 +671,11 @@ const PAIRS: &[Pair] = &[
     // The transcript's other hairlines and its scrollbar's thumb are no ink on a
     // surface at all, so no floor of this kind describes them.
     //
-    // And two things no floor here can see:
-    //   - the failure's six colours are fixed values, so a theme that moves the
-    //     field and the ink and stops there keeps a failed cell drawn for a dark
-    //     window. The separation below still holds — a near-black cell is a long
-    //     way from a light one — so nothing refuses it; naming the failure roles
-    //     is how a theme makes its own.
-    //   - the sidebar's other five marks — the pen on New Session in the button
-    //     and in the strip under the pointer, the fold's mark under the pointer,
-    //     and the pencil a row offers to rename it — are drawn on chips that are
-    //     not roles yet, so there is no field to measure them on. The ticket that
-    //     gives the sidebar's buttons a fill hands them theirs.
+    // And one thing no floor here can see: the failure's six colours are fixed
+    // values, so a theme that moves the field and the ink and stops there keeps a
+    // failed cell drawn for a dark window. The separation below still holds — a
+    // near-black cell is a long way from a light one — so nothing refuses it;
+    // naming the failure roles is how a theme makes its own.
     //
     // The brand mark is artwork rather than ink, and only its blade and its wing
     // are held to a floor on the column (18.9:1 and 8.5:1): its shadows sit at
@@ -690,7 +749,7 @@ const TELLINGS: &[Telling] = &[
     // against the one they saw a moment ago.
     Telling {
         a: Mark { role: Role::ComposerSendFill, on: ON_COMPOSER },
-        b: Mark { role: Role::ComposerStopFill, on: ON_COMPOSER },
+        b: Mark { role: Role::ButtonDangerFill, on: ON_COMPOSER },
         what: "the send disc and the stop disc",
         floor: APART,
     },

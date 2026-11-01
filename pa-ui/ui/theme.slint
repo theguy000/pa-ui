@@ -48,6 +48,18 @@ export global Theme {
     in-out property <color> sidebar-strip-new-session-mark-hover;
     in-out property <color> sidebar-search-mark;
     in-out property <color> sidebar-row-rename-mark;
+    // the column's two fields of its own: the chip the rename pencil sits on at
+    // rest, and the pill the window shows while the column is folded, with the
+    // words on it and the shadow that lifts it off the sheet it floats over
+    in-out property <color> sidebar-row-rename-fill;
+    in-out property <color> sidebar-row-rename-fill-hover;
+    in-out property <color> sidebar-open-tip-fill;
+    in-out property <color> sidebar-open-tip-ink;
+    in-out property <color> sidebar-open-tip-shadow;
+    // the words on New Session, the column's one filled button, at rest and with
+    // the pointer on it
+    in-out property <color> sidebar-new-session-ink;
+    in-out property <color> sidebar-new-session-ink-hover;
     // the brand mark's six fills: the blade, the wing it crosses, the shadow on
     // the wing's inner edge, the shadow the blade casts on the wing, the stem, and
     // the shadow the blade casts on it
@@ -162,19 +174,22 @@ export global Theme {
     in-out property <color> composer-send-fill;
     in-out property <color> composer-send-fill-hover;
     in-out property <color> composer-send-mark;
-    in-out property <color> composer-stop-fill;
-    in-out property <color> composer-stop-fill-hover;
     in-out property <color> composer-stop-mark;
     // the four panels that open over the window — the command list, the model
     // menu, the ladder that drops off one of its rows and the queue card — share
-    // one field, one edge and the two row states a panel can draw; the shadows
-    // are apart because the ladder is drawn on a panel rather than on the window
+    // one field, one edge and the two row states a panel can draw, and their
+    // shadows are apart because the ladder is drawn on a panel rather than on the
+    // window. The card that names a session is a fifth panel and shares the field
+    // and the shadow; its edge is its own because it hangs off a row rather than
+    // over the window
     in-out property <color> panel-surface;
     in-out property <color> panel-edge;
     in-out property <color> panel-shadow;
     in-out property <color> panel-shadow-nested;
     in-out property <color> panel-row-fill-hover;
     in-out property <color> panel-row-fill-current;
+    in-out property <color> session-card-edge;
+    in-out property <color> session-card-ink;
     // the command list: a command's name in the two states a row has, the
     // argument it takes, and the sentence that says what it does
     in-out property <color> slash-menu-row-ink;
@@ -228,4 +243,14 @@ export global Theme {
     in-out property <color> status-strip-queue-count-ink-hover;
     in-out property <color> status-strip-queue-label-ink;
     in-out property <color> status-strip-queue-label-ink-hover;
+    // the field a control paints, in the three characters a control comes in: a
+    // quiet one with no field until the pointer arrives, a primary one that
+    // carries its part's main action, and the danger one that stops a turn. A
+    // part whose field is genuinely its own names that role at the call site
+    in-out property <color> button-quiet-fill;
+    in-out property <color> button-quiet-fill-hover;
+    in-out property <color> button-primary-fill;
+    in-out property <color> button-primary-fill-hover;
+    in-out property <color> button-danger-fill;
+    in-out property <color> button-danger-fill-hover;
 }

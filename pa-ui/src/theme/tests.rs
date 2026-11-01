@@ -64,6 +64,16 @@ fn the_shipped_theme_draws_todays_sidebar() {
     assert_eq!(theme.get(Role::TagWorking), Rgba::hex("#a18e41"));
     assert_eq!(theme.get(Role::TagParked), Rgba::hex("#4a4d44"));
     assert_eq!(theme.get(Role::TagIdle), Rgba::hex("#6f9f5f"));
+    // The column's own fields, drawn by the buttons ticket: the chip a row offers
+    // to rename it, the words and the field of New Session, and the pill the
+    // folded column shows.
+    assert_eq!(theme.get(Role::SidebarRowRenameFill), Rgba::hex("#1d1d1d"));
+    assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::SidebarNewSessionInk), Rgba::hex("#e5e5e5"));
+    assert_eq!(theme.get(Role::SidebarNewSessionInkHover), Rgba::hex("#ffffff"));
+    assert_eq!(theme.get(Role::SidebarOpenTipFill), Rgba::hex("#e3e3e3"));
+    assert_eq!(theme.get(Role::SidebarOpenTipInk), Rgba::hex("#1f1f1f"));
+    assert_eq!(theme.get(Role::SidebarOpenTipShadow), Rgba::hex("#00000066"));
 }
 
 /// The glyphs as the window drew them before there was a theme: the values read
@@ -403,8 +413,6 @@ fn the_shipped_theme_draws_todays_composer() {
     assert_eq!(theme.get(Role::ComposerSendFill), Rgba::hex("#e6e6e6"));
     assert_eq!(theme.get(Role::ComposerSendFillHover), Rgba::hex("#f2f2f2"));
     assert_eq!(theme.get(Role::ComposerSendMark), Rgba::hex("#131313"));
-    assert_eq!(theme.get(Role::ComposerStopFill), Rgba::hex("#a2543f"));
-    assert_eq!(theme.get(Role::ComposerStopFillHover), Rgba::hex("#b8614c"));
     assert_eq!(theme.get(Role::ComposerStopMark), Rgba::hex("#f0f0f0"));
 }
 
@@ -442,8 +450,8 @@ fn a_theme_that_paints_the_stop_like_the_send_is_reported() {
     let theme = from_text(
         "mine.json",
         r##"{ "name": "mine", "version": 1,
-             "roles": { "composer-stop-fill": "#e6e6e6",
-                        "composer-stop-fill-hover": "#f2f2f2" } }"##,
+             "roles": { "button-danger-fill": "#e6e6e6",
+                        "button-danger-fill-hover": "#f2f2f2" } }"##,
     )
     .expect("a theme that loads");
 
@@ -506,8 +514,6 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
                "composer-send-fill": "#c9a7ff",
                "composer-send-fill-hover": "#ded2f2",
                "composer-send-mark": "#140f1c",
-               "composer-stop-fill": "#ff9f8f",
-               "composer-stop-fill-hover": "#ffd0c4",
                "composer-stop-mark": "#140f1c" } }"##,
     )
     .expect("a file that repaints the composer");
@@ -720,7 +726,14 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-strip-new-session-mark": "#303030",
                "sidebar-strip-new-session-mark-hover": "#101010",
                "sidebar-search-mark": "#4a4a4a",
-               "sidebar-row-rename-mark": "#5a5a5a" } }"##,
+               "sidebar-row-rename-mark": "#5a5a5a",
+               "sidebar-row-rename-fill": "#3a3a3a",
+               "sidebar-row-rename-fill-hover": "#4a4a4a",
+               "sidebar-new-session-ink": "#101010",
+               "sidebar-new-session-ink-hover": "#000000",
+               "sidebar-open-tip-fill": "#dddddd",
+               "sidebar-open-tip-ink": "#202020",
+               "sidebar-open-tip-shadow": "#00000099" } }"##,
     )
     .expect("a file that repaints the sidebar");
 
@@ -872,6 +885,63 @@ fn the_shipped_theme_draws_todays_menus() {
     assert_eq!(theme.get(Role::QueueRowPromoteMark), Rgba::hex("#8f8f8f"));
     assert_eq!(theme.get(Role::QueueRowPromoteMarkHover), Rgba::hex("#cdcdcd"));
     assert_eq!(theme.get(Role::QueueRowDeleteMark), Rgba::hex("#f3ded8"));
+
+    // The card that names a session: the panels' own field and shadow, with an
+    // edge of its own because it hangs off a row rather than over the window.
+    assert_eq!(theme.get(Role::SessionCardEdge), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::SessionCardInk), Rgba::hex("#e0e0e0"));
+}
+
+/// The field a control paints, in the three characters a control comes in, as the
+/// window drew it before the button was one shape: the quiet chips on the column,
+/// the filled button under them, and the disc that stops the turn. Read off
+/// `ui/app.slint`, `ui/sidebar.slint` and `ui/primitives.slint`, not out of this
+/// crate.
+#[test]
+fn the_shipped_theme_draws_todays_buttons() {
+    let theme = Resolved::shipped();
+    // A veil comes out as the one opaque colour it was drawn in over the column.
+    let over_column = |role| theme.get(role).over(theme.background());
+
+    // A quiet control draws nothing at rest: the column runs through it.
+    assert_eq!(theme.get(Role::ButtonQuietFill).a, 0, "a quiet control is not a fill");
+    assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2b2b2b"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#1a1a1a"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#242424"));
+    // The disc that stops the turn keeps the warmth the composer's stop had when
+    // it was the composer's own role: the button that stops is the danger one
+    // wherever it is drawn.
+    assert_eq!(theme.get(Role::ButtonDangerFill), Rgba::hex("#a2543f"));
+    assert_eq!(theme.get(Role::ButtonDangerFillHover), Rgba::hex("#b8614c"));
+}
+
+/// The three shapes are drawn by a component that asks for a role and nothing
+/// else, so a file that names the roles the shapes paint with moves every copy of
+/// them at once - the column's chips, the button that carries New Session, the
+/// disc that stops the turn, the card that names a session - and nothing else in
+/// the map. This is the ticket's promise held in a test, because a theme is
+/// resolved without a window and a screenshot cannot say it.
+#[test]
+fn a_theme_that_names_the_controls_roles_moves_only_those() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": {
+               "button-quiet-fill": "#00000000",
+               "button-quiet-fill-hover": "#2a1a3a",
+               "button-primary-fill": "#241a33",
+               "button-primary-fill-hover": "#2f2242",
+               "button-danger-fill": "#7a2f2f",
+               "button-danger-fill-hover": "#8d4035",
+               "session-card-edge": "#3a2a52",
+               "session-card-ink": "#eee6ff" } }"##,
+    )
+    .expect("a file that repaints the shapes");
+
+    let (moved, claimed) = moved_and_claimed(&theme, |name| {
+        name.starts_with("button-") || name.starts_with("session-card-")
+    });
+    assert_eq!(moved, claimed);
 }
 
 /// The status strip as the window drew it before there was a theme: the values
@@ -1089,6 +1159,13 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// which is the distance check's finding, not a ratio's, but the blade and the
 /// wing are still read on the column and still named here. Those are roles to
 /// override, not a file to refuse, and the author is told which.
+///
+/// The column's buttons tell it once more, and this is the case the shape made
+/// visible: their fields are lifts of the ink, so on a light window they go light
+/// while the pen and the pencil drawn on them are made of the quiet ink this file
+/// never moved. The mark floor finds three of them — the pen at rest and the label
+/// beside it, and the pencil a row offers at rest. The chip the pointer lights
+/// under them is opaque, so the pencil on it stays as readable as it was drawn.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -1136,6 +1213,8 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the level the running model is at",
             "the model the chip names",
             "the name of a lane with nothing to count",
+            "the pen on New Session at rest",
+            "the pencil a row offers, at rest",
             "the pencil and the bin on a waiting row",
             "the plus that attaches a picture",
             "the plus that attaches a picture, under the pointer",
@@ -1150,6 +1229,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the word beside the count, under the pointer",
             "the word beside the count, with the pill's card open",
             "the word that says what the turn is doing",
+            "the words on New Session under the pointer",
             "the words the reader has selected",
             "what a cell printed",
             "what a command does",
