@@ -2,7 +2,7 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SessionEntry, SessionItem, SessionMenuItem, SessionSection, SlashItem, TRow, Type } from "types.slint";
+import { EffortItem, ModelGroup, QueueItem, SessionEntry, SessionItem, SessionMenuItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
@@ -242,11 +242,10 @@ export component AppWindow inherits Window {
     in-out property <bool> model-menu: false;
     in-out property <string> selected-id;
     // The sidebar's groups: the rows of each, in the order they are drawn, and
-    // which of the three the reader has folded. The fold is a list of names
-    // rather than a flag per section so it survives every poll that rebuilds it.
-    // The sidebar's groups. The window fills all three from the one session list
-    // (src/sessions.rs `session_items`), so a row's group and the section it is
-    // drawn under are decided in one place and cannot disagree.
+    // which of the three the reader has folded. The window fills all three from
+    // the one session list (src/sessions.rs `session_items`), so a row's group
+    // and the group it is drawn under are decided in one place and cannot
+    // disagree.
     in-out property <[SessionItem]> active-items;
     in-out property <[SessionItem]> idle-items;
     in-out property <[SessionItem]> done-items;
@@ -258,8 +257,6 @@ export component AppWindow inherits Window {
     // The session menu: which row opened it, and where its dots were. The items
     // are filled when the dots open, from what that row is.
     in-out property <string> menu-id: "";
-    // the session's name, shown at the menu's head
-    in-out property <string> menu-title: "";
     in-out property <[SessionMenuItem]> menu-items;
     in-out property <length> menu-x: 0px;
     in-out property <length> menu-y: 0px;
@@ -307,9 +304,10 @@ export component AppWindow inherits Window {
         root.fold-mix = root.fold-flip ? 1.0 : 0.0;
     }
 
-    // Where the entry at `index` is drawn: headers and non-folding groups slide
-    // from `splice-at[index]` to `entry.at`; rows inside the folding group keep
-    // their natural 32px spacing (`entry.target`) and glide 18px without cramping.
+    // Where the entry at `index` is drawn: headers and whole groups slide from
+    // `splice-at[index]` to `entry.at`; the rows inside the group being folded
+    // keep their natural 32px spacing (`entry.target`) and rise 18px into the
+    // header as the group closes.
     pure public function row-y(index: int) -> length {
         let entry = root.session-entries[index];
         if !entry.is-header && root.fold-index == entry.seam && root.splice-at.length > 0 {
@@ -323,7 +321,8 @@ export component AppWindow inherits Window {
         from + (entry.at - from) * root.fold-progress
     }
 
-    // Smooth opacity for folding rows and rows moving between groups (fold-index == -2).
+    // Opacity for the rows of the group being folded, and for rows that arrived
+    // in a new group (fold-index == -2), which fade in as they slide.
     pure public function row-opacity(index: int) -> float {
         let entry = root.session-entries[index];
         if root.fold-index == entry.seam && root.splice-at.length > 0 {
@@ -341,22 +340,10 @@ export component AppWindow inherits Window {
         1.0
     }
 
-    // How tall a row is: 32px while visible (including during collapse fade-out),
-    // and 0px once folded at rest.
+    // A row is drawn at 32px while it is at all, and not at all once its group
+    // is folded shut.
     pure public function row-h(index: int) -> length {
         root.row-opacity(index) > 0.01 ? 32px : 0px
-    }
-
-    // How tall the box a group's rows are drawn in is: its rows' height while
-    // open, nothing while closed, and in between, the part a fold has covered
-    // so far.
-    pure public function group-box(index: int) -> length {
-        let entry = root.session-entries[index];
-        let rows = entry.count * 32px;
-        if root.fold-index == index && root.splice-at.length > 0 {
-            return rows * (root.fold-open ? root.fold-progress : (1.0 - root.fold-progress));
-        }
-        entry.folded ? 0px : rows
     }
 
     public function group-toggled(label: string) {
@@ -935,6 +922,14 @@ export component AppWindow inherits Window {
                                     root.rename-requested(id, name);
                                 }
                                 menu(id, x, y) => {
+                                    root.menu-id = id;
+                                    root.menu-x = x;
+                                    root.menu-y = y;
+                                    root.session-menu-opened(id);
+                                }
+                                // a second press on the dots of the row whose
+                                // menu is open closes it
+                                toggled(id, x, y) => {
                                     if root.menu-id == id {
                                         root.menu-id = "";
                                         root.menu-closed();
@@ -1715,7 +1710,6 @@ export component AppWindow inherits Window {
     // A session row's own menu, hung off the dots that opened it.
     if root.menu-id != "" : SessionMenu {
         items: root.menu-items;
-        title: root.menu-title;
         anchor-x: root.menu-x;
         anchor-y: root.menu-y - 32px;
         viewport-h: root.height;

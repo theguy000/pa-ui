@@ -38,7 +38,6 @@ fn a_resident_session_holding_a_turn_is_active() {
         "activity": "working", "isSessionActive": true, "isStreaming": true,
     }));
     assert_eq!(item.status, "active");
-    assert_eq!(item.group, "active");
     assert!(!item.done);
 }
 
@@ -61,7 +60,6 @@ fn a_resident_session_between_turns_is_idle() {
         "activity": "idle", "isSessionActive": false, "isStreaming": false,
     }));
     assert_eq!(item.status, "idle");
-    assert_eq!(item.group, "idle");
 }
 
 /// The bug this rule was rewritten for: `list {all: true}` re-sends every saved
@@ -76,7 +74,6 @@ fn a_saved_session_wearing_live_is_done_not_idle() {
         "messageCount": 37,
     }));
     assert_eq!(item.status, "done");
-    assert_eq!(item.group, "done");
     assert!(item.done);
 }
 
@@ -110,19 +107,42 @@ fn a_row_without_a_worker_is_done_whatever_its_lifecycle() {
 #[test]
 fn the_list_is_grouped_active_then_idle_then_done() {
     let rows = vec![
-        row(serde_json::json!({"activeSessionId": "d", "sessionId": "u4",
-                               "lifecycle": "archived"})),
-        row(serde_json::json!({"activeSessionId": "i", "sessionId": "u3",
-                               "lifecycle": "live", "workerState": "ready"})),
-        row(serde_json::json!({"activeSessionId": "a", "sessionId": "u2",
+        row(
+            serde_json::json!({"activeSessionId": "d", "sessionId": "u4",
+                               "lifecycle": "archived"}),
+        ),
+        row(
+            serde_json::json!({"activeSessionId": "i", "sessionId": "u3",
+                               "lifecycle": "live", "workerState": "ready"}),
+        ),
+        row(
+            serde_json::json!({"activeSessionId": "a", "sessionId": "u2",
                                "lifecycle": "live", "workerState": "ready",
-                               "activity": "working"})),
-        row(serde_json::json!({"activeSessionId": "s", "sessionId": "u1",
-                               "lifecycle": "live", "activity": "idle"})),
+                               "activity": "working"}),
+        ),
+        row(
+            serde_json::json!({"activeSessionId": "s", "sessionId": "u1",
+                               "lifecycle": "live", "activity": "idle"}),
+        ),
     ];
     let items = session_items(&rows);
-    let groups: Vec<&str> = items.iter().map(|item| item.group.as_str()).collect();
-    assert_eq!(groups, ["active", "idle", "done", "done"]);
+    let statuses: Vec<&str> = items.iter().map(|item| item.status.as_str()).collect();
+    assert_eq!(statuses, ["active", "idle", "done", "done"]);
+    // and the split the window draws from keeps that order: the same rows, the
+    // same way, and no row in two groups
+    let (active, idle, done) = session_groups(&items);
+    assert_eq!(active.len(), 1);
+    assert_eq!(idle.len(), 1);
+    assert_eq!(done.len(), 2);
+    assert_eq!(
+        active
+            .iter()
+            .chain(&idle)
+            .chain(&done)
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>(),
+        items.iter().map(|item| item.id.clone()).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -142,20 +162,38 @@ fn session_entries_positions_headers_and_rows_by_fold_state() {
     assert_eq!(open[0].at, COLUMN_TOP as f32);
     assert_eq!(open[1].at, (COLUMN_TOP + HEADER_HEIGHT) as f32);
     assert_eq!(open[2].at, (COLUMN_TOP + HEADER_HEIGHT + ROW_HEIGHT) as f32);
-    assert_eq!(open[3].at, (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32);
-    assert_eq!(open[4].at, (COLUMN_TOP + 2 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32);
-    assert_eq!(open[5].at, (COLUMN_TOP + 3 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32);
+    assert_eq!(
+        open[3].at,
+        (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32
+    );
+    assert_eq!(
+        open[4].at,
+        (COLUMN_TOP + 2 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
+    );
+    assert_eq!(
+        open[5].at,
+        (COLUMN_TOP + 3 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
+    );
     assert_eq!(
         entries_height(&open),
         (COLUMN_TOP + 3 * HEADER_HEIGHT + 3 * ROW_HEIGHT) as f32
     );
 
     let idle_folded = session_entries(&a, &i, &d, false, true, false);
-    assert_eq!(idle_folded[2].at, (COLUMN_TOP + HEADER_HEIGHT + ROW_HEIGHT) as f32);
+    assert_eq!(
+        idle_folded[2].at,
+        (COLUMN_TOP + HEADER_HEIGHT + ROW_HEIGHT) as f32
+    );
     assert_eq!(idle_folded[3].at, idle_folded[2].at);
     assert!(idle_folded[3].folded);
-    assert_eq!(idle_folded[4].at, (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32);
-    assert_eq!(idle_folded[5].at, (COLUMN_TOP + 3 * HEADER_HEIGHT + ROW_HEIGHT) as f32);
+    assert_eq!(
+        idle_folded[4].at,
+        (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32
+    );
+    assert_eq!(
+        idle_folded[5].at,
+        (COLUMN_TOP + 3 * HEADER_HEIGHT + ROW_HEIGHT) as f32
+    );
     assert_eq!(
         entries_height(&idle_folded),
         (COLUMN_TOP + 3 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32

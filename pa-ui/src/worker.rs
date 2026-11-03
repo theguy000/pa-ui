@@ -202,29 +202,45 @@ fn gist_id_from_url(url: &str) -> Option<&str> {
 /// writes the session's viewer HTML, and the GitHub CLI uploads it. The window
 /// holds no token of its own; if `gh` is missing or logged out, its own message
 /// comes back as the failure.
+///
+/// `export_html` reaches the daemon through the worker holding the session, so
+/// a session nothing is running cannot be exported. The menu says that rather
+/// than sending a command that would start a worker to answer it.
 fn share_as_gist(client: &Client, session: &str) -> Result<Shared, String> {
-    let file = std::env::temp_dir().join(format!("pa-ui-share-{session}.html"));
+    let pid = std::process::id();
+    let file = std::env::temp_dir().join(format!("pa-ui-share-{pid}-{session}.html"));
     let written = pa_client::export_html(client, session, &file.to_string_lossy())
         .map_err(|error| format!("could not export the session: {error}"))?;
+    // the path the daemon reports, and the temp path this window removes
     let path = std::path::PathBuf::from(written);
 
-    let mut command = std::process::Command::new("gh");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: the upload must not flash a console over the window
-        command.creation_flags(0x0800_0000);
+    // The TUI gates on `gh auth status` first, so a logged-out CLI says so
+    // rather than failing inside the upload.
+    let mut probe = gh_command();
+    let logged_in = probe
+        .args(["auth", "status"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !logged_in {
+        let _ = std::fs::remove_file(&file);
+        return Err("the GitHub CLI is not logged in: run `gh auth login`".to_string());
     }
-    let output = command
+
+    let output = gh_command()
         .args(["gist", "create", "--public=false"])
         .arg(&path)
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|error| {
             let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&file);
             format!("could not run the GitHub CLI (gh): {error}")
         });
     let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&file);
     let output = output?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
@@ -243,7 +259,24 @@ fn share_as_gist(client: &Client, session: &str) -> Result<Shared, String> {
     })
 }
 
-pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_id: String) {    let mut out = Out {
+/// The `gh` command, hidden on Windows so neither the auth probe nor the upload
+/// flashes a console over the window. The same `CREATE_NO_WINDOW` flag the
+/// window uses for the icon build's own child process.
+#[cfg(windows)]
+fn gh_command() -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new("gh");
+    command.creation_flags(0x0800_0000);
+    command
+}
+
+#[cfg(not(windows))]
+fn gh_command() -> std::process::Command {
+    std::process::Command::new("gh")
+}
+
+pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_id: String) {
+    let mut out = Out {
         tx,
         generation: 0,
     };
@@ -815,27 +848,29 @@ mod tests {
 
     #[test]
     fn a_live_row_offers_done_and_never_delete() {
-        let items = crate::interactive::sidebar::menu_items("Build the sidebar", false, false);
+        let items = crate::interactive::sidebar::menu_items(false, false);
         let keys = keys(&items);
         assert_eq!(keys, ["done", "rename", "share", "copy-id"]);
         assert!(
             !keys.iter().any(|key| key == "delete"),
             "a live row must never offer the action that destroys its file: {keys:?}"
         );
-        // the item says what it does to this session, and carries no tick: the
-        // row's own Done row already wears that mark
         assert_eq!(items[0].label.as_str(), "Mark done");
-        assert!(!items[0].done_mark);
     }
 
     #[test]
-    fn a_done_row_offers_delete_and_never_done() {
-        let items = crate::interactive::sidebar::menu_items("Hello there", true, false);
+    fn a_done_row_offers_delete_and_neither_done_nor_share() {
+        let items = crate::interactive::sidebar::menu_items(true, false);
         let keys = keys(&items);
-        assert_eq!(keys, ["rename", "share", "copy-id", "delete"]);
+        assert_eq!(keys, ["rename", "copy-id", "delete"]);
         assert!(
             !keys.iter().any(|key| key == "done"),
             "a done row is already set aside: {keys:?}"
+        );
+        // `export_html` needs a worker, and a done row has none
+        assert!(
+            !keys.iter().any(|key| key == "share"),
+            "a done row has no worker to export it: {keys:?}"
         );
         // Delete sits below the separator: it acts on the file, not the session
         let delete = items.iter().find(|item| item.key == "delete").expect("delete");
@@ -844,24 +879,23 @@ mod tests {
 
     #[test]
     fn delete_asks_once_before_it_acts() {
-        let armed = crate::interactive::sidebar::menu_items("Hello there", true, true);
+        let armed = crate::interactive::sidebar::menu_items(true, true);
         let delete = armed.iter().find(|item| item.key == "delete").expect("delete");
         assert_eq!(delete.label.as_str(), "Delete for good");
         // and it is still the same key: the second press is the act
         assert_eq!(delete.key.as_str(), "delete");
         assert!(delete.danger);
-        assert!(delete.note.is_empty());
-        assert!(delete.note_strong);
-        let unarmed = crate::interactive::sidebar::menu_items("Hello there", true, false);
+        assert_eq!(delete.note.as_str(), "this removes the session file");
+        let unarmed = crate::interactive::sidebar::menu_items(true, false);
         let delete = unarmed.iter().find(|item| item.key == "delete").expect("delete");
-        assert!(!delete.note_strong);
+        assert_eq!(delete.label.as_str(), "Delete");
         assert!(delete.note.is_empty());
     }
 
     #[test]
     fn every_menu_row_says_what_it_would_do() {
         for done in [false, true] {
-            for item in crate::interactive::sidebar::menu_items("Build the sidebar", done, false) {
+            for item in crate::interactive::sidebar::menu_items(done, false) {
                 assert!(item.note.is_empty(), "{} has unexpected subtext {:?}", item.key, item.note);
             }
         }
@@ -872,11 +906,13 @@ mod tests {
         use crate::interactive::sidebar::{menu_action, MenuAction};
         assert_eq!(menu_action("delete", false), MenuAction::Nothing);
         assert_eq!(menu_action("done", true), MenuAction::Nothing);
+        assert_eq!(menu_action("share", true), MenuAction::Nothing);
+        assert_eq!(menu_action("share", false), MenuAction::Share);
         assert_eq!(menu_action("delete", true), MenuAction::Delete);
         assert_eq!(menu_action("done", false), MenuAction::MarkDone);
         // every key a row offers is one some row can execute
         for done in [false, true] {
-            for item in crate::interactive::sidebar::menu_items("x", done, false) {
+            for item in crate::interactive::sidebar::menu_items(done, false) {
                 assert_ne!(
                     menu_action(&item.key, done),
                     MenuAction::Nothing,

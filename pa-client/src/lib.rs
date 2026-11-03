@@ -240,7 +240,8 @@ pub struct SessionRow {
     pub model_provider: String,
     pub thinking: String,
     /// Where the session is saved. A row with no worker is addressed and
-    /// deleted by this path, not by its id.
+    /// deleted by this path, not by its id. `list` sends it as `sessionFile`
+    /// and the saved catalog sends it as `path`.
     pub session_file: String,
     pub messages: u64,
     pub input_tokens: u64,
@@ -273,13 +274,15 @@ impl SessionRow {
         !self.worker_state.is_empty()
     }
 
-    /// The daemon's own status formula, in `pa-types` so every surface classifies
-    /// the same way: resident and busy is `Running`, resident and quiet is
-    /// `Idle`, and anything no worker holds is `Inactive`.
+    /// The daemon's status formula (`classify_session_roster_status` in
+    /// `pa-types`): a worker that holds the session and is busy is running, one
+    /// that holds it and is quiet is idle, and a session no worker holds is
+    /// inactive. An archived lifecycle is inactive whatever the other keys say,
+    /// since a session set aside is not one a worker is about to pick up.
     #[must_use]
     pub fn roster_status(&self) -> &'static str {
         match classify_session_roster_status(
-            self.is_resident(),
+            self.is_resident() && self.lifecycle != "archived",
             &self.activity,
             self.is_session_active,
             false,
@@ -290,7 +293,7 @@ impl SessionRow {
         }
     }
 
-    /// What the agent is doing right now, in the TUI's vocabulary.    ///
+    /// What the agent is doing right now, in the TUI's vocabulary.
     /// The summary only distinguishes coarse states; once stream events are
     /// consumed these labels get refined to Thinking / Writing / Writing code.
     #[must_use]
@@ -334,6 +337,10 @@ impl SessionRow {
         let number = |key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
         let usage = value.get("usage").cloned().unwrap_or(Value::Null);
         let usage_num = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+        // the resident summary carries `sessionFile`; the saved catalog row
+        // carries the same path as `path`, and it is the one a done row needs
+        let saved_as = text("sessionFile");
+        let session_file = if saved_as.is_empty() { text("path") } else { saved_as };
         let named = text("sessionName");
         let name = if named.is_empty() {
             text("firstMessage").chars().take(60).collect::<String>()
@@ -365,7 +372,7 @@ impl SessionRow {
                 .unwrap_or_default()
                 .to_string(),
             thinking: text("thinkingLevel"),
-            session_file: text("sessionFile"),
+            session_file,
             messages: number("messageCount"),
             input_tokens: usage_num("inputTokens"),
             output_tokens: usage_num("outputTokens"),

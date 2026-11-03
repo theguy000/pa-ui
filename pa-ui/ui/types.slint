@@ -34,26 +34,15 @@ export struct SessionItem {
     age: string,
     full: string,
     tip: string,
-    // the daemon's status, in the window's words: "active", "idle", "done"
+    // the daemon's status, in the window's words: "active", "idle" or "done",
+    // which is also the group the row is listed under
     status: string,
-    // the section the row is listed under, which is the same word
-    group: string,
-    // set aside: no worker holds it, so the row is in the done section
+    // set aside: no worker holds it, so the row is in the done group
     done: bool,
     // where the session is saved: the path `rename_saved_session` and
     // `delete_saved_session` address, since a row with no worker has no id to
     // target a worker with
     file: string,
-}
-
-// One group of the sessions column: the word it is headed with, and the rows
-// under it.
-//
-// The window no longer draws groups as groups. It flattens them into
-// `SessionEntry` so the sidebar's geometry is plain arithmetic.
-export struct SessionSection {
-    label: string,
-    rows: [SessionItem],
 }
 
 // One line of the sessions column: a group's header, or one session under it.
@@ -80,19 +69,17 @@ export struct SessionEntry {
 }
 
 // One row of a session's own menu: the action's key, the words it shows, whether
-// it is the set-aside tick rather than a word, whether it sits below the
-// separator away from the actions that act on the session itself, and what it
-// says under its label, or the warning it turns into once armed.
+// it sits below the separator away from the actions that act on the session
+// itself, and the warning it turns into once armed.
 export struct SessionMenuItem {
     key: string,
     label: string,
-    // drawn in the warning ink, and the row under it in that same ink
+    // drawn in the warning ink, and the note under it in that same ink
     danger: bool,
-    // what the row adds: a sentence, or what the action would overwrite
+    // what the armed item says it is about to do, and empty at rest
     note: string,
-    // an armed delete says what it does next rather than what it does
-    note-strong: bool,
-    done-mark: bool,
+    // below the separator, in the danger ink: the action acts on the file, not
+    // on the session
     separated: bool,
 }
 

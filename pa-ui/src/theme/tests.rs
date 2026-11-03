@@ -1177,6 +1177,11 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// never moved. The mark floor finds three of them — the pen at rest and the label
 /// beside it, and the pencil a row offers at rest. The chip the pointer lights
 /// under them is opaque, so the pencil on it stays as readable as it was drawn.
+///
+/// A group's header is the same shape as a row's pencil: its word is quiet ink on
+/// a field that is a lift of the ink, and its caret is drawn on the fill the
+/// pointer lights under the header itself. Both go dim with the rest, and both are
+/// named here so the author knows to move them.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -1195,6 +1200,8 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a cell's name at rest",
             "a cell's name under the pointer",
             "a command's name",
+            "a group's caret while the pointer is on its header",
+            "a group's word at rest",
             "a ledger value",
             "a link in prose",
             "a model's name at rest",

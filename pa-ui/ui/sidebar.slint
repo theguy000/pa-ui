@@ -5,10 +5,9 @@
 // row renames it in place; the three-dots menu appears under the pointer.
 
 import { SessionItem, Type } from "types.slint";
-import { MarqueeText } from "marquee-text.slint";
-import { IconCaret, IconDoneTick, IconMore, IconPencil } from "icons.slint";
+import { IconCaret, IconDoneTick, IconMore } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button, Tag, TagKind } from "primitives.slint";
+import { Button } from "primitives.slint";
 
 // A group header: the caret, the word, and how many rows it holds. Clicking it
 // folds the group.
@@ -18,7 +17,6 @@ export component SessionGroupHeader inherits Rectangle {
     // folded: the caret points at the rows instead of down at them
     in property <bool> closed: false;
     callback toggled();
-    out property <bool> hot: header-touch.has-hover;
 
     height: 32px;
     border-radius: 6px;
@@ -42,7 +40,7 @@ export component SessionGroupHeader inherits Rectangle {
         width: self.preferred-width;
         height: parent.height;
         text: root.label;
-        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-name-ink;
+        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
         font-size: 12.5px;
         font-weight: 600;
         vertical-alignment: center;
@@ -67,7 +65,7 @@ export component SessionGroupHeader inherits Rectangle {
             height: 10px;
             viewbox-width: 10;
             viewbox-height: 10;
-            tint: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-name-ink;
+            tint: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-caret;
         }
     }
 
@@ -77,8 +75,8 @@ export component SessionGroupHeader inherits Rectangle {
         y: 0;
         width: 32px;
         height: parent.height;
-        text: "\{root.count}";
-        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-name-ink;
+        text: "\\{root.count}";
+        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
         font-size: 11.5px;
         font-weight: 500;
         vertical-alignment: center;
@@ -102,6 +100,8 @@ export component SessionRow inherits Rectangle {
     // sent so the panel can hang there, and the id so the window can read which
     // item set the row's kind calls for.
     callback menu(string, length, length);
+    // the same press, when the row's menu is already open: the window closes it
+    callback toggled(string, length, length);
     // the row's own pointer state, so the component can watch it change: a
     // `changed` block only takes an identifier, and `ta.has-hover` is not one
     out property <bool> hot: ta.has-hover;
@@ -192,7 +192,9 @@ export component SessionRow inherits Rectangle {
             enabled: !root.editing;
             described: "Session menu";
             clicked => {
-                root.menu(root.item.id, self.absolute-position.x,
+                // the row's own toggle: `app.slint` owns which menu is open, so
+                // it decides whether this press opens one or closes the one here
+                root.toggled(root.item.id, self.absolute-position.x,
                     self.absolute-position.y + self.height);
             }
             visible: !root.editing;

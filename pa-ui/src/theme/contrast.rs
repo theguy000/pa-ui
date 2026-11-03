@@ -168,6 +168,25 @@ const PAIRS: &[Pair] = &[
         what: "a session's name while it is renamed",
         floor: BODY,
     },
+    // A group's header is a label over the names under it, so it is read as body
+    // text too, under the pointer as well as at rest. Its caret is a mark, and it
+    // only appears while the pointer is on its header, so it is read on the
+    // header's hover fill.
+    Pair {
+        ink: Mark { role: Role::SidebarGroupInk, on: ON_SIDEBAR_ROW },
+        what: "a group's word at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNameInkSelected, on: ON_SIDEBAR_ROW_HOVER },
+        what: "a group's word under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarGroupCaret, on: ON_SIDEBAR_ROW_HOVER },
+        what: "a group's caret while the pointer is on its header",
+        floor: MARK,
+    },
     // The column's controls draw a mark and nothing else, so the mark is read on
     // the column itself: there is no field between them. The strip's pen is the
     // same story — its chip is transparent until the pointer arrives, so folded

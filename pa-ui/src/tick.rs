@@ -331,25 +331,15 @@ impl Tick {
                     *sessions_cache.borrow_mut() = rows.clone();
                     let items: Vec<SessionItem> = session_items(&rows);
                     // The three groups, each taking its rows from the one sorted
-                    // list, so a section and its rows cannot disagree.
-                    let of_group = |group: &str| VecModel::from(
-                        items.iter()
-                            .filter(|item| item.group.as_str() == group)
-                            .cloned()
-                            .collect::<Vec<SessionItem>>(),
-                    );
-                    ui.set_active_items(ModelRc::from(Rc::new(of_group("active"))));
-                    ui.set_idle_items(ModelRc::from(Rc::new(of_group("idle"))));
-                    ui.set_done_items(ModelRc::from(Rc::new(of_group("done"))));
+                    // list, so a group and its rows cannot disagree.
+                    let (active, idle, done) = crate::sessions::session_groups(&items);
+                    ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
+                    ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
+                    ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
                     // The column is the flat list the window draws: headers and
                     // rows, each at the y it goes at. The group order and the
                     // fold state decide the positions here, so the sidebar never
                     // asks a layout where a row ended up.
-                    let (active, idle, done) = (
-                        of_group("active").iter().collect::<Vec<_>>(),
-                        of_group("idle").iter().collect::<Vec<_>>(),
-                        of_group("done").iter().collect::<Vec<_>>(),
-                    );
                     let entries = crate::sessions::session_entries(
                         &active,
                         &idle,
@@ -373,40 +363,16 @@ impl Tick {
                         });
                     if !entries_unchanged {
                         let saved_cy = ui.invoke_get_sidebar_cy();
-                        // Map each entry's previous y by its identity (header label or session uuid)
-                        // so a session moving between Done and Idle/Active slides & fades smoothly.
-                        let prev_map: std::collections::HashMap<String, (f32, i32)> = current_entries
+                        // Each entry starts at its own previous y, found by key,
+                        // so a row that moved between groups slides from where it
+                        // was rather than from whatever row held its old slot.
+                        let previous: Vec<SessionEntry> = current_entries.iter().collect();
+                        let from_y = crate::sessions::from_y(&previous, &entries, 16.0);
+                        // a row whose start differs from its rest is one moving
+                        let any_group_move = entries
                             .iter()
-                            .map(|e| {
-                                let key = if e.is_header {
-                                    format!("hdr:{}", e.label)
-                                } else {
-                                    format!("row:{}", e.item.uuid)
-                                };
-                                (key, (e.at, e.seam))
-                            })
-                            .collect();
-                        let mut any_group_move = false;
-                        let from_y: Vec<f32> = entries
-                            .iter()
-                            .map(|e| {
-                                let key = if e.is_header {
-                                    format!("hdr:{}", e.label)
-                                } else {
-                                    format!("row:{}", e.item.uuid)
-                                };
-                                if let Some(&(old_at, old_seam)) = prev_map.get(&key) {
-                                    if !e.is_header && old_seam != e.seam {
-                                        any_group_move = true;
-                                        // Fade & slide in at new destination
-                                        return e.at + if old_seam > e.seam { 16.0 } else { -16.0 };
-                                    }
-                                    old_at
-                                } else {
-                                    e.at
-                                }
-                            })
-                            .collect();
+                            .zip(from_y.iter())
+                            .any(|(entry, from)| (entry.at - from).abs() > 0.5);
                         let new_h = crate::sessions::entries_height(&entries);
                         ui.set_prev_sessions_height(ui.get_sessions_height());
                         ui.set_sessions_height(new_h);

@@ -205,8 +205,8 @@ export component IconMore inherits Path {
         + "M 19 10.5 A 1.5 1.5 0 0 0 17.5 12 A 1.5 1.5 0 0 0 19 13.5 A 1.5 1.5 0 0 0 20.5 12 A 1.5 1.5 0 0 0 19 10.5 Z";
 }
 
-// The tick that marks a session set aside, in the done section and on the
-// row's menu item.
+// The tick that marks a session set aside, in the done group and on that
+// group's header.
 export component IconDoneTick inherits Path {
     in property <color> tint: Theme.sidebar-row-done-mark;
     width: 11px;
@@ -232,7 +232,8 @@ export component IconEdit inherits Path {
     stroke: transparent;
 }
 
-// A minimalist bin in the 24x24 rounded monoline stroke family (Style C).
+// A bin with its lid and body drawn as one open stroke: delete, without the
+// promise of permanence.
 export component IconTrash inherits Path {
     in property <color> tint;
     width: 15px;
@@ -248,7 +249,7 @@ export component IconTrash inherits Path {
         + "M 7.2 9.5 L 7.8 18.2 A 2.2 2.2 0 0 0 10 20.2 L 14 20.2 A 2.2 2.2 0 0 0 16.2 18.2 L 16.8 9.5";
 }
 
-// Mark done: minimalist linear check (Style C).
+// Mark done: a check drawn in one stroke.
 export component IconMenuDone inherits Path {
     in property <color> tint: transparent;
     width: 15px;
@@ -263,7 +264,7 @@ export component IconMenuDone inherits Path {
     commands: "M 5 12.8 L 9.6 17.4 L 19.2 6.8";
 }
 
-// Rename: minimalist pen with baseline rule (Style C).
+// Rename: a pen over the line it writes on.
 export component IconMenuPencil inherits Path {
     in property <color> tint: transparent;
     width: 15px;
@@ -278,7 +279,7 @@ export component IconMenuPencil inherits Path {
     commands: "M 12 20 L 20 20 M 15.8 4.2 A 2 2 0 0 1 18.6 4.2 L 19.8 5.4 A 2 2 0 0 1 19.8 8.2 L 8.5 19.5 L 4 20 L 4.5 15.5 Z";
 }
 
-// Share as gist: minimalist curved share arrow (Style C).
+// Share as gist: an arrow leaving a shelf.
 export component IconMenuShare inherits Path {
     in property <color> tint: transparent;
     width: 15px;
@@ -293,7 +294,7 @@ export component IconMenuShare inherits Path {
     commands: "M 15 5 L 20 10 L 15 15 M 4 19 L 4 15 A 5 5 0 0 1 9 10 L 20 10";
 }
 
-// Copy id: minimalist hash / ID mark (Style C).
+// Copy id: a hash, the mark a short id wears.
 export component IconMenuCopy inherits Path {
     in property <color> tint: transparent;
     width: 15px;
@@ -306,22 +307,6 @@ export component IconMenuCopy inherits Path {
     stroke-line-cap: round;
     stroke-line-join: round;
     commands: "M 9 3.5 L 7.2 20.5 M 16.8 3.5 L 15 20.5 M 4 9 L 20 9 M 3.5 15 L 19.5 15";
-}
-
-// The chevron that marks a row which opens another panel: drawn beside the
-// delete's note so an armed delete reads as the heavier of the two actions.
-export component IconMenuChevron inherits Path {
-    in property <color> tint: transparent;
-    width: 10px;
-    height: 10px;
-    viewbox-width: 10;
-    viewbox-height: 10;
-    commands: "M 3.5 2 L 7 5 L 3.5 8";
-    stroke: tint;
-    stroke-width: 1.2px;
-    stroke-line-cap: round;
-    stroke-line-join: round;
-    fill: transparent;
 }
 
 // transcript

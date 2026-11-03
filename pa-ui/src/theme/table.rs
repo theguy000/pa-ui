@@ -297,8 +297,10 @@ pub(crate) enum Role {
     /// menu. Its own role although it ships the pencil's ink: it is a second
     /// control on the same row, and a theme may want it quieter than the pencil.
     SidebarRowMenuMark,
-    /// The tick a done row's menu offers, and the tick the done header carries:
-    /// done is green, the one tag with a mark rather than a tint on the row.
+    /// The tick a done row wears before its name, and the one the done group's
+    /// header carries: done is green, the one tag with a mark rather than a tint
+    /// on the row. It ships the idle tag's value on purpose, both saying the same
+    /// thing about a session that is not between turns.
     SidebarRowDoneMark,
     /// The label on the column's New Session button at rest. The button carries a
     /// field of its own, so its words are read on that field rather than on the
@@ -1225,8 +1227,13 @@ impl Role {
             Role::SidebarNameInkSelected => Derivation::Palette(Palette::Ink),
             Role::SidebarNameInkEditing => Derivation::Palette(Palette::Ink),
             Role::SidebarAgeInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
-            Role::SidebarGroupInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
-            Role::SidebarGroupCaret => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
+            // a group's word is read as a name is, being the label the rows
+            // under it are scanned from; its caret is a mark on the header's
+            // hover fill, drawn at the weight the row's own pencil is
+            Role::SidebarGroupInk => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarGroupCaret => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+            }
             Role::TagWorking => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::TagParked => Derivation::Fixed(Rgba::hex("#4a4d44")),
             Role::TagIdle => Derivation::Fixed(Rgba::hex("#6f9f5f")),

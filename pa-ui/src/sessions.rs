@@ -22,7 +22,8 @@ pub(crate) enum RowTag {
 }
 
 impl RowTag {
-    /// The word `sidebar.slint` compares against.
+    /// The word `sidebar.slint` compares against, and the group the row sits
+    /// under: active first, then idle, then the done rows.
     pub(crate) fn word(self) -> &'static str {
         match self {
             RowTag::Active => "active",
@@ -31,12 +32,7 @@ impl RowTag {
         }
     }
 
-    /// The group header the row sits under, and its position: active first, then
-    /// idle, then the set-aside rows.
-    pub(crate) fn group(self) -> &'static str {
-        self.word()
-    }
-
+    /// The order the groups are drawn in.
     pub(crate) fn rank(self) -> u8 {
         match self {
             RowTag::Active => 0,
@@ -80,7 +76,6 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
         full,
         tip,
         status: tag.word().into(),
-        group: tag.group().into(),
         done: tag == RowTag::Done,
         file: row.session_file.clone().into(),
     }
@@ -90,18 +85,35 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
 /// idle, then done, each group kept in the daemon's order.
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
     let mut items: Vec<SessionItem> = rows.iter().map(to_item).collect();
-    items.sort_by_key(|item| {
-        let tag = match item.status.as_str() {
-            "active" => RowTag::Active,
-            "idle" => RowTag::Idle,
-            _ => RowTag::Done,
-        };
-        tag.rank()
-    });
+    items.sort_by_key(|item| tag_word_rank(&item.status));
     items
 }
 
+/// The three groups as the window hands them to the column: each holding the
+/// rows of that group in drawing order, taken from the one sorted list so a
+/// group and its rows cannot disagree.
+pub(crate) fn session_groups(
+    items: &[SessionItem],
+) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+    let take = |tag: RowTag| {
+        items
+            .iter()
+            .filter(|item| tag_word_rank(&item.status) == tag.rank())
+            .cloned()
+            .collect::<Vec<SessionItem>>()
+    };
+    (take(RowTag::Active), take(RowTag::Idle), take(RowTag::Done))
+}
 
+/// A row's word back to its tag. The word is what the window holds, since
+/// `SessionItem`'s status crosses into Slint as a string.
+fn tag_word_rank(word: &str) -> u8 {
+    match word {
+        "active" => RowTag::Active.rank(),
+        "idle" => RowTag::Idle.rank(),
+        _ => RowTag::Done.rank(),
+    }
+}
 
 /// The sessions column, as the window draws it: one flat list of headers and
 /// rows.
@@ -111,11 +123,11 @@ pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
 /// rather than from Slint's layouts so that the height of the column is a
 /// number the window already has, not one a layout has to report back.
 ///
-/// `at` is where a header stands, and where a row is listed: the header of its
-/// own group, which the row sits under whether the group is open or not. While
-/// a fold runs, the rows slide from there to `target`, the y they settle at
-/// with every group open, and `seam` says which header's box they are drawn
-/// inside. A closed group's box has no height, so its rows are cut away.
+/// `at` is where a header stands, and where a row is drawn: the y it settles at
+/// with every group open. `target` is the same number for an unfolded group;
+/// inside the group a fold is moving, it is where the row would sit with that
+/// group open, so the rows keep their spacing while the group's box shrinks.
+/// `seam` is the group's index, which is what `fold-index` names.
 pub(crate) fn session_entries(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -164,6 +176,39 @@ pub(crate) fn session_entries(
     entries
 }
 
+/// One key per entry, the same before and after a fold: a header by its word, a
+/// row by its session's uuid. A row keeps its key when it moves between groups,
+/// which is how a poll tells it slid rather than arrived.
+pub(crate) fn entry_key(entry: &SessionEntry) -> String {
+    if entry.is_header {
+        format!("hdr:{}", entry.label)
+    } else {
+        format!("row:{}", entry.item.uuid)
+    }
+}
+
+/// Where each entry was drawn before the column was rebuilt, keyed by
+/// `entry_key`. `from_y` is aligned with `entries`, so `row-y` in `app.slint`
+/// slides one row from that row's own old y, whatever order either list is in.
+///
+/// A row that changed group has no shared history with the row it replaced in
+/// that slot, so it drops in from `slide` px on the side of the group it left:
+/// `-slide` from below, `+slide` from above. Fades are `app.slint`'s business.
+pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide: f32) -> Vec<f32> {
+    let before: std::collections::HashMap<String, &SessionEntry> = previous
+        .iter()
+        .map(|entry| (entry_key(entry), entry))
+        .collect();
+    entries
+        .iter()
+        .map(|entry| match before.get(&entry_key(entry)) {
+            Some(old) if old.seam == entry.seam => old.at,
+            Some(old) => entry.at + if old.seam > entry.seam { slide } else { -slide },
+            None => entry.at,
+        })
+        .collect()
+}
+
 /// The column's height for a set of entries, and its bottom edge.
 pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
     entries
@@ -180,22 +225,22 @@ pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
         .fold(COLUMN_TOP as f32, f32::max)
 }
 
-/// A header is 26px and a row 32px, both in `app.slint`: the window writes its
-/// entries at these heights, so the two must agree.
+/// A header is 32px and a row 32px, both in `sidebar.slint` and `app.slint`:
+/// the window draws its entries at these heights, so the two must agree.
 pub(crate) const HEADER_HEIGHT: i32 = 32;
 pub(crate) const ROW_HEIGHT: i32 = 32;
 /// Where the first header goes: below the column's band, the New Session button
-/// and the search row, with the 6px the column spaces them by. The list is
-/// pinned to the window's top edge, so this offset is the entries' own.
+/// and the search row. The list is pinned to the window's top edge, so this
+/// offset is the entries' own, and `app.slint` places the list at the same y.
 pub(crate) const COLUMN_TOP: i32 = 88;
 
+/// The session the selection follows: ids are re-keyed by a daemon restart,
 /// the session's uuid is not.
 pub(crate) fn uuid_of<'a>(rows: &'a [SessionRow], id: &str) -> Option<&'a str> {
     rows.iter()
         .find(|row| row.id == id)
         .map(|row| row.session_id.as_str())
 }
-
 
 pub(crate) fn display_name(row: &SessionRow) -> SharedString {
     let name = row.name.trim();

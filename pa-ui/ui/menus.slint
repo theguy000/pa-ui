@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
-import { IconCaret, IconCheck, IconDoneTick, IconMenuChevron, IconMenuCopy,
-    IconMenuDone, IconMenuPencil, IconMenuShare, IconMore, IconTrash } from "icons.slint";
+import { IconCaret, IconCheck, IconMenuCopy, IconMenuDone, IconMenuPencil,
+    IconMenuShare, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Panel } from "primitives.slint";
 
@@ -365,7 +365,6 @@ export component EffortLadder inherits Panel {
 // matching the sidebar header controls (search, collapse/expand, new session).
 export component SessionMenu inherits Panel {
     in property <[SessionMenuItem]> items;
-    in property <string> title;
     in property <length> anchor-x;
     in property <length> anchor-y;
     // the window's foot: a menu near it opens upwards instead
@@ -414,6 +413,8 @@ export component SessionMenu inherits Panel {
             clicked => {
                 root.picked(item.key);
             }
+            // the warning under an armed Delete is part of the item: a press on
+            // the words is the second press too
         }
 
         if item.separated : Rectangle {
@@ -421,7 +422,7 @@ export component SessionMenu inherits Panel {
             y: 0px;
             width: parent.width - 16px;
             height: 1px;
-            background: item.danger && item.note-strong ? Theme.transcript-cell-ink-failed : Theme.panel-edge;
+            background: Theme.panel-edge;
         }
 
         if item.key == "done" : IconMenuDone {
@@ -454,6 +455,7 @@ export component SessionMenu inherits Panel {
             tint: parent.row-ink;
         }
 
+        // an armed Delete says what it takes: the note under its label
         Text {
             x: 34px;
             y: 0;
@@ -462,15 +464,22 @@ export component SessionMenu inherits Panel {
             text: item.label;
             color: parent.row-ink;
             font-size: 12.5px;
-            vertical-alignment: center;
+            vertical-alignment: item.note == "" ? center : top;
             wrap: no-wrap;
             overflow: elide;
         }
 
-        if item.note-strong : IconMenuChevron {
-            x: parent.width - 18px;
-            y: (parent.height - self.height) / 2;
-            tint: parent.row-ink;
+        if item.note != "" : Text {
+            x: 34px;
+            y: 14px;
+            width: parent.width - 34px - 10px;
+            height: parent.height - 14px;
+            text: item.note;
+            color: parent.row-ink;
+            font-size: 10.5px;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
         }
     }
 }

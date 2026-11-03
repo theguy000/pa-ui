@@ -28,7 +28,10 @@ pub(crate) fn rename(ui: &AppWindow, job_tx: &Sender<Job>) {
             });
             return;
         }
-        let _ = jobs.send(Job::Rename { session, name: name.trim().to_string() });
+        let _ = jobs.send(Job::Rename {
+            session,
+            name: name.trim().to_string(),
+        });
     });
 }
 
@@ -42,52 +45,49 @@ fn current_item(ui: &AppWindow, id: &str) -> Option<SessionItem> {
 /// A row's actions follow from what the row is, because the commands differ: a
 /// live row is stopped (`kill`), a done row is deleted by its file, and the
 /// rename that leaves a done row alone is a different command from the one that
-/// renames a live session. Delete is never offered on a live row: the daemon
-/// refuses it there anyway, and a menu item that can only fail is worse than no
-/// item.
+/// renames a live session. Two items only a live row has. Delete needs a
+/// worker-free row, and the daemon refuses it on a live one. Share needs a
+/// worker to run `export_html`, and a done row has none, so the item would only
+/// fail. A menu item that can only fail is worse than no item.
 ///
-/// Each row says what it would do to this session: its own name for Rename and
-/// Delete, the set-aside in Mark done's words. `confirming` is the row
-/// mid-confirm: its Delete turns into the question, and the note under it into
-/// the warning.
-pub(crate) fn menu_items(_name: &str, done: bool, confirming: bool) -> Vec<SessionMenuItem> {
+/// `confirming` is the row mid-confirm: its Delete turns into the question, and
+/// the note under it into the warning.
+pub(crate) fn menu_items(done: bool, confirming: bool) -> Vec<SessionMenuItem> {
     if done {
         let delete = if confirming {
-            menu_item("delete", "Delete for good", true, true, "", true)
+            menu_item(
+                "delete",
+                "Delete for good",
+                "this removes the session file",
+                true,
+            )
         } else {
-            menu_item("delete", "Delete", true, true, "", false)
+            menu_item("delete", "Delete", "", true)
         };
         vec![
-            menu_item("rename", "Rename", false, false, "", false),
-            menu_item("share", "Share as gist", false, false, "", false),
-            menu_item("copy-id", "Copy id", false, false, "", false),
+            menu_item("rename", "Rename", "", false),
+            menu_item("copy-id", "Copy id", "", false),
             delete,
         ]
     } else {
         vec![
-            menu_item("done", "Mark done", false, false, "", false),
-            menu_item("rename", "Rename", false, false, "", false),
-            menu_item("share", "Share as gist", false, false, "", false),
-            menu_item("copy-id", "Copy id", false, false, "", false),
+            menu_item("done", "Mark done", "", false),
+            menu_item("rename", "Rename", "", false),
+            menu_item("share", "Share as gist", "", false),
+            menu_item("copy-id", "Copy id", "", false),
         ]
     }
 }
 
-fn menu_item(
-    key: &str,
-    label: &str,
-    danger: bool,
-    separated: bool,
-    note: &str,
-    note_strong: bool,
-) -> SessionMenuItem {
+/// One row of the menu: its key, the words it shows, the warning it carries once
+/// armed, and whether it sits below the separator away from the actions that
+/// act on the session itself rather than on its file.
+fn menu_item(key: &str, label: &str, note: &str, separated: bool) -> SessionMenuItem {
     SessionMenuItem {
         key: key.into(),
         label: label.into(),
-        danger,
+        danger: separated,
         note: note.into(),
-        note_strong,
-        done_mark: false,
         separated,
     }
 }
@@ -100,12 +100,13 @@ pub(crate) enum MenuAction {
     MarkDone,
     /// start editing the row's name in place
     Rename,
+    /// write the session's viewer HTML and upload it
     Share,
     CopyId,
     /// delete the done row's file
     Delete,
     /// a key nothing offers, or an action the row does not have: a live row
-    /// has no Delete, and a done row has no Mark done
+    /// has no Delete, and a done row has neither Mark done nor Share
     Nothing,
 }
 
@@ -113,7 +114,7 @@ pub(crate) fn menu_action(key: &str, done: bool) -> MenuAction {
     match key {
         "done" if !done => MenuAction::MarkDone,
         "rename" => MenuAction::Rename,
-        "share" => MenuAction::Share,
+        "share" if !done => MenuAction::Share,
         "copy-id" => MenuAction::CopyId,
         "delete" if done => MenuAction::Delete,
         _ => MenuAction::Nothing,
@@ -133,15 +134,18 @@ pub(crate) fn menu(ui: &AppWindow, job_tx: &Sender<Job>) {
     let open_confirming = confirming.clone();
     ui.on_session_menu_opened(move |id| {
         let id = id.to_string();
-        let Some(ui) = open_window.upgrade() else { return };
-        let Some(item) = current_item(&ui, &id) else { return };
+        let Some(ui) = open_window.upgrade() else {
+            return;
+        };
+        let Some(item) = current_item(&ui, &id) else {
+            return;
+        };
         // another row's half-made confirmation is not this row's
         let mut confirming = open_confirming.borrow_mut();
         if confirming.as_deref() != Some(id.as_str()) {
             *confirming = None;
         }
-        let items = menu_items(&item.name, item.done, confirming.is_some());
-        ui.set_menu_title(item.name.clone());
+        let items = menu_items(item.done, confirming.is_some());
         ui.set_menu_items(ModelRc::from(Rc::new(VecModel::from(items))));
     });
 
@@ -156,20 +160,37 @@ pub(crate) fn menu(ui: &AppWindow, job_tx: &Sender<Job>) {
         let id = id.to_string();
         let key = key.to_string();
         let Some(ui) = window.upgrade() else { return };
-        let Some(item) = current_item(&ui, &id) else { return };
         let mut confirming = picked_confirming.borrow_mut();
-        match menu_action(&key, item.done) {
+        // The poll can drop a row between the two presses, and the second press
+        // has to go through: the row the first press confirmed is the one the
+        // reader meant, whether this poll still lists it or not.
+        let done = match current_item(&ui, &id) {
+            Some(item) => item.done,
+            None if confirming.as_deref() == Some(id.as_str()) => true,
+            None => return,
+        };
+        match menu_action(&key, done) {
             // the first Delete asks, the second one acts: the TUI's two-press
             // confirm, with the item itself as the second press
             MenuAction::Delete if confirming.as_deref() != Some(id.as_str()) => {
                 *confirming = Some(id.clone());
-                let items = menu_items(&item.name, true, true);
+                let items = menu_items(true, true);
                 ui.set_menu_items(ModelRc::from(Rc::new(VecModel::from(items))));
                 return;
             }
             MenuAction::Delete => {
                 *confirming = None;
-                let _ = jobs.send(Job::DeleteSaved { session_path: item.file.to_string() });
+                let path = current_item(&ui, &id)
+                    .map(|item| item.file.to_string())
+                    .unwrap_or_default();
+                if path.is_empty() {
+                    crate::status::trouble(
+                        &ui,
+                        "could not delete: the row carries no session file",
+                    );
+                } else {
+                    let _ = jobs.send(Job::DeleteSaved { session_path: path });
+                }
                 // The menu's panel is the row's own area, so the redraw that
                 // drops it cannot come from the list: hide it here instead.
                 ui.set_menu_id("".into());
@@ -177,10 +198,15 @@ pub(crate) fn menu(ui: &AppWindow, job_tx: &Sender<Job>) {
             }
             MenuAction::MarkDone => {
                 *confirming = None;
-                let _ = jobs.send(Job::MarkDone { session: id.clone() });
+                let _ = jobs.send(Job::MarkDone {
+                    session: id.clone(),
+                });
             }
             MenuAction::Rename => {
                 *confirming = None;
+                let Some(item) = current_item(&ui, &id) else {
+                    return;
+                };
                 ui.set_menu_id("".into());
                 ui.set_editing_id(id.clone().into());
                 ui.set_draft(item.full.clone());
@@ -188,10 +214,15 @@ pub(crate) fn menu(ui: &AppWindow, job_tx: &Sender<Job>) {
             }
             MenuAction::Share => {
                 *confirming = None;
-                let _ = jobs.send(Job::Share { session: id.clone() });
+                let _ = jobs.send(Job::Share {
+                    session: id.clone(),
+                });
             }
             MenuAction::CopyId => {
                 *confirming = None;
+                let Some(item) = current_item(&ui, &id) else {
+                    return;
+                };
                 match copy_to_clipboard(&item.uuid) {
                     Ok(()) => crate::status::say(&ui, "session id copied"),
                     Err(error) => crate::status::trouble(&ui, format!("could not copy: {error}")),
@@ -225,21 +256,15 @@ pub(crate) fn new_chat(ui: &AppWindow, job_tx: &Sender<Job>) {
 
 /// Rebuild the column from what the window holds right now, and hand the window
 /// the y every entry started from before the fold so `row-y` slides each entry
-/// from its old position to its new `at` over 200ms.
+/// from its old position to its new `at`.
 fn compose_entries(ui: &AppWindow, was: [bool; 3]) {
     let (active, idle, done) = (
         ui.get_active_items().iter().collect::<Vec<_>>(),
         ui.get_idle_items().iter().collect::<Vec<_>>(),
         ui.get_done_items().iter().collect::<Vec<_>>(),
     );
-    let old_entries = crate::sessions::session_entries(
-        &active,
-        &idle,
-        &done,
-        was[0],
-        was[1],
-        was[2],
-    );
+    let old_entries =
+        crate::sessions::session_entries(&active, &idle, &done, was[0], was[1], was[2]);
     let entries = crate::sessions::session_entries(
         &active,
         &idle,
@@ -249,6 +274,8 @@ fn compose_entries(ui: &AppWindow, was: [bool; 3]) {
         ui.get_done_folded(),
     );
     let saved_cy = ui.invoke_get_sidebar_cy();
+    // the lists have the same rows in the same order, only the ys moved, so
+    // each entry starts at its own old y
     let from_y: Vec<f32> = old_entries.iter().map(|entry| entry.at).collect();
     ui.set_prev_sessions_height(crate::sessions::entries_height(&old_entries));
     ui.set_sessions_height(crate::sessions::entries_height(&entries));
@@ -259,7 +286,7 @@ fn compose_entries(ui: &AppWindow, was: [bool; 3]) {
 }
 
 /// A group's header was clicked. The fold state is the window's, and the y each
-/// row started from comes from here, so the window only has to run the 200ms.
+/// row started from comes from here, so the window only has to run the animation.
 pub(crate) fn folds(ui: &AppWindow) {
     let window = ui.as_weak();
     let before: Rc<RefCell<[bool; 3]>> = Rc::new(RefCell::new([
@@ -269,7 +296,11 @@ pub(crate) fn folds(ui: &AppWindow) {
     ]));
     ui.on_fold_changed(move || {
         let Some(ui) = window.upgrade() else { return };
-        let now = [ui.get_active_folded(), ui.get_idle_folded(), ui.get_done_folded()];
+        let now = [
+            ui.get_active_folded(),
+            ui.get_idle_folded(),
+            ui.get_done_folded(),
+        ];
         let was = before.replace(now);
         let Some(index) = (0..3).find(|index| now[*index] != was[*index]) else {
             return;
@@ -279,5 +310,3 @@ pub(crate) fn folds(ui: &AppWindow) {
         compose_entries(&ui, was);
     });
 }
-
-
