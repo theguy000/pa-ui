@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-changed=ui");
     slint_build::compile("ui/app.slint").unwrap();
     #[cfg(windows)]
     window_icon();

@@ -251,6 +251,7 @@ impl Tick {
         let selected = ui.get_selected_id().to_string();
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
+            l.selected_uuid = uuid_of(&sessions_cache.borrow(), &selected).map(str::to_string);
             l.tail_sig = None;
             l.tail_len = 0;
             // a different chat starts its own walk backwards
@@ -329,6 +330,96 @@ impl Tick {
                     // rather than asking the daemon again
                     *sessions_cache.borrow_mut() = rows.clone();
                     let items: Vec<SessionItem> = session_items(&rows);
+                    // The three groups, each taking its rows from the one sorted
+                    // list, so a section and its rows cannot disagree.
+                    let of_group = |group: &str| VecModel::from(
+                        items.iter()
+                            .filter(|item| item.group.as_str() == group)
+                            .cloned()
+                            .collect::<Vec<SessionItem>>(),
+                    );
+                    ui.set_active_items(ModelRc::from(Rc::new(of_group("active"))));
+                    ui.set_idle_items(ModelRc::from(Rc::new(of_group("idle"))));
+                    ui.set_done_items(ModelRc::from(Rc::new(of_group("done"))));
+                    // The column is the flat list the window draws: headers and
+                    // rows, each at the y it goes at. The group order and the
+                    // fold state decide the positions here, so the sidebar never
+                    // asks a layout where a row ended up.
+                    let (active, idle, done) = (
+                        of_group("active").iter().collect::<Vec<_>>(),
+                        of_group("idle").iter().collect::<Vec<_>>(),
+                        of_group("done").iter().collect::<Vec<_>>(),
+                    );
+                    let entries = crate::sessions::session_entries(
+                        &active,
+                        &idle,
+                        &done,
+                        ui.get_active_folded(),
+                        ui.get_idle_folded(),
+                        ui.get_done_folded(),
+                    );
+                    let current_entries = ui.get_session_entries();
+                    let entries_unchanged = current_entries.row_count() == entries.len()
+                        && current_entries.iter().zip(entries.iter()).all(|(a, b)| {
+                            a.is_header == b.is_header
+                                && a.label == b.label
+                                && a.count == b.count
+                                && a.folded == b.folded
+                                && (a.at - b.at).abs() < 0.5
+                                && a.item.id == b.item.id
+                                && a.item.name == b.item.name
+                                && a.item.status == b.item.status
+                                && a.item.done == b.item.done
+                        });
+                    if !entries_unchanged {
+                        let saved_cy = ui.invoke_get_sidebar_cy();
+                        // Map each entry's previous y by its identity (header label or session uuid)
+                        // so a session moving between Done and Idle/Active slides & fades smoothly.
+                        let prev_map: std::collections::HashMap<String, (f32, i32)> = current_entries
+                            .iter()
+                            .map(|e| {
+                                let key = if e.is_header {
+                                    format!("hdr:{}", e.label)
+                                } else {
+                                    format!("row:{}", e.item.uuid)
+                                };
+                                (key, (e.at, e.seam))
+                            })
+                            .collect();
+                        let mut any_group_move = false;
+                        let from_y: Vec<f32> = entries
+                            .iter()
+                            .map(|e| {
+                                let key = if e.is_header {
+                                    format!("hdr:{}", e.label)
+                                } else {
+                                    format!("row:{}", e.item.uuid)
+                                };
+                                if let Some(&(old_at, old_seam)) = prev_map.get(&key) {
+                                    if !e.is_header && old_seam != e.seam {
+                                        any_group_move = true;
+                                        // Fade & slide in at new destination
+                                        return e.at + if old_seam > e.seam { 16.0 } else { -16.0 };
+                                    }
+                                    old_at
+                                } else {
+                                    e.at
+                                }
+                            })
+                            .collect();
+                        let new_h = crate::sessions::entries_height(&entries);
+                        ui.set_prev_sessions_height(ui.get_sessions_height());
+                        ui.set_sessions_height(new_h);
+                        ui.set_session_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+                        if current_entries.row_count() > 0 {
+                            ui.set_fold_index(if any_group_move { -2 } else { -1 });
+                            ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(from_y))));
+                            ui.invoke_trigger_list_anim();
+                        } else {
+                            ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(Vec::<f32>::new()))));
+                        }
+                        ui.invoke_restore_sidebar_cy(saved_cy);
+                    }
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     if ui.get_selected_id().is_empty() {
                         let preferred = std::env::var("PA_SELECT").ok();
@@ -338,12 +429,13 @@ impl Tick {
                             .or_else(|| rows.first());
                         if let Some(first) = chosen {
                             ui.set_selected_id(first.id.clone().into());
+                            l.selected_uuid = Some(first.session_id.clone());
                         }
                     }
 
-                    // The daemon re-keys session ids across restarts. Follow the
-                    // selection by its uuid so the chat, the busy chip and the
-                    // prompt target keep pointing at the same session.
+                    // The daemon re-keys session ids when a saved session becomes resident
+                    // or across restarts. Follow the selection by its uuid so clicking a
+                    // Done session stays on that session when it moves to Idle.
                     let selected = ui.get_selected_id().to_string();
                     if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
                         if let Some(uuid) = l.selected_uuid.as_deref() {
@@ -355,18 +447,14 @@ impl Tick {
                                 }
                                 ui.set_selected_id(rebound.clone().into());
                                 l.selected_uuid = Some(uuid.to_string());
-                                l.loaded = None;
-                                l.tail_len = 0;
-                                l.tail_sig = None;
-                                l.last_seq = 0;
-                                l.open_live = None;
-                                sheet.answer_ended();
+                                // Keep l.loaded updated to the new resident id if we already attached
+                                l.loaded = Some(rebound);
                             }
                         }
                     }
                     let selected = ui.get_selected_id().to_string();
-                    if l.selected_uuid.is_none() {
-                        l.selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
+                    if let Some(uuid) = uuid_of(&rows, &selected) {
+                        l.selected_uuid = Some(uuid.to_string());
                     }
                     // the chip names the model this session is actually on
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
@@ -1039,6 +1127,19 @@ impl Tick {
                     None => status::clear(&ui),
                 },
                 Msg::Error(error) => status::trouble(&ui, format!("error: {error}")),
+                // A share is the one action whose result is somewhere else: the
+                // viewer URL goes on the clipboard and on the status line, since
+                // the link is what the reader wanted from it.
+                Msg::Shared(Ok(shared)) => {
+                    match crate::interactive::sidebar::copy_to_clipboard(&shared.viewer_url) {
+                        Ok(()) => status::say(&ui, format!("shared: {}", shared.viewer_url)),
+                        Err(error) => status::trouble(
+                            &ui,
+                            format!("shared: {} (could not copy: {error})", shared.viewer_url),
+                        ),
+                    }
+                }
+                Msg::Shared(Err(error)) => status::trouble(&ui, format!("could not share: {error}")),
             }
         }
 

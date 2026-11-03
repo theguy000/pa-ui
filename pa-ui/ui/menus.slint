@@ -1,12 +1,7 @@
-// The three panels that hang off the composer: the slash command list, the model
-// menu, and the thinking-level ladder that drops off one of its rows. Each sits at
-// the window root rather than inside the composer band, because a band-height
-// animation would drag it along, and each is told where the composer is instead of
-// reaching for it.
-
 import { ScrollView } from "std-widgets.slint";
-import { EffortItem, ModelGroup, SlashItem } from "types.slint";
-import { IconCaret, IconCheck } from "icons.slint";
+import { EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
+import { IconCaret, IconCheck, IconDoneTick, IconMenuChevron, IconMenuCopy,
+    IconMenuDone, IconMenuPencil, IconMenuShare, IconMore, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Panel } from "primitives.slint";
 
@@ -362,5 +357,120 @@ export component EffortLadder inherits Panel {
                 y: (parent.height - self.height) / 2;
                 tint: Theme.effort-ladder-check-mark;
             }
+    }
+}
+
+
+// The menu a session row opens: compact, single-line rows with monoline icons
+// matching the sidebar header controls (search, collapse/expand, new session).
+export component SessionMenu inherits Panel {
+    in property <[SessionMenuItem]> items;
+    in property <string> title;
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    // the window's foot: a menu near it opens upwards instead
+    in property <length> viewport-h;
+    callback picked(string);
+    callback close-requested();
+
+    property <length> pad: 5px;
+    property <length> row-h: 32px;
+
+    x: max(6px, root.anchor-x - self.width + 18px);
+    y: root.anchor-y + 34px + self.height > root.viewport-h
+        ? max(6px, root.anchor-y - self.height + 2px)
+        : root.anchor-y + 34px;
+    width: 184px;
+    height: root.pad * 2 + root.items.length * root.row-h;
+    border-radius: 10px;
+
+    menu-bg := TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+    }
+
+    for item[i] in root.items : Rectangle {
+        x: root.pad;
+        y: root.pad + i * root.row-h;
+        width: parent.width - root.pad * 2;
+        height: root.row-h;
+        border-radius: 6px;
+        background: item-touch.has-hover ? (item.danger ? Theme.button-danger-fill-hover
+            : Theme.panel-row-fill-hover) : transparent;
+        animate background { duration: 90ms; }
+
+        property <color> row-ink: item.danger
+            ? (item-touch.has-hover ? Theme.composer-stop-mark : Theme.transcript-cell-ink-failed)
+            : (item-touch.has-hover ? Theme.model-menu-row-ink-current : Theme.model-menu-row-ink);
+
+        item-touch := TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => {
+                root.picked(item.key);
+            }
+        }
+
+        if item.separated : Rectangle {
+            x: 8px;
+            y: 0px;
+            width: parent.width - 16px;
+            height: 1px;
+            background: item.danger && item.note-strong ? Theme.transcript-cell-ink-failed : Theme.panel-edge;
+        }
+
+        if item.key == "done" : IconMenuDone {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
+
+        if item.key == "rename" : IconMenuPencil {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
+
+        if item.key == "share" : IconMenuShare {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
+
+        if item.key == "copy-id" : IconMenuCopy {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
+
+        if item.key == "delete" : IconTrash {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
+
+        Text {
+            x: 34px;
+            y: 0;
+            width: parent.width - 34px - 10px;
+            height: 100%;
+            text: item.label;
+            color: parent.row-ink;
+            font-size: 12.5px;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+
+        if item.note-strong : IconMenuChevron {
+            x: parent.width - 18px;
+            y: (parent.height - self.height) / 2;
+            tint: parent.row-ink;
+        }
     }
 }

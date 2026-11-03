@@ -287,6 +287,10 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::sidebar::rename(&ui, &job_tx);
 
+    interactive::sidebar::menu(&ui, &job_tx);
+
+    interactive::sidebar::folds(&ui);
+
     interactive::rows::toggle(&ui, &sheet);
 
     let oldest_cursor: Rc<std::cell::RefCell<Option<String>>> =

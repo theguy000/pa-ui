@@ -9,6 +9,7 @@
 mod wire;
 
 pub mod commands;
+use pa_types::daemon::agent_roster::{classify_session_roster_status, AgentRosterStatus};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -238,11 +239,17 @@ pub struct SessionRow {
     pub model_name: String,
     pub model_provider: String,
     pub thinking: String,
+    /// Where the session is saved. A row with no worker is addressed and
+    /// deleted by this path, not by its id.
+    pub session_file: String,
     pub messages: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost: f64,
     pub is_streaming: bool,
+    /// An active turn: streaming, compacting, or a parked message waiting to run.
+    /// The daemon's roster classifies a session on this key.
+    pub is_session_active: bool,
     pub is_running_tools: bool,
     pub is_bash_running: bool,
     pub is_compacting: bool,
@@ -257,8 +264,33 @@ pub struct SessionRow {
 }
 
 impl SessionRow {
-    /// What the agent is doing right now, in the TUI's vocabulary.
-    ///
+    /// Whether a worker holds this session. `list` re-sends every saved session
+    /// off disk with `lifecycle: "live"` whenever it has a message, so the
+    /// lifecycle alone never says a worker exists; the daemon stamps
+    /// `workerState` on the rows it routed to a resident.
+    #[must_use]
+    pub fn is_resident(&self) -> bool {
+        !self.worker_state.is_empty()
+    }
+
+    /// The daemon's own status formula, in `pa-types` so every surface classifies
+    /// the same way: resident and busy is `Running`, resident and quiet is
+    /// `Idle`, and anything no worker holds is `Inactive`.
+    #[must_use]
+    pub fn roster_status(&self) -> &'static str {
+        match classify_session_roster_status(
+            self.is_resident(),
+            &self.activity,
+            self.is_session_active,
+            false,
+        ) {
+            AgentRosterStatus::Running => "Running",
+            AgentRosterStatus::Idle => "Idle",
+            AgentRosterStatus::Inactive => "Inactive",
+        }
+    }
+
+    /// What the agent is doing right now, in the TUI's vocabulary.    ///
     /// The summary only distinguishes coarse states; once stream events are
     /// consumed these labels get refined to Thinking / Writing / Writing code.
     #[must_use]
@@ -282,6 +314,9 @@ impl SessionRow {
             return "Thinking";
         }
         if self.activity == "working" {
+            return "Waiting";
+        }
+        if self.is_session_active {
             return "Waiting";
         }
         "idle"
@@ -330,11 +365,16 @@ impl SessionRow {
                 .unwrap_or_default()
                 .to_string(),
             thinking: text("thinkingLevel"),
+            session_file: text("sessionFile"),
             messages: number("messageCount"),
             input_tokens: usage_num("inputTokens"),
             output_tokens: usage_num("outputTokens"),
             cost: usage.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
             is_streaming: value.get("isStreaming").and_then(Value::as_bool).unwrap_or(false),
+            is_session_active: value
+                .get("isSessionActive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             is_running_tools: value
                 .get("isRunningTools")
                 .and_then(Value::as_bool)
@@ -647,6 +687,84 @@ pub fn stop(client: &Client, session: &str) -> std::io::Result<String> {
     } else {
         client.send("abort", json!({"activeSessionId": session}))
     }
+}
+
+/// `kill` → stop the session and release its worker. This is the TUI's ctrl+x
+/// on an idle session: the worker writes `session_state {status: archived}` on
+/// its way out, and the next status poll lists the session as set aside with no
+/// worker holding it.
+///
+/// It never removes the file. Deleting is a second, separate command, which is
+/// why the sidebar offers them as two items and never as one.
+///
+/// # Errors
+/// Fails only on transport errors (a closed pipe). The daemon's answer arrives
+/// as a `kill` response on the attached connection.
+pub fn mark_done(client: &Client, session: &str) -> std::io::Result<String> {
+    client.send("kill", json!({"activeSessionId": session}))
+}
+
+/// `rename_saved_session` → rename a session by its file.
+///
+/// This is the command a row with no worker takes. `rename` is not: it resolves
+/// the id against a resident session and starts a worker when there is none, so
+/// renaming a saved row through it would bring the session back to life.
+///
+/// # Errors
+/// Fails only on transport errors.
+pub fn rename_saved_session(
+    client: &Client,
+    session_path: &str,
+    name: &str,
+) -> std::io::Result<String> {
+    client.send(
+        "rename_saved_session",
+        json!({"sessionPath": session_path, "name": name}),
+    )
+}
+
+/// `delete_saved_session` → delete a saved session's file and its artifacts.
+///
+/// The daemon refuses this for a file some worker currently holds, which is the
+/// half the sidebar keeps on its side by never offering Delete on a live row.
+///
+/// # Errors
+/// Fails only on transport errors.
+pub fn delete_saved_session(client: &Client, session_path: &str) -> std::io::Result<String> {
+    client.send("delete_saved_session", json!({"sessionPath": session_path}))
+}
+
+/// `export_html` → the standalone viewer file for the session, written to
+/// `output_path`. The answer carries the written path under `path`.
+///
+/// This is the export the TUI's `/share` uploads; a session with no file on disk
+/// (still a draft) cannot be exported and the daemon says so.
+///
+/// # Errors
+/// Fails on a transport error, a refusal, or an answer with no path.
+pub fn export_html(
+    client: &Client,
+    session: &str,
+    output_path: &str,
+) -> std::io::Result<String> {
+    let frame = client.request(
+        "export_html",
+        json!({"activeSessionId": session, "outputPath": output_path}),
+        Duration::from_secs(120),
+    )?;
+    let failed = frame.get("success").and_then(Value::as_bool) == Some(false);
+    if failed {
+        let reason = frame
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the export was refused");
+        return Err(std::io::Error::other(reason.to_string()));
+    }
+    frame
+        .pointer("/data/path")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| std::io::Error::other("the export wrote no file"))
 }
 
 /// `prompt` with an explicit streaming behaviour: `steer` folds the message into
