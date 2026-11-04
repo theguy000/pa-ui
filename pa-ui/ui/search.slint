@@ -1,4 +1,4 @@
-﻿// The popup that finds a session by name. It opens over the middle of the window
+// The popup that finds a session by name. It opens over the middle of the window
 // rather than off the sidebar it is reached from: the column is a place the
 // reader reads, and a list of every session is one job wider than the column.
 //
@@ -38,7 +38,11 @@ export component SearchPopup inherits Panel {
     // Raised by the window when it wants the caret in the field. The field is not
     // reachable from outside, so the popup moves the caret itself on the change.
     in property <int> focus-tick: 0;
-    changed focus-tick => { field.focus(); }
+    changed focus-tick => {
+        field.focus();
+        root.focus-pending = true;
+        focus-ticker.start();
+    }
 
     // A character was typed into the field, and the text it now holds.
     callback typed(string);
@@ -65,12 +69,7 @@ export component SearchPopup inherits Panel {
     // so it takes the caret whenever the popup exists, and again a tick later:
     // the chain from the scope to the leaf that holds the text is not built in
     // the first frame, and a focus asked for then never reaches the letters.
-    init => {
-        field.focus();
-        focus-ticker.start();
-    }
-
-    private property <bool> focus-pending: true;
+    private property <bool> focus-pending: false;
     focus-ticker := Timer {
         interval: 16ms;
         running: root.focus-pending;

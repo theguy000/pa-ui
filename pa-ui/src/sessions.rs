@@ -730,12 +730,7 @@ impl Sidebar {
                         let path = current_item(&ui, &id)
                             .map(|item| item.file.to_string())
                             .unwrap_or_default();
-                        if path.is_empty() {
-                            crate::status::trouble(
-                                &ui,
-                                "could not delete: the row carries no session file",
-                            );
-                        } else {
+                        if !path.is_empty() {
                             let _ = jobs.send(Job::DeleteSaved { session_path: path });
                         }
                         ui.set_menu_id("".into());
@@ -764,12 +759,7 @@ impl Sidebar {
                         let Some(item) = current_item(&ui, &id) else {
                             return;
                         };
-                        match copy_to_clipboard(&item.uuid) {
-                            Ok(()) => crate::status::say(&ui, "session id copied"),
-                            Err(error) => {
-                                crate::status::trouble(&ui, format!("could not copy: {error}"))
-                            }
-                        }
+                        let _ = copy_to_clipboard(&item.uuid);
                     }
                     MenuAction::Nothing => {
                         *confirming = None;

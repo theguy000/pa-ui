@@ -538,14 +538,6 @@ pub(crate) enum Role {
     ComposerAttachInk,
     /// The plus mark with the pointer on it.
     ComposerAttachInkHover,
-    /// The line under the draft that says what the composer is doing.
-    ComposerStatusLineInk,
-    /// The same line when it carries a failure. Its own role although it ships
-    /// the failed cell's red: it is read on the composer's field, and a theme
-    /// that moves one of the two has already decided about the other. A fixed
-    /// value, because the palette's danger is a red the window never drew a
-    /// status line in, so a theme names this role rather than moving `danger`.
-    ComposerStatusLineInkBad,
     /// A tick of the context ring the session has reached. The ring is a mark
     /// rather than a fill: it is drawn as 24 hairlines round a circle, so a
     /// theme can move it without moving anything else the composer draws.
@@ -810,7 +802,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 194] = [
+    pub(crate) const ALL: [Role; 192] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -923,8 +915,6 @@ impl Role {
         Role::ComposerAttachFillHover,
         Role::ComposerAttachInk,
         Role::ComposerAttachInkHover,
-        Role::ComposerStatusLineInk,
-        Role::ComposerStatusLineInkBad,
         Role::ComposerRingTickLit,
         Role::ComposerRingTickUnlit,
         Role::ComposerCardSurface,
@@ -1122,8 +1112,6 @@ impl Role {
             Role::ComposerAttachFillHover => "composer-attach-fill-hover",
             Role::ComposerAttachInk => "composer-attach-ink",
             Role::ComposerAttachInkHover => "composer-attach-ink-hover",
-            Role::ComposerStatusLineInk => "composer-status-line-ink",
-            Role::ComposerStatusLineInkBad => "composer-status-line-ink-bad",
             Role::ComposerRingTickLit => "composer-ring-tick-lit",
             Role::ComposerRingTickUnlit => "composer-ring-tick-unlit",
             Role::ComposerCardSurface => "composer-card-surface",
@@ -1399,8 +1387,6 @@ impl Role {
             }
             Role::ComposerAttachInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7736),
             Role::ComposerAttachInkHover => Derivation::Palette(Palette::QuietInk),
-            Role::ComposerStatusLineInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786),
-            Role::ComposerStatusLineInkBad => Derivation::Fixed(Rgba::hex("#c98a7f")),
             Role::ComposerRingTickLit => Derivation::Fixed(Rgba::hex("#c9a86a")),
             Role::ComposerRingTickUnlit => Derivation::Mix(Palette::Ink, Palette::Background, 0.1698),
             Role::ComposerCardSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),

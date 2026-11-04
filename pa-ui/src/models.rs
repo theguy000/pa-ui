@@ -104,7 +104,6 @@ impl ModelMenu {
                     return;
                 }
                 if provider.trim().is_empty() {
-                    status::trouble(&ui, format!("{model}: provider unknown, not switching"));
                     return;
                 }
                 if let Some(entry) = catalog

@@ -14,7 +14,6 @@ mod sessions;
 mod share;
 mod sheet;
 mod slash;
-mod status;
 mod text;
 mod theme;
 mod tick;

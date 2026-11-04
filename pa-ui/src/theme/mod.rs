@@ -181,8 +181,6 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::ComposerAttachFillHover => global.set_composer_attach_fill_hover(value),
         Role::ComposerAttachInk => global.set_composer_attach_ink(value),
         Role::ComposerAttachInkHover => global.set_composer_attach_ink_hover(value),
-        Role::ComposerStatusLineInk => global.set_composer_status_line_ink(value),
-        Role::ComposerStatusLineInkBad => global.set_composer_status_line_ink_bad(value),
         Role::ComposerRingTickLit => global.set_composer_ring_tick_lit(value),
         Role::ComposerRingTickUnlit => global.set_composer_ring_tick_unlit(value),
         Role::ComposerCardSurface => global.set_composer_card_surface(value),

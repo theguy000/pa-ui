@@ -227,11 +227,6 @@ export component AppWindow inherits Window {
     in-out property <bool> cost-family-on: false;
     in-out property <bool> ctx-hover: false;
     in-out property <string> editing-id: "";
-    // The one message the window has for the reader that neither the transcript
-    // nor the busy strip can carry: something it could not do, or the daemon link.
-    // Written only through src/status.rs.
-    in property <string> status-line: "connecting";
-    in property <bool> status-line-bad: false;
     in-out property <string> hover-title: "";
     in-out property <length> hover-y: 0px;
     in-out property <bool> tooltip-on: false;
@@ -967,13 +962,13 @@ export component AppWindow inherits Window {
                             opacity: root.row-opacity(k);
                             clip: true;
 
-                            SidebarRow {
+                            if !entry.is-header : SidebarRow {
                                 width: 100%;
                                 height: 32px;
                                 item: entry.item;
-                                selected: entry.item.id == root.selected-id;
-                                editing: entry.item.id == root.editing-id;
-                                menu-open: root.menu-id == entry.item.id;
+                                selected: root.selected-id != "" && entry.item.id == root.selected-id;
+                                editing: root.editing-id != "" && entry.item.id == root.editing-id;
+                                menu-open: root.menu-id != "" && root.menu-id == entry.item.id;
                                 draft <=> root.draft;
                                 picked(id) => {
                                     root.model-menu = false;
@@ -1442,7 +1437,7 @@ export component AppWindow inherits Window {
                                 // While the popup is up it owns the keyboard: a
                                 // word meant for its field must not reach the
                                 // words the reader was writing as well.
-                                if root.search-field-typed {
+                                if root.search-open && root.search-field-typed {
                                     return EventResult.accept;
                                 }
                                 // Ctrl+K opens the search popup from the words the
@@ -1544,22 +1539,9 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
-            // The status line takes the empty stretch before the controls: it costs
-            // the row no height and can never push the ring, the chip or send aside.
             Rectangle {
                 horizontal-stretch: 1;
                 background: transparent;
-                Text {
-                    width: 100%;
-                    height: 100%;
-                    text: root.status-line;
-                    color: root.status-line-bad ? Theme.composer-status-line-ink-bad
-                        : Theme.composer-status-line-ink;
-                    font-size: 10px;
-                    vertical-alignment: center;
-                    wrap: no-wrap;
-                    overflow: elide;
-                }
             }
             // the context ring sits in the button row, not in the status strip:
             // the strip appears and disappears with every turn, and a number you
@@ -2006,8 +1988,10 @@ export component AppWindow inherits Window {
             query <=> root.search-query;
             index <=> root.search-index;
             typed(text) => {
-                root.search-field-used();
-                root.search-typed(text);
+                if root.search-open {
+                    root.search-field-used();
+                    root.search-typed(text);
+                }
             }
             picked(id) => { root.search-picked(id); }
             // The window closes the popup and hands the caret back to the

@@ -152,7 +152,6 @@ impl Composer {
         ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
         ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
         ui.set_busy(false);
-        status::clear(ui);
         ui.set_selected_id(id.into());
         if crate::env_cfg::cfg().debug {
             eprintln!("[new] selected {id}");
@@ -166,17 +165,12 @@ impl Composer {
         }
         self.pending_user.borrow_mut().take();
         sheet.take_back_prompt(text);
-        status::trouble(ui, "prompt not accepted \u{2014} text restored");
     }
 
-    pub fn on_prompt_result(&self, ui: &AppWindow, sheet: &sheet::Sheet, error: Option<String>) {
-        match error {
-            Some(error) => {
-                let text = self.pending_user.borrow_mut().take().unwrap_or_default();
-                sheet.take_back_prompt(&text);
-                status::trouble(ui, format!("prompt failed: {error}"));
-            }
-            None => status::clear(ui),
+    pub fn on_prompt_result(&self, sheet: &sheet::Sheet, error: Option<String>) {
+        if error.is_some() {
+            let text = self.pending_user.borrow_mut().take().unwrap_or_default();
+            sheet.take_back_prompt(&text);
         }
     }
 
@@ -217,13 +211,11 @@ impl Composer {
                         if crate::env_cfg::cfg().debug {
                             eprintln!("[send] held: {reason}");
                         }
-                        status::trouble(&ui, reason);
                         return;
                     }
                 }
                 let session = ui.get_selected_id().to_string();
                 if session.is_empty() {
-                    status::trouble(&ui, "no session selected");
                     return;
                 }
                 match slash_dispatch(&message) {
@@ -233,14 +225,12 @@ impl Composer {
                         ui.set_composer_has_text(false);
                         ui.set_composer_command("".into());
                         ui.set_model_menu(true);
-                        status::trouble(&ui, "pick a model");
                         return;
                     }
                     SlashAction::EffortHint => {
                         ui.set_composer_text("".into());
                         ui.set_composer_has_text(false);
                         ui.set_composer_command("".into());
-                        status::trouble(&ui, "the thinking level opens from the model menu");
                         return;
                     }
                     SlashAction::NewChat => {
@@ -256,7 +246,6 @@ impl Composer {
                     }
                     SlashAction::Rename(name) => {
                         if name.is_empty() {
-                            status::trouble(&ui, "give the chat a name: /name <name>");
                             return;
                         }
                         ui.set_composer_text("".into());
@@ -265,11 +254,7 @@ impl Composer {
                         let _ = jobs.send(Job::Rename { session, name });
                         return;
                     }
-                    SlashAction::NotWired(name) => {
-                        status::trouble(
-                            &ui,
-                            format!("/{name} belongs to the terminal app and isn't wired here yet"),
-                        );
+                    SlashAction::NotWired(_) => {
                         return;
                     }
                 }
@@ -314,7 +299,6 @@ impl Composer {
                     ui.set_busy_label("Waiting".into());
                     ui.set_busy(true);
                 }
-                status::clear(&ui);
                 in_flight_for_send.set(true);
                 let _ = jobs.send(Job::Prompt {
                     session,
@@ -518,7 +502,6 @@ impl Composer {
                     ui.set_composer_text("".into());
                     ui.set_composer_has_text(false);
                     ui.set_model_menu(true);
-                    status::trouble(&ui, "pick a model");
                     return;
                 }
                 let text = ui.get_composer_text().to_string();

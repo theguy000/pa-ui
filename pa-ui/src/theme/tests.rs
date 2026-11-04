@@ -384,8 +384,6 @@ fn the_shipped_theme_draws_todays_composer() {
     assert_eq!(theme.get(Role::ComposerAttachFillHover), Rgba::hex("#232421"));
     assert_eq!(theme.get(Role::ComposerAttachInk), Rgba::hex("#8c8d85"));
     assert_eq!(theme.get(Role::ComposerAttachInkHover), Rgba::hex("#b0b1a8"));
-    assert_eq!(theme.get(Role::ComposerStatusLineInk), Rgba::hex("#6d6e67"));
-    assert_eq!(theme.get(Role::ComposerStatusLineInkBad), Rgba::hex("#c98a7f"));
 
     // The ring, and the card that opens off it.
     assert_eq!(theme.get(Role::ComposerRingTickLit), Rgba::hex("#c9a86a"));
@@ -490,8 +488,6 @@ fn a_theme_that_names_the_composer_roles_moves_only_those() {
                "composer-attach-fill-hover": "#2f2242",
                "composer-attach-ink": "#9a8fb0",
                "composer-attach-ink-hover": "#cfc0e8",
-               "composer-status-line-ink": "#8a7fa0",
-               "composer-status-line-ink-bad": "#ff9f8f",
                "composer-ring-tick-lit": "#c9a7ff",
                "composer-ring-tick-unlit": "#3a2a52",
                "composer-card-surface": "#1c1526",
@@ -1223,7 +1219,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the caret in front of a provider's name",
             "the caret on the composer's chip",
             "the command a draft starts with",
-            "the composer's status line",
             "the dot that parts a cell's meta from its elapsed time",
             "the fold mark at rest",
             "the label a thinking row carries",
@@ -1240,7 +1235,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the send disc on the composer's field",
             "the sidebar's fold mark at rest",
             "the sidebar's magnifier",
-            "the status line when something went wrong",
             "the text inside an opened thinking row",
             "the tick beside the rung the model is on",
             "the tick beside the running model",

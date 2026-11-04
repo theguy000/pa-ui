@@ -272,7 +272,7 @@ impl Tick {
                         }
                     }
                 }
-                Msg::Sessions(Err(error)) => status::trouble(&ui, format!("daemon: {error}")),
+                Msg::Sessions(Err(_)) => {}
                 Msg::Activity { label } => {
                     if label != l.busy_label {
                         l.busy_label = label;
@@ -638,7 +638,6 @@ impl Tick {
                 Msg::QueueEdit { text } => {
                     ui.set_composer_text(text.into());
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
-                    status::clear(&ui);
                 }
                 Msg::ExtraCommands(rows) => {
                     composer.set_extra_commands(rows);
@@ -698,27 +697,18 @@ impl Tick {
                     sheet.answer_ended();
                     sheet.clear_tail_sig();
                     l.last_seq = 0;
-                    status::say(&ui, "reconnecting");
                 }
                 Msg::PromptRejected { text } => {
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
-                    composer.on_prompt_result(&ui, sheet, error);
+                    composer.on_prompt_result(sheet, error);
                 }
-                Msg::Error(error) => status::trouble(&ui, format!("error: {error}")),
+                Msg::Error(_) => {}
                 Msg::Shared(Ok(shared)) => {
-                    match crate::sessions::copy_to_clipboard(&shared.viewer_url) {
-                        Ok(()) => status::say(&ui, format!("shared: {}", shared.viewer_url)),
-                        Err(error) => status::trouble(
-                            &ui,
-                            format!("shared: {} (could not copy: {error})", shared.viewer_url),
-                        ),
-                    }
+                    let _ = crate::sessions::copy_to_clipboard(&shared.viewer_url);
                 }
-                Msg::Shared(Err(error)) => {
-                    status::trouble(&ui, format!("could not share: {error}"))
-                }
+                Msg::Shared(Err(_)) => {}
             }
         }
 

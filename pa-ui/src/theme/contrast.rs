@@ -436,16 +436,6 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::ComposerStatusLineInk, on: ON_COMPOSER },
-        what: "the composer's status line",
-        floor: MARK,
-    },
-    Pair {
-        ink: Mark { role: Role::ComposerStatusLineInkBad, on: ON_COMPOSER },
-        what: "the status line when something went wrong",
-        floor: MARK,
-    },
-    Pair {
         ink: Mark { role: Role::ComposerAttachInk, on: ON_ATTACH },
         what: "the plus that attaches a picture",
         floor: MARK,
