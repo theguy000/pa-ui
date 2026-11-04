@@ -222,7 +222,7 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::SessionCardEdge => global.set_session_card_edge(value),
         Role::SessionCardInk => global.set_session_card_ink(value),
         Role::SearchRowInk => global.set_search_row_ink(value),
-        Role::SearchRowInkHighlighted => global.set_search_row_ink_highlighted(value),
+        Role::SearchRowInkHover => global.set_search_row_ink_hover(value),
         Role::SearchMatchInk => global.set_search_match_ink(value),
         Role::SearchAgeInk => global.set_search_age_ink(value),
         Role::SlashMenuRowInk => global.set_slash_menu_row_ink(value),

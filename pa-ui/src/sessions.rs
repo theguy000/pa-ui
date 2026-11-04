@@ -83,12 +83,18 @@ pub(crate) fn age_label(row: &SessionRow) -> SharedString {
     } else {
         &row.last_activity
     };
-    let Some(seconds) = stamp_seconds(stamp) else {
-        return SharedString::new();
-    };
     let now = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
+    age_label_at(stamp, now)
+}
+
+/// The same label read against a given clock, so a test does not have to wait
+/// for a day to pass.
+fn age_label_at(stamp: &str, now: i64) -> SharedString {
+    let Some(seconds) = stamp_seconds(stamp) else {
+        return SharedString::new();
+    };
     // A stamp in the future is the clock disagreeing with itself, not a session
     // used later today: read it as today rather than as a negative age.
     match (now - seconds).max(0) / 86_400 {
@@ -111,9 +117,23 @@ fn stamp_seconds(stamp: &str) -> Option<i64> {
     let year = num(0..4)?;
     let month = num(5..7)?;
     let day = num(8..10)?;
+    // A stamp that keeps its separators where the daemon puts them, so a string
+    // of nineteen digits is read as no date rather than as the year 20261. The
+    // bytes are safe to index: every separator is ASCII, so each one is a whole
+    // character and no range below can split one.
+    let separators: [(usize, u8); 5] = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
+    if separators
+        .iter()
+        .any(|(at, want)| stamp.as_bytes().get(*at) != Some(want))
+    {
+        return None;
+    }
     let hour = num(11..13)?;
     let minute = num(14..16)?;
     let second = num(17..19)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
     Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
 }
 
@@ -128,6 +148,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
+
 
 
 /// Every session, as the sidebar draws it, grouped: active rows first, then
@@ -325,6 +346,13 @@ impl Column {
 
 /// Borrowed rows per group, in the order the window draws them.
 pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
+
+/// The three groups of a set of daemon rows, with every group folded open, for
+/// a window that fills the column from a list it made itself: the poll and the
+/// snapshot seed both come through here, so a change to grouping reaches both.
+pub(crate) fn groups_from(rows: &[SessionRow]) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+    session_groups(&session_items(rows))
+}
 
 /// Rebuild the column for `folded` (active, idle, done), given what each group
 /// held before and that same group's fold state then.

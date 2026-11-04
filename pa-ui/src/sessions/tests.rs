@@ -294,7 +294,7 @@ fn first_poll_and_subsequent_polls_compare_against_was_not_current() {
 /// session as used yesterday that the daemon saved today.
 #[test]
 fn a_stamp_reads_as_the_seconds_the_popup_counts_days_from() {
-    // 2026-11-03T00:00:00Z is 20799 days after the epoch, by the same
+    // 2026-11-03T00:00:00Z is 20760 days after the epoch, by the same
     // arithmetic every calendar library uses.
     assert_eq!(stamp_seconds("2026-11-03T00:00:00Z"), Some(20_760 * 86_400));
     assert_eq!(
@@ -302,8 +302,30 @@ fn a_stamp_reads_as_the_seconds_the_popup_counts_days_from() {
         Some(0),
         "the epoch is the zero the rest are measured from"
     );
+    assert_eq!(stamp_seconds("2024-02-29T12:34:56Z"), Some(1_709_210_096));
     assert_eq!(stamp_seconds("2026-11-03"), None, "a date alone is not a stamp");
     assert_eq!(stamp_seconds(""), None);
+    assert_eq!(
+        stamp_seconds("20261103T000000000Z"),
+        None,
+        "a stamp without its separators is not a date"
+    );
+    assert_eq!(
+        stamp_seconds("2026-13-03T00:00:00Z"),
+        None,
+        "a thirteenth month is not a date"
+    );
+}
+
+/// The label counts forward from the clock it is given, so a stamp from a
+/// second ago, a day ago and ten days ago read as the three words a reader
+/// scans a column for.
+#[test]
+fn the_age_is_today_yesterday_or_the_days_since() {
+    let now = 20_760 * 86_400 + 3600;
+    assert_eq!(age_label_at("2026-11-03T00:59:00Z", now), "Today");
+    assert_eq!(age_label_at("2026-11-02T00:59:00Z", now), "Yesterday");
+    assert_eq!(age_label_at("2026-10-24T00:59:00Z", now), "10d");
 }
 
 /// A stamp the machine's clock has not reached yet is the clock disagreeing with

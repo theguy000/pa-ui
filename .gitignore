@@ -15,3 +15,7 @@ previews/shot.png
 
 # Scratch: throwaway diffs, dumps and probes a session writes while working.
 .scratch/
+
+# The session-search design note: kept on disk beside the code it describes,
+# never part of the product.
+/docs/specs/session-search.md

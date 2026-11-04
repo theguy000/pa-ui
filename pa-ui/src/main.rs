@@ -81,6 +81,21 @@ const SPINNER_FRAMES: [&str; 10] = [
     "\u{2827}", "\u{2807}", "\u{280f}",
 ];
 
+/// The rows `PA_SEARCH_SEED` names, so a machine whose daemon answers with an
+/// empty list can still show a frame of matches. The stamp is fixed so two runs
+/// of the same snapshot say the same thing.
+fn seed_rows(seed: &str) -> Vec<SessionRow> {
+    seed.split('|')
+        .map(|name| SessionRow {
+            id: name.to_string(),
+            session_id: name.to_string(),
+            name: name.to_string(),
+            last_activity: "2026-11-03T00:00:00Z".to_string(),
+            ..SessionRow::default()
+        })
+        .collect()
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     // A theme author checks a file without a window: the same check the suite
     // runs over the themes that ship, printed for one file and stopped there.
@@ -456,24 +471,8 @@ fn main() -> Result<(), slint::PlatformError> {
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();
         if let Ok(seed) = std::env::var("PA_SEARCH_SEED") {
-            // the rows the popup lists, so a machine whose daemon answers with an
-            // empty list can still show a frame of matches
-            let names: Vec<&str> = seed.split('|').collect();
-            let rows: Vec<SessionRow> = names
-                .iter()
-                .map(|name| SessionRow {
-                    id: name.to_string(),
-                    session_id: name.to_string(),
-                    name: name.to_string(),
-                    last_activity: "2026-11-03T00:00:00Z".to_string(),
-                    ..SessionRow::default()
-                })
-                .collect();
-            let items: Vec<SessionItem> = sessions::session_items(&rows);
-            let (active, idle, done) = sessions::session_groups(&items);
-            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
-            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
-            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
+            let rows = seed_rows(&seed);
+            let (active, idle, done) = sessions::groups_from(&rows);
             let column = sessions::column(
                 (&active, &idle, &done),
                 [false, false, false],
@@ -481,7 +480,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 [false, false, false],
             );
             sessions::apply(&ui, column, -1, false);
-            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(sessions::session_items(&rows)))));
             *sessions_cache.borrow_mut() = rows;
         }
         // PA_SEARCH is a design check: the popup open, with a query already in it
@@ -491,7 +493,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if !query.is_empty() {
                 ui.set_search_query(query.as_str().into());
             }
-            ui.invoke_search_open_requested();
+            interactive::search::open(&ui, &sessions_cache.borrow());
         }
         let shot_timer = std::rc::Rc::new(slint::Timer::default());
         let stop = shot_timer.clone();

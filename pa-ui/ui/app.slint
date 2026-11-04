@@ -2,9 +2,9 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SearchEntry, SessionEntry, SessionItem, SessionMenuItem, SlashItem, TRow, Type } from "types.slint";
+import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
-import { SessionGroupHeader, SessionRow } from "sidebar.slint";
+import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
 import { SearchPopup } from "search.slint";
@@ -18,7 +18,6 @@ import { Theme } from "theme.slint";
 export { Theme }
 
 export component AppWindow inherits Window {
-
     // the failure reason of a cell, drawn here so no row can paint over it
     in-out property <bool> reason-open;
     in-out property <length> reason-x;
@@ -376,61 +375,27 @@ export component AppWindow inherits Window {
     in-out property <int> search-focus-tick: 0;
     in-out property <string> search-query: "";
     in-out property <int> search-index: 0;
-    in-out property <[SearchEntry]> search-entries;
-    // Where the popup's panel is drawn, worked out from its own size so the
-    // strip that closes the popup and the panel can never drift apart.
-    property <length> search-x: 0px;
-    property <length> search-y: 48px;
-    // Building one: the highlight on the best row, and the panel's place known
-    // before the first frame is drawn. The rows are Rust's, set before the open
-    // is asked for, so the popup has them the moment it appears rather than a
-    // blank half-panel that fills in a frame later.
+    in-out property <[SearchRow]> search-rows;
+    // The least room the panel keeps between itself and the title bar above it,
+    // and between itself and the window's side.
+    private property <length> search-clearance: 48px;
+
+    // Opening: the highlight goes to the best row and Rust fills the rows. The
+    // window draws the popup the moment `search-open` rises, and Rust raises it
+    // only after the rows are in, so the popup never shows a blank panel that
+    // fills in a frame later.
     public function open-requested() {
         root.search-open-requested();
-        root.search-index = 0;
-        root.search-open = true;
-        root.search-place-from(400px, root.search-height(root.search-entries.length));
-        // The caret is put in the field in this same step. The field is built with
-        // the panel, and the chain from the key the scope receives to the leaf
-        // that holds the text is not built yet a frame later, so a focus asked
-        // for then never reaches the letters.
-        root.search-focus-tick = root.search-focus-tick + 1;
-    }
-
-    // The popup's own height for a number of rows: its field, up to eight rows,
-    // and its foot. The window works the place out before the panel exists, so
-    // the sum is here as a function rather than read off the panel while it is
-    // down.
-    pure function search-height(rows: int) -> length {
-        rows == 0 && root.search-query == ""
-            ? 45px
-            : (45px + (rows == 0 ? 48px : min(rows * 32px, 256px) + 16px))
-    }
-
-    // Centring a panel that is `height` tall in the window: over the middle of
-    // the width, and over the middle of the height but never under the strip at
-    // the top. The popup itself calls this whenever its size changes, so its own
-    // laid-out size and this first guess stay the same place.
-    public function search-place-from(width: length, height: length) {
-        root.search-x = Math.max(0px, (root.width - width) / 2);
-        root.search-y = Math.max(48px, (root.height - height) / 2);
     }
 
     // The popup's field was typed into, so the window stops handing every
     // unrelated word back to the caret's last owner.
     public function search-field-used() { root.search-field-typed = true; }
 
-    // A press that lands outside the popup. A click inside the popup never
-    // reaches the window behind it, so this only ever hears a press on the
-    // window itself, and closes the popup the way Escape does.
-    public function search-outside() {
-        if !root.search-open {
-            return;
-        }
-        root.search-open = false;
-        root.search-closed();
-        root.focus-composer();
-    }
+    // A press that lands outside the popup. The popup's strips cover the whole
+    // window while it is up, so this only ever hears a press on the window
+    // itself. It closes the way Escape does, through the same callback.
+    public function search-outside() { root.search-closed(); }
 
     callback search-open-requested();
 
@@ -998,7 +963,7 @@ export component AppWindow inherits Window {
                             opacity: root.row-opacity(k);
                             clip: true;
 
-                            SessionRow {
+                            SidebarRow {
                                 width: 100%;
                                 height: 32px;
                                 item: entry.item;
@@ -1992,20 +1957,16 @@ export component AppWindow inherits Window {
 
 
     // The search popup, over the middle of the window: a place to find one
-    // session out of all of them, not a part of any column. Drawn after the
-    // menus so it paints above them, and under the title bar so the caption
-    // still answers at the top edge.
-    //
-    // A click that lands outside the panel closes it. The window's dismiss
-    // surface is the first child of the window, under everything, so the popup
-    // carries a surface of its own over the whole window: a click on it is a
-    // click on nothing, because a press on the panel never reaches it.
-    if root.search-open : Rectangle {
+    // session out of all of them, not a part of any column. It is the last thing
+    // the window draws, so it paints above the menus and the title bar, and the
+    // strips around it are the window itself: a click there closes the popup,
+    // and a click on the panel never reaches them.
+    search-backdrop := Rectangle {
         x: 0;
         y: 0;
         width: root.width;
         height: root.height;
-        background: transparent;
+        visible: root.search-open;
 
         TouchArea {
             width: 100%;
@@ -2013,55 +1974,51 @@ export component AppWindow inherits Window {
             clicked => { root.search-outside(); }
         }
 
-
-
-        Rectangle {
-            x: root.search-x;
-            y: root.search-y;
-            width: search-popup.width;
-            height: search-popup.height;
-            background: transparent;
-            // A press inside the panel is not a press on the window: the cover,
-            // the field and the cross are under this one, and the window behind
-            // it would otherwise close the popup on the same click that put the
-            // caret in the field or picked a row.
-            TouchArea {
-                width: 100%;
-                height: 100%;
+        // The panel takes its place from `search-place`, which reads the panel's
+        // own size a moment before the panel paints. The popup declares its
+        // width and height, so that size is known without the panel being drawn.
+        search-popup := SearchPopup {
+            x: search-place.panel-x;
+            y: search-place.panel-y;
+            rows: root.search-rows;
+            placeholder: "Search sessions";
+            query <=> root.search-query;
+            index <=> root.search-index;
+            typed(text) => {
+                root.search-field-used();
+                root.search-typed(text);
             }
-
-            search-popup := SearchPopup {
-                x: 0;
-                y: 0;
-                entries: root.search-entries;
-                placeholder: "Search sessions";
-                query <=> root.search-query;
-                index <=> root.search-index;
-                typed(text) => {
-                    root.search-field-used();
-                    root.search-typed(text);
-                }
-                picked(id) => { root.search-picked(id); }
-                closed => { root.search-closed(); }
-                focus-tick: root.search-focus-tick;
-            }
+            picked(id) => { root.search-picked(id); }
+            // The window closes the popup and hands the caret back to the
+            // composer in the same call, so the popup may bind its Escape, its
+            // cross and Return straight to this.
+            closed => { root.search-closed(); }
+            focus-tick: root.search-focus-tick;
         }
-        // The panel's own size, as it lays itself out inside the box above.
-        search-size := Rectangle {
-            x: search-popup.x;
-            y: search-popup.y;
+
+        search-place := Rectangle {
+            x: 0px;
+            y: 0px;
             width: search-popup.width;
             height: search-popup.height;
             background: transparent;
-            // The place follows the panel. `search-size` is the panel's own size
-            // once it has laid itself out, and the panel and the strips around it
-            // are moved from it together, so they can never disagree about where
-            // the panel is. The size is also the one the window would work out
-            // when it opens the popup, so a change here usually leaves the place
-            // where it was.
-            init => { root.search-place-from(self.width, self.height); }
-            changed width => { root.search-place-from(self.width, self.height); }
-            changed height => { root.search-place-from(self.width, self.height); }
+            // Where the panel goes: over the middle of the window, but never
+            // nearer the title bar than the clearance, and never off the left
+            // edge at the window's narrowest.
+            out property <length> panel-x: 0px;
+            out property <length> panel-y: 0px;
+            // A change on either axis writes the panel's place, which the panel
+            // above reads. The `init` writes it once so the first frame is placed.
+            init => {
+                search-place.panel-x = max(root.search-clearance, (root.width - self.width) / 2);
+                search-place.panel-y = max(root.search-clearance, (root.height - self.height) / 2);
+            }
+            changed width => {
+                search-place.panel-x = max(root.search-clearance, (root.width - self.width) / 2);
+            }
+            changed height => {
+                search-place.panel-y = max(root.search-clearance, (root.height - self.height) / 2);
+            }
         }
 
     }

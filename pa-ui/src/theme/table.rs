@@ -274,8 +274,9 @@ pub(crate) enum Role {
     /// two controls that open the search popup. Quiet ink, because the mark says
     /// nothing until it is pointed at.
     SidebarSearchMark,
-    /// That magnifier under the pointer. At the ink a name gets, because the
-    /// control answers now.
+    /// That magnifier under the pointer. A step above the mark at rest, as the
+    /// pen on New Session's button steps up: its chip is transparent, so it is
+    /// read on the column rather than on a field of its own.
     SidebarSearchMarkHover,
     /// The product's name beside the brand mark, at the top of the column. The one
     /// piece of lettering in the column that is not a session's, so it is read at
@@ -652,8 +653,9 @@ pub(crate) enum Role {
     SessionCardInk,
     /// A session's name on a row of the search popup, at rest.
     SearchRowInk,
-    /// That name on the row the arrows or the pointer are on.
-    SearchRowInkHighlighted,
+    /// That name on the row the arrows or the pointer are on. Named the way the
+    /// command list names its two row states, because it is the same idea.
+    SearchRowInkHover,
     /// The letters a query matched: the row's name at full ink, because the
     /// mark is the whole of the reason the row is in the list at all.
     SearchMatchInk,
@@ -956,7 +958,7 @@ impl Role {
         Role::SessionCardEdge,
         Role::SessionCardInk,
         Role::SearchRowInk,
-        Role::SearchRowInkHighlighted,
+        Role::SearchRowInkHover,
         Role::SearchMatchInk,
         Role::SearchAgeInk,
         Role::SlashMenuRowInk,
@@ -1155,7 +1157,7 @@ impl Role {
             Role::SessionCardEdge => "session-card-edge",
             Role::SessionCardInk => "session-card-ink",
             Role::SearchRowInk => "search-row-ink",
-            Role::SearchRowInkHighlighted => "search-row-ink-highlighted",
+            Role::SearchRowInkHover => "search-row-ink-hover",
             Role::SearchMatchInk => "search-match-ink",
             Role::SearchAgeInk => "search-age-ink",
             Role::SlashMenuRowInk => "slash-menu-row-ink",
@@ -1452,7 +1454,7 @@ impl Role {
             Role::SessionCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
             Role::SessionCardInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9764),
             Role::SearchRowInk => Derivation::Palette(Palette::QuietInk),
-            Role::SearchRowInkHighlighted => Derivation::Palette(Palette::Ink),
+            Role::SearchRowInkHover => Derivation::Palette(Palette::Ink),
             Role::SearchMatchInk => Derivation::Fixed(Rgba::hex("#e0cd7c")),
             Role::SearchAgeInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)

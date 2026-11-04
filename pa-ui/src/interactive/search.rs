@@ -19,15 +19,25 @@ pub(crate) fn opened(ui: &AppWindow, sessions: &Rc<RefCell<Vec<SessionRow>>>) {
     let weak = ui.as_weak();
     ui.on_search_open_requested(move || {
         let Some(ui) = weak.upgrade() else { return };
-        let query = ui.get_search_query();
-        ui.set_search_entries(match_entries(&sessions.borrow(), query.as_str()));
-        ui.set_search_index(0);
-        ui.set_search_field_typed(false);
-        ui.set_search_open(true);
+        open(&ui, &sessions.borrow());
     });
 }
 
-
+/// Opening, once the window is in hand: the rows for whatever the field already
+/// holds, the highlight on the best of them, and the popup up. The snapshot hook
+/// comes through here too, so the frame it writes is the frame the key opens.
+pub(crate) fn open(ui: &AppWindow, sessions: &[SessionRow]) {
+    let query = ui.get_search_query();
+    ui.set_search_rows(match_rows(sessions, query.as_str()));
+    ui.set_search_index(0);
+    ui.set_search_field_typed(false);
+    ui.set_search_open(true);
+    // The caret goes into the field in the same step that opens the popup: a
+    // frame later the chain from the key the scope receives to the leaf that
+    // holds the text is not built, and a focus asked for then never reaches the
+    // letters.
+    ui.set_search_focus_tick(ui.get_search_focus_tick() + 1);
+}
 
 /// A character arrived in the field: the rows narrow to what it matches, and the
 /// highlight falls back to the best match, because the row it was on may be gone.
@@ -38,9 +48,9 @@ pub(crate) fn typed(ui: &AppWindow, rows: &Rc<RefCell<Vec<SessionRow>>>) {
         let Some(ui) = weak.upgrade() else { return };
         // the field already holds the text: only the rows catch up with it, and
         // they are set before the highlight that indexes into them
-        let entries = match_entries(&rows.borrow(), query.as_str());
+        let found = match_rows(&rows.borrow(), query.as_str());
         ui.set_search_index(0);
-        ui.set_search_entries(entries);
+        ui.set_search_rows(found);
     });
 }
 
@@ -63,7 +73,9 @@ pub(crate) fn picked(ui: &AppWindow) {
 }
 
 /// Closing without a pick. Escape lands here as well as the cross and a click
-/// outside, because the popup answers all three the same way.
+/// outside, because the popup answers all three the same way. The window raises
+/// this only while the popup is open and closes it in the same call, which is
+/// what makes it safe to bind `closed` straight to the callback.
 pub(crate) fn closed(ui: &AppWindow) {
     let weak = ui.as_weak();
     ui.on_search_closed(move || {
@@ -74,26 +86,23 @@ pub(crate) fn closed(ui: &AppWindow) {
     });
 }
 
-/// The rows for one query, as the popup draws them.
-fn match_entries(sessions: &[SessionRow], query: &str) -> ModelRc<SearchEntry> {
-    to_entries(&search::matches(sessions, query))
-}
-
-/// The rows the popup draws, each name cut to what a row has room for and then
-/// drawn as the glyphs the row is built from.
-fn to_entries(found: &[(&SessionRow, Vec<usize>)]) -> ModelRc<SearchEntry> {
-    let entries: Vec<SearchEntry> = found
-        .iter()
+/// The rows the popup draws for one query: each name cut to what a row has room
+/// for and drawn as the glyphs the row is built from. The glyphs are looked up
+/// in the cut name itself, which is the string the popup draws, so a mark can
+/// never land on a character the row does not show.
+fn match_rows(sessions: &[SessionRow], query: &str) -> ModelRc<SearchRow> {
+    let rows: Vec<SearchRow> = search::matches(sessions, query)
+        .into_iter()
         .map(|(row, offsets)| {
             let name = search::elide(&sessions::display_name(row));
-            SearchEntry {
+            SearchRow {
                 id: row.id.as_str().into(),
                 age: sessions::age_label(row),
-                glyphs: ModelRc::from(Rc::new(VecModel::from(search::glyphs(&name, offsets)))),
+                glyphs: ModelRc::from(Rc::new(VecModel::from(search::glyphs(&name, &offsets)))),
             }
         })
         .collect();
-    ModelRc::from(Rc::new(VecModel::from(entries)))
+    ModelRc::from(Rc::new(VecModel::from(rows)))
 }
 
 #[cfg(test)]
@@ -124,35 +133,52 @@ mod tests {
             daemon_row("2", "hello"),
             daemon_row("3", "do some random tool calls"),
         ];
-        assert_eq!(match_entries(&rows, "").row_count(), 3);
+        assert_eq!(match_rows(&rows, "").row_count(), 3);
     }
 
     /// Rows are drawn by session id, which is what a pick hands back.
     #[test]
     fn each_row_carries_the_sessions_id() {
         let rows = [daemon_row("1", "prime-agent")];
-        let entries = match_entries(&rows, "");
+        let entries = match_rows(&rows, "");
         assert_eq!(entries.row_data(0).expect("a row").id.as_str(), "1");
     }
 
     /// The session with no title still appears, named the way the sidebar names
-    /// it: the folder's name, and the id so two such sessions stay apart.
+    /// it: the folder's name, and the id so two such sessions stay apart. The row
+    /// carries one glyph for each character of that name, and no more.
     #[test]
     fn an_unnamed_session_still_draws_a_name() {
         let mut row = daemon_row("abc", "");
         row.cwd = "C:\\work\\prime-agent".to_string();
-        let entries = match_entries(&[row], "");
+        let name = sessions::display_name(&row);
+        let entries = match_rows(&[row], "");
         let glyphs = entries.row_data(0).expect("a row").glyphs;
+        assert_eq!(glyphs.row_count(), name.chars().count());
         let drawn: String = (0..glyphs.row_count())
             .map(|index| glyphs.row_data(index).expect("a glyph").text.to_string())
             .collect();
         assert_eq!(drawn, "prime-agent · abc");
     }
 
+    /// A name the row cuts keeps the marks on the letters it still shows, and a
+    /// mark past the cut is dropped rather than moved onto the wrong letter.
+    #[test]
+    fn a_cut_name_marks_only_the_letters_it_shows() {
+        let row = daemon_row("1", "alpha beta gamma delta epsilon zeta eta theta iota");
+        let entries = match_rows(&[row], "beta");
+        let glyphs = entries.row_data(0).expect("a row").glyphs;
+        let marked: String = (0..glyphs.row_count())
+            .filter(|index| glyphs.row_data(*index).expect("a glyph").matched)
+            .map(|index| glyphs.row_data(index).expect("a glyph").text.to_string())
+            .collect();
+        assert_eq!(marked, "beta");
+    }
+
     /// An empty cache is the one case that draws "No sessions yet", and it must
     /// stay distinguishable from a query that matched nothing.
     #[test]
     fn an_empty_cache_draws_no_rows() {
-        assert_eq!(match_entries(&[], "").row_count(), 0);
+        assert_eq!(match_rows(&[], "").row_count(), 0);
     }
 }

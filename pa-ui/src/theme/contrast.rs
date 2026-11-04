@@ -230,6 +230,13 @@ const PAIRS: &[Pair] = &[
         what: "the fold mark on its chip under the pointer",
         floor: MARK,
     },
+    // The magnifier's chip is the one quiet control in the band that stays
+    // transparent, so its mark under the pointer is read on the column.
+    Pair {
+        ink: Mark { role: Role::SidebarSearchMarkHover, on: ON_SIDEBAR },
+        what: "the magnifier under the pointer",
+        floor: MARK,
+    },
     Pair {
         ink: Mark { role: Role::SidebarStripNewSessionMarkHover, on: ON_QUIET_CONTROL },
         what: "the pen on the folded strip's chip under the pointer",
@@ -279,7 +286,7 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SearchRowInkHighlighted, on: ON_PANEL_ROW },
+        ink: Mark { role: Role::SearchRowInkHover, on: ON_PANEL_ROW },
         what: "the session the pointer or the arrows are on",
         floor: BODY,
     },
