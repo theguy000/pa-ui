@@ -15,6 +15,7 @@ mod scroll;
 mod sheet;
 mod send;
 mod sessions;
+mod share;
 mod slash;
 mod status;
 mod text;
@@ -64,7 +65,7 @@ use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use transcript::Row;
 
 const WINDOW_ROWS: usize = 300;
@@ -286,6 +287,10 @@ fn main() -> Result<(), slint::PlatformError> {
     interactive::sidebar::new_chat(&ui, &job_tx);
 
     interactive::sidebar::rename(&ui, &job_tx);
+
+    interactive::sidebar::menu(&ui, &job_tx);
+
+    interactive::sidebar::folds(&ui);
 
     interactive::rows::toggle(&ui, &sheet);
 

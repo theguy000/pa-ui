@@ -61,7 +61,6 @@ fn the_shipped_theme_draws_todays_sidebar() {
     assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b1a8"));
     assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e7e5df"));
-    assert_eq!(theme.get(Role::SidebarAgeInk), Rgba::hex("#585953"));
     // The three tags are the one part of the sidebar whose value no palette
     // entry can describe, so the window keeps them and a theme names them.
     assert_eq!(theme.get(Role::TagWorking), Rgba::hex("#a18e41"));
@@ -70,7 +69,6 @@ fn the_shipped_theme_draws_todays_sidebar() {
     // The column's own fields, drawn by the buttons ticket: the chip a row offers
     // to rename it, the words and the field of New Session, and the pill the
     // folded column shows.
-    assert_eq!(theme.get(Role::SidebarRowRenameFill), Rgba::hex("#1c1d1a"));
     assert_eq!(theme.get(Role::SidebarRowRenameFillHover), Rgba::hex("#2a2c24"));
     assert_eq!(theme.get(Role::SidebarNewSessionInk), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::SidebarNewSessionInkHover), Rgba::hex("#ffffff"));
@@ -719,7 +717,8 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-name-ink": "#303030",
                "sidebar-name-ink-selected": "#101010",
                "sidebar-name-ink-editing": "#101010",
-               "sidebar-age-ink": "#6a6a6a",
+                "sidebar-group-ink": "#6a6a6a",
+                "sidebar-group-caret": "#6a6a6a",
                "tag-working": "#8a6d00",
                "tag-parked": "#8a8a8a",
                "tag-idle": "#2f7d3a",
@@ -732,8 +731,9 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-search-mark": "#4a4a4a",
                "sidebar-wordmark-ink": "#101010",
                "sidebar-row-rename-mark": "#5a5a5a",
-               "sidebar-row-rename-fill": "#3a3a3a",
                "sidebar-row-rename-fill-hover": "#4a4a4a",
+                "sidebar-row-menu-mark": "#5a5a5a",
+                "sidebar-row-done-mark": "#2f7d3a",
                "sidebar-new-session-ink": "#101010",
                "sidebar-new-session-ink-hover": "#000000",
                "sidebar-open-tip-fill": "#dddddd",
@@ -911,8 +911,8 @@ fn the_shipped_theme_draws_todays_buttons() {
     // A quiet control draws nothing at rest: the column runs through it.
     assert_eq!(theme.get(Role::ButtonQuietFill).a, 0, "a quiet control is not a fill");
     assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2a2b27"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#191a17"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#2e2f2c"));
     // The disc that stops the turn keeps the warmth the composer's stop had when
     // it was the composer's own role: the button that stops is the danger one
     // wherever it is drawn.
@@ -1170,9 +1170,14 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// The column's buttons tell it once more, and this is the case the shape made
 /// visible: their fields are lifts of the ink, so on a light window they go light
 /// while the pen and the pencil drawn on them are made of the quiet ink this file
-/// never moved. The mark floor finds three of them — the pen at rest and the label
-/// beside it, and the pencil a row offers at rest. The chip the pointer lights
-/// under them is opaque, so the pencil on it stays as readable as it was drawn.
+/// never moved. The mark floor finds two of them: the pen at rest and the label
+/// beside it. The chip the pointer lights under the pencil is opaque, so the
+/// pencil on it stays as readable as it was drawn.
+///
+/// A group's header is the same shape as a row's pencil: its word is quiet ink on
+/// a field that is a lift of the ink, and its caret is drawn on the fill the
+/// pointer lights under the header itself. Both go dim with the rest, and both are
+/// named here so the author knows to move them.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -1191,6 +1196,8 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a cell's name at rest",
             "a cell's name under the pointer",
             "a command's name",
+            "a group's caret while the pointer is on its header",
+            "a group's word at rest",
             "a ledger value",
             "a link in prose",
             "a model's name at rest",
@@ -1223,7 +1230,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the model the chip names",
             "the name of a lane with nothing to count",
             "the pen on New Session at rest",
-            "the pencil a row offers, at rest",
             "the pencil and the bin on a waiting row",
             "the plus that attaches a picture",
             "the plus that attaches a picture, under the pointer",

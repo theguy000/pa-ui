@@ -4,6 +4,15 @@ use crate::*;
 
 pub(crate) enum Job {
     Rename { session: String, name: String },
+    /// rename a row no worker holds, by its file: `rename` would start a worker
+    RenameSaved { session_path: String, name: String },
+    /// stop a live session, the TUI's ctrl+x: it becomes a done row
+    MarkDone { session: String },
+    /// delete a done row's file; the daemon refuses one a worker holds
+    DeleteSaved { session_path: String },
+    /// ask the daemon to export a session and the GitHub CLI to share it, the
+    /// TUI's `/share`
+    Share { session: String },
     Attach { session: String, generation: u64 },
     Tail { session: String, fresh: bool },
     /// the page before the one already loaded, walked from a row id
@@ -100,10 +109,11 @@ pub(crate) enum Msg {
     Stats { session: String, stats: pa_client::SessionStats },
     State { state: pa_client::SessionState },
     Activity { label: String },
+    /// a share finished: the gist URL to copy and the viewer URL to open, or
+    /// the reason it could not be made
+    Shared(Result<crate::share::Shared, String>),
     Error(String),
 }
-
-
 
 /// The worker's outbox. Every reply carries the generation it was produced
 /// under, so the window can tell an answer it is still waiting for from an
@@ -183,6 +193,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut resume: Option<(String, u64)> = None;
+    // the outage line is already on the status bar for this stretch of failure
+    let mut offline = false;
     let window_rows: usize = std::env::var("PA_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(WINDOW_ROWS);
 
     loop {
@@ -194,21 +206,36 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // with the resume cursor so the daemon replays the gap
                     attached = None;
                     resume = None;
+                    offline = false;
                     out.send(Msg::Reconnected);
                 }
                 Err(error) => {
-                    out.send(Msg::Error(error.to_string()));
+                    // Reported once per outage: the retry is every two seconds,
+                    // and the same line repeated is not news. The loop then runs
+                    // on to the jobs below rather than starting over, so a
+                    // prompt typed while the daemon is away is still answered
+                    // and the list keeps its rows instead of freezing.
+                    if !offline {
+                        out.send(Msg::Error(error.to_string()));
+                        offline = true;
+                    }
                     std::thread::sleep(Duration::from_secs(2));
-                    continue;
                 }
             }
         }
-        let Some(active) = client.as_ref() else { continue };
+        let Some(active) = client.as_ref() else {
+            // No connection: still let the clock run. `continue` here spun the
+            // loop with nothing to do, so `last_list` never aged and no list was
+            // ever asked for once a connection came back.
+            std::thread::sleep(Duration::from_millis(150));
+            continue;
+        };
         // the daemon may have restarted under us; without this the app keeps
         // reading a dead pipe and the transcript freezes until it is restarted
         if !active.alive() {
             client = None;
             attached = None;
+            offline = false;
             out.send(Msg::Error("daemon connection lost \u{2014} reconnecting".into()));
             std::thread::sleep(Duration::from_millis(300));
             continue;
@@ -222,6 +249,29 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         serde_json::json!({"activeSessionId": session, "name": name}),
                     );
                     last_list = SystemTime::now() - Duration::from_secs(60);
+                }
+                Job::RenameSaved { session_path, name } => {
+                    match pa_client::rename_saved_session(active, &session_path, &name) {
+                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Err(error) => out.send(Msg::Error(error.to_string())),
+                    }
+                }
+                Job::MarkDone { session } => {
+                    // the TUI's ctrl+x: the worker archives the session on its
+                    // way out, and the row moves to done on the next poll
+                    match pa_client::mark_done(active, &session) {
+                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Err(error) => out.send(Msg::Error(error.to_string())),
+                    }
+                }
+                Job::DeleteSaved { session_path } => {
+                    match pa_client::delete_saved_session(active, &session_path) {
+                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Err(error) => out.send(Msg::Error(error.to_string())),
+                    }
+                }
+                Job::Share { session } => {
+                    out.send(Msg::Shared(crate::share::share_as_gist(active, &session)));
                 }
                 Job::Attach {
                     session,
@@ -239,6 +289,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             attached = Some(session.clone());
                             let (rows, skipped) = crate::transcript::build(&messages, window_rows);
                             out.send(Msg::Transcript { session, rows, skipped, messages });
+                            last_list = SystemTime::now() - Duration::from_secs(60);
                         }
                         Err(error) => {
                             out.send(Msg::Error(error.to_string()));
@@ -691,6 +742,92 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 #[cfg(test)]
 mod tests {
     use super::Msg;
+
+    // --- the session menu, at the seam between the row and the commands ------
+
+    // The menu lives behind a window's callback, so its decisions are tested
+    // through the functions that hold them, not through the UI.
+
+    fn keys(items: &[crate::SessionMenuItem]) -> Vec<String> {
+        items.iter().map(|item| item.key.to_string()).collect()
+    }
+
+    #[test]
+    fn a_live_row_offers_done_and_never_delete() {
+        let items = crate::interactive::sidebar::menu_items(false, false);
+        let keys = keys(&items);
+        assert_eq!(keys, ["done", "rename", "share", "copy-id"]);
+        assert!(
+            !keys.iter().any(|key| key == "delete"),
+            "a live row must never offer the action that destroys its file: {keys:?}"
+        );
+        assert_eq!(items[0].label.as_str(), "Mark done");
+    }
+
+    #[test]
+    fn a_done_row_offers_delete_and_neither_done_nor_share() {
+        let items = crate::interactive::sidebar::menu_items(true, false);
+        let keys = keys(&items);
+        assert_eq!(keys, ["rename", "copy-id", "delete"]);
+        assert!(
+            !keys.iter().any(|key| key == "done"),
+            "a done row is already set aside: {keys:?}"
+        );
+        // `export_html` needs a worker, and a done row has none
+        assert!(
+            !keys.iter().any(|key| key == "share"),
+            "a done row has no worker to export it: {keys:?}"
+        );
+        // Delete sits below the separator: it acts on the file, not the session
+        let delete = items.iter().find(|item| item.key == "delete").expect("delete");
+        assert!(delete.separated);
+    }
+
+    #[test]
+    fn delete_asks_once_before_it_acts() {
+        let armed = crate::interactive::sidebar::menu_items(true, true);
+        let delete = armed.iter().find(|item| item.key == "delete").expect("delete");
+        assert_eq!(delete.label.as_str(), "Delete for good");
+        // and it is still the same key: the second press is the act
+        assert_eq!(delete.key.as_str(), "delete");
+        assert!(delete.danger);
+        assert_eq!(delete.note.as_str(), "this removes the session file");
+        let unarmed = crate::interactive::sidebar::menu_items(true, false);
+        let delete = unarmed.iter().find(|item| item.key == "delete").expect("delete");
+        assert_eq!(delete.label.as_str(), "Delete");
+        assert!(delete.note.is_empty());
+    }
+
+    #[test]
+    fn every_menu_row_says_what_it_would_do() {
+        for done in [false, true] {
+            for item in crate::interactive::sidebar::menu_items(done, false) {
+                assert!(item.note.is_empty(), "{} has unexpected subtext {:?}", item.key, item.note);
+            }
+        }
+    }
+
+    #[test]
+    fn a_live_row_cannot_be_talked_into_deleting_and_a_done_row_cannot_start() {
+        use crate::interactive::sidebar::{menu_action, MenuAction};
+        assert_eq!(menu_action("delete", false), MenuAction::Nothing);
+        assert_eq!(menu_action("done", true), MenuAction::Nothing);
+        assert_eq!(menu_action("share", true), MenuAction::Nothing);
+        assert_eq!(menu_action("share", false), MenuAction::Share);
+        assert_eq!(menu_action("delete", true), MenuAction::Delete);
+        assert_eq!(menu_action("done", false), MenuAction::MarkDone);
+        // every key a row offers is one some row can execute
+        for done in [false, true] {
+            for item in crate::interactive::sidebar::menu_items(done, false) {
+                assert_ne!(
+                    menu_action(&item.key, done),
+                    MenuAction::Nothing,
+                    "{} offered on done={done} does nothing",
+                    item.key
+                );
+            }
+        }
+    }
 
     fn tail() -> Msg {
         Msg::Tail {

@@ -1,21 +1,106 @@
-// The sessions column: one session's row, and the tag that says what it is doing.
+// The sessions column: one session's row, and the headers that group the rows.
+//
+// A row is a name and nothing else: the state it is in is which group the row sits
+// under, so no row carries a tag dot, an age or a status word. Double-clicking a
+// row renames it in place; the three-dots menu appears under the pointer.
 
 import { SessionItem, Type } from "types.slint";
-import { MarqueeText } from "marquee-text.slint";
-import { IconPencil } from "icons.slint";
+import { IconCaret, IconDoneTick, IconMore } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button, Tag, TagKind } from "primitives.slint";
+import { Button } from "primitives.slint";
+
+// A group header: the caret, the word, and how many rows it holds. Clicking it
+// folds the group.
+export component SessionGroupHeader inherits Rectangle {
+    in property <string> label;
+    in property <int> count;
+    // folded: the caret points at the rows instead of down at them
+    in property <bool> closed: false;
+    callback toggled();
+
+    height: 32px;
+    border-radius: 6px;
+    background: header-touch.has-hover ? Theme.sidebar-row-fill-hover : transparent;
+
+    header-touch := TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 100%;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.toggled(); }
+    }
+
+    // No layout here either, for the same reason as the row below: a layout
+    // makes the header report a preferred height the list then uses, and the
+    // list drew its entries a header apart from where they were written.
+    hdr-label := Text {
+        x: 10px;
+        y: 0;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.label;
+        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
+        font-size: 12.5px;
+        font-weight: 600;
+        vertical-alignment: center;
+        wrap: no-wrap;
+    }
+
+    Rectangle {
+        x: 10px + hdr-label.preferred-width + 6px;
+        y: 0;
+        width: 12px;
+        height: parent.height;
+        opacity: header-touch.has-hover ? 1.0 : 0.0;
+        animate opacity { duration: 120ms; easing: ease-in-out; }
+
+        IconCaret {
+            x: 0;
+            y: (parent.height - self.height) / 2 + 1px;
+            up: false;
+            transform-rotation: root.closed ? -90deg : 0deg;
+            animate transform-rotation { duration: 160ms; easing: ease-in-out; }
+            width: 10px;
+            height: 10px;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            tint: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-caret;
+        }
+    }
+
+    Text {
+        // the count's own cell, right-aligned at the header's edge
+        x: parent.width - 10px - 32px;
+        y: 0;
+        width: 32px;
+        height: parent.height;
+        text: root.count;
+        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
+        font-size: 11.5px;
+        font-weight: 500;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+}
 
 export component SessionRow inherits Rectangle {
     in property <SessionItem> item;
     in property <bool> selected;
     in property <bool> editing;
     in-out property <string> draft;
+    // the row's menu is open: the dots stay lit under it
+    in property <bool> menu-open: false;
     callback picked(string);
     // the row's own window position rides along, so the card can sit beside it
     callback hovered(string, length);
     callback edit(string);
     callback commit(string, string);
+    // the three dots: the row's menu, opened beside the button, or closed when
+    // this row's menu is the open one. The position is sent so the panel can
+    // hang there, and the id so the window can read which item set the row's
+    // kind calls for.
+    callback toggled(string, length, length);
     // the row's own pointer state, so the component can watch it change: a
     // `changed` block only takes an identifier, and `ta.has-hover` is not one
     out property <bool> hot: ta.has-hover;
@@ -28,124 +113,96 @@ export component SessionRow inherits Rectangle {
     ta := TouchArea {
         x: 0;
         y: 0;
-        width: parent.width - 30px;
+        width: parent.width - 28px;
         height: 100%;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.picked(root.item.id); }
-        pointer-event(event) => {
-            if event.kind == PointerEventKind.move {
-                root.hovered(root.item.tip, self.absolute-position.y);
-            }
-        }
+        double-clicked => { root.edit(root.item.id); }
     }
 
-    // Leaving the row is the half `move` cannot report: walking up into the
-    // blank band above the list produces no further move inside the row, so the
-    // card used to sit there until the timer gave up. The `changed` block lives
-    // on the row rather than inside the TouchArea - inside it, a has-hover
-    // change eats the click that follows.
     changed hot => {
         if !hot {
             root.hovered("", 0px);
         }
     }
 
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 9px;
-        spacing: 6px;
-
-        Rectangle {
-            horizontal-stretch: 1;
-            height: 32px;
-            clip: true;
-
-            // a name longer than the sidebar travels while the row is hovered;
-            // left alone the row is clipped where it lies, as it always was
-            if !root.editing : MarqueeText {
-                x: 0;
-                y: (parent.height - self.height) / 2;
-                width: parent.width;
-                text: root.item.name;
-                text-color: root.selected ? Theme.sidebar-name-ink-selected
-                    : Theme.sidebar-name-ink;
-                font-size: Type.item;
-                active: ta.has-hover;
-            }
-
-            if root.editing : input := TextInput {
-                text: root.draft;
-                y: (parent.height - self.height) / 2;
-                width: parent.width;
-                color: Theme.sidebar-name-ink-editing;
-                font-size: Type.item;
-                single-line: true;
-                edited => { root.draft = self.text; }
-                accepted => { root.commit(root.item.id, root.draft); }
-                key-pressed(event) => {
-                    if event.text == Key.Escape {
-                        root.commit(root.item.id, root.item.full);
-                        return EventResult.accept;
-                    }
-                    return EventResult.reject;
-                }
-                init => { self.focus(); }
-            }
+    if root.item.done : Rectangle {
+        x: 20px;
+        y: 0;
+        width: 11px;
+        height: parent.height;
+        IconDoneTick {
+            x: 0;
+            y: (parent.height - self.height) / 2;
         }
+    }
 
-        Rectangle {
-            width: 18px;
-            height: 32px;
-            rename := Button {
-                x: 0;
-                y: (parent.height - self.height) / 2;
-                width: 18px;
-                height: 18px;
-                border-radius: 4px;
-                // The chip only appears under the pointer, so its resting fill is
-                // the row's own hover rather than a field of its own; the pointer
-                // on the chip itself lifts it one more step.
-                fill: Theme.sidebar-row-rename-fill;
-                fill-hover: Theme.sidebar-row-rename-fill-hover;
-                enabled: !root.editing;
-                described: "Rename the session";
-                clicked => { root.edit(root.item.id); }
-                visible: !root.editing;
-                opacity: ta.has-hover || rename.hot ? 1 : 0;
-                animate opacity { duration: 100ms; }
-                IconPencil {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                }
+    // the name: from the indent (or tick) to just before the three-dots button
+    if !root.editing : Text {
+        x: root.item.done ? 36px : 20px;
+        y: 0;
+        width: parent.width - self.x - 9px - 22px;
+        height: parent.height;
+        text: root.item.name;
+        color: root.selected ? Theme.sidebar-name-ink-selected
+            : Theme.sidebar-name-ink;
+        font-size: Type.item;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    if root.editing : input := TextInput {
+        x: root.item.done ? 36px : 20px;
+        text: root.draft;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - self.x - 9px - 22px;
+        color: Theme.sidebar-name-ink-editing;
+        font-size: Type.item;
+        single-line: true;
+        edited => { root.draft = self.text; }
+        accepted => { root.commit(root.item.id, root.draft); }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.commit(root.item.id, root.item.full);
+                return EventResult.accept;
             }
+            return EventResult.reject;
         }
+        init => { self.focus(); }
+    }
 
-        Rectangle {
-            width: age-text.preferred-width;
-            height: 32px;
-            age-text := Text {
-                text: root.item.age;
-                color: Theme.sidebar-age-ink;
-                font-size: 10px;
-                height: parent.height;
-                vertical-alignment: center;
-                opacity: root.editing ? 0 : 1;
+    // The dots, at the row's right edge: 22px wide, 6px in from it.
+    menu-slot := Rectangle {
+        x: parent.width - 6px - 22px;
+        y: 0;
+        width: 22px;
+        height: parent.height;
+
+        menu := Button {
+            x: 0;
+            y: (parent.height - self.height) / 2;
+            width: 22px;
+            height: 22px;
+            border-radius: 5px;
+            lit: root.menu-open;
+            fill: Theme.button-quiet-fill;
+            fill-hover: Theme.sidebar-row-rename-fill-hover;
+            enabled: !root.editing;
+            described: "Session menu";
+            clicked => {
+                // the row's own toggle: `app.slint` owns which menu is open, so
+                // it decides whether this press opens one or closes the one here
+                root.toggled(root.item.id, self.absolute-position.x,
+                    self.absolute-position.y + self.height);
             }
-        }
-
-        Rectangle {
-            width: 5px;
-            height: 32px;
-            // The three words the wire uses for what a session is doing, and the
-            // one tag state each of them names.
-            Tag {
+            visible: !root.editing;
+            opacity: ta.has-hover || menu.hot || root.menu-open ? 1 : 0;
+            animate opacity { duration: 100ms; }
+            IconMore {
+                x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: 5px;
-                height: 5px;
-                border-radius: 2.5px;
-                kind: root.item.status == "working" ? TagKind.working
-                    : root.item.status == "parked" ? TagKind.parked : TagKind.idle;
-                opacity: root.editing ? 0 : 1;
+                tint: menu.on ? Theme.sidebar-name-ink-selected : Theme.sidebar-row-menu-mark;
             }
         }
     }

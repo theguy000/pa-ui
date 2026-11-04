@@ -31,13 +31,57 @@ export struct SessionItem {
     id: string,
     uuid: string,
     name: string,
-    age: string,
     full: string,
     tip: string,
+    // the daemon's status, in the window's words: "active", "idle" or "done",
+    // which is also the group the row is listed under
     status: string,
+    // set aside: no worker holds it, so the row is in the done group
+    done: bool,
+    // where the session is saved: the path `rename_saved_session` and
+    // `delete_saved_session` address, since a row with no worker has no id to
+    // target a worker with
+    file: string,
 }
 
-// one waiting message, addressed by its lane and its position in that lane
+// One line of the sessions column: a group's header, or one session under it.
+// Every entry carries the y it is drawn at, computed by the window from the
+// group order, the row counts and the fold state.
+export struct SessionEntry {
+    // a header, not a session
+    is-header: bool,
+    // the header's word: "Active", "Idle" or "Done"
+    label: string,
+    // the header's count, and whether its group is folded
+    count: int,
+    folded: bool,
+    // the row, for a session entry
+    item: SessionItem,
+    // where it is drawn, from the top of the column
+    at: length,
+    // where it is drawn once the last fold has settled: equal to `at` when the
+    // group it is in is the one folding open or closed
+    target: length,
+    // the heading a fold moves the entry between: its own group's header, or
+    // the next one when its own group has folded
+    seam: int,
+}
+
+// One row of a session's own menu: the action's key, the words it shows, whether
+// it sits below the separator away from the actions that act on the session
+// itself, and the warning it turns into once armed.
+export struct SessionMenuItem {
+    key: string,
+    label: string,
+    // drawn in the warning ink, and the note under it in that same ink
+    danger: bool,
+    // what the armed item says it is about to do, and empty at rest
+    note: string,
+    // below the separator, in the danger ink: the action acts on the file, not
+    // on the session
+    separated: bool,
+}
+
 // One row of the command menu: the word after the slash, the argument hint the
 // command takes, and what it does.
 export struct SlashItem {

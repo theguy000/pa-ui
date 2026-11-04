@@ -232,11 +232,13 @@ pub(crate) enum Role {
     /// picked name's value: it is read against the row's own field and not the
     /// picked fill, so a light sidebar has to move the two apart.
     SidebarNameInkEditing,
-    /// How long ago a session last moved. The window's own value reads at
-    /// 2.7:1 on the column, under any legibility floor, and this table keeps it
-    /// because a pixel may not move here; `contrast.rs` records the miss instead
-    /// of measuring it.
-    SidebarAgeInk,
+    /// A group header on the column: the word over the active, idle and done
+    /// rows, and the count beside it. Quiet, because it is a label over names
+    /// the reader is scanning rather than a name of its own.
+    SidebarGroupInk,
+    /// The caret that folds a group header. The whole of what says the header
+    /// opens and closes, so it is read at the header's ink rather than below it.
+    SidebarGroupCaret,
     /// A session at work. The three tags are told apart by colour alone, so
     /// `contrast.rs` holds them to a separation floor. Their own contrast
     /// against the column is recorded there, not gated: the parked tag, at
@@ -277,15 +279,20 @@ pub(crate) enum Role {
     SidebarWordmarkInk,
     /// The pencil a session row offers to rename it.
     SidebarRowRenameMark,
-    /// The chip that pencil sits on, at rest: a lift of ink over the column, so
-    /// the control reads as something to press rather than as a bare mark. The
-    /// chip draws no edge, so its fill is the whole of what says it is there.
-    SidebarRowRenameFill,
     /// That chip with the pointer on it. Opaque, and its own role rather than a
     /// quiet button's veil: the chip only appears under a pointer that is already
     /// on the row, so what it is laid on is the row's own fill and not the column,
     /// and a veil would land a shade lighter on a picked row than on a quiet one.
     SidebarRowRenameFillHover,
+    /// The menu mark on a session row: the three dots that open the row's own
+    /// menu. Its own role although it ships the pencil's ink: it is a second
+    /// control on the same row, and a theme may want it quieter than the pencil.
+    SidebarRowMenuMark,
+    /// The tick a done row wears before its name, and the one the done group's
+    /// header carries: done is green, the one tag with a mark rather than a tint
+    /// on the row. It ships the idle tag's value on purpose, both saying the same
+    /// thing about a session that is not between turns.
+    SidebarRowDoneMark,
     /// The label on the column's New Session button at rest. The button carries a
     /// field of its own, so its words are read on that field rather than on the
     /// column, and the pointer brightens them.
@@ -787,7 +794,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 187] = [
+    pub(crate) const ALL: [Role; 189] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -803,7 +810,8 @@ impl Role {
         Role::SidebarNameInk,
         Role::SidebarNameInkSelected,
         Role::SidebarNameInkEditing,
-        Role::SidebarAgeInk,
+        Role::SidebarGroupInk,
+        Role::SidebarGroupCaret,
         Role::TagWorking,
         Role::TagParked,
         Role::TagIdle,
@@ -816,8 +824,9 @@ impl Role {
         Role::SidebarSearchMark,
         Role::SidebarWordmarkInk,
         Role::SidebarRowRenameMark,
-        Role::SidebarRowRenameFill,
         Role::SidebarRowRenameFillHover,
+        Role::SidebarRowMenuMark,
+        Role::SidebarRowDoneMark,
         Role::SidebarNewSessionInk,
         Role::SidebarNewSessionInkHover,
         Role::SidebarOpenTipFill,
@@ -995,7 +1004,8 @@ impl Role {
             Role::SidebarNameInk => "sidebar-name-ink",
             Role::SidebarNameInkSelected => "sidebar-name-ink-selected",
             Role::SidebarNameInkEditing => "sidebar-name-ink-editing",
-            Role::SidebarAgeInk => "sidebar-age-ink",
+            Role::SidebarGroupInk => "sidebar-group-ink",
+            Role::SidebarGroupCaret => "sidebar-group-caret",
             Role::TagWorking => "tag-working",
             Role::TagParked => "tag-parked",
             Role::TagIdle => "tag-idle",
@@ -1008,8 +1018,9 @@ impl Role {
             Role::SidebarSearchMark => "sidebar-search-mark",
             Role::SidebarWordmarkInk => "sidebar-wordmark-ink",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
-            Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
             Role::SidebarRowRenameFillHover => "sidebar-row-rename-fill-hover",
+            Role::SidebarRowMenuMark => "sidebar-row-menu-mark",
+            Role::SidebarRowDoneMark => "sidebar-row-done-mark",
             Role::SidebarNewSessionInk => "sidebar-new-session-ink",
             Role::SidebarNewSessionInkHover => "sidebar-new-session-ink-hover",
             Role::SidebarOpenTipFill => "sidebar-open-tip-fill",
@@ -1202,7 +1213,13 @@ impl Role {
             Role::SidebarNameInk => Derivation::Palette(Palette::QuietInk),
             Role::SidebarNameInkSelected => Derivation::Palette(Palette::Ink),
             Role::SidebarNameInkEditing => Derivation::Palette(Palette::Ink),
-            Role::SidebarAgeInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
+            // a group's word is read as a name is, being the label the rows
+            // under it are scanned from; its caret is a mark on the header's
+            // hover fill, drawn at the weight the row's own pencil is
+            Role::SidebarGroupInk => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarGroupCaret => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+            }
             Role::TagWorking => Derivation::Fixed(Rgba::hex("#a18e41")),
             Role::TagParked => Derivation::Fixed(Rgba::hex("#4a4d44")),
             Role::TagIdle => Derivation::Fixed(Rgba::hex("#6f9f5f")),
@@ -1215,8 +1232,9 @@ impl Role {
             Role::SidebarSearchMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9015),
             Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
-            Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
             Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2a2c24")),
+            Role::SidebarRowMenuMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
+            Role::SidebarRowDoneMark => Derivation::Fixed(Rgba::hex("#6f9f5f")),
             Role::SidebarNewSessionInk => Derivation::Palette(Palette::Ink),
             Role::SidebarNewSessionInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
             Role::SidebarOpenTipFill => Derivation::Fixed(Rgba::hex("#e3e3e3")),
@@ -1390,9 +1408,9 @@ impl Role {
             Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
             Role::ButtonQuietFill => Derivation::Veil(Palette::Background, 0x00),
             Role::ButtonQuietFillHover => Derivation::Veil(Palette::Ink, 0x1f),
-            Role::ButtonPrimaryFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
+            Role::ButtonPrimaryFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
             Role::ButtonPrimaryFillHover => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1415)
             }
             Role::ButtonDangerFill => Derivation::Fixed(Rgba::hex("#a2543f")),
             Role::ButtonDangerFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
