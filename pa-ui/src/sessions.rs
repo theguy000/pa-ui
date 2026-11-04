@@ -67,12 +67,6 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
         id: row.id.clone().into(),
         uuid: row.session_id.clone().into(),
         name: trim_to(&full, 90).into(),
-        age: age_of(if row.last_activity.is_empty() {
-            &row.modified
-        } else {
-            &row.last_activity
-        })
-        .into(),
         full,
         tip,
         status: tag.word().into(),
@@ -202,11 +196,129 @@ pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide:
     entries
         .iter()
         .map(|entry| match before.get(&entry_key(entry)) {
-            Some(old) if old.seam == entry.seam => old.at,
-            Some(old) => entry.at + if old.seam > entry.seam { slide } else { -slide },
+            Some(old) if !moved_between_groups(old, entry) => old.at,
+            Some(old) => old.at + if old.seam > entry.seam { slide } else { -slide },
             None => entry.at,
         })
         .collect()
+}
+
+/// Whether an entry slid to another group since the column was last drawn. This
+/// is the only place the question is answered: `from_y` drops such an entry in
+/// from the side, and `app.slint` fades it in over `arrived` while a fold or a
+/// poll is in flight. A check on the distance before and after would answer
+/// differently for a row that moved to a group that lands it at the same y.
+pub(crate) fn moved_between_groups(previous: &SessionEntry, entry: &SessionEntry) -> bool {
+    previous.seam != entry.seam
+}
+
+/// Whether any entry slid to another group. What the window asks after a poll,
+/// before it decides which animation to run.
+pub(crate) fn any_moved(previous: &[SessionEntry], entries: &[SessionEntry]) -> bool {
+    let before: std::collections::HashMap<String, &SessionEntry> = previous
+        .iter()
+        .map(|entry| (entry_key(entry), entry))
+        .collect();
+    entries
+        .iter()
+        .any(|entry| before.get(&entry_key(entry)).is_some_and(|old| moved_between_groups(old, entry)))
+}
+
+/// The column as one rebuild writes it: the entries the window draws, the y
+/// each one started from, how tall the column was and is, and whether a row or a
+/// group's border has moved at all.
+///
+/// Fold and poll go through here, so a fold state change and a row arriving from
+/// the daemon produce the same four numbers, and neither path can drift from
+/// the other.
+pub(crate) struct Column {
+    pub(crate) previous: Vec<SessionEntry>,
+    pub(crate) entries: Vec<SessionEntry>,
+    /// aligned with `entries`: the y each one starts from
+    pub(crate) from_y: Vec<f32>,
+    pub(crate) was_height: f32,
+    pub(crate) height: f32,
+}
+
+impl Column {
+    /// Whether anything moved: a row between groups, or an entry to a new y.
+    pub(crate) fn changed(&self) -> bool {
+        self.entries.len() != self.previous.len()
+            || self
+                .entries
+                .iter()
+                .zip(&self.from_y)
+                .any(|(entry, from)| (entry.at - from).abs() > 0.5)
+    }
+}
+
+/// Borrowed rows per group, in the order the window draws them.
+pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
+
+/// Rebuild the column for `folded` (active, idle, done), given what each group
+/// held before and that same group's fold state then.
+pub(crate) fn column(
+    groups: Groups<'_>,
+    folded: [bool; 3],
+    was: Groups<'_>,
+    was_folded: [bool; 3],
+) -> Column {
+    let (active, idle, done) = groups;
+    let previous = session_entries(active, idle, done, was_folded[0], was_folded[1], was_folded[2]);
+    let entries = session_entries(active, idle, done, folded[0], folded[1], folded[2]);
+    let from_y = if was.0.len() + was.1.len() + was.2.len() == 0 {
+        // nothing has been drawn yet: every entry starts where it is
+        entries.iter().map(|entry| entry.at).collect()
+    } else {
+        from_y(&previous, &entries, 16.0)
+    };
+    Column {
+        was_height: entries_height(&previous),
+        height: entries_height(&entries),
+        previous,
+        entries,
+        from_y,
+    }
+}
+
+/// Copy the rows the window holds into the three groups `column` takes. The
+/// window's models are the source, so a rebuild never needs the daemon.
+pub(crate) fn groups_of(
+    active: &slint::ModelRc<SessionItem>,
+    idle: &slint::ModelRc<SessionItem>,
+    done: &slint::ModelRc<SessionItem>,
+) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+    (
+        active.iter().collect(),
+        idle.iter().collect(),
+        done.iter().collect(),
+    )
+}
+
+/// Write one rebuild to the window: the entries, the y each starts from, the
+/// two heights, and the order to animate in. A first fill has nothing to slide
+/// from, so it sets the entries and leaves the animation at rest.
+pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: bool) {
+    if column.previous.is_empty() {
+        ui.set_session_entries(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(column.entries),
+        )));
+        ui.set_sessions_height(column.height);
+        return;
+    }
+    let saved_cy = ui.invoke_get_sidebar_cy();
+    ui.set_prev_sessions_height(column.was_height);
+    ui.set_sessions_height(column.height);
+    ui.set_fold_index(fold_index);
+    ui.set_fold_open(fold_open);
+    ui.set_session_entries(slint::ModelRc::from(std::rc::Rc::new(
+        slint::VecModel::from(column.entries),
+    )));
+    ui.set_splice_at(slint::ModelRc::from(std::rc::Rc::new(
+        slint::VecModel::from(column.from_y),
+    )));
+    ui.invoke_trigger_list_anim();
+    ui.invoke_restore_sidebar_cy(saved_cy);
 }
 
 /// The column's height for a set of entries, and its bottom edge.

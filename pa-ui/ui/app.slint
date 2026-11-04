@@ -842,10 +842,10 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
-                // The list is the column's last child, so its rows paint over the
-                // column's surface rather than under it. The band and New Session
-                // are the column's first children and cover the strip above y
-                // 135px, so a row scrolled up slides behind them.
+                // The list starts at the column's top edge and covers the band and
+                // New Session: its entries begin at 88px, which is where the band
+                // ends, so no row is drawn over them and a scrolled list slides
+                // under the column's edge rather than through the header.
                 //
                 // A Flickable, not a ScrollView. ScrollView is a layout item: it
                 // lays its children out, and when those children are a `for`
@@ -855,12 +855,18 @@ export component AppWindow inherits Window {
                 // lays nothing out, so each entry keeps the box it is given.
                 sidebar-list := Flickable {
                     visible: root.sidebar-open;
+                    // The list is drawn where it stands, not at 88px from the
+                    // column's top: the column is a row of the window's outer
+                    // layout, so a y inside it starts at the column's own edge
+                    // and the band and New Session would cover the first rows.
+                    // The 88px stays in the entries, so the rows below need no
+                    // shift of their own.
                     x: 8px;
-                    y: 88px;
+                    y: 0px;
                     width: 232px - 16px;
                     // the window's height, not the Flickable's own or the
                     // column's: either way back through the layout is a loop
-                    height: max(0px, root.height - 88px);
+                    height: max(0px, root.height - 8px);
                     content-width: self.width;
                     content-height: max(0px, root.animated-sessions-height - 88px);
                     interactive: true;
@@ -920,12 +926,6 @@ export component AppWindow inherits Window {
                                 commit(id, name) => {
                                     root.editing-id = "";
                                     root.rename-requested(id, name);
-                                }
-                                menu(id, x, y) => {
-                                    root.menu-id = id;
-                                    root.menu-x = x;
-                                    root.menu-y = y;
-                                    root.session-menu-opened(id);
                                 }
                                 // a second press on the dots of the row whose
                                 // menu is open closes it
@@ -1707,17 +1707,15 @@ export component AppWindow inherits Window {
         }
     }
 
-    // A session row's own menu, hung off the dots that opened it.
+    // A session row's own menu, hung off the dots that opened it. At the window
+    // root like the model menu and the queue panel, so it paints over the
+    // transcript and the composer rather than under them.
     if root.menu-id != "" : SessionMenu {
         items: root.menu-items;
         anchor-x: root.menu-x;
         anchor-y: root.menu-y - 32px;
         viewport-h: root.height;
         picked(key) => { root.session-menu-picked(root.menu-id, key); }
-        close-requested => {
-            root.menu-id = "";
-            root.menu-closed();
-        }
     }
 
     // The queue panel hangs off the strip, at the window root like the model

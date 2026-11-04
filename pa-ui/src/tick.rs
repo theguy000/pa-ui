@@ -333,58 +333,45 @@ impl Tick {
                     // The three groups, each taking its rows from the one sorted
                     // list, so a group and its rows cannot disagree.
                     let (active, idle, done) = crate::sessions::session_groups(&items);
+                    // The column is the flat list the window draws: headers and
+                    // rows, each at the y it goes at. `sessions::column` builds it
+                    // from what the groups held and what they hold now, so the
+                    // same numbers drive a fold and a poll.
+                    let previous = groups_of(
+                        &ui.get_active_items(),
+                        &ui.get_idle_items(),
+                        &ui.get_done_items(),
+                    );
                     ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
                     ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
                     ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
-                    // The column is the flat list the window draws: headers and
-                    // rows, each at the y it goes at. The group order and the
-                    // fold state decide the positions here, so the sidebar never
-                    // asks a layout where a row ended up.
-                    let entries = crate::sessions::session_entries(
-                        &active,
-                        &idle,
-                        &done,
-                        ui.get_active_folded(),
-                        ui.get_idle_folded(),
-                        ui.get_done_folded(),
+                    let column = crate::sessions::column(
+                        (&active, &idle, &done),
+                        [
+                            ui.get_active_folded(),
+                            ui.get_idle_folded(),
+                            ui.get_done_folded(),
+                        ],
+                        // the fold state has not changed since the last rebuild,
+                        // so the groups held now were drawn then
+                        (&previous.0, &previous.1, &previous.2),
+                        [
+                            ui.get_active_folded(),
+                            ui.get_idle_folded(),
+                            ui.get_done_folded(),
+                        ],
                     );
-                    let current_entries = ui.get_session_entries();
-                    let entries_unchanged = current_entries.row_count() == entries.len()
-                        && current_entries.iter().zip(entries.iter()).all(|(a, b)| {
-                            a.is_header == b.is_header
-                                && a.label == b.label
-                                && a.count == b.count
-                                && a.folded == b.folded
-                                && (a.at - b.at).abs() < 0.5
-                                && a.item.id == b.item.id
-                                && a.item.name == b.item.name
-                                && a.item.status == b.item.status
-                                && a.item.done == b.item.done
-                        });
-                    if !entries_unchanged {
-                        let saved_cy = ui.invoke_get_sidebar_cy();
-                        // Each entry starts at its own previous y, found by key,
-                        // so a row that moved between groups slides from where it
-                        // was rather than from whatever row held its old slot.
-                        let previous: Vec<SessionEntry> = current_entries.iter().collect();
-                        let from_y = crate::sessions::from_y(&previous, &entries, 16.0);
-                        // a row whose start differs from its rest is one moving
-                        let any_group_move = entries
-                            .iter()
-                            .zip(from_y.iter())
-                            .any(|(entry, from)| (entry.at - from).abs() > 0.5);
-                        let new_h = crate::sessions::entries_height(&entries);
-                        ui.set_prev_sessions_height(ui.get_sessions_height());
-                        ui.set_sessions_height(new_h);
-                        ui.set_session_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
-                        if current_entries.row_count() > 0 {
-                            ui.set_fold_index(if any_group_move { -2 } else { -1 });
-                            ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(from_y))));
-                            ui.invoke_trigger_list_anim();
-                        } else {
-                            ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(Vec::<f32>::new()))));
-                        }
-                        ui.invoke_restore_sidebar_cy(saved_cy);
+                    // a row that slid to another group says so through the one
+                    // rule in `sessions.rs`, not through its own arithmetic
+                    let any_group_move = crate::sessions::any_moved(&column.previous, &column.entries);
+
+                    if column.changed() {
+                        crate::sessions::apply(
+                            &ui,
+                            column,
+                            if any_group_move { -2 } else { -1 },
+                            false,
+                        );
                     }
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     if ui.get_selected_id().is_empty() {

@@ -1,6 +1,4 @@
-//! Small formatting: labels, token counts, ages, widths, and the text inside a protocol message.
-
-use crate::*;
+//! Small formatting: labels, token counts, widths, and the text inside a protocol message.
 
 /// `river_ai` reads better as `river ai`; the catalog's own names are long.
 pub(crate) fn provider_label(provider: &str) -> String {
@@ -98,47 +96,4 @@ pub(crate) fn trim_to(text: &str, width: usize) -> String {
         return cleaned;
     }
     cleaned.chars().take(width.saturating_sub(1)).chain(['\u{2026}']).collect()
-}
-
-
-pub(crate) fn age_of(stamp: &str) -> String {
-    let Some(seconds) = parse_iso_seconds(stamp) else {
-        return String::new();
-    };
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    let delta = (now - seconds).max(0);
-    match delta {
-        0..=59 => "now".to_string(),
-        60..=3599 => format!("{}m", delta / 60),
-        3600..=86_399 => format!("{}h", delta / 3600),
-        _ => format!("{}d", delta / 86_400),
-    }
-}
-
-
-pub(crate) fn parse_iso_seconds(stamp: &str) -> Option<i64> {
-    if stamp.len() < 19 {
-        return None;
-    }
-    let num = |range: std::ops::Range<usize>| stamp.get(range).and_then(|part| part.parse::<i64>().ok());
-    let year = num(0..4)?;
-    let month = num(5..7)?;
-    let day = num(8..10)?;
-    let hour = num(11..13)?;
-    let minute = num(14..16)?;
-    let second = num(17..19)?;
-    Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
-}
-
-
-pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let shifted_month = if month > 2 { month - 3 } else { month + 9 };
-    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
 }

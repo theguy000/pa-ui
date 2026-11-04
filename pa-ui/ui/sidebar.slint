@@ -96,11 +96,10 @@ export component SessionRow inherits Rectangle {
     callback hovered(string, length);
     callback edit(string);
     callback commit(string, string);
-    // the three dots: the row's menu, opened beside the button. The position is
-    // sent so the panel can hang there, and the id so the window can read which
-    // item set the row's kind calls for.
-    callback menu(string, length, length);
-    // the same press, when the row's menu is already open: the window closes it
+    // the three dots: the row's menu, opened beside the button, or closed when
+    // this row's menu is the open one. The position is sent so the panel can
+    // hang there, and the id so the window can read which item set the row's
+    // kind calls for.
     callback toggled(string, length, length);
     // the row's own pointer state, so the component can watch it change: a
     // `changed` block only takes an identifier, and `ta.has-hover` is not one

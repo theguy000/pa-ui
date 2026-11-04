@@ -254,39 +254,9 @@ pub(crate) fn new_chat(ui: &AppWindow, job_tx: &Sender<Job>) {
     });
 }
 
-/// Rebuild the column from what the window holds right now, and hand the window
-/// the y every entry started from before the fold so `row-y` slides each entry
-/// from its old position to its new `at`.
-fn compose_entries(ui: &AppWindow, was: [bool; 3]) {
-    let (active, idle, done) = (
-        ui.get_active_items().iter().collect::<Vec<_>>(),
-        ui.get_idle_items().iter().collect::<Vec<_>>(),
-        ui.get_done_items().iter().collect::<Vec<_>>(),
-    );
-    let old_entries =
-        crate::sessions::session_entries(&active, &idle, &done, was[0], was[1], was[2]);
-    let entries = crate::sessions::session_entries(
-        &active,
-        &idle,
-        &done,
-        ui.get_active_folded(),
-        ui.get_idle_folded(),
-        ui.get_done_folded(),
-    );
-    let saved_cy = ui.invoke_get_sidebar_cy();
-    // the lists have the same rows in the same order, only the ys moved, so
-    // each entry starts at its own old y
-    let from_y: Vec<f32> = old_entries.iter().map(|entry| entry.at).collect();
-    ui.set_prev_sessions_height(crate::sessions::entries_height(&old_entries));
-    ui.set_sessions_height(crate::sessions::entries_height(&entries));
-    ui.set_session_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
-    ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(from_y))));
-    ui.invoke_trigger_list_anim();
-    ui.invoke_restore_sidebar_cy(saved_cy);
-}
-
 /// A group's header was clicked. The fold state is the window's, and the y each
-/// row started from comes from here, so the window only has to run the animation.
+/// row started from comes from `sessions::column`, so the window only has to run
+/// the animation.
 pub(crate) fn folds(ui: &AppWindow) {
     let window = ui.as_weak();
     let before: Rc<RefCell<[bool; 3]>> = Rc::new(RefCell::new([
@@ -305,8 +275,19 @@ pub(crate) fn folds(ui: &AppWindow) {
         let Some(index) = (0..3).find(|index| now[*index] != was[*index]) else {
             return;
         };
-        ui.set_fold_index(index as i32);
-        ui.set_fold_open(!now[index]);
-        compose_entries(&ui, was);
+        // the rows are the ones the last poll handed the window: a fold moves
+        // them, it does not reload them
+        let (active, idle, done) = groups_of(
+            &ui.get_active_items(),
+            &ui.get_idle_items(),
+            &ui.get_done_items(),
+        );
+        let column = sessions::column(
+            (&active, &idle, &done),
+            now,
+            (&active, &idle, &done),
+            was,
+        );
+        apply(&ui, column, index as i32, !now[index]);
     });
 }
