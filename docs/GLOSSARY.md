@@ -103,3 +103,13 @@ _Avoid_: channel, queue (the queue is both lanes together)
 **Parked message**:
 A message that waits in a lane instead of running now.
 _Avoid_: pending message, queued message
+
+### The model menu
+
+**Model menu**:
+The picker that lists providers and their models, with configured providers first and unconfigured ones folded until opened.
+_Avoid_: model selector, dropdown, provider list
+
+**Effort ladder**:
+The thinking-level submenu that hangs off a hovered model row when that model offers two or more thinking levels, clamped to the rung that would apply on switch.
+_Avoid_: thinking dropdown, effort submenu

@@ -1,4 +1,5 @@
-//! The sidebar's sessions: session rows, the sidebar's filter, and the name a session is shown under.
+//! The sidebar: session roster, group folding, UUID rebinding across daemon restarts,
+//! session context menu, search popup, and theme picker.
 
 use crate::*;
 
@@ -7,10 +8,6 @@ mod tests;
 
 /// The tag a session row carries: what `sidebar.slint` draws, and what decides
 /// which group the row sits in.
-///
-/// The three words are the daemon's three states, which are the only states
-/// there are: `Running`, `Idle` and `Inactive` from `classify_session_roster_status`.
-/// The window shows them as active, idle and done.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RowTag {
     /// A resident session with a turn in flight, or a message waiting on it.
@@ -22,8 +19,6 @@ pub(crate) enum RowTag {
 }
 
 impl RowTag {
-    /// The word `sidebar.slint` compares against, and the group the row sits
-    /// under: active first, then idle, then the done rows.
     pub(crate) fn word(self) -> &'static str {
         match self {
             RowTag::Active => "active",
@@ -32,7 +27,6 @@ impl RowTag {
         }
     }
 
-    /// The order the groups are drawn in.
     pub(crate) fn rank(self) -> u8 {
         match self {
             RowTag::Active => 0,
@@ -42,14 +36,6 @@ impl RowTag {
     }
 }
 
-/// The row's tag, read straight from the daemon's status formula.
-///
-/// `list` answers every saved session with `lifecycle: "live"` once it has a
-/// message, so lifecycle cannot say whether anything is running: 53 of this
-/// machine's "live" rows had no worker at all and read as idle beside the TUI's
-/// single idle session. `workerState` is what a worker actually stamps on the
-/// rows it holds, so residency comes from that and the busy/idle split is the
-/// daemon's own.
 pub(crate) fn tag_of(row: &SessionRow) -> RowTag {
     match row.roster_status() {
         "Running" => RowTag::Active,
@@ -60,7 +46,6 @@ pub(crate) fn tag_of(row: &SessionRow) -> RowTag {
 
 pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
     let full = display_name(row);
-    // every row gets a card: consistency was asked for explicitly, twice
     let tip = full.clone();
     let tag = tag_of(row);
     SessionItem {
@@ -75,8 +60,6 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
     }
 }
 
-/// When the session was last used, as the search popup says it: a day the reader
-/// is likely to think in, so today and yesterday by name and older days counted.
 pub(crate) fn age_label(row: &SessionRow) -> SharedString {
     let stamp = if row.last_activity.is_empty() {
         &row.modified
@@ -89,14 +72,10 @@ pub(crate) fn age_label(row: &SessionRow) -> SharedString {
     age_label_at(stamp, now)
 }
 
-/// The same label read against a given clock, so a test does not have to wait
-/// for a day to pass.
 fn age_label_at(stamp: &str, now: i64) -> SharedString {
     let Some(seconds) = stamp_seconds(stamp) else {
         return SharedString::new();
     };
-    // A stamp in the future is the clock disagreeing with itself, not a session
-    // used later today: read it as today rather than as a negative age.
     match (now - seconds).max(0) / 86_400 {
         0 => "Today".into(),
         1 => "Yesterday".into(),
@@ -104,9 +83,6 @@ fn age_label_at(stamp: &str, now: i64) -> SharedString {
     }
 }
 
-/// A `YYYY-MM-DDTHH:MM:SS` stamp as seconds since the epoch, or `None` when the
-/// stamp is too short to read. The zone suffix is ignored, so a stamp one zone
-/// away from the machine only moves the day boundary by hours.
 fn stamp_seconds(stamp: &str) -> Option<i64> {
     if stamp.len() < 19 {
         return None;
@@ -117,10 +93,6 @@ fn stamp_seconds(stamp: &str) -> Option<i64> {
     let year = num(0..4)?;
     let month = num(5..7)?;
     let day = num(8..10)?;
-    // A stamp that keeps its separators where the daemon puts them, so a string
-    // of nineteen digits is read as no date rather than as the year 20261. The
-    // bytes are safe to index: every separator is ASCII, so each one is a whole
-    // character and no range below can split one.
     let separators: [(usize, u8); 5] = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
     if separators
         .iter()
@@ -131,14 +103,17 @@ fn stamp_seconds(stamp: &str) -> Option<i64> {
     let hour = num(11..13)?;
     let minute = num(14..16)?;
     let second = num(17..19)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return None;
     }
     Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
 }
 
-/// Days since 1970-01-01 for a civil date, by Howard Hinnant's `days_from_civil`,
-/// which is exact for every date the calendar has.
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;
@@ -149,19 +124,12 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-
-
-/// Every session, as the sidebar draws it, grouped: active rows first, then
-/// idle, then done, each group kept in the daemon's order.
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
     let mut items: Vec<SessionItem> = rows.iter().map(to_item).collect();
     items.sort_by_key(|item| tag_word_rank(&item.status));
     items
 }
 
-/// The three groups as the window hands them to the column: each holding the
-/// rows of that group in drawing order, taken from the one sorted list so a
-/// group and its rows cannot disagree.
 pub(crate) fn session_groups(
     items: &[SessionItem],
 ) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
@@ -175,8 +143,6 @@ pub(crate) fn session_groups(
     (take(RowTag::Active), take(RowTag::Idle), take(RowTag::Done))
 }
 
-/// A row's word back to its tag. The word is what the window holds, since
-/// `SessionItem`'s status crosses into Slint as a string.
 fn tag_word_rank(word: &str) -> u8 {
     match word {
         "active" => RowTag::Active.rank(),
@@ -185,19 +151,6 @@ fn tag_word_rank(word: &str) -> u8 {
     }
 }
 
-/// The sessions column, as the window draws it: one flat list of headers and
-/// rows.
-///
-/// The groups are drawn in the daemon's order (active, idle, done). A folded
-/// group contributes its header and nothing else. Positions come from here
-/// rather than from Slint's layouts so that the height of the column is a
-/// number the window already has, not one a layout has to report back.
-///
-/// `at` is where a header stands, and where a row is drawn: the y it settles at
-/// with every group open. `target` is the same number for an unfolded group;
-/// inside the group a fold is moving, it is where the row would sit with that
-/// group open, so the rows keep their spacing while the group's box shrinks.
-/// `seam` is the group's index, which is what `fold-index` names.
 pub(crate) fn session_entries(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -246,9 +199,6 @@ pub(crate) fn session_entries(
     entries
 }
 
-/// One key per entry, the same before and after a fold: a header by its word, a
-/// row by its session's uuid. A row keeps its key when it moves between groups,
-/// which is how a poll tells it slid rather than arrived.
 pub(crate) fn entry_key(entry: &SessionEntry) -> String {
     if entry.is_header {
         format!("hdr:{}", entry.label)
@@ -257,13 +207,6 @@ pub(crate) fn entry_key(entry: &SessionEntry) -> String {
     }
 }
 
-/// Where each entry was drawn before the column was rebuilt, keyed by
-/// `entry_key`. `from_y` is aligned with `entries`, so `row-y` in `app.slint`
-/// slides one row from that row's own old y, whatever order either list is in.
-///
-/// A row that changed group has no shared history with the row it replaced in
-/// that slot, so it drops in from `slide` px on the side of the group it left:
-/// `-slide` from below, `+slide` from above. Fades are `app.slint`'s business.
 pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide: f32) -> Vec<f32> {
     let before: std::collections::HashMap<String, &SessionEntry> = previous
         .iter()
@@ -279,47 +222,31 @@ pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide:
         .collect()
 }
 
-/// Whether an entry slid to another group since the column was last drawn. This
-/// is the only place the question is answered: `from_y` drops such an entry in
-/// from the side, and `app.slint` fades it in over `arrived` while a fold or a
-/// poll is in flight. A check on the distance before and after would answer
-/// differently for a row that moved to a group that lands it at the same y.
 pub(crate) fn moved_between_groups(previous: &SessionEntry, entry: &SessionEntry) -> bool {
     previous.seam != entry.seam
 }
 
-/// Whether any entry slid to another group. What the window asks after a poll,
-/// before it decides which animation to run.
 pub(crate) fn any_moved(previous: &[SessionEntry], entries: &[SessionEntry]) -> bool {
     let before: std::collections::HashMap<String, &SessionEntry> = previous
         .iter()
         .map(|entry| (entry_key(entry), entry))
         .collect();
-    entries
-        .iter()
-        .any(|entry| before.get(&entry_key(entry)).is_some_and(|old| moved_between_groups(old, entry)))
+    entries.iter().any(|entry| {
+        before
+            .get(&entry_key(entry))
+            .is_some_and(|old| moved_between_groups(old, entry))
+    })
 }
 
-/// The column as one rebuild writes it: the entries the window draws, the y
-/// each one started from, how tall the column was and is, and whether a row or a
-/// group's border has moved at all.
-///
-/// Fold and poll go through here, so a fold state change and a row arriving from
-/// the daemon produce the same four numbers, and neither path can drift from
-/// the other.
 pub(crate) struct Column {
     pub(crate) previous: Vec<SessionEntry>,
     pub(crate) entries: Vec<SessionEntry>,
-    /// aligned with `entries`: the y each one starts from
     pub(crate) from_y: Vec<f32>,
     pub(crate) was_height: f32,
     pub(crate) height: f32,
 }
 
 impl Column {
-    /// Whether anything moved or changed: the first fill (when `previous` is
-    /// empty), a row added or removed, a row between groups, an entry at a new
-    /// y, or a row's visible fields updated.
     pub(crate) fn changed(&self) -> bool {
         self.entries.len() != self.previous.len()
             || self
@@ -327,35 +254,27 @@ impl Column {
                 .iter()
                 .zip(&self.from_y)
                 .any(|(entry, from)| (entry.at - from).abs() > 0.5)
-            || self
-                .entries
-                .iter()
-                .zip(&self.previous)
-                .any(|(a, b)| {
-                    a.is_header != b.is_header
-                        || a.label != b.label
-                        || a.count != b.count
-                        || a.folded != b.folded
-                        || a.item.id != b.item.id
-                        || a.item.name != b.item.name
-                        || a.item.status != b.item.status
-                        || a.item.done != b.item.done
-                })
+            || self.entries.iter().zip(&self.previous).any(|(a, b)| {
+                a.is_header != b.is_header
+                    || a.label != b.label
+                    || a.count != b.count
+                    || a.folded != b.folded
+                    || a.item.id != b.item.id
+                    || a.item.name != b.item.name
+                    || a.item.status != b.item.status
+                    || a.item.done != b.item.done
+            })
     }
 }
 
-/// Borrowed rows per group, in the order the window draws them.
 pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
 
-/// The three groups of a set of daemon rows, with every group folded open, for
-/// a window that fills the column from a list it made itself: the poll and the
-/// snapshot seed both come through here, so a change to grouping reaches both.
-pub(crate) fn groups_from(rows: &[SessionRow]) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+pub(crate) fn groups_from(
+    rows: &[SessionRow],
+) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
     session_groups(&session_items(rows))
 }
 
-/// Rebuild the column for `folded` (active, idle, done), given what each group
-/// held before and that same group's fold state then.
 pub(crate) fn column(
     groups: Groups<'_>,
     folded: [bool; 3],
@@ -363,8 +282,7 @@ pub(crate) fn column(
     was_folded: [bool; 3],
 ) -> Column {
     let (active, idle, done) = groups;
-    let first_fill = was.0.len() + was.1.len() + was.2.len() == 0
-        && folded == was_folded;
+    let first_fill = was.0.len() + was.1.len() + was.2.len() == 0 && folded == was_folded;
     let previous = if first_fill {
         Vec::new()
     } else {
@@ -372,7 +290,6 @@ pub(crate) fn column(
     };
     let entries = session_entries(active, idle, done, folded[0], folded[1], folded[2]);
     let from_y = if first_fill {
-        // nothing has been drawn yet: every entry starts where it is
         entries.iter().map(|entry| entry.at).collect()
     } else {
         from_y(&previous, &entries, 16.0)
@@ -380,14 +297,12 @@ pub(crate) fn column(
     Column {
         was_height: entries_height(&previous),
         height: entries_height(&entries),
-
         previous,
         entries,
         from_y,
     }
 }
-/// Copy the rows the window holds into the three groups `column` takes. The
-/// window's models are the source, so a rebuild never needs the daemon.
+
 pub(crate) fn groups_of(
     active: &slint::ModelRc<SessionItem>,
     idle: &slint::ModelRc<SessionItem>,
@@ -400,9 +315,6 @@ pub(crate) fn groups_of(
     )
 }
 
-/// Write one rebuild to the window: the entries, the y each starts from, the
-/// two heights, and the order to animate in. A first fill has nothing to slide
-/// from, so it sets the entries and leaves the animation at rest.
 pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: bool) {
     if column.previous.is_empty() {
         ui.set_session_entries(slint::ModelRc::from(std::rc::Rc::new(
@@ -426,7 +338,6 @@ pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: 
     ui.invoke_restore_sidebar_cy(saved_cy);
 }
 
-/// The column's height for a set of entries, and its bottom edge.
 pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
     entries
         .iter()
@@ -442,17 +353,10 @@ pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
         .fold(COLUMN_TOP as f32, f32::max)
 }
 
-/// A header is 32px and a row 32px, both in `sidebar.slint` and `app.slint`:
-/// the window draws its entries at these heights, so the two must agree.
 pub(crate) const HEADER_HEIGHT: i32 = 32;
 pub(crate) const ROW_HEIGHT: i32 = 32;
-/// Where the first header goes: below the column's band, the New Session button
-/// and the search row. The list is pinned to the window's top edge, so this
-/// offset is the entries' own, and `app.slint` places the list at the same y.
 pub(crate) const COLUMN_TOP: i32 = 88;
 
-/// The session the selection follows: ids are re-keyed by a daemon restart,
-/// the session's uuid is not.
 pub(crate) fn uuid_of<'a>(rows: &'a [SessionRow], id: &str) -> Option<&'a str> {
     rows.iter()
         .find(|row| row.id == id)
@@ -473,4 +377,512 @@ pub(crate) fn display_name(row: &SessionRow) -> SharedString {
         return format!("{last} \u{00b7} {}", tail(&row.id, 6)).into();
     }
     tail(&row.id, 10).into()
+}
+
+/// Put the last copied id on the system clipboard.
+pub(crate) fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("no clipboard: {error}"))?;
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|error| error.to_string())
+}
+
+/// Pure UUID rebinding resolution: when `selected` is missing from `rows`, looks up
+/// a row sharing `selected_uuid` and returns its new `id`.
+pub(crate) fn resolve_rebound_id(
+    rows: &[SessionRow],
+    selected: &str,
+    selected_uuid: Option<&str>,
+) -> Option<String> {
+    if selected.is_empty() || rows.iter().any(|row| row.id == selected) {
+        return None;
+    }
+    let uuid = selected_uuid?;
+    rows.iter()
+        .find(|row| row.session_id == uuid)
+        .map(|row| row.id.clone())
+}
+
+/// Pure family cost calculation across spawned child sessions in the roster.
+pub(crate) fn compute_family_cost(rows: &[SessionRow], session: &str, own_cost: f64) -> (f64, bool) {
+    let mut children_cost = 0.0f64;
+    let mut has_children = false;
+    let own_sid = rows
+        .iter()
+        .find(|row| row.id == session)
+        .map(|row| row.session_id.as_str())
+        .filter(|sid| !sid.is_empty());
+    if let Some(own_sid) = own_sid {
+        for row in rows.iter().filter(|row| row.parent == own_sid) {
+            has_children = true;
+            children_cost += row.cost;
+        }
+    }
+    (own_cost + children_cost, has_children)
+}
+
+/// The items a session row's menu offers, in the order they are drawn.
+pub(crate) fn menu_items(done: bool, confirming: bool) -> Vec<SessionMenuItem> {
+    if done {
+        let delete = if confirming {
+            menu_item(
+                "delete",
+                "Delete for good",
+                "this removes the session file",
+                true,
+            )
+        } else {
+            menu_item("delete", "Delete", "", true)
+        };
+        vec![
+            menu_item("rename", "Rename", "", false),
+            menu_item("copy-id", "Copy id", "", false),
+            delete,
+        ]
+    } else {
+        vec![
+            menu_item("done", "Mark done", "", false),
+            menu_item("rename", "Rename", "", false),
+            menu_item("share", "Share as gist", "", false),
+            menu_item("copy-id", "Copy id", "", false),
+        ]
+    }
+}
+
+fn menu_item(key: &str, label: &str, note: &str, separated: bool) -> SessionMenuItem {
+    SessionMenuItem {
+        key: key.into(),
+        label: label.into(),
+        danger: separated,
+        note: note.into(),
+        separated,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MenuAction {
+    MarkDone,
+    Rename,
+    Share,
+    CopyId,
+    Delete,
+    Nothing,
+}
+
+pub(crate) fn menu_action(key: &str, done: bool) -> MenuAction {
+    match key {
+        "done" if !done => MenuAction::MarkDone,
+        "rename" => MenuAction::Rename,
+        "share" if !done => MenuAction::Share,
+        "copy-id" => MenuAction::CopyId,
+        "delete" if done => MenuAction::Delete,
+        _ => MenuAction::Nothing,
+    }
+}
+
+fn current_item(ui: &AppWindow, id: &str) -> Option<SessionItem> {
+    ui.get_sessions().iter().find(|item| item.id == id)
+}
+
+const MOCK_THEMES: [(&str, &str); 5] = [
+    ("default", "Default"),
+    ("mono", "Mono"),
+    ("obsidian", "Obsidian"),
+    ("ember", "Ember"),
+    ("paper", "Paper"),
+];
+
+fn populate_themes(ui: &AppWindow, active: &str) {
+    let rows: Vec<ThemeItem> = MOCK_THEMES
+        .iter()
+        .map(|(id, label)| ThemeItem {
+            id: (*id).into(),
+            label: (*label).into(),
+            current: *id == active,
+        })
+        .collect();
+    ui.set_theme_items(ModelRc::from(Rc::new(VecModel::from(rows))));
+}
+
+/// The rows the search popup draws for one query.
+pub(crate) fn match_rows(sessions: &[SessionRow], query: &str) -> ModelRc<SearchRow> {
+    let rows: Vec<SearchRow> = search::matches(sessions, query)
+        .into_iter()
+        .map(|(row, offsets)| {
+            let name = search::elide(&display_name(row));
+            SearchRow {
+                id: row.id.as_str().into(),
+                age: age_label(row),
+                glyphs: ModelRc::from(Rc::new(VecModel::from(search::glyphs(&name, &offsets)))),
+            }
+        })
+        .collect();
+    ModelRc::from(Rc::new(VecModel::from(rows)))
+}
+
+pub(crate) fn open_search(ui: &AppWindow, sessions: &[SessionRow]) {
+    let query = ui.get_search_query();
+    ui.set_search_rows(match_rows(sessions, query.as_str()));
+    ui.set_search_index(0);
+    ui.set_search_field_typed(false);
+    ui.set_search_open(true);
+    ui.set_search_focus_tick(ui.get_search_focus_tick() + 1);
+}
+
+/// Stateful Sidebar module owning the session roster, fold state, UUID rebinding,
+/// context menu confirmation, and search popup.
+pub(crate) struct Sidebar {
+    pub cache: Rc<RefCell<Vec<SessionRow>>>,
+    pub selected_uuid: RefCell<Option<String>>,
+    groups: Rc<RefCell<(Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>)>>,
+}
+
+impl Sidebar {
+    pub fn new(ui: &AppWindow, job_tx: &Sender<Job>) -> Rc<Self> {
+        let sidebar = Rc::new(Self {
+            cache: Rc::new(RefCell::new(Vec::new())),
+            selected_uuid: RefCell::new(None),
+            groups: Rc::new(RefCell::new((Vec::new(), Vec::new(), Vec::new()))),
+        });
+        sidebar.bind_ui(ui, job_tx);
+        sidebar
+    }
+
+    pub fn track_selection(&self, selected: &str) {
+        if let Some(uuid) = uuid_of(&self.cache.borrow(), selected) {
+            *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        }
+    }
+
+    pub fn family_cost(&self, session: &str, own_cost: f64) -> (f64, bool) {
+        if let Ok(rows) = self.cache.try_borrow() {
+            compute_family_cost(&rows, session, own_cost)
+        } else {
+            (own_cost, false)
+        }
+    }
+
+    pub fn seed(&self, ui: &AppWindow, rows: Vec<SessionRow>) {
+        let (active, idle, done) = groups_from(&rows);
+        let col = column(
+            (&active, &idle, &done),
+            [false, false, false],
+            (&[], &[], &[]),
+            [false, false, false],
+        );
+        apply(ui, col, -1, false);
+        ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
+        ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
+        ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
+        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(session_items(&rows)))));
+        *self.groups.borrow_mut() = (active, idle, done);
+        *self.cache.borrow_mut() = rows;
+    }
+
+    /// Apply a freshly polled session roster to the window and resolve any UUID rebinding.
+    /// Returns `Some(rebound_id)` if the active selection was re-keyed by the daemon.
+    pub fn apply_roster(&self, ui: &AppWindow, rows: Vec<SessionRow>) -> Option<String> {
+        *self.cache.borrow_mut() = rows.clone();
+        let items: Vec<SessionItem> = session_items(&rows);
+        let (active, idle, done) = session_groups(&items);
+        let folded = [
+            ui.get_active_folded(),
+            ui.get_idle_folded(),
+            ui.get_done_folded(),
+        ];
+        let col = {
+            let prev = self.groups.borrow();
+            column(
+                (&active, &idle, &done),
+                folded,
+                (&prev.0, &prev.1, &prev.2),
+                folded,
+            )
+        };
+        *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
+        ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+        ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+        ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+
+        let any_group_move = any_moved(&col.previous, &col.entries);
+        if col.changed() {
+            apply(ui, col, if any_group_move { -2 } else { -1 }, false);
+        }
+        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+
+        if ui.get_selected_id().is_empty() {
+            let preferred = std::env::var("PA_SELECT").ok();
+            let chosen = preferred
+                .as_deref()
+                .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
+                .or_else(|| rows.first());
+            if let Some(first) = chosen {
+                ui.set_selected_id(first.id.clone().into());
+                *self.selected_uuid.borrow_mut() = Some(first.session_id.clone());
+            }
+        }
+
+        let selected = ui.get_selected_id().to_string();
+        let mut rebound_out = None;
+        let current_uuid = self.selected_uuid.borrow().clone();
+        if let Some(rebound) = resolve_rebound_id(&rows, &selected, current_uuid.as_deref()) {
+            if crate::env_cfg::cfg().debug {
+                eprintln!("[rebind] {selected} -> {rebound}");
+            }
+            ui.set_selected_id(rebound.clone().into());
+            rebound_out = Some(rebound);
+        }
+
+        let selected = ui.get_selected_id().to_string();
+        if let Some(uuid) = uuid_of(&rows, &selected) {
+            *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        }
+        rebound_out
+    }
+
+    fn bind_ui(&self, ui: &AppWindow, job_tx: &Sender<Job>) {
+        // 1. New chat
+        {
+            let jobs = job_tx.clone();
+            ui.on_new_chat(move || {
+                let _ = jobs.send(Job::NewChat);
+            });
+        }
+
+        // 2. Rename
+        {
+            let jobs = job_tx.clone();
+            let window = ui.as_weak();
+            ui.on_rename_requested(move |session, name| {
+                let session = session.to_string();
+                if session.is_empty() || name.trim().is_empty() {
+                    return;
+                }
+                let saved = window
+                    .upgrade()
+                    .and_then(|ui| current_item(&ui, &session))
+                    .filter(|item| item.done)
+                    .map(|item| item.file.to_string());
+                if let Some(session_path) = saved {
+                    let _ = jobs.send(Job::RenameSaved {
+                        session_path,
+                        name: name.trim().to_string(),
+                    });
+                    return;
+                }
+                let _ = jobs.send(Job::Rename {
+                    session,
+                    name: name.trim().to_string(),
+                });
+            });
+        }
+
+        // 3. Per-session menu
+        {
+            let jobs = job_tx.clone();
+            let window = ui.as_weak();
+            let confirming: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+            let open_window = ui.as_weak();
+            let open_confirming = confirming.clone();
+            ui.on_session_menu_opened(move |id| {
+                let id = id.to_string();
+                let Some(ui) = open_window.upgrade() else {
+                    return;
+                };
+                let Some(item) = current_item(&ui, &id) else {
+                    return;
+                };
+                let mut confirming = open_confirming.borrow_mut();
+                if confirming.as_deref() != Some(id.as_str()) {
+                    *confirming = None;
+                }
+                let items = menu_items(item.done, confirming.is_some());
+                ui.set_menu_items(ModelRc::from(Rc::new(VecModel::from(items))));
+            });
+
+            let close_confirming = confirming.clone();
+            ui.on_menu_closed(move || {
+                *close_confirming.borrow_mut() = None;
+            });
+
+            let picked_confirming = confirming;
+            ui.on_session_menu_picked(move |id, key| {
+                let id = id.to_string();
+                let key = key.to_string();
+                let Some(ui) = window.upgrade() else { return };
+                let mut confirming = picked_confirming.borrow_mut();
+                let done = match current_item(&ui, &id) {
+                    Some(item) => item.done,
+                    None if confirming.as_deref() == Some(id.as_str()) => true,
+                    None => return,
+                };
+                match menu_action(&key, done) {
+                    MenuAction::Delete if confirming.as_deref() != Some(id.as_str()) => {
+                        *confirming = Some(id);
+                        let items = menu_items(true, true);
+                        ui.set_menu_items(ModelRc::from(Rc::new(VecModel::from(items))));
+                        return;
+                    }
+                    MenuAction::Delete => {
+                        *confirming = None;
+                        let path = current_item(&ui, &id)
+                            .map(|item| item.file.to_string())
+                            .unwrap_or_default();
+                        if path.is_empty() {
+                            crate::status::trouble(
+                                &ui,
+                                "could not delete: the row carries no session file",
+                            );
+                        } else {
+                            let _ = jobs.send(Job::DeleteSaved { session_path: path });
+                        }
+                        ui.set_menu_id("".into());
+                        return;
+                    }
+                    MenuAction::MarkDone => {
+                        *confirming = None;
+                        let _ = jobs.send(Job::MarkDone { session: id });
+                    }
+                    MenuAction::Rename => {
+                        *confirming = None;
+                        let Some(item) = current_item(&ui, &id) else {
+                            return;
+                        };
+                        ui.set_menu_id("".into());
+                        ui.set_editing_id(id.into());
+                        ui.set_draft(item.full);
+                        return;
+                    }
+                    MenuAction::Share => {
+                        *confirming = None;
+                        let _ = jobs.send(Job::Share { session: id });
+                    }
+                    MenuAction::CopyId => {
+                        *confirming = None;
+                        let Some(item) = current_item(&ui, &id) else {
+                            return;
+                        };
+                        match copy_to_clipboard(&item.uuid) {
+                            Ok(()) => crate::status::say(&ui, "session id copied"),
+                            Err(error) => {
+                                crate::status::trouble(&ui, format!("could not copy: {error}"))
+                            }
+                        }
+                    }
+                    MenuAction::Nothing => {
+                        *confirming = None;
+                    }
+                }
+                ui.set_menu_id("".into());
+            });
+        }
+
+        // 4. Group folds
+        {
+            let window = ui.as_weak();
+            let groups = self.groups.clone();
+            let before: Rc<RefCell<[bool; 3]>> = Rc::new(RefCell::new([
+                ui.get_active_folded(),
+                ui.get_idle_folded(),
+                ui.get_done_folded(),
+            ]));
+            ui.on_fold_changed(move || {
+                let Some(ui) = window.upgrade() else { return };
+                let now = [
+                    ui.get_active_folded(),
+                    ui.get_idle_folded(),
+                    ui.get_done_folded(),
+                ];
+                let was = before.replace(now);
+                let Some(index) = (0..3).find(|index| now[*index] != was[*index]) else {
+                    return;
+                };
+                let held = groups.borrow();
+                let (active, idle, done) = if held.0.is_empty() && held.1.is_empty() && held.2.is_empty() {
+                    groups_of(
+                        &ui.get_active_items(),
+                        &ui.get_idle_items(),
+                        &ui.get_done_items(),
+                    )
+                } else {
+                    held.clone()
+                };
+                drop(held);
+                let col = column((&active, &idle, &done), now, (&active, &idle, &done), was);
+                apply(&ui, col, index as i32, !now[index]);
+            });
+        }
+
+        // 5. Theme picker
+        {
+            let initial = crate::env_cfg::cfg()
+                .theme
+                .as_deref()
+                .unwrap_or("default");
+            populate_themes(ui, initial);
+
+            let weak = ui.as_weak();
+            ui.on_theme_picked(move |id| {
+                let Some(ui) = weak.upgrade() else { return };
+                let id_str = id.as_str();
+                populate_themes(&ui, id_str);
+                let selection = if id_str == "default" {
+                    None
+                } else {
+                    Some(id_str)
+                };
+                let (resolved, refusal) = crate::theme::select(selection);
+                if refusal.is_none() {
+                    crate::theme::apply(&ui, &resolved);
+                }
+            });
+        }
+
+        // 6. Search popup callbacks
+        {
+            let sessions = self.cache.clone();
+            let weak = ui.as_weak();
+            ui.on_search_open_requested(move || {
+                let Some(ui) = weak.upgrade() else { return };
+                open_search(&ui, &sessions.borrow());
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            let rows = self.cache.clone();
+            ui.on_search_typed(move |query| {
+                let Some(ui) = weak.upgrade() else { return };
+                let found = match_rows(&rows.borrow(), query.as_str());
+                ui.set_search_index(0);
+                ui.set_search_rows(found);
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            ui.on_search_picked(move |id| {
+                let Some(ui) = weak.upgrade() else { return };
+                ui.set_model_menu(false);
+                ui.set_queue_open(false);
+                ui.set_selected_id(id);
+                ui.set_hover_title(SharedString::new());
+                ui.set_search_field_typed(false);
+                ui.set_search_open(false);
+                ui.invoke_focus_composer();
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            ui.on_search_closed(move || {
+                let Some(ui) = weak.upgrade() else { return };
+                ui.set_search_field_typed(false);
+                ui.set_search_open(false);
+                ui.invoke_focus_composer();
+            });
+        }
+        ui.on_opens_search(|text, control, search_open| {
+            search::keys::opens_search(text.as_str(), control, search_open)
+        });
+    }
 }

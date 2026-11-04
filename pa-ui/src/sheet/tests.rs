@@ -29,15 +29,14 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
     let sheet = Sheet {
         inner: RefCell::new(Inner {
             rows: Vec::new(),
-                heights: Vec::new(),
-                measured: Vec::new(),
-                last_prepend_px: 0.0,
+            last_prepend_px: 0.0,
             index: std::collections::HashMap::new(),
             open: None,
             virtual_state: None,
-                drawn: Box::new(Recording(orders.clone())),
+            drawn: Box::new(Recording(orders.clone())),
         }),
         vstate: Rc::new(RefCell::new(VirtualSlintRows::new(Rc::new(slint::VecModel::default())))),
+        paging: RefCell::new(Paging::new(2)),
     };
     (sheet, orders)
 }
@@ -81,7 +80,6 @@ fn an_open_row_stays_open_when_the_poll_rebuilds_it() {
     sheet.toggle(0);
     assert!(sheet.rows()[0].expanded);
 
-    // the same two rows arrive again, collapsed, exactly as a poll delivers them
     sheet.merge(vec![code, cell]);
 
     assert!(sheet.rows()[0].expanded, "the open code block was collapsed by the poll");
@@ -108,7 +106,6 @@ fn the_store_copy_replaces_the_answer_where_it_stands() {
     sheet.merge(vec![row("m2", transcript::KIND_AGENT, "", "", "half an answer")]);
     assert_eq!(sheet.rows().len(), 2);
 
-    // the turn closes and the store's copy of the same message arrives, longer
     sheet.answer_ended();
     sheet.merge(vec![
         row("m2", transcript::KIND_AGENT, "", "", "the whole answer"),
@@ -177,7 +174,6 @@ fn leaving_a_chat_mid_answer_does_not_touch_the_new_one() {
     sheet.answer_began("a3");
     sheet.merge(vec![row("a3", transcript::KIND_AGENT, "", "", "still writing")]);
 
-    // the reader switches chats while that answer is being written
     let b = vec![
         row("b1", transcript::KIND_USER, "", "", "ask b"),
         row("b2", transcript::KIND_AGENT, "", "", "answer b"),
@@ -196,8 +192,101 @@ fn rows_that_arrive_while_an_answer_is_open_land_above_it() {
     sheet.answer_began("live");
     sheet.merge(vec![row("live", transcript::KIND_AGENT, "", "", "writing")]);
 
-    // a message the store had not published yet arrives mid-answer
     sheet.merge(vec![row("m2", transcript::KIND_AGENT, "", "", "older news")]);
 
     assert_eq!(messages(&sheet), ["m1", "m2", "live"], "the answer drifted above newer rows");
+}
+
+fn settled() -> PagerState {
+    PagerState {
+        follows_bottom: false,
+        ready: true,
+        loading: false,
+        has_older: true,
+        content_y: -3000.0,
+        content_height: 2000.0,
+        height: 600.0,
+    }
+}
+
+#[test]
+fn a_page_is_fetched_only_at_the_top() {
+    let mut state = settled();
+    assert!(!should_load_older(state), "mid-transcript must not fetch");
+    state.content_y = -2500.0;
+    assert!(!should_load_older(state), "still below the slack band");
+    state.content_y = -2200.0;
+    assert!(should_load_older(state), "at the top: fetch");
+    state.content_y = 0.0;
+    assert!(should_load_older(state), "clamped at the very top");
+}
+
+#[test]
+fn nothing_is_fetched_when_there_is_nothing_to_fetch() {
+    let mut state = settled();
+    state.content_y = 0.0;
+    state.follows_bottom = true;
+    assert!(!should_load_older(state));
+    state.follows_bottom = false;
+    state.has_older = false;
+    assert!(!should_load_older(state));
+    state.has_older = true;
+    state.loading = true;
+    assert!(!should_load_older(state));
+    state.loading = false;
+    state.ready = false;
+    assert!(!should_load_older(state));
+    state.ready = true;
+    state.content_height = 400.0;
+    assert!(!should_load_older(state));
+}
+
+#[test]
+fn scroll_and_hold_guards_are_exact_opposites_when_not_dragging() {
+    assert!(!may_autoscroll(true, true));
+    assert!(!may_autoscroll(false, false));
+    assert!(may_autoscroll(true, false));
+    assert!(should_hold_offset(false, false));
+    assert!(!should_hold_offset(true, false));
+    assert!(!should_hold_offset(false, true));
+}
+
+#[test]
+fn idle_floor_trim_evicts_prepended_pages_after_sixty_seconds_and_restores_tail_cursor() {
+    let (sheet, _) = sheet();
+    let tail_msgs = vec![serde_json::json!({"id": "m3", "role": "user", "timestamp": 10})];
+    assert_eq!(
+        sheet.accept_tail_page(&tail_msgs, "cursor-m3", "cursor-m3", true, true, false),
+        Some(true)
+    );
+    sheet.replace(vec![
+        row("m3", transcript::KIND_USER, "", "", "newest"),
+        row("m4", transcript::KIND_AGENT, "", "", "reply"),
+    ]);
+
+    // Reader scrolls up and loads an older page
+    let cursor = sheet.check_load_older(false, true, -100.0, 2000.0, 600.0);
+    assert_eq!(cursor.as_deref(), Some("cursor-m3"));
+    let (_, has_older) = sheet.complete_older_page(
+        vec![row("m1", transcript::KIND_USER, "", "", "oldest")],
+        false,
+        "cursor-m1".to_string(),
+        false,
+    );
+    assert!(!has_older);
+    assert_eq!(messages(&sheet), ["m1", "m3", "m4"]);
+
+    // Reader returns to floor; before 60s, nothing is trimmed
+    let t0 = SystemTime::now();
+    assert_eq!(sheet.check_idle_floor_trim(true, t0), None);
+    assert_eq!(
+        sheet.check_idle_floor_trim(true, t0 + Duration::from_secs(30)),
+        None
+    );
+
+    // At 60s, rows above m3 are trimmed and `has_older` / `oldest_cursor` restore to `cursor-m3`
+    let trimmed = sheet.check_idle_floor_trim(true, t0 + Duration::from_secs(60));
+    assert_eq!(trimmed, Some((1, true)));
+    assert_eq!(messages(&sheet), ["m3", "m4"]);
+    assert!(sheet.has_older());
 }

@@ -1,4 +1,4 @@
-﻿//! What the sidebar's rows must say, asserted on the items the window hands the
+//! What the sidebar's rows must say, asserted on the items the window hands the
 //! list: the status word `sidebar.slint` compares, built from the daemon's wire
 //! JSON.
 //!
@@ -347,3 +347,100 @@ fn a_row_with_no_readable_stamp_has_no_age() {
     assert_eq!(age_label(&row), "");
 }
 
+
+fn daemon_row(id: &str, name: &str) -> SessionRow {
+    SessionRow {
+        id: id.to_string(),
+        session_id: id.to_string(),
+        name: name.to_string(),
+        cwd: "C:\\work".to_string(),
+        activity: "idle".to_string(),
+        lifecycle: "ready".to_string(),
+        last_activity: "2026-11-03T00:00:00Z".to_string(),
+        ..SessionRow::default()
+    }
+}
+
+#[test]
+fn opening_on_a_populated_cache_lists_every_session() {
+    use slint::Model;
+    let rows = [
+        daemon_row("1", "prime-agent"),
+        daemon_row("2", "hello"),
+        daemon_row("3", "do some random tool calls"),
+    ];
+    assert_eq!(match_rows(&rows, "").row_count(), 3);
+}
+
+#[test]
+fn each_row_carries_the_sessions_id() {
+    use slint::Model;
+    let rows = [daemon_row("1", "prime-agent")];
+    let entries = match_rows(&rows, "");
+    assert_eq!(entries.row_data(0).expect("a row").id.as_str(), "1");
+}
+
+#[test]
+fn an_unnamed_session_still_draws_a_name() {
+    use slint::Model;
+    let mut row = daemon_row("abc", "");
+    row.cwd = "C:\\work\\prime-agent".to_string();
+    let name = display_name(&row);
+    let entries = match_rows(&[row], "");
+    let glyphs = entries.row_data(0).expect("a row").glyphs;
+    assert_eq!(glyphs.row_count(), name.chars().count());
+    let drawn: String = (0..glyphs.row_count())
+        .map(|index| glyphs.row_data(index).expect("a glyph").text.to_string())
+        .collect();
+    assert_eq!(drawn, "prime-agent \u{00b7} abc");
+}
+
+#[test]
+fn a_cut_name_marks_only_the_letters_it_shows() {
+    use slint::Model;
+    let row = daemon_row("1", "alpha beta gamma delta epsilon zeta eta theta iota");
+    let entries = match_rows(&[row], "beta");
+    let glyphs = entries.row_data(0).expect("a row").glyphs;
+    let marked: String = (0..glyphs.row_count())
+        .filter(|index| glyphs.row_data(*index).expect("a glyph").matched)
+        .map(|index| glyphs.row_data(index).expect("a glyph").text.to_string())
+        .collect();
+    assert_eq!(marked, "beta");
+}
+
+#[test]
+fn an_empty_cache_draws_no_rows() {
+    use slint::Model;
+    assert_eq!(match_rows(&[], "").row_count(), 0);
+}
+
+#[test]
+fn rebind_finds_new_session_id_by_uuid_across_daemon_restart() {
+    let mut r = daemon_row("resident-9", "my chat");
+    r.session_id = "uuid-stable".to_string();
+    let rows = [r];
+    assert_eq!(
+        resolve_rebound_id(&rows, "saved-old", Some("uuid-stable")),
+        Some("resident-9".to_string())
+    );
+    assert_eq!(
+        resolve_rebound_id(&rows, "resident-9", Some("uuid-stable")),
+        None
+    );
+}
+
+#[test]
+fn family_cost_sums_spawned_children_with_parent_session_id() {
+    let mut parent = daemon_row("s1", "parent");
+    parent.session_id = "uuid-parent".to_string();
+    parent.cost = 1.25;
+    let mut child1 = daemon_row("s2", "child1");
+    child1.parent = "uuid-parent".to_string();
+    child1.cost = 0.50;
+    let mut child2 = daemon_row("s3", "child2");
+    child2.parent = "uuid-parent".to_string();
+    child2.cost = 0.25;
+    let (total, has_children) = compute_family_cost(&[parent, child1, child2], "s1", 1.25);
+    assert!(has_children);
+    assert!((total - 2.00).abs() < 1e-6);
+}

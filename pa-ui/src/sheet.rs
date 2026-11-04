@@ -1,4 +1,5 @@
-//! The sheet: the rows the reader sees, and the virtualized window that draws them.
+//! The sheet: the rows the reader sees, backward paging, idle floor eviction,
+//! reader scroll guards, and the virtualized window that draws them.
 
 use crate::*;
 use std::cell::Ref;
@@ -23,10 +24,89 @@ const MAX_MOUNTED_ROWS: usize = 72;
 const OVERSCAN_ROWS: usize = 20;
 const SHIFT_STEP: usize = 6;
 
+/// How close to the top counts as "the reader reached the top".
+pub(crate) const TOP_SLACK: f32 = 2200.0;
+
+/// Why the window would (or would not) ask for older history.
+#[derive(Debug, Clone, Copy)]
+pub struct PagerState {
+    /// the reader is parked at the newest row (nothing to fetch above them)
+    pub follows_bottom: bool,
+    /// the transcript has settled since the last rebuild
+    pub ready: bool,
+    /// a page is already in flight
+    pub loading: bool,
+    /// the store said there is a page before this one
+    pub has_older: bool,
+    /// scroll offset of the list (negative once scrolled down)
+    pub content_y: f32,
+    /// full height of the list's content
+    pub content_height: f32,
+    /// height of the list itself
+    pub height: f32,
+}
+
+#[must_use]
+pub fn should_load_older(state: PagerState) -> bool {
+    if state.follows_bottom {
+        return false;
+    }
+    if !state.ready || state.loading || !state.has_older {
+        return false;
+    }
+    if state.content_height <= state.height {
+        return false;
+    }
+    state.content_y >= -TOP_SLACK
+}
+
+/// Whether the reader's view must be held still while rows change.
+#[must_use]
+pub fn should_hold_offset(following: bool, dragging: bool) -> bool {
+    !following && !dragging
+}
+
+/// The reader's offset, if it is theirs to keep right now.
+pub(crate) fn hold_offset(ui: &AppWindow) -> Option<f32> {
+    if !should_hold_offset(ui.get_follow_bottom(), ui.get_scrollbar_dragging()) {
+        return None;
+    }
+    Some(ui.get_dbg_cy())
+}
+
+/// Hold the reader's place across a model mutation.
+pub(crate) fn pin_offset_across_layout(_ui: &AppWindow, _held: Option<f32>) {}
+
+/// Whether the window is allowed to move the view at all right now.
+#[must_use]
+pub fn may_autoscroll(following: bool, dragging: bool) -> bool {
+    following && !dragging
+}
+
+/// Follow the newest row only when the reader is already there.
+pub(crate) fn scroll_if_parked(ui: &AppWindow) {
+    if ui.get_follow_bottom() && !ui.get_scrollbar_dragging() {
+        scroll_to_end_when_ready(&ui.as_weak());
+    }
+}
+
+/// Move to the newest row because the reader asked for it: a send, or a new chat.
+pub(crate) fn force_scroll_to_end(ui: &AppWindow) {
+    ui.set_follow_bottom(true);
+    ui.invoke_force_scroll_to_end();
+}
+
+pub(crate) fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
+    let Some(current) = ui.upgrade() else { return };
+    if !may_autoscroll(current.get_follow_bottom(), current.get_scrollbar_dragging()) {
+        return;
+    }
+    current.invoke_scroll_to_end();
+}
+
 /// Accurate height estimator matched to `TranscriptRow` in `app.slint`.
 fn estimate_row_height(row: &Row) -> f32 {
     match row.kind {
-        // User bubble: padding 6px top + 6px bottom + inner 8px top + 8px bottom + 15px font (~21.5px line)
         0 => {
             let lines = row
                 .body
@@ -36,7 +116,6 @@ fn estimate_row_height(row: &Row) -> f32 {
                 .max(1);
             (lines as f32 * 21.5) + 28.0
         }
-        // Assistant prose: 12px padding + 15px StyledText (~22.5px per line + paragraph spacing)
         1 => {
             let lines = row
                 .body
@@ -52,7 +131,6 @@ fn estimate_row_height(row: &Row) -> f32 {
                 .max(1);
             (lines as f32 * 22.5) + 12.0
         }
-        // Thinking block: 24px bar + 8px padding
         2 => {
             if row.expanded {
                 let lines = row.body.lines().count().clamp(1, 6);
@@ -61,7 +139,6 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
-        // Tool calls / notices
         _ => {
             if row.expanded {
                 let code_lines = row.code.lines().count().min(12);
@@ -241,7 +318,6 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             && target_end <= old_end
             && (old_start - target_start) <= 16
         {
-            // Incremental slide UP: keep the overlapping rows untouched in Slint!
             let remove_end = old_end - target_end;
             let prepend_rows = vs.all_rows[target_start..old_start].to_vec();
             vs.win_start = target_start;
@@ -260,7 +336,6 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             && target_end > old_end
             && (target_end - old_end) <= 16
         {
-            // Incremental slide DOWN: keep the overlapping rows untouched in Slint!
             let remove_start = target_start - old_start;
             let append_rows = vs.all_rows[old_end..target_end].to_vec();
             vs.win_start = target_start;
@@ -349,15 +424,57 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
     }
 }
 
+/// Paging & floor-eviction state owned inside the Sheet module.
+pub(crate) struct Paging {
+    pub tail_from: Option<String>,
+    pub tail_cursor: Option<String>,
+    pub tail_more: bool,
+    pub oldest_cursor: Option<String>,
+    pub has_older: bool,
+    pub loading_older: bool,
+    pub floor_since: Option<SystemTime>,
+    pub history_rows: usize,
+    pub tail_len: usize,
+    pub tail_sig: Option<(u64, u64)>,
+}
+
+impl Paging {
+    pub fn new(history_rows: usize) -> Self {
+        Self {
+            tail_from: None,
+            tail_cursor: None,
+            tail_more: false,
+            oldest_cursor: None,
+            has_older: false,
+            loading_older: false,
+            floor_since: None,
+            history_rows,
+            tail_len: 0,
+            tail_sig: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.tail_from = None;
+        self.tail_cursor = None;
+        self.tail_more = false;
+        self.oldest_cursor = None;
+        self.has_older = false;
+        self.loading_older = false;
+        self.floor_since = None;
+        self.tail_len = 0;
+        self.tail_sig = None;
+    }
+}
+
 pub(crate) struct Sheet {
     inner: RefCell<Inner>,
     vstate: Rc<RefCell<VirtualSlintRows>>,
+    paging: RefCell<Paging>,
 }
 
 struct Inner {
     rows: Vec<Row>,
-    heights: Vec<f32>,
-    measured: Vec<bool>,
     last_prepend_px: f32,
     index: std::collections::HashMap<String, std::ops::Range<usize>>,
     open: Option<String>,
@@ -367,13 +484,19 @@ struct Inner {
 
 impl Sheet {
     pub fn new() -> (Self, ModelRc<TRow>) {
+        let history_rows: usize = std::env::var("PA_HISTORY")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1500);
+        Self::with_history(history_rows)
+    }
+
+    pub fn with_history(history_rows: usize) -> (Self, ModelRc<TRow>) {
         let model = Rc::new(VecModel::<TRow>::default());
         let vstate = Rc::new(RefCell::new(VirtualSlintRows::new(model.clone())));
         let sheet = Self {
             inner: RefCell::new(Inner {
                 rows: Vec::new(),
-                heights: Vec::new(),
-                measured: Vec::new(),
                 last_prepend_px: 0.0,
                 index: std::collections::HashMap::new(),
                 open: None,
@@ -381,6 +504,7 @@ impl Sheet {
                 virtual_state: Some(vstate.clone()),
             }),
             vstate,
+            paging: RefCell::new(Paging::new(history_rows)),
         };
         (sheet, ModelRc::from(model))
     }
@@ -397,6 +521,185 @@ impl Sheet {
         ui.on_row_measured(move |idx, h| {
             sheet_meas.on_row_measured(idx as usize, h);
         });
+        let sheet_toggle = self.clone();
+        ui.on_toggle_row(move |index| {
+            sheet_toggle.toggle(index as usize);
+        });
+    }
+
+    pub fn reset_paging(&self, ui: &AppWindow) {
+        self.paging.borrow_mut().reset();
+        ui.set_has_older(false);
+        ui.set_loading_older(false);
+        ui.set_pager_ready(false);
+    }
+
+    pub fn set_tail_anchor(&self, messages: &[serde_json::Value]) {
+        let mut p = self.paging.borrow_mut();
+        p.tail_len = messages.len();
+        p.tail_from = messages.first().map(transcript::message_key);
+    }
+
+    pub fn tail_len(&self) -> usize {
+        self.paging.borrow().tail_len
+    }
+
+    /// Check if an incoming Tail page should be applied, updating cursors and `has_older`.
+    /// Returns `true` when the caller should merge the page's rows.
+    pub fn accept_tail_page(
+        &self,
+        messages: &[serde_json::Value],
+        first_entry: &str,
+        last_entry: &str,
+        more: bool,
+        fresh: bool,
+        has_open_live: bool,
+    ) -> Option<bool> {
+        if messages.is_empty() {
+            return None;
+        }
+        let newest = messages
+            .last()
+            .and_then(|message| message.get("timestamp"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let cursor = page_cursor(last_entry);
+        let mut p = self.paging.borrow_mut();
+        if p.tail_sig == Some((cursor, newest)) && !fresh {
+            return None;
+        }
+        let next_tail_cursor = (!first_entry.is_empty()).then(|| first_entry.to_string());
+        p.tail_cursor = next_tail_cursor.clone();
+        p.tail_more = more;
+        let has_prepended = p
+            .tail_from
+            .as_deref()
+            .is_some_and(|key| self.has_rows_above(key));
+        let mut updated_has_older = None;
+        if !has_prepended {
+            if let Some(c) = next_tail_cursor {
+                p.oldest_cursor = Some(c);
+            }
+            p.has_older = more;
+            updated_has_older = Some(more);
+        }
+        p.tail_len = messages.len();
+        p.tail_sig = Some((cursor, newest));
+        if has_open_live && !fresh {
+            return Some(false);
+        }
+        p.tail_from = messages.first().map(transcript::message_key);
+        let _ = updated_has_older;
+        Some(true)
+    }
+
+    pub fn has_older(&self) -> bool {
+        self.paging.borrow().has_older
+    }
+
+    pub fn loading_older(&self) -> bool {
+        self.paging.borrow().loading_older
+    }
+
+    pub fn clear_tail_sig(&self) {
+        self.paging.borrow_mut().tail_sig = None;
+    }
+
+    /// Check if upward paging should fire; if so, marks loading and returns `before` cursor.
+    pub fn check_load_older(
+        &self,
+        follows_bottom: bool,
+        ready: bool,
+        content_y: f32,
+        content_height: f32,
+        height: f32,
+    ) -> Option<String> {
+        let mut p = self.paging.borrow_mut();
+        let state = PagerState {
+            follows_bottom,
+            ready,
+            loading: p.loading_older,
+            has_older: p.has_older,
+            content_y,
+            content_height,
+            height,
+        };
+        if !should_load_older(state) {
+            return None;
+        }
+        let before = p.oldest_cursor.clone()?;
+        p.loading_older = true;
+        Some(before)
+    }
+
+    /// Complete an older page load, prepending rows and updating `oldest_cursor` and `has_older`.
+    /// Returns `(added_height_px, has_older)`.
+    pub fn complete_older_page(
+        &self,
+        rows: Vec<Row>,
+        messages_empty: bool,
+        first_entry: String,
+        more: bool,
+    ) -> (f32, bool) {
+        {
+            let mut p = self.paging.borrow_mut();
+            p.loading_older = false;
+            if messages_empty || rows.is_empty() {
+                p.has_older = false;
+                return (0.0, false);
+            }
+        }
+        self.prepend(rows);
+        let mut p = self.paging.borrow_mut();
+        p.oldest_cursor = if first_entry.is_empty() {
+            None
+        } else {
+            Some(first_entry)
+        };
+        p.has_older = more && p.oldest_cursor.is_some();
+        (self.last_prepend_height(), p.has_older)
+    }
+
+    /// Check if the sheet has been idle at the floor for >= 60s with > `history_rows` rows.
+    /// When it trims, restores `oldest_cursor` and `has_older` to the tail page's cursor.
+    pub fn check_idle_floor_trim(&self, at_floor_ignoring_load: bool, now: SystemTime) -> Option<(usize, bool)> {
+        let (should_trim, newest) = {
+            let mut p = self.paging.borrow_mut();
+            let at_floor = at_floor_ignoring_load && !p.loading_older;
+            if !at_floor {
+                p.floor_since = None;
+                return None;
+            }
+            let since = match p.floor_since {
+                Some(t) => t,
+                None => {
+                    p.floor_since = Some(now);
+                    now
+                }
+            };
+            if self.rows().len() > p.history_rows
+                && now.duration_since(since).unwrap_or_default() >= Duration::from_secs(60)
+            {
+                p.floor_since = Some(now);
+                (true, p.tail_from.clone())
+            } else {
+                (false, None)
+            }
+        };
+        if !should_trim {
+            return None;
+        }
+        let newest = newest?;
+        let gone = self.trim_to_tail(&newest);
+        if gone > 0 {
+            let mut p = self.paging.borrow_mut();
+            p.oldest_cursor = p.tail_cursor.clone();
+            let more = p.tail_more && p.oldest_cursor.is_some();
+            p.has_older = more;
+            Some((gone, more))
+        } else {
+            None
+        }
     }
 
     pub fn last_prepend_height(&self) -> f32 {
@@ -423,12 +726,6 @@ impl Sheet {
         if height <= 1.0 {
             return;
         }
-        if let Ok(mut inner) = self.inner.try_borrow_mut() {
-            if at < inner.heights.len() {
-                inner.heights[at] = height;
-                inner.measured[at] = true;
-            }
-        }
         let sync_info = {
             let Ok(mut vs) = self.vstate.try_borrow_mut() else {
                 return;
@@ -444,9 +741,6 @@ impl Sheet {
             if delta.abs() <= 0.5 {
                 None
             } else {
-                // Check if this newly-measured row sits ABOVE the visible viewport
-                // (e.g. in the top overscan buffer as the user scrolls up).
-                // If so, shift content-y by `-delta` so the visible rows on screen don't jump!
                 let row_bottom_before: f32 = vs.heights[..at].iter().sum::<f32>() + old;
                 let scroll_top = (-vs.last_scroll_y).max(0.0);
                 let compensate_scroll = !was_measured && row_bottom_before <= scroll_top + 4.0;
@@ -510,12 +804,10 @@ impl Sheet {
                     }
                 }
             }
-            inner.heights = rows.iter().map(estimate_row_height).collect();
-            inner.measured = vec![false; rows.len()];
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                    vs.heights = inner.heights.clone();
-                    vs.measured = inner.measured.clone();
+                    vs.heights = rows.iter().map(estimate_row_height).collect();
+                    vs.measured = vec![false; rows.len()];
                 }
             }
             let trows: Vec<TRow> = rows.iter().map(to_slint).collect();
@@ -590,10 +882,7 @@ impl Sheet {
                 inner.index.insert(key, at - len..at);
             }
             inner.last_prepend_px = added_px;
-
             inner.rows.splice(0..0, new_rows);
-            inner.heights.splice(0..0, new_heights.clone());
-            inner.measured.splice(0..0, std::iter::repeat_n(false, total));
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
@@ -643,10 +932,6 @@ impl Sheet {
             row.expanded = !row.expanded;
             let est = estimate_row_height(row);
             let drawn = to_slint(row);
-            if at < inner.heights.len() {
-                inner.heights[at] = est;
-                inner.measured[at] = false;
-            }
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     if at < vs.heights.len() {
@@ -681,10 +966,6 @@ impl Sheet {
                 return 0;
             }
             inner.rows.drain(0..from);
-            let h_end = from.min(inner.heights.len());
-            inner.heights.drain(0..h_end);
-            let m_end = from.min(inner.measured.len());
-            inner.measured.drain(0..m_end);
             inner.index = reindex(&inner.rows);
 
             if let Some(vs_rc) = &inner.virtual_state {
@@ -732,10 +1013,6 @@ impl Sheet {
             let at = inner.rows.len() - 1;
             let key = inner.rows[at].message.clone();
             inner.rows.remove(at);
-            if at < inner.heights.len() {
-                inner.heights.remove(at);
-                inner.measured.remove(at);
-            }
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     if at < vs.heights.len() {
@@ -819,8 +1096,6 @@ impl Inner {
         for (offset, row) in rows.iter().enumerate() {
             let est = estimate_row_height(row);
             self.rows.insert(at + offset, row.clone());
-            self.heights.insert(at + offset, est);
-            self.measured.insert(at + offset, false);
             if let Some(vs_rc) = &self.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     vs.heights.insert(at + offset, est);
@@ -881,13 +1156,10 @@ impl Inner {
             }
             let est = estimate_row_height(row);
             self.rows[at] = row.clone();
-            if at < self.heights.len() && !self.measured[at] {
-                self.heights[at] = est;
-                if let Some(vs_rc) = &self.virtual_state {
-                    if let Ok(mut vs) = vs_rc.try_borrow_mut() {
-                        if at < vs.heights.len() {
-                            vs.heights[at] = est;
-                        }
+            if let Some(vs_rc) = &self.virtual_state {
+                if let Ok(mut vs) = vs_rc.try_borrow_mut() {
+                    if at < vs.heights.len() && !vs.measured[at] {
+                        vs.heights[at] = est;
                     }
                 }
             }
@@ -900,10 +1172,6 @@ impl Inner {
         } else if adjusted.len() < had {
             for at in (start + adjusted.len()..start + had).rev() {
                 self.rows.remove(at);
-                if at < self.heights.len() {
-                    self.heights.remove(at);
-                    self.measured.remove(at);
-                }
                 if let Some(vs_rc) = &self.virtual_state {
                     if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                         if at < vs.heights.len() {

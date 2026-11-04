@@ -754,7 +754,7 @@ mod tests {
 
     #[test]
     fn a_live_row_offers_done_and_never_delete() {
-        let items = crate::interactive::sidebar::menu_items(false, false);
+        let items = crate::sessions::menu_items(false, false);
         let keys = keys(&items);
         assert_eq!(keys, ["done", "rename", "share", "copy-id"]);
         assert!(
@@ -766,7 +766,7 @@ mod tests {
 
     #[test]
     fn a_done_row_offers_delete_and_neither_done_nor_share() {
-        let items = crate::interactive::sidebar::menu_items(true, false);
+        let items = crate::sessions::menu_items(true, false);
         let keys = keys(&items);
         assert_eq!(keys, ["rename", "copy-id", "delete"]);
         assert!(
@@ -785,14 +785,14 @@ mod tests {
 
     #[test]
     fn delete_asks_once_before_it_acts() {
-        let armed = crate::interactive::sidebar::menu_items(true, true);
+        let armed = crate::sessions::menu_items(true, true);
         let delete = armed.iter().find(|item| item.key == "delete").expect("delete");
         assert_eq!(delete.label.as_str(), "Delete for good");
         // and it is still the same key: the second press is the act
         assert_eq!(delete.key.as_str(), "delete");
         assert!(delete.danger);
         assert_eq!(delete.note.as_str(), "this removes the session file");
-        let unarmed = crate::interactive::sidebar::menu_items(true, false);
+        let unarmed = crate::sessions::menu_items(true, false);
         let delete = unarmed.iter().find(|item| item.key == "delete").expect("delete");
         assert_eq!(delete.label.as_str(), "Delete");
         assert!(delete.note.is_empty());
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn every_menu_row_says_what_it_would_do() {
         for done in [false, true] {
-            for item in crate::interactive::sidebar::menu_items(done, false) {
+            for item in crate::sessions::menu_items(done, false) {
                 assert!(item.note.is_empty(), "{} has unexpected subtext {:?}", item.key, item.note);
             }
         }
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn a_live_row_cannot_be_talked_into_deleting_and_a_done_row_cannot_start() {
-        use crate::interactive::sidebar::{menu_action, MenuAction};
+        use crate::sessions::{menu_action, MenuAction};
         assert_eq!(menu_action("delete", false), MenuAction::Nothing);
         assert_eq!(menu_action("done", true), MenuAction::Nothing);
         assert_eq!(menu_action("share", true), MenuAction::Nothing);
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(menu_action("done", false), MenuAction::MarkDone);
         // every key a row offers is one some row can execute
         for done in [false, true] {
-            for item in crate::interactive::sidebar::menu_items(done, false) {
+            for item in crate::sessions::menu_items(done, false) {
                 assert_ne!(
                     menu_action(&item.key, done),
                     MenuAction::Nothing,

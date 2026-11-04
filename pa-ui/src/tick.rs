@@ -9,66 +9,39 @@ pub(crate) struct Tick {
     /// which attach the window is waiting on: a reply that carries an older
     /// number is an answer to a question it has given up on
     pub attach_generation: std::cell::Cell<u64>,
-    /// the oldest message of the newest page: everything above it is history,
-    /// and history is what gets unloaded
-    pub tail_from: std::cell::RefCell<Option<String>>,
-    pub tail_cursor: std::cell::RefCell<Option<String>>,
-    pub tail_more: std::cell::Cell<bool>,
-    pub floor_since: std::cell::Cell<Option<SystemTime>>,
-    /// how many rows of history stay resident above the newest page
-    pub history_rows: usize,
     /// when the poll last ran: a long gap is a stall the reader felt
     pub last_tick: std::cell::Cell<SystemTime>,
     pub sheet: Rc<sheet::Sheet>,
-    pub sessions_cache: Rc<RefCell<Vec<SessionRow>>>,
-    pub in_flight: Rc<std::cell::Cell<bool>>,
-    pub pending_user: Rc<RefCell<Option<String>>>,
-    pub extra_commands: SlashCommands,
-    pub repaint_slot: RepaintSlot,
-    pub sent_thumbs: SentThumbs,
-    pub catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>>,
-    pub collapsed: Rc<RefCell<std::collections::HashSet<String>>>,
-    pub catalog_loaded: Rc<std::cell::Cell<bool>>,
+    pub sidebar: Rc<sessions::Sidebar>,
+    pub composer: Rc<composer::Composer>,
+    pub models: Rc<models::ModelMenu>,
     pub busy_since: Rc<std::cell::Cell<SystemTime>>,
-    pub oldest_cursor: Rc<RefCell<Option<String>>>,
-    pub has_older: Rc<std::cell::Cell<bool>>,
-    pub loading_older: Rc<std::cell::Cell<bool>>,
     pub window_rows: usize,
     pub drawn_user: std::cell::Cell<Option<String>>,
     pub loaded: std::cell::Cell<Option<String>>,
     pub live_state: std::cell::Cell<String>,
     pub live_since: std::cell::Cell<SystemTime>,
     pub busy_label: std::cell::Cell<String>,
-    pub tail_len: std::cell::Cell<usize>,
-    pub tail_sig: std::cell::Cell<Option<(u64, u64)>>,
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
     pub _stream_at: std::cell::Cell<SystemTime>,
-    pub selected_uuid: std::cell::Cell<Option<String>>,
     pub tail_at: std::cell::Cell<SystemTime>,
     pub queue_at: std::cell::Cell<SystemTime>,
     pub stats_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
 }
 
-/// The state a tick carries between one call and the next.
-///
-/// It is taken out of the window's cells at the start of a tick and put back at
-/// the end, so the body below reads as it did when these were plain locals.
 pub(crate) struct Local {
     drawn_user: Option<String>,
     loaded: Option<String>,
     live_state: String,
     live_since: SystemTime,
     busy_label: String,
-    tail_len: usize,
-    tail_sig: Option<(u64, u64)>,
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
     _stream_at: SystemTime,
-    selected_uuid: Option<String>,
     tail_at: SystemTime,
     queue_at: SystemTime,
     stats_at: SystemTime,
@@ -83,13 +56,10 @@ impl Local {
             live_state: tick.live_state.take(),
             live_since: tick.live_since.get(),
             busy_label: tick.busy_label.take(),
-            tail_len: tick.tail_len.get(),
-            tail_sig: tick.tail_sig.take(),
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
             _stream_at: tick._stream_at.get(),
-            selected_uuid: tick.selected_uuid.take(),
             tail_at: tick.tail_at.get(),
             queue_at: tick.queue_at.get(),
             stats_at: tick.stats_at.get(),
@@ -103,13 +73,10 @@ impl Local {
         tick.live_state.set(self.live_state);
         tick.live_since.set(self.live_since);
         tick.busy_label.set(self.busy_label);
-        tick.tail_len.set(self.tail_len);
-        tick.tail_sig.set(self.tail_sig);
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
         tick._stream_at.set(self._stream_at);
-        tick.selected_uuid.set(self.selected_uuid);
         tick.tail_at.set(self.tail_at);
         tick.queue_at.set(self.queue_at);
         tick.stats_at.set(self.stats_at);
@@ -119,24 +86,19 @@ impl Local {
 
 impl Tick {
     fn request_older(&self, ui: &AppWindow) {
-        let state = PagerState {
-            follows_bottom: ui.get_follow_bottom(),
-            ready: ui.get_pager_ready(),
-            loading: self.loading_older.get(),
-            has_older: self.has_older.get(),
-            content_y: ui.get_dbg_cy(),
-            content_height: ui.get_dbg_ch(),
-            height: ui.get_dbg_h(),
-        };
-        if !should_load_older(state) {
-            return;
-        }
-        let Some(before) = self.oldest_cursor.borrow().clone() else { return };
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
             return;
         }
-        self.loading_older.set(true);
+        let Some(before) = self.sheet.check_load_older(
+            ui.get_follow_bottom(),
+            ui.get_pager_ready(),
+            ui.get_dbg_cy(),
+            ui.get_dbg_ch(),
+            ui.get_dbg_h(),
+        ) else {
+            return;
+        };
         ui.set_loading_older(true);
         if crate::env_cfg::cfg().debug {
             eprintln!("[older] asking for the page before {before}");
@@ -150,8 +112,6 @@ impl Tick {
 
     /// One pass: drain what the worker sent, then let the window catch up.
     pub fn run(&self) {
-        // The timer is 120 ms. Anything much later means the window was busy,
-        // and the gap is how long the reader waited.
         let now = SystemTime::now();
         if let Ok(gap) = now.duration_since(self.last_tick.get()) {
             if gap.as_millis() > 250 && crate::env_cfg::cfg().debug {
@@ -164,21 +124,11 @@ impl Tick {
         let jobs = &self.jobs;
         let msg_rx = &self.msg_rx;
         let sheet = &self.sheet;
-        let tail_from = &self.tail_from;
-        let sessions_cache = &self.sessions_cache;
-        let in_flight = &self.in_flight;
-        let pending_user = &self.pending_user;
-        let extra_commands = &self.extra_commands;
-        let repaint_slot = &self.repaint_slot;
-        let sent_thumbs = &self.sent_thumbs;
-        let catalog = &self.catalog;
-        let collapsed = &self.collapsed;
-        let catalog_loaded = &self.catalog_loaded;
+        let sidebar = &self.sidebar;
+        let composer = &self.composer;
+        let models = &self.models;
         let busy_since = &self.busy_since;
         let window_rows = self.window_rows;
-        let oldest_cursor = &self.oldest_cursor;
-        let has_older = &self.has_older;
-        let loading_older = &self.loading_older;
 
         if crate::env_cfg::cfg().debug {
             eprintln!(
@@ -188,8 +138,6 @@ impl Tick {
                 ui.get_dbg_h(),
                 ui.get_at_bottom()
             );
-            // the pager only moves on a scroll; when it does not, this says which
-            // of the four conditions was false
             l.scroll_ticks += 1;
             if l.scroll_ticks.is_multiple_of(15) {
                 eprintln!(
@@ -217,8 +165,8 @@ impl Tick {
         }
 
         // what is stacked behind the running turn
-        if ui.get_busy() && !l.loaded.as_deref().unwrap_or("").is_empty()
-            // PA_QUEUE is a design check: keep the seeded lanes on screen
+        if ui.get_busy()
+            && !l.loaded.as_deref().unwrap_or("").is_empty()
             && !crate::env_cfg::cfg().queue_preset
             && l.queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
         {
@@ -228,11 +176,6 @@ impl Tick {
             }
         }
 
-        // while the agent works, keep pulling the tail of the transcript so
-        // completed tool calls show up as rows; the snapshot alone never updates
-        // Poll while a turn runs, and slowly the rest of the time. Gating this
-        // on `busy` alone meant one missed `message_end` froze the transcript
-        // for good: nothing would ever ask the store again.
         let poll_every = if ui.get_busy() {
             Duration::from_millis(900)
         } else {
@@ -243,7 +186,10 @@ impl Tick {
         {
             l.tail_at = SystemTime::now();
             if let Some(session) = l.loaded.clone() {
-                let _ = jobs.send(Job::Tail { session, fresh: false });
+                let _ = jobs.send(Job::Tail {
+                    session,
+                    fresh: false,
+                });
             }
         }
 
@@ -251,19 +197,8 @@ impl Tick {
         let selected = ui.get_selected_id().to_string();
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
-            l.selected_uuid = uuid_of(&sessions_cache.borrow(), &selected).map(str::to_string);
-            l.tail_sig = None;
-            l.tail_len = 0;
-            // a different chat starts its own walk backwards
-            *oldest_cursor.borrow_mut() = None;
-            *self.tail_cursor.borrow_mut() = None;
-            self.tail_more.set(false);
-            self.floor_since.set(None);
-            has_older.set(false);
-            loading_older.set(false);
-            ui.set_has_older(false);
-            ui.set_loading_older(false);
-            ui.set_pager_ready(false);
+            sidebar.track_selection(&selected);
+            sheet.reset_paging(&ui);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
             let _ = jobs.send(Job::Attach {
@@ -275,157 +210,33 @@ impl Tick {
         // reaching the top pulls in the page before this one
         self.request_older(&ui);
 
-        let at_floor = ui.get_follow_bottom()
-            && !ui.get_scrollbar_dragging()
-            && ui.get_at_bottom()
-            && !loading_older.get();
-        if at_floor {
-            let since = match self.floor_since.get() {
-                Some(t) => t,
-                None => {
-                    self.floor_since.set(Some(now));
-                    now
-                }
-            };
-            if sheet.rows().len() > self.history_rows
-                && now.duration_since(since).unwrap_or_default() >= Duration::from_secs(60)
-            {
-                if let Some(newest) = tail_from.borrow().clone() {
-                    let gone = sheet.trim_to_tail(&newest);
-                    if gone > 0 {
-                        *oldest_cursor.borrow_mut() = self.tail_cursor.borrow().clone();
-                        let more = self.tail_more.get() && oldest_cursor.borrow().is_some();
-                        has_older.set(more);
-                        ui.set_has_older(more);
-                        scroll_to_end_when_ready(&ui.as_weak());
-                        if crate::env_cfg::cfg().debug {
-                            eprintln!("[trim] idle floor trim unloaded {gone} rows above tail");
-                        }
-                    }
-                }
-                self.floor_since.set(Some(now));
+        // 60-second idle floor trim
+        let at_floor =
+            ui.get_follow_bottom() && !ui.get_scrollbar_dragging() && ui.get_at_bottom();
+        if let Some((gone, more)) = sheet.check_idle_floor_trim(at_floor, now) {
+            ui.set_has_older(more);
+            scroll_to_end_when_ready(&ui.as_weak());
+            if crate::env_cfg::cfg().debug {
+                eprintln!("[trim] idle floor trim unloaded {gone} rows above tail");
             }
-        } else {
-            self.floor_since.set(None);
         }
 
-        // caret and selection moves arrive here (arrow keys, clicks); keystrokes
-        // paint themselves
-        if let Some(paint) = repaint_slot.borrow().as_ref() {
-            paint(&ui);
-        }
+        // caret and selection moves arrive here (arrow keys, clicks); keystrokes paint themselves
+        composer.repaint(&ui);
 
         while let Ok((generation, message)) = msg_rx.try_recv() {
-            // One rule for every session-scoped reply: if the window has
-            // attached since this request was issued, the answer belongs to a
-            // chat the reader has left. It is dropped here, before any state
-            // can see it. A session id could not tell this apart from a reply
-            // sent before a re-attach of the same chat.
             if message.is_session_scoped() && generation != self.attach_generation.get() {
                 continue;
             }
             match message {
                 Msg::Sessions(Ok(rows)) => {
-                    // kept because the cost family walks every session here
-                    // rather than asking the daemon again
-                    *sessions_cache.borrow_mut() = rows.clone();
-                    let items: Vec<SessionItem> = session_items(&rows);
-                    // The three groups, each taking its rows from the one sorted
-                    // list, so a group and its rows cannot disagree.
-                    let (active, idle, done) = crate::sessions::session_groups(&items);
-                    // The column is the flat list the window draws: headers and
-                    // rows, each at the y it goes at. `sessions::column` builds it
-                    // from what the groups held and what they hold now, so the
-                    // same numbers drive a fold and a poll.
-                    let previous = groups_of(
-                        &ui.get_active_items(),
-                        &ui.get_idle_items(),
-                        &ui.get_done_items(),
-                    );
-                    ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
-                    ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
-                    ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
-                    let column = crate::sessions::column(
-                        (&active, &idle, &done),
-                        [
-                            ui.get_active_folded(),
-                            ui.get_idle_folded(),
-                            ui.get_done_folded(),
-                        ],
-                        // the fold state has not changed since the last rebuild,
-                        // so the groups held now were drawn then
-                        (&previous.0, &previous.1, &previous.2),
-                        [
-                            ui.get_active_folded(),
-                            ui.get_idle_folded(),
-                            ui.get_done_folded(),
-                        ],
-                    );
-                    // a row that slid to another group says so through the one
-                    // rule in `sessions.rs`, not through its own arithmetic
-                    let any_group_move = crate::sessions::any_moved(&column.previous, &column.entries);
-
-                    if column.changed() {
-                        crate::sessions::apply(
-                            &ui,
-                            column,
-                            if any_group_move { -2 } else { -1 },
-                            false,
-                        );
-                    }
-                    ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
-                    if ui.get_selected_id().is_empty() {
-                        let preferred = std::env::var("PA_SELECT").ok();
-                        let chosen = preferred
-                            .as_deref()
-                            .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
-                            .or_else(|| rows.first());
-                        if let Some(first) = chosen {
-                            ui.set_selected_id(first.id.clone().into());
-                            l.selected_uuid = Some(first.session_id.clone());
-                        }
-                    }
-
-                    // The daemon re-keys session ids when a saved session becomes resident
-                    // or across restarts. Follow the selection by its uuid so clicking a
-                    // Done session stays on that session when it moves to Idle.
-                    let selected = ui.get_selected_id().to_string();
-                    if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
-                        if let Some(uuid) = l.selected_uuid.as_deref() {
-                            if let Some(rebound) =
-                                rows.iter().find(|row| row.session_id == uuid).map(|row| row.id.clone())
-                            {
-                                if crate::env_cfg::cfg().debug {
-                                    eprintln!("[rebind] {selected} -> {rebound}");
-                                }
-                                ui.set_selected_id(rebound.clone().into());
-                                l.selected_uuid = Some(uuid.to_string());
-                                // Keep l.loaded updated to the new resident id if we already attached
-                                l.loaded = Some(rebound);
-                            }
-                        }
+                    if let Some(rebound) = sidebar.apply_roster(&ui, rows.clone()) {
+                        l.loaded = Some(rebound);
                     }
                     let selected = ui.get_selected_id().to_string();
-                    if let Some(uuid) = uuid_of(&rows, &selected) {
-                        l.selected_uuid = Some(uuid.to_string());
-                    }
-                    // the chip names the model this session is actually on
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
-                        if !row.model.is_empty() {
-                            let label = if row.model_name.is_empty() {
-                                row.model.clone()
-                            } else {
-                                model_label(&row.model_name, &row.model)
-                            };
-                            if ui.get_model_label().as_str() != label {
-                                ui.set_model_label(label.into());
-                            }
-                            ui.set_model_id(row.model.clone().into());
-                            ui.set_model_provider(row.model_provider.clone().into());
-                        }
+                        models.sync_session_row(&ui, row);
                     }
-
-                    // nothing known about this selection: nothing is running
                     if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
                         ui.set_busy(false);
                         l.busy_label.clear();
@@ -440,10 +251,11 @@ impl Tick {
                         if !busy_now && ui.get_busy() {
                             ui.set_busy(false);
                             l.busy_label.clear();
-                            // the run just ended: grab whatever landed after the
-                            // last refresh so the final tool calls are not lost
                             if let Some(session) = l.loaded.clone() {
-                                let _ = jobs.send(Job::Tail { session, fresh: false });
+                                let _ = jobs.send(Job::Tail {
+                                    session,
+                                    fresh: false,
+                                });
                             }
                         }
                         if busy_now && !ui.get_busy() {
@@ -469,13 +281,16 @@ impl Tick {
                     }
                     ui.set_busy(true);
                 }
-                Msg::Transcript { session, rows, skipped, messages } => {
-                    // the session's own commands arrive with the session
+                Msg::Transcript {
+                    session,
+                    rows,
+                    skipped,
+                    messages,
+                } => {
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
                     });
-                    l.tail_len = messages.len();
-                    *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
+                    sheet.set_tail_anchor(&messages);
                     let _ = window_rows;
                     let mut built = rows;
                     if crate::env_cfg::cfg().debug {
@@ -491,13 +306,8 @@ impl Tick {
                     if crate::env_cfg::cfg().demo_markdown {
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    // a prompt sent while this snapshot was in flight: the
-                    // store predates it, so the row we drew has to survive the
-                    // rebuild
                     sheet.replace(built);
                     sheet::dump(&sheet.rows());
-                    // which model is running, and at what effort: the chip and
-                    // the menu's ladder both read from this
                     let _ = jobs.send(Job::SessionState {
                         session: session.clone(),
                     });
@@ -510,7 +320,6 @@ impl Tick {
                         session: session.clone(),
                         fresh: true,
                     });
-                    // land on the newest turn, like every chat
                     scroll_to_end_when_ready(&ui.as_weak());
                 }
                 Msg::Tail {
@@ -523,67 +332,35 @@ impl Tick {
                     more,
                     fresh,
                 } => {
-                    // Where the reader is now, before the model changes: a
-                    // rebuild must not drag them back to the newest row when they
-                    // have scrolled up to read. This is what made scrolling up
-                    // while the agent worked impossible.
                     let follow = ui.get_follow_bottom() && !ui.get_scrollbar_dragging();
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
                             "[tail] {session} {} msgs (have {}) newest={:?}",
                             messages.len(),
-                            l.tail_len,
+                            sheet.tail_len(),
                             messages
                                 .last()
-                                .map(|m| m.get("timestamp").and_then(serde_json::Value::as_u64).unwrap_or(0))
+                                .map(|m| m
+                                    .get("timestamp")
+                                    .and_then(serde_json::Value::as_u64)
+                                    .unwrap_or(0))
                                 .unwrap_or(0)
                         );
                     }
-                    // An empty list usually means the id went stale (the daemon
-                    // restarted and re-keyed its sessions). Never let that blank
-                    // a transcript that is already on screen.
-                    if messages.is_empty() {
+                    let Some(should_merge) = sheet.accept_tail_page(
+                        &messages,
+                        &first_entry,
+                        &last_entry,
+                        more,
+                        fresh,
+                        l.open_live.is_some(),
+                    ) else {
+                        continue;
+                    };
+                    ui.set_has_older(sheet.has_older());
+                    if !should_merge {
                         continue;
                     }
-                    // the page cursor is the fingerprint: it moves when the tail
-                    // moves, even when the row count is unchanged
-                    let newest = messages
-                        .last()
-                        .and_then(|message| message.get("timestamp"))
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0);
-                    let cursor = page_cursor(&last_entry);
-                    // A closed turn reconciles even when the page is the same
-                    // one the busy path already folded in: that page was
-                    // appended beside the streamed row, and the signature alone
-                    // would keep both copies on screen for good.
-                    if l.tail_sig == Some((cursor, newest)) && !fresh {
-                        continue;
-                    }
-                    // the walk backwards starts at the oldest row of the page
-                    // being shown; a fresh page re-anchors it
-                    let next_tail_cursor = (!first_entry.is_empty()).then(|| first_entry.clone());
-                    *self.tail_cursor.borrow_mut() = next_tail_cursor.clone();
-                    self.tail_more.set(more);
-                    let has_prepended = tail_from
-                        .borrow()
-                        .as_deref()
-                        .is_some_and(|key| sheet.has_rows_above(key));
-                    if !has_prepended {
-                        if let Some(c) = next_tail_cursor {
-                            *oldest_cursor.borrow_mut() = Some(c);
-                        }
-                        has_older.set(more);
-                        ui.set_has_older(more);
-                    }
-                    if l.open_live.is_some() && !fresh {
-                        l.tail_len = messages.len();
-                        l.tail_sig = Some((cursor, newest));
-                        continue;
-                    }
-                    l.tail_len = messages.len();
-                    l.tail_sig = Some((cursor, newest));
-                    *tail_from.borrow_mut() = messages.first().map(transcript::message_key);
                     let _ = window_rows;
                     let mut built = rows;
                     if built.is_empty() && !messages.is_empty() {
@@ -592,15 +369,11 @@ impl Tick {
                     if crate::env_cfg::cfg().demo_markdown {
                         built.extend(transcript::markdown_demo_rows());
                     }
-                    // The store now carries the message being written: its copy
-                    // replaces the streamed rows where they stand. Taking the
-                    // turn out and putting it back - the fake Live this arm used
-                    // to build - existed only because the range lived out here.
                     let live_in_built = l
                         .open_live
                         .as_ref()
                         .is_some_and(|turn| built.iter().any(|row| row.message == turn.message));
-                    if live_in_built || (!ui.get_busy() && !in_flight.get()) {
+                    if live_in_built || (!ui.get_busy() && !composer.in_flight.get()) {
                         l.open_live = None;
                         sheet.answer_ended();
                     }
@@ -611,7 +384,10 @@ impl Tick {
                     }
                     sheet::trace("tail merge", &sheet.rows());
                     if crate::env_cfg::cfg().debug {
-                        eprintln!("[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})", messages.len());
+                        eprintln!(
+                            "[tail] rebuilt {} msgs -> {count} rows (skipped {skipped})",
+                            messages.len()
+                        );
                     }
                     if follow {
                         scroll_to_end_when_ready(&ui.as_weak());
@@ -632,63 +408,35 @@ impl Tick {
                     more,
                     ..
                 } => {
-                    loading_older.set(false);
                     ui.set_loading_older(false);
-                    if messages.is_empty() {
-                        // nothing to prepend: stop asking rather than loop
-                        has_older.set(false);
-                        ui.set_has_older(false);
-                        continue;
-                    }
-                    let built_at = SystemTime::now();
-                    let older = rows;
-                    let build_ms = built_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
-                    if older.is_empty() {
-                        has_older.set(false);
-                        ui.set_has_older(false);
-                        continue;
-                    }
-                    // Where the reader was, and how tall the content was, before
-                    // the page goes in. Both are read from the list itself.
                     let before_y = ui.get_dbg_cy();
-                    let older_len = older.len();
+                    let older_len = rows.len();
                     let insert_at = SystemTime::now();
-                    sheet.prepend(older);
-                    let insert_ms = insert_at.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
-                    if crate::env_cfg::cfg().debug {
-                        eprintln!(
-                            "[older] our side: build {build_ms:.1} ms, insert {insert_ms:.1} ms for {older_len} rows"
-                        );
-                    }
-
-                    *oldest_cursor.borrow_mut() = if first_entry.is_empty() {
-                        None
-                    } else {
-                        Some(first_entry)
-                    };
-                    has_older.set(more && oldest_cursor.borrow().is_some());
-                    ui.set_has_older(has_older.get());
-                    // Synchronously shift scroll offset by the exact top-pad height added
-                    let added_h = sheet.last_prepend_height();
+                    let (added_h, more_after) = sheet.complete_older_page(
+                        rows,
+                        messages.is_empty(),
+                        first_entry,
+                        more,
+                    );
+                    ui.set_has_older(more_after);
                     if added_h > 0.0 {
                         ui.invoke_set_scroll_y(before_y - added_h);
                     }
-                    if crate::env_cfg::cfg().debug {
+                    if crate::env_cfg::cfg().debug && !messages.is_empty() {
+                        let insert_ms = insert_at
+                            .elapsed()
+                            .map(|d| d.as_secs_f64() * 1000.0)
+                            .unwrap_or(0.0);
                         eprintln!(
-                            "[older] {} msgs -> {} rows, more={more} after={:?}",
-                            messages.len(),
-                            older_len,
-                            oldest_cursor.borrow()
+                            "[older] {} msgs -> {older_len} rows ({insert_ms:.1} ms), more={more_after}",
+                            messages.len()
                         );
                     }
                 }
                 Msg::Event { session, event } => {
-                    // exact TUI vocabulary straight from the stream
                     if let Some(label) = pa_client::activity_label(&event) {
                         ui.set_busy_label(label.into());
                     }
-                    // gap detection: a skipped sequence means we missed frames
-                    // (daemon restart, a stalled pipe): backfill from the store
                     if let Some(sequence) = event
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
@@ -703,11 +451,6 @@ impl Tick {
                     }
 
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
-                    // The queue's own truth: the daemon pushes the projection
-                    // whenever either lane changes, so a delivered message leaves
-                    // the rows the moment it stops waiting. Polling alone could
-                    // only notice after the fact, and nothing polled at all while
-                    // the window sat idle.
                     if kind == Some("session_action_update") {
                         let lane = |name: &str| -> Vec<String> {
                             event
@@ -722,24 +465,12 @@ impl Tick {
                                 })
                                 .unwrap_or_default()
                         };
-                        apply_queue(&ui, &lane("steering"), &lane("followUps"), sent_thumbs);
+                        composer.project_queue(&ui, &lane("steering"), &lane("followUps"));
                         continue;
                     }
-                    // A closed turn is reconciled from the store: the live row
-                    // holds whatever text last arrived, and one dropped
-                    // message_end would otherwise strand the view on a
-                    // half-written row for good.
                     if matches!(kind, Some("turn_end" | "agent_end")) {
-                        in_flight.set(false);
+                        composer.in_flight.set(false);
                         sheet.answer_ended();
-                        // The answer stays exactly where it is. Dropping it and
-                        // rebuilding from a store that is still one message
-                        // behind is what made it collapse to a line and then
-                        // come back: the screen may not shrink on the strength
-                        // of a store that has not caught up.
-                        // The live rows stay, carrying the message they belong
-                        // to: the store's copy of that message replaces them
-                        // when it arrives, in place.
                         l.open_live = None;
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
@@ -758,9 +489,6 @@ impl Tick {
                             continue;
                         }
                         let Some(turn) = l.open_live.as_mut() else {
-                            // no message is open: the turn's own frames are the
-                            // only thing that may draw a cell, and the store
-                            // will carry it when the turn closes
                             continue;
                         };
                         if kind == Some("tool_execution_start") {
@@ -798,10 +526,6 @@ impl Tick {
                     }
                     let role = message.get("role").and_then(serde_json::Value::as_str);
                     if role == Some("user") {
-                        // The store owns this row. Drawing it here as well is how
-                        // it ended up on screen twice: the rebuild had already
-                        // brought it, then the echo drew a second one. Ask for a
-                        // poll and let the one owner speak.
                         let text = message_text(message);
                         let stamp = message
                             .get("timestamp")
@@ -820,7 +544,7 @@ impl Tick {
                             });
                         }
                         if kind == Some("message_end") {
-                            *pending_user.borrow_mut() = None;
+                            *composer.pending_user.borrow_mut() = None;
                         }
                         continue;
                     }
@@ -855,14 +579,18 @@ impl Tick {
                     let Some(turn) = l.open_live.as_mut() else {
                         continue;
                     };
-                    // Ignore toolcall JSON deltas and *_end markers that don't change visible prose/thinking
-                    if !delta_kind.is_empty() && !delta_kind.starts_with("text_delta") && !delta_kind.starts_with("thinking_delta") {
+                    if !delta_kind.is_empty()
+                        && !delta_kind.starts_with("text_delta")
+                        && !delta_kind.starts_with("thinking_delta")
+                    {
                         continue;
                     }
                     if kind == Some("message_end") {
                         continue;
                     }
-                    if let Some(delta) = delta_event.get("delta").and_then(serde_json::Value::as_str) {
+                    if let Some(delta) =
+                        delta_event.get("delta").and_then(serde_json::Value::as_str)
+                    {
                         if delta_kind.starts_with("text") {
                             turn.push_text(delta);
                         } else if delta_kind.starts_with("thinking") {
@@ -886,82 +614,37 @@ impl Tick {
                         );
                     }
                 }
-                Msg::Queue { steering, follow_up } => {
-                    apply_queue(&ui, &steering, &follow_up, sent_thumbs);
+                Msg::Queue {
+                    steering,
+                    follow_up,
+                } => {
+                    composer.project_queue(&ui, &steering, &follow_up);
                 }
-                Msg::Prompt { session, message, images } => {
-                    in_flight.set(true);
-                    let _ = jobs.send(Job::Prompt { session, message, images });
+                Msg::Prompt {
+                    session,
+                    message,
+                    images,
+                } => {
+                    composer.in_flight.set(true);
+                    let _ = jobs.send(Job::Prompt {
+                        session,
+                        message,
+                        images,
+                    });
                 }
                 Msg::NewChat(id) => {
-                    // PA_SLASH: a look at the command menu in this fresh chat,
-                    // never in a session that holds the user's draft.
-                    if let Ok(opening) = std::env::var("PA_SLASH") {
-                        ui.set_composer_text(opening.as_str().into());
-                        ui.set_composer_has_text(!opening.is_empty());
-                        let opening_text = ui.get_composer_text().to_string();
-                        if let Some(name) = opening_text.trim().strip_prefix('/') {
-                            let rows = slash_rows(name, &extra_commands.borrow());
-                            if !rows.is_empty() {
-                                ui.set_slash_items(ModelRc::from(Rc::new(VecModel::from(rows))));
-                                ui.set_slash_open(true);
-                            }
-                        }
-                    }
-                    // selection drives everything else: the follow-selection
-                    // block below attaches, and the attach reply replaces the
-                    // rows. Nothing from the old chat may survive the switch -
-                    // a draft is the old chat's, and a queue row belongs to a
-                    // session that is still running its own turn.
-                    ui.set_composer_text("".into());
-                    ui.set_composer_has_text(false);
-                    ui.set_queued_count(0);
-                    ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
-                    ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
-                    ui.set_busy(false);
-                    status::clear(&ui);
-                    ui.set_selected_id(id.clone().into());
-                    if crate::env_cfg::cfg().debug {
-                        eprintln!("[new] selected {id}");
-                    }
+                    composer.reset_for_new_chat(&ui, &id);
                 }
                 Msg::QueueEdit { text } => {
-                    // the row is out of the queue; the text comes back to where
-                    // it came from, so the next Enter decides the lane again
                     ui.set_composer_text(text.into());
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                     status::clear(&ui);
                 }
                 Msg::ExtraCommands(rows) => {
-                    *extra_commands.borrow_mut() = rows;
+                    composer.set_extra_commands(rows);
                 }
                 Msg::ModelCatalog(entries) => {
-                    // every group starts folded: 35 providers open at once is a
-                    // wall, not a menu. Only the first load seeds that, so a
-                    // provider the user unfolds stays unfolded.
-                    if !catalog_loaded.get() {
-                        collapsed.borrow_mut().extend(
-                            entries.iter().map(|entry| entry.provider.clone()),
-                        );
-                    }
-                    catalog_loaded.set(true);
-                    *catalog.borrow_mut() = entries;
-                    refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
-                    // a headless hook: open the menu without a pointer, so the
-                    // geometry and the hover path can be read off the log
-                    if crate::env_cfg::cfg().menu && !ui.get_model_menu() {
-                        // the headless hook needs rows, not 35 folded headers
-                        collapsed.borrow_mut().clear();
-                        refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
-                        ui.set_model_menu(true);
-                        eprintln!(
-                            "[menu] auto-open box=({},{},{}) height={}",
-                            ui.get_box_x(),
-                            ui.get_box_y(),
-                            ui.get_box_w(),
-                            ui.get_model_menu_height()
-                        );
-                    }
+                    models.set_catalog(&ui, entries);
                 }
                 Msg::Stats { session, stats } => {
                     let fill = if stats.context_window > 0 {
@@ -984,9 +667,6 @@ impl Tick {
                     ui.set_stat_in(tokens(stats.input_tokens).into());
                     ui.set_stat_out(tokens(stats.output_tokens).into());
                     ui.set_stat_cache(tokens(stats.cache_read).into());
-                    // A model with no price in the catalog reports zero, and
-                    // "$0.00" would claim the run was free: say the number is
-                    // unknown rather than invent one.
                     let spent = stats.input_tokens + stats.output_tokens + stats.cache_read;
                     ui.set_cost_session(
                         if stats.cost > 0.0 {
@@ -998,25 +678,7 @@ impl Tick {
                         }
                         .into(),
                     );
-                    // What this session costs on its own understates it once it
-                    // has spawned: a child's spend is the same bill. The child
-                    // rows carry their own cost and name their parent, so the
-                    // family total needs no extra command.
-                    let mut children_cost = 0.0f64;
-                    let mut has_children = false;
-                    if let Ok(cache) = sessions_cache.try_borrow() {
-                        let own_sid = cache
-                            .iter()
-                            .find(|row| row.id == session)
-                            .map(|row| row.session_id.clone());
-                        if let Some(own_sid) = own_sid.filter(|sid| !sid.is_empty()) {
-                            for row in cache.iter().filter(|row| row.parent == own_sid) {
-                                has_children = true;
-                                children_cost += row.cost;
-                            }
-                        }
-                    }
-                    let family = stats.cost + children_cost;
+                    let (family, has_children) = sidebar.family_cost(&session, stats.cost);
                     ui.set_cost_family(
                         if family > 0.0 {
                             format!("${:.2}", family)
@@ -1028,63 +690,25 @@ impl Tick {
                     ui.set_cost_family_on(has_children);
                 }
                 Msg::State { state, .. } => {
-                    ui.set_current_effort(thinking_level_label(&state.thinking_level).into());
-                    ui.set_current_level(state.thinking_level.clone().into());
-                    // the daemon is the truth about which model runs; the chip
-                    // follows it rather than the last thing clicked
-                    if !state.model_id.is_empty()
-                        && (ui.get_model_id() != state.model_id
-                            || ui.get_model_provider() != state.provider)
-                    {
-                        let label = catalog
-                            .borrow()
-                            .iter()
-                            .find(|entry| {
-                                entry.id == state.model_id && entry.provider == state.provider
-                            })
-                            .map(|entry| model_label(&entry.name, &entry.id))
-                            .unwrap_or_else(|| state.model_id.clone());
-                        ui.set_model_label(label.into());
-                        ui.set_model_id(state.model_id.clone().into());
-                        ui.set_model_provider(state.provider.clone().into());
-                    }
-                    refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                    models.sync_session_state(&ui, &state);
                 }
                 Msg::Reconnected => {
                     l.loaded = None;
                     l.open_live = None;
                     sheet.answer_ended();
-                    l.tail_sig = None;
+                    sheet.clear_tail_sig();
                     l.last_seq = 0;
                     status::say(&ui, "reconnecting");
                 }
                 Msg::PromptRejected { text } => {
-                    // the daemon refused the prompt (usually a stale session id):
-                    // put the text back rather than losing what was typed, and
-                    // take the row we drew back out - a refused message that
-                    // stays on screen is a message that was never sent
-                    if ui.get_composer_text().is_empty() {
-                        ui.set_composer_text(text.as_str().into());
-                    ui.set_composer_has_text(!ui.get_composer_text().is_empty());
-                    }
-                    pending_user.borrow_mut().take();
-                    sheet.take_back_prompt(&text);
-                    status::trouble(&ui, "prompt not accepted \u{2014} text restored");
+                    composer.on_prompt_rejected(&ui, sheet, &text);
                 }
-                Msg::PromptResult { error } => match error {
-                    Some(error) => {
-                        let text = pending_user.borrow_mut().take().unwrap_or_default();
-                        sheet.take_back_prompt(&text);
-                        status::trouble(&ui, format!("prompt failed: {error}"));
-                    }
-                    None => status::clear(&ui),
-                },
+                Msg::PromptResult { error } => {
+                    composer.on_prompt_result(&ui, sheet, error);
+                }
                 Msg::Error(error) => status::trouble(&ui, format!("error: {error}")),
-                // A share is the one action whose result is somewhere else: the
-                // viewer URL goes on the clipboard and on the status line, since
-                // the link is what the reader wanted from it.
                 Msg::Shared(Ok(shared)) => {
-                    match crate::interactive::sidebar::copy_to_clipboard(&shared.viewer_url) {
+                    match crate::sessions::copy_to_clipboard(&shared.viewer_url) {
                         Ok(()) => status::say(&ui, format!("shared: {}", shared.viewer_url)),
                         Err(error) => status::trouble(
                             &ui,
@@ -1092,7 +716,9 @@ impl Tick {
                         ),
                     }
                 }
-                Msg::Shared(Err(error)) => status::trouble(&ui, format!("could not share: {error}")),
+                Msg::Shared(Err(error)) => {
+                    status::trouble(&ui, format!("could not share: {error}"))
+                }
             }
         }
 
