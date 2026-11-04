@@ -37,6 +37,22 @@ export struct SessionItem {
     status: string,
 }
 
+// One character of a session's name in the search popup, and whether the query
+// matched it. A row of these is what the popup draws instead of a plain name,
+// because the letters the query hit carry a colour of their own.
+export struct SearchGlyph {
+    text: string,
+    matched: bool,
+}
+
+// One row of the search popup: the session it opens, and when it was last used,
+// with the name as the characters the row draws it by.
+export struct SearchEntry {
+    id: string,
+    age: string,
+    glyphs: [SearchGlyph],
+}
+
 // one waiting message, addressed by its lane and its position in that lane
 // One row of the command menu: the word after the slash, the argument hint the
 // command takes, and what it does.

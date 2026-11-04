@@ -257,6 +257,39 @@ const PAIRS: &[Pair] = &[
         what: "the words on the card that names a session",
         floor: BODY,
     },
+    // The search popup. A session's name is what the reader typed to find, so it
+    // is body text in both the states a row has, and so are the letters the query
+    // matched, on either row. The date at the row's edge is found, not read.
+    Pair {
+        ink: Mark { role: Role::SearchRowInk, on: ON_PANEL },
+        what: "a session's name in the search list",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SearchRowInkHighlighted, on: ON_PANEL_ROW },
+        what: "the session the pointer or the arrows are on",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SearchMatchInk, on: ON_PANEL },
+        what: "the letters a query matched",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SearchMatchInk, on: ON_PANEL_ROW },
+        what: "the matched letters on the highlighted row",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SearchAgeInk, on: ON_PANEL },
+        what: "when a session was last used",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SearchAgeInk, on: ON_PANEL_ROW },
+        what: "when the highlighted session was last used",
+        floor: MARK,
+    },
     // The transcript. Its rows are what the reader came for, so the words in
     // them are held to the body floor on whichever field they are read on — a
     // cell's name on the cell, the code it opened and what it printed inside it.

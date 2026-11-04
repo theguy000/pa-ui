@@ -2,11 +2,12 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SessionItem, SlashItem, TRow, Type } from "types.slint";
+import { EffortItem, ModelGroup, QueueItem, SearchEntry, SessionItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SlashMenu } from "menus.slint";
+import { SearchPopup } from "search.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
 import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
@@ -17,6 +18,7 @@ import { Theme } from "theme.slint";
 export { Theme }
 
 export component AppWindow inherits Window {
+
     // the failure reason of a cell, drawn here so no row can paint over it
     in-out property <bool> reason-open;
     in-out property <length> reason-x;
@@ -239,6 +241,94 @@ export component AppWindow inherits Window {
     in-out property <bool> right-open: false;
     in-out property <bool> model-menu: false;
     in-out property <string> selected-id;
+
+    // The session search: whether it is open, the field's text, the row the
+    // arrows or the pointer are on, and the rows themselves. The rows are worked
+    // out in Rust, so the window draws a match it was handed rather than making
+    // one of its own.
+    in-out property <bool> search-open: false;
+    // Counts the times the window has asked for the caret to be put in the
+    // popup's field: Rust cannot reach the field directly while the popup lives
+    // inside an `if`, and this is the one thing a change can be hung on.
+    in-out property <int> search-focus-tick: 0;
+    in-out property <string> search-query: "";
+    in-out property <int> search-index: 0;
+    in-out property <[SearchEntry]> search-entries;
+    // Where the popup's panel is drawn, worked out from its own size so the
+    // strip that closes the popup and the panel can never drift apart.
+    property <length> search-x: 0px;
+    property <length> search-y: 48px;
+    // Building one: the highlight on the best row, and the panel's place known
+    // before the first frame is drawn. The rows are Rust's, set before the open
+    // is asked for, so the popup has them the moment it appears rather than a
+    // blank half-panel that fills in a frame later.
+    public function open-requested() {
+        root.search-open-requested();
+        root.search-index = 0;
+        root.search-open = true;
+        root.search-place-from(400px, root.search-height(root.search-entries.length));
+        // The caret is put in the field in this same step. The field is built with
+        // the panel, and the chain from the key the scope receives to the leaf
+        // that holds the text is not built yet a frame later, so a focus asked
+        // for then never reaches the letters.
+        root.search-focus-tick = root.search-focus-tick + 1;
+    }
+
+    // The popup's own height for a number of rows: its field, up to eight rows,
+    // and its foot. The window works the place out before the panel exists, so
+    // the sum is here as a function rather than read off the panel while it is
+    // down.
+    pure function search-height(rows: int) -> length {
+        rows == 0 && root.search-query == ""
+            ? 45px
+            : (45px + (rows == 0 ? 48px : min(rows * 32px, 256px) + 16px))
+    }
+
+    // Centring a panel that is `height` tall in the window: over the middle of
+    // the width, and over the middle of the height but never under the strip at
+    // the top. The popup itself calls this whenever its size changes, so its own
+    // laid-out size and this first guess stay the same place.
+    public function search-place-from(width: length, height: length) {
+        root.search-x = Math.max(0px, (root.width - width) / 2);
+        root.search-y = Math.max(48px, (root.height - height) / 2);
+    }
+
+    // The popup's field was typed into, so the window stops handing every
+    // unrelated word back to the caret's last owner.
+    public function search-field-used() { root.search-field-typed = true; }
+
+    // A press that lands outside the popup. A click inside the popup never
+    // reaches the window behind it, so this only ever hears a press on the
+    // window itself, and closes the popup the way Escape does.
+    public function search-outside() {
+        if !root.search-open {
+            return;
+        }
+        root.search-open = false;
+        root.search-closed();
+        root.focus-composer();
+    }
+
+    callback search-open-requested();
+
+    // The window works this out itself for the keys: everything typed while a
+    // popup is up belongs to its field, wherever the caret last was.
+    in-out property <bool> search-field-typed: false;
+    callback search-typed(string);
+    callback search-picked(string);
+    callback search-closed();
+    // Ctrl+K anywhere the window has focus opens the popup, and so does the
+    // magnifier in the column's header. What counts as the chord is decided in
+    // Rust, where it has tests: the toolkit reports a chord as the character it
+    // makes, and a rule that is wrong here fails silently.
+    pure callback opens-search(string, bool, bool) -> bool;
+    public function search-key(event: KeyEvent) -> bool {
+        if root.opens-search(event.text, event.modifiers.control, root.search-open) {
+            root.open-requested();
+            return true;
+        }
+        false
+    }
 
 
     in property <bool> busy: false;
@@ -489,6 +579,9 @@ export component AppWindow inherits Window {
         width: 0px;
         height: 0px;
         key-pressed(event) => {
+            if root.search-key(event) {
+                return EventResult.accept;
+            }
             if event.text == Key.PageUp {
                 root.page-scroll(-1);
                 return EventResult.accept;
@@ -530,6 +623,10 @@ export component AppWindow inherits Window {
             return;
         }
     }
+
+    // Closing the search popup hands the window back to the words the reader was
+    // writing, wherever they were: the composer is what an open window is for.
+    public function focus-composer() { draft-window.grab-focus(); }
 
     VerticalLayout {
 
@@ -594,19 +691,20 @@ export component AppWindow inherits Window {
                         }
                     }
         
-                    // The magnifier again, still drawn and still inert: folded or not,
-                    // it holds the same place in the column.
+                    // The magnifier in the folded strip also opens the search popup.
                     Rectangle {
                         height: 32px;
                         HorizontalLayout {
                             alignment: center;
-                            Rectangle {
-                                width: 32px;
-                                height: 32px;
-                                border-radius: 16px;
+                            strip-search := PanelButton {
+                                described: "Search sessions";
+                                clicked => { root.open-requested(); }
                                 IconSearch {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
+                                    tint: strip-search.hot
+                                        ? Theme.sidebar-search-mark-hover
+                                        : Theme.sidebar-search-mark;
                                 }
                             }
                         }
@@ -642,17 +740,20 @@ export component AppWindow inherits Window {
                             font-weight: 600;
                         }
 
-                        // Drawn, not wired: no TouchArea, no callback, no pointer.
-                        // It holds the band's shape until search exists.
-                        Rectangle {
+                        // The magnifier opens the search popup. It keeps the band's
+                        // place: the fold still sits where it always has.
+                        band-search := PanelButton {
+                            size: 30px;
                             x: parent.width - 64px;
                             y: (parent.height - 30px) / 2;
-                            width: 30px;
-                            height: 30px;
-                            border-radius: 15px;
+                            described: "Search sessions";
+                            clicked => { root.open-requested(); }
                             IconSearch {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
+                                tint: band-search.hot
+                                    ? Theme.sidebar-search-mark-hover
+                                    : Theme.sidebar-search-mark;
                             }
                         }
 
@@ -1117,6 +1218,17 @@ export component AppWindow inherits Window {
                     root.slash-typed(t, self.caret-offset);
                 }
                         key-pressed(event) => {
+                                // While the popup is up it owns the keyboard: a
+                                // word meant for its field must not reach the
+                                // words the reader was writing as well.
+                                if root.search-field-typed {
+                                    return EventResult.accept;
+                                }
+                                // Ctrl+K opens the search popup from the words the
+                                // reader is writing; the window owns the chord.
+                                if root.search-key(event) {
+                                    return EventResult.accept;
+                                }
                                 // The command menu answers first while it is open.
                                 if root.slash-take(event) {
                                     return EventResult.accept;
@@ -1203,7 +1315,9 @@ export component AppWindow inherits Window {
                                 }
                                 return EventResult.reject;
                             }
-                init => { self.grab-focus(); }
+                // the keys belong to the composer: it is where the window opens
+                // and where the reader types after a session is picked
+                init => { draft-window.grab-focus(); }
 
             }
         }
@@ -1602,6 +1716,82 @@ export component AppWindow inherits Window {
 
 
 
+
+
+    // The search popup, over the middle of the window: a place to find one
+    // session out of all of them, not a part of any column. Drawn after the
+    // menus so it paints above them, and under the title bar so the caption
+    // still answers at the top edge.
+    //
+    // A click that lands outside the panel closes it. The window's dismiss
+    // surface is the first child of the window, under everything, so the popup
+    // carries a surface of its own over the whole window: a click on it is a
+    // click on nothing, because a press on the panel never reaches it.
+    if root.search-open : Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        background: transparent;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { root.search-outside(); }
+        }
+
+
+
+        Rectangle {
+            x: root.search-x;
+            y: root.search-y;
+            width: search-popup.width;
+            height: search-popup.height;
+            background: transparent;
+            // A press inside the panel is not a press on the window: the cover,
+            // the field and the cross are under this one, and the window behind
+            // it would otherwise close the popup on the same click that put the
+            // caret in the field or picked a row.
+            TouchArea {
+                width: 100%;
+                height: 100%;
+            }
+
+            search-popup := SearchPopup {
+                x: 0;
+                y: 0;
+                entries: root.search-entries;
+                placeholder: "Search sessions";
+                query <=> root.search-query;
+                index <=> root.search-index;
+                typed(text) => {
+                    root.search-field-used();
+                    root.search-typed(text);
+                }
+                picked(id) => { root.search-picked(id); }
+                closed => { root.search-closed(); }
+                focus-tick: root.search-focus-tick;
+            }
+        }
+        // The panel's own size, as it lays itself out inside the box above.
+        search-size := Rectangle {
+            x: search-popup.x;
+            y: search-popup.y;
+            width: search-popup.width;
+            height: search-popup.height;
+            background: transparent;
+            // The place follows the panel. `search-size` is the panel's own size
+            // once it has laid itself out, and the panel and the strips around it
+            // are moved from it together, so they can never disagree about where
+            // the panel is. The size is also the one the window would work out
+            // when it opens the popup, so a change here usually leaves the place
+            // where it was.
+            init => { root.search-place-from(self.width, self.height); }
+            changed width => { root.search-place-from(self.width, self.height); }
+            changed height => { root.search-place-from(self.width, self.height); }
+        }
+
+    }
 
 
     // The hint the folded strip raises under its own control: it names the action

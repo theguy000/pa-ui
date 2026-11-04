@@ -93,6 +93,7 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
             global.set_sidebar_strip_new_session_mark_hover(value)
         }
         Role::SidebarSearchMark => global.set_sidebar_search_mark(value),
+        Role::SidebarSearchMarkHover => global.set_sidebar_search_mark_hover(value),
         Role::SidebarWordmarkInk => global.set_sidebar_wordmark_ink(value),
         Role::SidebarRowRenameMark => global.set_sidebar_row_rename_mark(value),
         Role::SidebarRowRenameFill => global.set_sidebar_row_rename_fill(value),
@@ -218,6 +219,10 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::PanelRowFillCurrent => global.set_panel_row_fill_current(value),
         Role::SessionCardEdge => global.set_session_card_edge(value),
         Role::SessionCardInk => global.set_session_card_ink(value),
+        Role::SearchRowInk => global.set_search_row_ink(value),
+        Role::SearchRowInkHighlighted => global.set_search_row_ink_highlighted(value),
+        Role::SearchMatchInk => global.set_search_match_ink(value),
+        Role::SearchAgeInk => global.set_search_age_ink(value),
         Role::SlashMenuRowInk => global.set_slash_menu_row_ink(value),
         Role::SlashMenuRowInkHover => global.set_slash_menu_row_ink_hover(value),
         Role::SlashMenuHintInk => global.set_slash_menu_hint_ink(value),

@@ -1,0 +1,300 @@
+// The popup that finds a session by name. It opens over the middle of the window
+// rather than off the sidebar it is reached from: the column is a place the
+// reader reads, and a list of every session is one job wider than the column.
+//
+// A query is matched against a name letter by letter, gaps allowed, so msc
+// finds "Mefenamic Acid for Period Pain". The letters that matched keep the ink
+// of the highlighted row, so a loose match still says why the row is there.
+
+import { ScrollView } from "std-widgets.slint";
+import { Panel, PanelButton } from "primitives.slint";
+import { MatchedName } from "search-name.slint";
+import { SearchEntry } from "types.slint";
+import { IconCross, IconSearch } from "icons.slint";
+import { Theme } from "theme.slint";
+
+export component SearchPopup inherits Panel {
+    in property <[SearchEntry]> entries;
+    in-out property <int> index;
+    // The field's text. The component never works out a match itself: the rows
+    // come from Rust, so what the reader sees is what the filter decided.
+    in-out property <string> query;
+    in-out property <string> placeholder;
+    // Raised by the window when it wants the caret in the field. The field is not
+    // reachable from outside, so the popup moves the caret itself on the change.
+    in property <int> focus-tick: 0;
+    changed focus-tick => { field.focus(); }
+
+    // The field was typed into, a character at a time; 	ext is the whole name.
+    callback typed(string);
+    callback picked(string);
+    callback closed();
+
+    private property <bool> show-list: root.entries.length > 0 || root.query != "";
+
+    width: 400px;
+    // The field, and when there are rows or a query to report on, up to eight
+    // rows at 32px plus symmetric top and bottom padding.
+    height: self.show-list
+        ? (45px + (root.entries.length == 0 ? 48px : min(root.entries.length * 32px, 256px) + 16px))
+        : 45px;
+    border-radius: 20px;
+    // The popup is the only surface of its kind in the window, so it carries no
+    // edge of its own: the drop shadow already parts it from what is behind it.
+    border-width: 0px;
+
+    // The field's own caret, for the window to put there after the popup opens:
+    // a frame earlier and the first character can land nowhere. Called again
+    // whenever a click on the panel takes the caret out of the field.
+    public function focus-field() { field.focus(); }
+
+    // Where the field ends. The window's cover over the rows starts here, so a
+    // press on the field reaches the TextInput instead of the cover.
+    out property <length> field-height: 45px;
+
+    // The field is the only thing the reader can type into while the popup is up,
+    // so it takes the caret whenever the popup exists.
+    init => {
+        field.focus();
+        focus-ticker.start();
+    }
+
+    // A tick later, like a single-shot timer without the callback plumbing. The
+    // ticker is not a child of keys: a focus scope that loses its own caret
+    // cancels the timers under it, and this one exists to move the caret.
+    private property <bool> focus-pending: true;
+    focus-ticker := Timer {
+        interval: 16ms;
+        running: root.focus-pending;
+        triggered => {
+            root.focus-pending = false;
+            field.focus();
+        }
+    }
+
+
+    // The highlight walks the rows the arrows chose and wraps at either end, so
+    // holding one arrow reaches every session and neither end is a dead stop.
+    public function move(step: int) {
+        if root.entries.length == 0 {
+            return;
+        }
+        root.index = Math.mod(root.index + step + root.entries.length, root.entries.length);
+    }
+
+    // Where the pointer is, in the popup's own coordinates. The window's cover
+    // passes it down: this component sits under that cover, so a row of its own
+    // could never see a pointer event.
+    private property <length> pointer-y: 0px;
+    // The list starts where the field stops, a hairline and 8 of padding down,
+    // and a row is 32 tall: a y in the list is the row that holds it. The cast
+    // drops the fraction, and a y above the first row is no row at all.
+    private property <int> row-under: (self.pointer-y - 54px + max(0px, -view.content-y)) / 32px;
+
+    // Moving over a row makes it the highlighted one, and pressing it opens that
+    // row's session: one highlight, whichever way it was moved.
+    public function hover(y: length) {
+        self.pointer-y = y;
+        if self.row-under >= 0 && self.row-under < root.entries.length
+            && self.row-under != root.index {
+            root.index = self.row-under;
+        }
+    }
+
+    public function press(y: length) {
+        self.hover(y);
+        if self.row-under >= 0 && self.row-under < root.entries.length {
+            root.picked(root.entries[self.row-under].id);
+        }
+    }
+
+    // The field's focus scope, over the field and no more: the rows below it keep
+    // their own clicks, and the keys the field does not take (the three that move
+    // or close the popup) come up to here.
+    //
+    // Escape and the two arrows are exactly these: Escape is 0x1b, and the arrows
+    // arrive as function-key codepoints rather than as words. Anything else is a
+    // character, and a character belongs to the field. The table is pinned in
+    // Rust by search::keys so a wrong codepoint fails a test instead of quietly
+    // stopping the field from typing.
+    pure function key-role(text: string) -> int {
+        if text == "\u{1b}" {
+            return 0;
+        }
+        if text == "\u{f701}" {
+            return 1;
+        }
+        if text == "\u{f700}" {
+            return 2;
+        }
+        3
+    }
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 45px;
+        key-pressed(event) => {
+            let what = root.key-role(event.text);
+            if what == 0 {
+                root.closed();
+                return accept;
+            }
+            if what == 1 {
+                root.move(1);
+                return accept;
+            }
+            if what == 2 {
+                root.move(-1);
+                return accept;
+            }
+            reject
+        }
+
+        // The mark in the field's left edge.
+        IconSearch {
+            x: 18px;
+            y: (45px - self.height) / 2;
+            tint: Theme.search-row-ink;
+        }
+
+        // What the field says before it is typed into, and behind the caret once it
+        // is. Drawn first so the text the reader types covers it.
+        if root.query == "" : Text {
+            x: 44px;
+            y: 0;
+            width: parent.width - 44px - 44px;
+            height: 45px;
+            text: root.placeholder;
+            color: Theme.search-row-ink;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
+
+        field := TextInput {
+            x: 44px;
+            y: 0;
+            width: parent.width - 44px - 44px;
+            height: 45px;
+            text <=> root.query;
+            color: Theme.search-row-ink-highlighted;
+            font-size: 14px;
+            vertical-alignment: center;
+            single-line: true;
+            // The placeholder is drawn under the field rather than set on it: this
+            // toolkit's TextInput has no placeholder of its own.
+            edited => { root.typed(self.text); }
+            // No key-pressed of its own: the field inserts every character it is
+            // given, and the three keys that move or close the popup bubble up to
+            // keys above, which is the scope that answers them.
+            accepted => {
+                if root.entries.length > 0 {
+                    root.picked(root.entries[root.index].id);
+                }
+            }
+        }
+    }
+
+    // The hairline under the field, at the panel's edge: it parts the field from
+    // the rows the way that edge parts the panel from the window.
+    if root.show-list : Rectangle {
+        x: 0;
+        y: 45px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.panel-edge;
+    }
+
+    close := PanelButton {
+        size: 24px;
+        x: parent.width - 34px;
+        y: (45px - self.height) / 2;
+        fill: transparent;
+        fill-hover: Theme.panel-row-fill-hover;
+        described: "Close search";
+        clicked => { root.closed(); }
+        IconCross {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close.hot ? Theme.search-row-ink-highlighted : Theme.search-row-ink;
+        }
+    }
+
+    view := ScrollView {
+        x: 0;
+        y: 46px;
+        width: parent.width;
+        height: root.show-list ? max(24px, parent.height - 46px) : 0px;
+        visible: root.show-list && root.entries.length > 0;
+        vertical-scrollbar-policy: root.entries.length > 8
+            ? ScrollBarPolicy.as-needed
+            : ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: root.entries.length * 32px + 12px;
+        // arrowing past the fold pulls the list after the highlight, the way the
+        // command menu does: the highlighted row is never off screen
+        content-y: -clamp(
+            root.index * 32px - 96px,
+            0px,
+            max(0px, root.entries.length * 32px + 12px - self.height)
+        );
+
+        for entry[index] in root.entries : Rectangle {
+            y: 8px + index * 32px;
+            x: 16px;
+            width: parent.width - 32px;
+            height: 28px;
+            border-radius: 6px;
+            background: index == root.index ? Theme.panel-row-fill-hover : transparent;
+            animate background { duration: 90ms; }
+
+            name := MatchedName {
+                x: 10px;
+                y: 0;
+                width: parent.width - 20px - age.preferred-width - 10px;
+                height: parent.height;
+                glyphs: entry.glyphs;
+                highlighted: index == root.index;
+            }
+
+            // When the session was last used, at the row's right edge, where a
+            // column of dates lines up and the eye scans down it.
+            age := Text {
+                x: parent.width - self.preferred-width - 10px;
+                y: 0;
+                height: parent.height;
+                text: entry.age;
+                color: Theme.search-age-ink;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: MouseCursor.pointer;
+                clicked => {
+                    root.index = index;
+                    root.picked(entry.id);
+                }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.move && root.index != index {
+                        root.index = index;
+                    }
+                }
+            }
+        }
+    }
+
+    // An empty list when a query matched nothing.
+    if root.show-list && root.entries.length == 0 : Text {
+        x: 18px;
+        y: 46px + 16px;
+        width: parent.width - 36px;
+        text: "No session matches";
+        color: Theme.search-row-ink;
+        font-size: 12px;
+    }
+}

@@ -268,9 +268,13 @@ pub(crate) enum Role {
     /// the button's hover: a theme that moves the strip's pen would have it spring
     /// back to the button's colour under the pointer.
     SidebarStripNewSessionMarkHover,
-    /// The magnifier in the column's header, and again in its folded strip.
-    /// Drawn and inert until search exists, and read at the quiet ink both draw.
+    /// The magnifier in the column's header, and again in its folded strip: the
+    /// two controls that open the search popup. Quiet ink, because the mark says
+    /// nothing until it is pointed at.
     SidebarSearchMark,
+    /// That magnifier under the pointer. At the ink a name gets, because the
+    /// control answers now.
+    SidebarSearchMarkHover,
     /// The product's name beside the brand mark, at the top of the column. The one
     /// piece of lettering in the column that is not a session's, so it is read at
     /// body ink while the names under it step back.
@@ -639,6 +643,16 @@ pub(crate) enum Role {
     SessionCardEdge,
     /// The words on that card.
     SessionCardInk,
+    /// A session's name on a row of the search popup, at rest.
+    SearchRowInk,
+    /// That name on the row the arrows or the pointer are on.
+    SearchRowInkHighlighted,
+    /// The letters a query matched: the row's name at full ink, because the
+    /// mark is the whole of the reason the row is in the list at all.
+    SearchMatchInk,
+    /// When the session was last used, at the row's right edge. The row's name
+    /// is what the reader read the row for, so the date steps behind it.
+    SearchAgeInk,
     /// A command's name at rest: quiet ink, because the list is a column to scan.
     SlashMenuRowInk,
     /// That name while the row is the one the arrows or the pointer is on. The
@@ -787,7 +801,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 187] = [
+    pub(crate) const ALL: [Role; 192] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -814,6 +828,7 @@ impl Role {
         Role::SidebarStripNewSessionMark,
         Role::SidebarStripNewSessionMarkHover,
         Role::SidebarSearchMark,
+        Role::SidebarSearchMarkHover,
         Role::SidebarWordmarkInk,
         Role::SidebarRowRenameMark,
         Role::SidebarRowRenameFill,
@@ -931,6 +946,10 @@ impl Role {
         Role::PanelRowFillCurrent,
         Role::SessionCardEdge,
         Role::SessionCardInk,
+        Role::SearchRowInk,
+        Role::SearchRowInkHighlighted,
+        Role::SearchMatchInk,
+        Role::SearchAgeInk,
         Role::SlashMenuRowInk,
         Role::SlashMenuRowInkHover,
         Role::SlashMenuHintInk,
@@ -1006,6 +1025,7 @@ impl Role {
             Role::SidebarStripNewSessionMark => "sidebar-strip-new-session-mark",
             Role::SidebarStripNewSessionMarkHover => "sidebar-strip-new-session-mark-hover",
             Role::SidebarSearchMark => "sidebar-search-mark",
+            Role::SidebarSearchMarkHover => "sidebar-search-mark-hover",
             Role::SidebarWordmarkInk => "sidebar-wordmark-ink",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
             Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
@@ -1123,6 +1143,10 @@ impl Role {
             Role::PanelRowFillCurrent => "panel-row-fill-current",
             Role::SessionCardEdge => "session-card-edge",
             Role::SessionCardInk => "session-card-ink",
+            Role::SearchRowInk => "search-row-ink",
+            Role::SearchRowInkHighlighted => "search-row-ink-highlighted",
+            Role::SearchMatchInk => "search-match-ink",
+            Role::SearchAgeInk => "search-age-ink",
             Role::SlashMenuRowInk => "slash-menu-row-ink",
             Role::SlashMenuRowInkHover => "slash-menu-row-ink-hover",
             Role::SlashMenuHintInk => "slash-menu-hint-ink",
@@ -1213,6 +1237,7 @@ impl Role {
             Role::SidebarStripNewSessionMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.933),
             Role::SidebarStripNewSessionMarkHover => Derivation::Palette(Palette::Ink),
             Role::SidebarSearchMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9015),
+            Role::SidebarSearchMarkHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.9387),
             Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
             Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
@@ -1408,6 +1433,12 @@ impl Role {
             }
             Role::SessionCardEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1226),
             Role::SessionCardInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9764),
+            Role::SearchRowInk => Derivation::Palette(Palette::QuietInk),
+            Role::SearchRowInkHighlighted => Derivation::Palette(Palette::Ink),
+            Role::SearchMatchInk => Derivation::Fixed(Rgba::hex("#e0cd7c")),
+            Role::SearchAgeInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.5786)
+            }
             Role::SlashMenuRowInk => Derivation::Palette(Palette::QuietInk),
             Role::SlashMenuRowInkHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.8302)

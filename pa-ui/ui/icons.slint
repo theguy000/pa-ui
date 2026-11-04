@@ -157,8 +157,8 @@ export component IconNewChat inherits Path {
         + "L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z";
 }
 
-// The quiet tint is deliberate: the mark is inert until search exists, and a
-// control that cannot be clicked should not look like one.
+// The quiet tint is deliberate: the mark sits in a row of quieter controls, and
+// it takes the brighter search ink only under the pointer.
 export component IconSearch inherits Path {
     in property <color> tint: Theme.sidebar-search-mark;
     width: 16px;
@@ -211,6 +211,20 @@ export component IconTrash inherits Path {
     commands: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z";
     fill: tint;
     stroke: transparent;
+}
+
+// A cross: closes the search popup it sits in.
+export component IconCross inherits Path {
+    in property <color> tint;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M 6 6 L 18 18 M 18 6 L 6 18";
+    stroke: tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    fill: transparent;
 }
 
 // transcript

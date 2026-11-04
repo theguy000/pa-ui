@@ -30,6 +30,30 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
 }
 
 
+/// When the session was last used, as the search popup says it: a day the reader
+/// is likely to think in, so today and yesterday by name and older days counted.
+pub(crate) fn age_label(row: &SessionRow) -> SharedString {
+    let stamp = if row.last_activity.is_empty() {
+        &row.modified
+    } else {
+        &row.last_activity
+    };
+    let Some(seconds) = parse_iso_seconds(stamp) else {
+        return SharedString::new();
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    // A stamp in the future is the clock disagreeing with itself, not a session
+    // used later today: read it as today rather than as a negative age.
+    match (now - seconds).max(0) / 86_400 {
+        0 => "Today".into(),
+        1 => "Yesterday".into(),
+        days => format!("{days}d").into(),
+    }
+}
+
+
 /// Every session, as the sidebar draws it, in the order the daemon gave them.
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
     rows.iter().map(to_item).collect()

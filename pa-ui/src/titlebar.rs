@@ -33,6 +33,7 @@ const STRIP: i32 = 48;
 /// window's left. The column is 232 wide and its band is inset 8 either side, so
 /// the 30px button starts at `232 - 8 - 30`. These must agree with the column in
 /// `ui/app.slint` for the same reason the right column's do.
+const SIDEBAR_SEARCH_LEFT: i32 = 160;
 const SIDEBAR_COLLAPSE_LEFT: i32 = 194;
 const SIDEBAR_COLLAPSE: i32 = 30;
 
@@ -282,8 +283,8 @@ mod imp {
                 if x < inset_x + (super::STRIP as f64 * scale).round() as i32 {
                     return HTCLIENT;
                 }
-                let sb_left = inset_x + (super::SIDEBAR_COLLAPSE_LEFT as f64 * scale).round() as i32;
-                let sb_right = sb_left + (super::SIDEBAR_COLLAPSE as f64 * scale).round() as i32;
+                let sb_left = inset_x + (super::SIDEBAR_SEARCH_LEFT as f64 * scale).round() as i32;
+                let sb_right = inset_x + ((super::SIDEBAR_COLLAPSE_LEFT + super::SIDEBAR_COLLAPSE) as f64 * scale).round() as i32;
                 if x >= sb_left && x < sb_right {
                     return HTCLIENT;
                 }
