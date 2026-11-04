@@ -48,7 +48,6 @@ const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRo
 const ON_QUIET_CONTROL: &[Role] = &[Role::ButtonQuietFillHover];
 const ON_PRIMARY_CONTROL: &[Role] = &[Role::ButtonPrimaryFill];
 const ON_PRIMARY_CONTROL_HOVER: &[Role] = &[Role::ButtonPrimaryFillHover];
-const ON_RENAME_CHIP: &[Role] = &[Role::SidebarRowRenameFill];
 const ON_RENAME_CHIP_HOVER: &[Role] = &[Role::SidebarRowRenameFillHover];
 const ON_OPEN_TIP: &[Role] = &[Role::SidebarOpenTipFill];
 const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
@@ -255,11 +254,6 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_PRIMARY_CONTROL_HOVER },
         what: "the words on New Session under the pointer",
         floor: BODY,
-    },
-    Pair {
-        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP },
-        what: "the pencil a row offers, at rest",
-        floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP_HOVER },

@@ -232,11 +232,6 @@ pub(crate) enum Role {
     /// picked name's value: it is read against the row's own field and not the
     /// picked fill, so a light sidebar has to move the two apart.
     SidebarNameInkEditing,
-    /// How long ago a session last moved. The window's own value reads at
-    /// 2.7:1 on the column, under any legibility floor, and this table keeps it
-    /// because a pixel may not move here; `contrast.rs` records the miss instead
-    /// of measuring it.
-    SidebarAgeInk,
     /// A group header on the column: the word over the active, idle and done
     /// rows, and the count beside it. Quiet, because it is a label over names
     /// the reader is scanning rather than a name of its own.
@@ -284,10 +279,6 @@ pub(crate) enum Role {
     SidebarWordmarkInk,
     /// The pencil a session row offers to rename it.
     SidebarRowRenameMark,
-    /// The chip that pencil sits on, at rest: a lift of ink over the column, so
-    /// the control reads as something to press rather than as a bare mark. The
-    /// chip draws no edge, so its fill is the whole of what says it is there.
-    SidebarRowRenameFill,
     /// That chip with the pointer on it. Opaque, and its own role rather than a
     /// quiet button's veil: the chip only appears under a pointer that is already
     /// on the row, so what it is laid on is the row's own fill and not the column,
@@ -803,7 +794,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 191] = [
+    pub(crate) const ALL: [Role; 189] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -819,7 +810,6 @@ impl Role {
         Role::SidebarNameInk,
         Role::SidebarNameInkSelected,
         Role::SidebarNameInkEditing,
-        Role::SidebarAgeInk,
         Role::SidebarGroupInk,
         Role::SidebarGroupCaret,
         Role::TagWorking,
@@ -834,7 +824,6 @@ impl Role {
         Role::SidebarSearchMark,
         Role::SidebarWordmarkInk,
         Role::SidebarRowRenameMark,
-        Role::SidebarRowRenameFill,
         Role::SidebarRowRenameFillHover,
         Role::SidebarRowMenuMark,
         Role::SidebarRowDoneMark,
@@ -1015,7 +1004,6 @@ impl Role {
             Role::SidebarNameInk => "sidebar-name-ink",
             Role::SidebarNameInkSelected => "sidebar-name-ink-selected",
             Role::SidebarNameInkEditing => "sidebar-name-ink-editing",
-            Role::SidebarAgeInk => "sidebar-age-ink",
             Role::SidebarGroupInk => "sidebar-group-ink",
             Role::SidebarGroupCaret => "sidebar-group-caret",
             Role::TagWorking => "tag-working",
@@ -1030,7 +1018,6 @@ impl Role {
             Role::SidebarSearchMark => "sidebar-search-mark",
             Role::SidebarWordmarkInk => "sidebar-wordmark-ink",
             Role::SidebarRowRenameMark => "sidebar-row-rename-mark",
-            Role::SidebarRowRenameFill => "sidebar-row-rename-fill",
             Role::SidebarRowRenameFillHover => "sidebar-row-rename-fill-hover",
             Role::SidebarRowMenuMark => "sidebar-row-menu-mark",
             Role::SidebarRowDoneMark => "sidebar-row-done-mark",
@@ -1226,7 +1213,6 @@ impl Role {
             Role::SidebarNameInk => Derivation::Palette(Palette::QuietInk),
             Role::SidebarNameInkSelected => Derivation::Palette(Palette::Ink),
             Role::SidebarNameInkEditing => Derivation::Palette(Palette::Ink),
-            Role::SidebarAgeInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.447),
             // a group's word is read as a name is, being the label the rows
             // under it are scanned from; its caret is a mark on the header's
             // hover fill, drawn at the weight the row's own pencil is
@@ -1246,7 +1232,6 @@ impl Role {
             Role::SidebarSearchMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.9015),
             Role::SidebarWordmarkInk => Derivation::Palette(Palette::Ink),
             Role::SidebarRowRenameMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
-            Role::SidebarRowRenameFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0566),
             Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2a2c24")),
             Role::SidebarRowMenuMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
             Role::SidebarRowDoneMark => Derivation::Fixed(Rgba::hex("#6f9f5f")),
