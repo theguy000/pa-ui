@@ -1,4 +1,4 @@
-//! What the sidebar's rows must say, asserted on the items the window hands the
+﻿//! What the sidebar's rows must say, asserted on the items the window hands the
 //! list: the status word `sidebar.slint` compares, built from the daemon's wire
 //! JSON.
 //!
@@ -288,3 +288,62 @@ fn first_poll_and_subsequent_polls_compare_against_was_not_current() {
     let third = column((&[], &renamed, &[]), [false, false, false], (&[], &i2, &[]), [false, false, false]);
     assert!(third.changed(), "renaming a session must mark the column changed");
 }
+
+/// The popup's age column reads the daemon's stamp, and the two helpers are the
+/// only place the window turns a date into a number: a day off would show a
+/// session as used yesterday that the daemon saved today.
+#[test]
+fn a_stamp_reads_as_the_seconds_the_popup_counts_days_from() {
+    // 2026-11-03T00:00:00Z is 20760 days after the epoch, by the same
+    // arithmetic every calendar library uses.
+    assert_eq!(stamp_seconds("2026-11-03T00:00:00Z"), Some(20_760 * 86_400));
+    assert_eq!(
+        stamp_seconds("1970-01-01T00:00:00Z"),
+        Some(0),
+        "the epoch is the zero the rest are measured from"
+    );
+    assert_eq!(stamp_seconds("2024-02-29T12:34:56Z"), Some(1_709_210_096));
+    assert_eq!(stamp_seconds("2026-11-03"), None, "a date alone is not a stamp");
+    assert_eq!(stamp_seconds(""), None);
+    assert_eq!(
+        stamp_seconds("20261103T000000000Z"),
+        None,
+        "a stamp without its separators is not a date"
+    );
+    assert_eq!(
+        stamp_seconds("2026-13-03T00:00:00Z"),
+        None,
+        "a thirteenth month is not a date"
+    );
+}
+
+/// The label counts forward from the clock it is given, so a stamp from a
+/// second ago, a day ago and ten days ago read as the three words a reader
+/// scans a column for.
+#[test]
+fn the_age_is_today_yesterday_or_the_days_since() {
+    let now = 20_760 * 86_400 + 3600;
+    assert_eq!(age_label_at("2026-11-03T00:59:00Z", now), "Today");
+    assert_eq!(age_label_at("2026-11-02T00:59:00Z", now), "Yesterday");
+    assert_eq!(age_label_at("2026-10-24T00:59:00Z", now), "10d");
+}
+
+/// A stamp the machine's clock has not reached yet is the clock disagreeing with
+/// itself: the popup says today rather than a negative age.
+#[test]
+fn a_future_stamp_reads_as_today() {
+    let row = row(serde_json::json!({
+        "activeSessionId": "f1", "sessionId": "uf1", "lifecycle": "live",
+        "lastActivityAt": "2999-01-01T00:00:00Z",
+    }));
+    assert_eq!(age_label(&row), "Today");
+}
+
+#[test]
+fn a_row_with_no_readable_stamp_has_no_age() {
+    let row = row(serde_json::json!({
+        "activeSessionId": "n1", "sessionId": "un1", "lifecycle": "live",
+    }));
+    assert_eq!(age_label(&row), "");
+}
+

@@ -1,0 +1,275 @@
+﻿// The popup that finds a session by name. It opens over the middle of the window
+// rather than off the sidebar it is reached from: the column is a place the
+// reader reads, and a list of every session is one job wider than the column.
+//
+// A query is matched against a name letter by letter, gaps allowed, so msc
+// finds "Mxs Mints cat". The letters that matched take an ink of their
+// own, so a loose match still says why the row is there.
+
+import { ScrollView } from "std-widgets.slint";
+import { Button, Panel } from "primitives.slint";
+import { MatchedName } from "search-name.slint";
+import { SearchRow } from "types.slint";
+import { IconCross, IconSearch } from "icons.slint";
+import { Theme } from "theme.slint";
+
+// The panel's own geometry, in one place: its field, its side padding, its row
+// height, and the room its list keeps under the last row. `app.slint` reads the
+// same numbers for the `Panel` it puts behind the popup, so the panel's place
+// is known before the popup is built. This file's rationale is in
+// pa-ui/design/README.md.
+export global SearchBox {
+    out property <length> field: 45px;
+    out property <length> inset: 8px;
+    out property <length> row: 32px;
+    // The list stops at eight rows and scrolls after that.
+    out property <int> rows-shown: 8;
+    // The most the list can be tall: its eight rows and the inset under them.
+    out property <length> list-max: root.rows-shown * root.row + root.inset;
+}
+
+export component SearchPopup inherits Panel {
+    in property <[SearchRow]> rows;
+    in-out property <int> index;
+    // The field's text. The component never works out a match itself: the rows
+    // come from Rust, so what the reader sees is what the filter decided.
+    in-out property <string> query;
+    in-out property <string> placeholder;
+    // Raised by the window when it wants the caret in the field. The field is not
+    // reachable from outside, so the popup moves the caret itself on the change.
+    in property <int> focus-tick: 0;
+    changed focus-tick => { field.focus(); }
+
+    // A character was typed into the field, and the text it now holds.
+    callback typed(string);
+    callback picked(string);
+    callback closed();
+
+    private property <bool> show-list: root.rows.length > 0 || root.query != "";
+
+    width: 400px;
+    // The field, and when there are rows or a query to report on, the list: up
+    // to eight rows, the inset above the first and the inset under the last. A
+    // query that matched nothing keeps the room for the one line that says so.
+    height: !root.show-list
+        ? SearchBox.field
+        : root.rows.length == 0
+            ? SearchBox.field + 2 * SearchBox.inset + 2 * SearchBox.row
+            : SearchBox.field + min(root.rows.length * SearchBox.row + SearchBox.inset, SearchBox.list-max);
+    border-radius: 20px;
+    // The popup is the only surface of its kind in the window, so it carries no
+    // edge of its own: the drop shadow already parts it from what is behind it.
+    border-width: 0px;
+
+    // The field is the only thing the reader can type into while the popup is up,
+    // so it takes the caret whenever the popup exists, and again a tick later:
+    // the chain from the scope to the leaf that holds the text is not built in
+    // the first frame, and a focus asked for then never reaches the letters.
+    init => {
+        field.focus();
+        focus-ticker.start();
+    }
+
+    private property <bool> focus-pending: true;
+    focus-ticker := Timer {
+        interval: 16ms;
+        running: root.focus-pending;
+        triggered => {
+            root.focus-pending = false;
+            field.focus();
+        }
+    }
+
+    // The highlight walks the rows the arrows chose and wraps at either end, so
+    // holding one arrow reaches every session and neither end is a dead stop.
+    public function move(step: int) {
+        if root.rows.length == 0 {
+            return;
+        }
+        root.index = Math.mod(root.index + step + root.rows.length, root.rows.length);
+    }
+
+    // The field's focus scope, over the field and no more: the rows below it keep
+    // their own clicks, and the keys the field does not take come up to here.
+    //
+    // Escape, Return and the two arrows are named by `Key`, so a wrong codepoint
+    // fails to compile rather than quietly stopping the field from typing. Ctrl+K
+    // is the one chord that is not: the toolkit reports it as the character it
+    // makes, and `search::keys` in Rust pins both spellings with a test.
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: SearchBox.field;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.closed();
+                return EventResult.accept;
+            }
+            if event.text == Key.DownArrow {
+                root.move(1);
+                return EventResult.accept;
+            }
+            if event.text == Key.UpArrow {
+                root.move(-1);
+                return EventResult.accept;
+            }
+            if event.text == Key.Return {
+                root.accept();
+                return EventResult.accept;
+            }
+            reject
+        }
+
+        // The mark in the field's left edge.
+        IconSearch {
+            x: 18px;
+            y: (SearchBox.field - self.height) / 2;
+            tint: Theme.search-row-ink;
+        }
+
+        // What the field says before it is typed into, and behind the caret once it
+        // is. Drawn first so the text the reader types covers it.
+        if root.query == "" : Text {
+            x: 44px;
+            y: 0;
+            width: parent.width - 44px - 44px;
+            height: SearchBox.field;
+            text: root.placeholder;
+            color: Theme.search-row-ink;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
+
+        field := TextInput {
+            x: 44px;
+            y: 0;
+            width: parent.width - 44px - 44px;
+            height: SearchBox.field;
+            text <=> root.query;
+            color: Theme.search-row-ink-hover;
+            font-size: 14px;
+            vertical-alignment: center;
+            single-line: true;
+            // The placeholder is drawn under the field rather than set on it: this
+            // toolkit's TextInput has no placeholder of its own.
+            edited => { root.typed(self.text); }
+            // No key-pressed of its own: the field inserts every character it is
+            // given, and the keys that move or close the popup bubble up to
+            // `keys` above, which is the scope that answers them.
+        }
+    }
+
+    // Return opens the highlighted row.
+    public function accept() {
+        if root.rows.length > 0 {
+            root.picked(root.rows[root.index].id);
+        }
+    }
+
+    // The hairline under the field, at the panel's edge: it parts the field from
+    // the rows the way that edge parts the panel from the window.
+    if root.show-list : Rectangle {
+        x: 0;
+        y: SearchBox.field;
+        width: parent.width;
+        height: 1px;
+        background: Theme.panel-edge;
+    }
+
+    close := Button {
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        x: parent.width - 34px;
+        y: (SearchBox.field - self.height) / 2;
+        fill: transparent;
+        fill-hover: Theme.panel-row-fill-hover;
+        described: "Close search";
+        clicked => { root.closed(); }
+        IconCross {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+    }
+
+    view := ScrollView {
+        x: 0;
+        y: SearchBox.field;
+        width: parent.width;
+        height: root.rows.length > 0
+            ? min(root.rows.length * SearchBox.row + SearchBox.inset, SearchBox.list-max)
+            : 0px;
+        vertical-scrollbar-policy: root.rows.length > SearchBox.rows-shown
+            ? ScrollBarPolicy.as-needed
+            : ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: root.rows.length * SearchBox.row + 2 * SearchBox.inset;
+        // arrowing past the fold pulls the list after the highlight, the way the
+        // command menu does: the highlighted row is never off screen
+        content-y: -clamp(
+            root.index * SearchBox.row - 96px,
+            0px,
+            max(0px, root.rows.length * SearchBox.row + SearchBox.inset - self.height)
+        );
+
+        for row[index] in root.rows : Rectangle {
+            y: SearchBox.inset + index * SearchBox.row;
+            x: 16px;
+            width: parent.width - 32px;
+            height: SearchBox.row - 4px;
+            border-radius: 6px;
+            background: index == root.index ? Theme.panel-row-fill-hover : transparent;
+
+            name := MatchedName {
+                x: 10px;
+                y: 0;
+                width: parent.width - 20px - age.preferred-width - 10px;
+                height: parent.height;
+                glyphs: row.glyphs;
+                highlighted: index == root.index;
+            }
+
+            // When the session was last used, at the row's right edge, where a
+            // column of dates lines up and the eye scans down it.
+            age := Text {
+                x: parent.width - self.preferred-width - 10px;
+                y: 0;
+                height: parent.height;
+                text: row.age;
+                color: Theme.search-age-ink;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: MouseCursor.pointer;
+                clicked => {
+                    root.index = index;
+                    root.picked(row.id);
+                }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.move && root.index != index {
+                        root.index = index;
+                    }
+                }
+            }
+        }
+    }
+
+    // An empty list when a query matched nothing.
+    if root.show-list && root.rows.length == 0 : Text {
+        x: 18px;
+        y: SearchBox.field + SearchBox.inset;
+        width: parent.width - 36px;
+        height: SearchBox.row * 2;
+        text: "No session matches";
+        color: Theme.search-row-ink;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+}

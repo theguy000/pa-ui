@@ -1,0 +1,35 @@
+// A session's name on a row of the search popup.
+//
+// A fuzzy match is a list of character offsets, not markup, and StyledText
+// cannot carry them: one styled string per character offset would mean building
+// the window's type in Rust. So the row draws the name as one Text per character,
+// in order, and each character takes the ink its offset asks for. A run of Text
+// elements laid out side by side is one line of type; the model is the one Rust
+// already elides to a length a row can afford.
+
+import { SearchGlyph } from "types.slint";
+import { Theme } from "theme.slint";
+
+export component MatchedName inherits Rectangle {
+    in property <[SearchGlyph]> glyphs;
+    in property <bool> highlighted;
+    in property <length> font-size: 13px;
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+        // left, so a row of glyphs starts at the row's own left edge. The first
+        // character carries the leading the font gives the line, so the row's
+        // ink starts where every other row's type does.
+        alignment: start;
+
+        for glyph[index] in root.glyphs : Text {
+            text: glyph.text;
+            font-size: root.font-size;
+            vertical-alignment: center;
+            color: glyph.matched ? Theme.search-match-ink
+                : root.highlighted ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+    }
+}

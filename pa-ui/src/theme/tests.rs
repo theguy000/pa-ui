@@ -729,6 +729,7 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-strip-new-session-mark": "#303030",
                "sidebar-strip-new-session-mark-hover": "#101010",
                "sidebar-search-mark": "#4a4a4a",
+                "sidebar-search-mark-hover": "#101010",
                "sidebar-wordmark-ink": "#101010",
                "sidebar-row-rename-mark": "#5a5a5a",
                "sidebar-row-rename-fill-hover": "#4a4a4a",
@@ -1204,6 +1205,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a provider the reader is not signed in to",
             "a rung of the ladder",
             "a session's name at rest",
+            "a session's name in the search list",
             "a session's name under the pointer",
             "a table's text",
             "how many messages are waiting",
@@ -1225,7 +1227,9 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the dot that parts a cell's meta from its elapsed time",
             "the fold mark at rest",
             "the label a thinking row carries",
+            "the letters a query matched",
             "the level the running model is at",
+            "the matched letters on the highlighted row",
             "the message the reader sent",
             "the model the chip names",
             "the name of a lane with nothing to count",
@@ -1247,7 +1251,9 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the words on New Session under the pointer",
             "what a cell printed",
             "what a command does",
-            "what is left of the context"
+            "what is left of the context",
+            "when a session was last used",
+            "when the highlighted session was last used"
         ]
     );
 }

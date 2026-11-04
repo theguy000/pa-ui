@@ -13,6 +13,7 @@ mod probes;
 mod queue;
 mod scroll;
 mod sheet;
+mod search;
 mod send;
 mod sessions;
 mod share;
@@ -79,6 +80,21 @@ const SPINNER_FRAMES: [&str; 10] = [
     "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
     "\u{2827}", "\u{2807}", "\u{280f}",
 ];
+
+/// The rows `PA_SEARCH_SEED` names, so a machine whose daemon answers with an
+/// empty list can still show a frame of matches. The stamp is fixed so two runs
+/// of the same snapshot say the same thing.
+fn seed_rows(seed: &str) -> Vec<SessionRow> {
+    seed.split('|')
+        .map(|name| SessionRow {
+            id: name.to_string(),
+            session_id: name.to_string(),
+            name: name.to_string(),
+            last_activity: "2026-11-03T00:00:00Z".to_string(),
+            ..SessionRow::default()
+        })
+        .collect()
+}
 
 fn main() -> Result<(), slint::PlatformError> {
     // A theme author checks a file without a window: the same check the suite
@@ -294,6 +310,16 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::rows::toggle(&ui, &sheet);
 
+    interactive::search::opened(&ui, &sessions_cache);
+    interactive::search::typed(&ui, &sessions_cache);
+    interactive::search::picked(&ui);
+    interactive::search::closed(&ui);
+    // The chord rules live in Rust so they have tests; the window asks them
+    // rather than comparing key strings in Slint.
+    ui.on_opens_search(|text, control, search_open| {
+        search::keys::opens_search(text.as_str(), control, search_open)
+    });
+
     let oldest_cursor: Rc<std::cell::RefCell<Option<String>>> =
         Rc::new(std::cell::RefCell::new(None));
     let has_older = Rc::new(std::cell::Cell::new(false));
@@ -444,6 +470,31 @@ fn main() -> Result<(), slint::PlatformError> {
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();
+        if let Ok(seed) = std::env::var("PA_SEARCH_SEED") {
+            let rows = seed_rows(&seed);
+            let (active, idle, done) = sessions::groups_from(&rows);
+            let column = sessions::column(
+                (&active, &idle, &done),
+                [false, false, false],
+                (&[], &[], &[]),
+                [false, false, false],
+            );
+            sessions::apply(&ui, column, -1, false);
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(sessions::session_items(&rows)))));
+            *sessions_cache.borrow_mut() = rows;
+        }
+        // PA_SEARCH is a design check: the popup open, with a query already in it
+        // so a frame shows the rows, the match and the highlight at once. An empty
+        // value opens it on the whole list.
+        if let Ok(query) = std::env::var("PA_SEARCH") {
+            if !query.is_empty() {
+                ui.set_search_query(query.as_str().into());
+            }
+            interactive::search::open(&ui, &sessions_cache.borrow());
+        }
         let shot_timer = std::rc::Rc::new(slint::Timer::default());
         let stop = shot_timer.clone();
         shot_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(600), move || {

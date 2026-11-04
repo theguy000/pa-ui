@@ -28,13 +28,15 @@ const COLLAPSE: i32 = 26;
 /// way back open, so the whole strip is Slint's to answer.
 const STRIP: i32 = 48;
 
-/// Logical geometry of the sidebar's collapse button, drawn at the right of the
-/// column's header band and inside this strip: left edge and width, from the
-/// window's left. The column is 232 wide and its band is inset 8 either side, so
-/// the 30px button starts at `232 - 8 - 30`. These must agree with the column in
+/// Logical geometry of the two controls at the right of the sidebar's header
+/// band, inside this strip: left edge and width, from the window's left. The
+/// column is 232 wide and its band is inset 8 either side, so the 30px collapse
+/// button starts at `232 - 8 - 30`, and the 30px magnifier sits one gap to its
+/// left. The band's own right edge is the span the client area has to answer
+/// for, and both buttons sit inside it. These must agree with the column in
 /// `ui/app.slint` for the same reason the right column's do.
-const SIDEBAR_COLLAPSE_LEFT: i32 = 194;
-const SIDEBAR_COLLAPSE: i32 = 30;
+const SIDEBAR_BAND_RIGHT: i32 = 224;
+const SIDEBAR_CONTROLS_LEFT: i32 = 160;
 
 /// Attach to this process's main window. Returns false until the window exists.
 pub fn init() -> bool {
@@ -277,13 +279,13 @@ mod imp {
 
             let caption = inset_y + (super::HEIGHT as f64 * scale).round() as i32;
             if y >= inset_y && y < caption {
-                // The folded strip's top mark and the sidebar's collapse button
-                // live in the top strip and are Slint controls.
+                // The folded strip's top mark and the sidebar's two controls live
+                // in the top strip and are Slint controls.
                 if x < inset_x + (super::STRIP as f64 * scale).round() as i32 {
                     return HTCLIENT;
                 }
-                let sb_left = inset_x + (super::SIDEBAR_COLLAPSE_LEFT as f64 * scale).round() as i32;
-                let sb_right = sb_left + (super::SIDEBAR_COLLAPSE as f64 * scale).round() as i32;
+                let sb_left = inset_x + (super::SIDEBAR_CONTROLS_LEFT as f64 * scale).round() as i32;
+                let sb_right = inset_x + (super::SIDEBAR_BAND_RIGHT as f64 * scale).round() as i32;
                 if x >= sb_left && x < sb_right {
                     return HTCLIENT;
                 }

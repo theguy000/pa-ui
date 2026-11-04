@@ -75,6 +75,82 @@ pub(crate) fn to_item(row: &SessionRow) -> SessionItem {
     }
 }
 
+/// When the session was last used, as the search popup says it: a day the reader
+/// is likely to think in, so today and yesterday by name and older days counted.
+pub(crate) fn age_label(row: &SessionRow) -> SharedString {
+    let stamp = if row.last_activity.is_empty() {
+        &row.modified
+    } else {
+        &row.last_activity
+    };
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    age_label_at(stamp, now)
+}
+
+/// The same label read against a given clock, so a test does not have to wait
+/// for a day to pass.
+fn age_label_at(stamp: &str, now: i64) -> SharedString {
+    let Some(seconds) = stamp_seconds(stamp) else {
+        return SharedString::new();
+    };
+    // A stamp in the future is the clock disagreeing with itself, not a session
+    // used later today: read it as today rather than as a negative age.
+    match (now - seconds).max(0) / 86_400 {
+        0 => "Today".into(),
+        1 => "Yesterday".into(),
+        days => format!("{days}d").into(),
+    }
+}
+
+/// A `YYYY-MM-DDTHH:MM:SS` stamp as seconds since the epoch, or `None` when the
+/// stamp is too short to read. The zone suffix is ignored, so a stamp one zone
+/// away from the machine only moves the day boundary by hours.
+fn stamp_seconds(stamp: &str) -> Option<i64> {
+    if stamp.len() < 19 {
+        return None;
+    }
+    let num = |range: std::ops::Range<usize>| {
+        stamp.get(range).and_then(|part| part.parse::<i64>().ok())
+    };
+    let year = num(0..4)?;
+    let month = num(5..7)?;
+    let day = num(8..10)?;
+    // A stamp that keeps its separators where the daemon puts them, so a string
+    // of nineteen digits is read as no date rather than as the year 20261. The
+    // bytes are safe to index: every separator is ASCII, so each one is a whole
+    // character and no range below can split one.
+    let separators: [(usize, u8); 5] = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
+    if separators
+        .iter()
+        .any(|(at, want)| stamp.as_bytes().get(*at) != Some(want))
+    {
+        return None;
+    }
+    let hour = num(11..13)?;
+    let minute = num(14..16)?;
+    let second = num(17..19)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+/// Days since 1970-01-01 for a civil date, by Howard Hinnant's `days_from_civil`,
+/// which is exact for every date the calendar has.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let shifted_month = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+
+
 /// Every session, as the sidebar draws it, grouped: active rows first, then
 /// idle, then done, each group kept in the daemon's order.
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
@@ -270,6 +346,13 @@ impl Column {
 
 /// Borrowed rows per group, in the order the window draws them.
 pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
+
+/// The three groups of a set of daemon rows, with every group folded open, for
+/// a window that fills the column from a list it made itself: the poll and the
+/// snapshot seed both come through here, so a change to grouping reaches both.
+pub(crate) fn groups_from(rows: &[SessionRow]) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+    session_groups(&session_items(rows))
+}
 
 /// Rebuild the column for `folded` (active, idle, done), given what each group
 /// held before and that same group's fold state then.
