@@ -1,7 +1,7 @@
 // The window's caption, drawn here because the native one cannot follow the app
 // theme. Geometry must agree with HEIGHT and BUTTON in src/titlebar.rs.
 
-import { CaptionGlyph, PanelIcon } from "icons.slint";
+import { CaptionGlyph, IconSettings, PanelIcon } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Button, PanelButton } from "primitives.slint";
 
@@ -18,6 +18,8 @@ export component CaptionButton inherits Button {
 export component TitleBar inherits Rectangle {
     in property <bool> right-open: false;
     callback toggle-right();
+    in property <bool> settings-open: false;
+    callback toggle-settings();
     in property <bool> maximized: false;
     in property <bool> max-hover: false;
     in property <string> caption: "Prime Agent Desktop";
@@ -30,6 +32,24 @@ export component TitleBar inherits Rectangle {
     // sidebar's header band sits inside this height.
     background: transparent;
 
+    settings-toggle := PanelButton {
+        size: 26px;
+        x: parent.width - 202px;
+        y: (parent.height - 26px) / 2;
+        lit: root.settings-open;
+        fill-hover: Theme.title-bar-fold-fill-hover;
+        fade: 0ms;
+        described: "Settings";
+        clicked => { root.toggle-settings(); }
+        IconSettings {
+            x: 5px;
+            y: 5px;
+            tint: settings-toggle.on
+                ? Theme.title-bar-fold-glyph-hover
+                : Theme.title-bar-fold-glyph;
+        }
+    }
+
     // The right column's collapse button lives in the chrome, not in the column:
     // the column is blank, so a mark inside it would have nothing to sit on.
     right-toggle := PanelButton {
@@ -37,7 +57,6 @@ export component TitleBar inherits Rectangle {
         x: parent.width - 172px;
         y: (parent.height - 26px) / 2;
         fill-hover: Theme.title-bar-fold-fill-hover;
-        cursor: MouseCursor.default;
         fade: 0ms;
         described: "Toggle the right column";
         clicked => { root.toggle-right(); }

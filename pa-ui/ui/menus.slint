@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
+import { EffortItem, ModelGroup, SessionMenuItem, SlashItem, ThemeItem } from "types.slint";
 import { IconCaret, IconCheck, IconMenuCopy, IconMenuDone, IconMenuPencil,
     IconMenuShare, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
@@ -479,6 +479,117 @@ export component SessionMenu inherits Panel {
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
+        }
+    }
+}
+
+// The settings popup anchored under the title bar's settings button, and the
+// theme list that opens beside it like a sidebar flyout.
+export component SettingsMenu inherits Panel {
+    in property <length> window-w;
+    in-out property <bool> themes-open: true;
+    callback theme-row-hovered();
+
+    x: root.window-w - 146px - self.width;
+    y: 36px;
+    width: 148px;
+    height: 40px;
+    border-radius: 10px;
+
+    Rectangle {
+        x: 6px;
+        y: 6px;
+        width: parent.width - 12px;
+        height: 28px;
+        border-radius: 5px;
+        background: root.themes-open || row-touch.has-hover
+            ? Theme.panel-row-fill-hover : transparent;
+
+        row-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.themes-open = !root.themes-open; }
+            moved => {
+                if self.has-hover {
+                    root.theme-row-hovered();
+                }
+            }
+        }
+
+        Path {
+            x: 8px;
+            y: (parent.height - self.height) / 2;
+            width: 10px;
+            height: 10px;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            commands: "M 6.5 2 L 3.5 5 L 6.5 8";
+            stroke: Theme.model-menu-caret-mark;
+            stroke-width: 1.3px;
+            fill: transparent;
+        }
+
+        Text {
+            x: 24px;
+            y: 0;
+            height: 100%;
+            text: "Theme";
+            color: Theme.model-menu-row-ink-current;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ThemeSidebar inherits Panel {
+    in property <[ThemeItem]> items;
+    in property <length> window-w;
+    callback picked(string);
+
+    x: root.window-w - 146px - 148px - 6px - self.width;
+    y: 36px;
+    width: 148px;
+    height: 12px + root.items.length * 26px;
+    border-radius: 10px;
+    shadow: Theme.panel-shadow-nested;
+    drop-shadow-blur: 10px;
+
+    for item[i] in root.items : Rectangle {
+        x: 6px;
+        y: 6px + i * 26px;
+        width: parent.width - 12px;
+        height: 26px;
+        border-radius: 5px;
+        background: item.current ? Theme.panel-row-fill-current
+            : (item-touch.has-hover ? Theme.panel-row-fill-hover : transparent);
+
+        item-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.picked(item.id); }
+        }
+
+        Text {
+            x: 10px;
+            y: 0;
+            width: parent.width - 36px;
+            height: 100%;
+            text: item.label;
+            color: item.current ? Theme.effort-ladder-row-ink-current
+                : Theme.effort-ladder-row-ink;
+            font-size: 11px;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+
+
+        if item.current : IconCheck {
+            x: parent.width - 22px;
+            y: (parent.height - self.height) / 2;
+            tint: Theme.effort-ladder-check-mark;
         }
     }
 }

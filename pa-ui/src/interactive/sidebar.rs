@@ -255,7 +255,7 @@ pub(crate) fn new_chat(ui: &AppWindow, job_tx: &Sender<Job>) {
 }
 
 /// A group's header was clicked. The fold state is the window's, and the y each
-/// row started from comes from `sessions::column`, so the window only has to run
+/// row started from comes from sessions::column, so the window only has to run
 /// the animation.
 pub(crate) fn folds(ui: &AppWindow) {
     let window = ui.as_weak();
@@ -289,5 +289,45 @@ pub(crate) fn folds(ui: &AppWindow) {
             was,
         );
         apply(&ui, column, index as i32, !now[index]);
+    });
+}
+
+const MOCK_THEMES: [(&str, &str); 5] = [
+    ("default", "Default"),
+    ("mono", "Mono"),
+    ("obsidian", "Obsidian"),
+    ("ember", "Ember"),
+    ("paper", "Paper"),
+];
+
+fn populate_themes(ui: &AppWindow, active: &str) {
+    let rows: Vec<ThemeItem> = MOCK_THEMES
+        .iter()
+        .map(|(id, label)| ThemeItem {
+            id: (*id).into(),
+            label: (*label).into(),
+            current: *id == active,
+        })
+        .collect();
+    ui.set_theme_items(ModelRc::from(Rc::new(VecModel::from(rows))));
+}
+
+pub(crate) fn themes(ui: &AppWindow) {
+    let initial = crate::env_cfg::cfg()
+        .theme
+        .as_deref()
+        .unwrap_or("default");
+    populate_themes(ui, initial);
+
+    let weak = ui.as_weak();
+    ui.on_theme_picked(move |id| {
+        let Some(ui) = weak.upgrade() else { return };
+        let id_str = id.as_str();
+        populate_themes(&ui, id_str);
+        let selection = if id_str == "default" { None } else { Some(id_str) };
+        let (resolved, refusal) = crate::theme::select(selection);
+        if refusal.is_none() {
+            crate::theme::apply(&ui, &resolved);
+        }
     });
 }

@@ -21,8 +21,8 @@ const BUTTONS: i32 = 3;
 /// strip and is a Slint button: measured from the window's right edge to its left
 /// side, and its width. These must agree with the TitleBar in `ui/app.slint` - a
 /// mark left inside HTCAPTION is a window drag, and its click never arrives.
-const COLLAPSE_INSET: i32 = 172;
-const COLLAPSE: i32 = 26;
+const COLLAPSE_INSET: i32 = 202;
+const COLLAPSE: i32 = 56;
 
 /// The sidebar when it is folded away: a strip of controls whose top mark is the
 /// way back open, so the whole strip is Slint's to answer.

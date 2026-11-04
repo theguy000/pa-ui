@@ -2,11 +2,11 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, TRow, Type } from "types.slint";
+import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
-import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
+import { EffortLadder, ModelMenu, SessionMenu, SettingsMenu, SlashMenu, ThemeSidebar } from "menus.slint";
 import { SearchPopup } from "search.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
@@ -43,7 +43,7 @@ export component AppWindow inherits Window {
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
         // a click that lands on nothing in particular dismisses the model menu
-        clicked => { root.model-menu = false; root.queue-open = false; }
+        clicked => { root.model-menu = false; root.queue-open = false; root.settings-menu = false; }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
                 root.pointer-moved();
@@ -241,6 +241,10 @@ export component AppWindow inherits Window {
     // lives in it yet.
     in-out property <bool> right-open: false;
     in-out property <bool> model-menu: false;
+    in-out property <bool> settings-menu: false;
+    in-out property <bool> themes-open: true;
+    in-out property <[ThemeItem]> theme-items;
+    callback theme-picked(string);
     in-out property <string> selected-id;
     // The sidebar's groups: the rows of each, in the order they are drawn, and
     // which of the three the reader has folded. The window fills all three from
@@ -973,6 +977,7 @@ export component AppWindow inherits Window {
                                 draft <=> root.draft;
                                 picked(id) => {
                                     root.model-menu = false;
+                                    root.settings-menu = false;
                                     root.menu-id = "";
                                     root.selected-id = id;
                                     // a picked row drops the card: leaving
@@ -1092,6 +1097,7 @@ export component AppWindow inherits Window {
                                 // this area takes the press, so the drag surface
                                 // below never reports the click it should have seen
                                 if event.kind == PointerEventKind.down {
+                                    root.settings-menu = false;
                                     // the page keys follow the pointer: clicking
                                     // the transcript lets Page Up/Down scroll it
                                     transcript-scope.focus();
@@ -1634,6 +1640,7 @@ export component AppWindow inherits Window {
                 label: root.model-label;
                 open: root.model-menu;
                 toggled => {
+                    root.settings-menu = false;
                     root.model-menu = !root.model-menu;
                     if root.model-menu {
                         root.model-menu-opened();
@@ -1759,6 +1766,20 @@ export component AppWindow inherits Window {
         anchor-y: composer-box.absolute-position.y;
         anchor-w: composer-box.width;
         accepted => { root.slash-accept(); }
+    }
+
+    if root.settings-menu : SettingsMenu {
+        window-w: root.width;
+        themes-open <=> root.themes-open;
+        theme-row-hovered => { root.themes-open = true; }
+    }
+
+    if root.settings-menu && root.themes-open : ThemeSidebar {
+        items: root.theme-items;
+        window-w: root.width;
+        picked(id) => {
+            root.theme-picked(id);
+        }
     }
 
     if root.model-menu : ModelMenu {
@@ -2056,6 +2077,15 @@ export component AppWindow inherits Window {
         caption: root.title;
         right-open: root.right-open;
         toggle-right => { root.right-open = !root.right-open; }
+        settings-open: root.settings-menu;
+        toggle-settings => {
+            root.model-menu = false;
+            root.queue-open = false;
+            root.settings-menu = !root.settings-menu;
+            if root.settings-menu {
+                root.themes-open = true;
+            }
+        }
         maximized: root.titlebar-maximized;
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }

@@ -308,6 +308,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::sidebar::folds(&ui);
 
+    interactive::sidebar::themes(&ui);
+
     interactive::rows::toggle(&ui, &sheet);
 
     interactive::search::opened(&ui, &sessions_cache);
