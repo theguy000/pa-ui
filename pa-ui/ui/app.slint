@@ -677,6 +677,10 @@ export component AppWindow inherits Window {
                 background: Theme.sidebar-surface;
 
                 VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
                     visible: !root.sidebar-open;
                     padding-top: 4px;
                     spacing: 6px;
@@ -751,6 +755,10 @@ export component AppWindow inherits Window {
                 }
 
                 VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
                     visible: root.sidebar-open;
                     padding-left: 8px;
                     padding-right: 8px;
@@ -818,26 +826,33 @@ export component AppWindow inherits Window {
                         border-radius: 10px;
                         kind: ButtonKind.primary;
                         described: "New Session";
-                        // the button does not cover its own corners
-                        background: Theme.sidebar-surface;
                         clicked => { root.new-chat(); }
 
-                        IconNewChat {
-                            x: 9px;
-                            y: (parent.height - self.height) / 2;
-                            tint: new-session.hot
-                                ? Theme.sidebar-new-session-mark-hover
-                                : Theme.sidebar-new-session-mark;
-                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 7px;
 
-                        Text {
-                            x: 32px;
-                            y: (parent.height - self.height) / 2;
-                            text: "New Session";
-                            color: new-session.hot
-                                ? Theme.sidebar-new-session-ink-hover
-                                : Theme.sidebar-new-session-ink;
-                            font-size: 12px;
+                            Rectangle {
+                                width: 16px;
+                                height: parent.height;
+                                IconNewChat {
+                                    x: 0;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: new-session.hot
+                                        ? Theme.sidebar-new-session-mark-hover
+                                        : Theme.sidebar-new-session-mark;
+                                }
+                            }
+
+                            Text {
+                                height: parent.height;
+                                vertical-alignment: center;
+                                text: "New Session";
+                                color: new-session.hot
+                                    ? Theme.sidebar-new-session-ink-hover
+                                    : Theme.sidebar-new-session-ink;
+                                font-size: 12px;
+                            }
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
@@ -855,22 +870,18 @@ export component AppWindow inherits Window {
                 // lays nothing out, so each entry keeps the box it is given.
                 sidebar-list := Flickable {
                     visible: root.sidebar-open;
-                    // The list is drawn where it stands, not at 88px from the
-                    // column's top: the column is a row of the window's outer
-                    // layout, so a y inside it starts at the column's own edge
-                    // and the band and New Session would cover the first rows.
-                    // The 88px stays in the entries, so the rows below need no
-                    // shift of their own.
+                    // The list starts below the band and New Session at 88px,
+                    // matching `COLUMN_TOP`, and its entries subtract 88px so
+                    // the first header lands at y=0 inside the Flickable.
                     x: 8px;
-                    y: 0px;
+                    y: 88px;
                     width: 232px - 16px;
                     // the window's height, not the Flickable's own or the
                     // column's: either way back through the layout is a loop
-                    height: max(0px, root.height - 8px);
+                    height: max(0px, root.height - 88px);
                     content-width: self.width;
                     content-height: max(0px, root.animated-sessions-height - 88px);
                     interactive: true;
-                
 
                     sidebar-content := Rectangle {
                         x: 0px;

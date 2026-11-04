@@ -261,3 +261,30 @@ fn a_fold_grows_the_column_by_the_group_it_closes() {
     let at = folded.entries[3].at;
     assert!(folded.from_y[3] > at);
 }
+
+#[test]
+fn first_poll_and_subsequent_polls_compare_against_was_not_current() {
+    let i = vec![resident(serde_json::json!({
+        "activeSessionId": "i1", "sessionId": "ui1", "lifecycle": "live", "activity": "idle", "name": "First"
+    }))];
+    // First poll: `was` is empty, so `previous` is empty and `changed()` must be true.
+    let first = column((&[], &i, &[]), [false, false, false], (&[], &[], &[]), [false, false, false]);
+    assert!(first.previous.is_empty());
+    assert!(first.changed(), "first poll must populate the sidebar");
+
+    // Second poll with a new session: `was` has 1 row, `groups` has 2 rows.
+    let i2 = vec![
+        i[0].clone(),
+        resident(serde_json::json!({
+            "activeSessionId": "i2", "sessionId": "ui2", "lifecycle": "live", "activity": "idle", "name": "Second"
+        })),
+    ];
+    let second = column((&[], &i2, &[]), [false, false, false], (&[], &i, &[]), [false, false, false]);
+    assert!(second.changed(), "adding a session must mark the column changed");
+
+    // Rename in place: same length and positions, different name.
+    let mut renamed = i2.clone();
+    renamed[0].name = "Renamed".into();
+    let third = column((&[], &renamed, &[]), [false, false, false], (&[], &i2, &[]), [false, false, false]);
+    assert!(third.changed(), "renaming a session must mark the column changed");
+}

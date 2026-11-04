@@ -911,8 +911,8 @@ fn the_shipped_theme_draws_todays_buttons() {
     // A quiet control draws nothing at rest: the column runs through it.
     assert_eq!(theme.get(Role::ButtonQuietFill).a, 0, "a quiet control is not a fill");
     assert_eq!(over_column(Role::ButtonQuietFillHover), Rgba::hex("#2a2b27"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#191a17"));
-    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFill), Rgba::hex("#232421"));
+    assert_eq!(theme.get(Role::ButtonPrimaryFillHover), Rgba::hex("#2e2f2c"));
     // The disc that stops the turn keeps the warmth the composer's stop had when
     // it was the composer's own role: the button that stops is the danger one
     // wherever it is drawn.

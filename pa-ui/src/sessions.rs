@@ -241,7 +241,9 @@ pub(crate) struct Column {
 }
 
 impl Column {
-    /// Whether anything moved: a row between groups, or an entry to a new y.
+    /// Whether anything moved or changed: the first fill (when `previous` is
+    /// empty), a row added or removed, a row between groups, an entry at a new
+    /// y, or a row's visible fields updated.
     pub(crate) fn changed(&self) -> bool {
         self.entries.len() != self.previous.len()
             || self
@@ -249,6 +251,20 @@ impl Column {
                 .iter()
                 .zip(&self.from_y)
                 .any(|(entry, from)| (entry.at - from).abs() > 0.5)
+            || self
+                .entries
+                .iter()
+                .zip(&self.previous)
+                .any(|(a, b)| {
+                    a.is_header != b.is_header
+                        || a.label != b.label
+                        || a.count != b.count
+                        || a.folded != b.folded
+                        || a.item.id != b.item.id
+                        || a.item.name != b.item.name
+                        || a.item.status != b.item.status
+                        || a.item.done != b.item.done
+                })
     }
 }
 
@@ -264,9 +280,15 @@ pub(crate) fn column(
     was_folded: [bool; 3],
 ) -> Column {
     let (active, idle, done) = groups;
-    let previous = session_entries(active, idle, done, was_folded[0], was_folded[1], was_folded[2]);
+    let first_fill = was.0.len() + was.1.len() + was.2.len() == 0
+        && folded == was_folded;
+    let previous = if first_fill {
+        Vec::new()
+    } else {
+        session_entries(was.0, was.1, was.2, was_folded[0], was_folded[1], was_folded[2])
+    };
     let entries = session_entries(active, idle, done, folded[0], folded[1], folded[2]);
-    let from_y = if was.0.len() + was.1.len() + was.2.len() == 0 {
+    let from_y = if first_fill {
         // nothing has been drawn yet: every entry starts where it is
         entries.iter().map(|entry| entry.at).collect()
     } else {
@@ -275,12 +297,12 @@ pub(crate) fn column(
     Column {
         was_height: entries_height(&previous),
         height: entries_height(&entries),
+
         previous,
         entries,
         from_y,
     }
 }
-
 /// Copy the rows the window holds into the three groups `column` takes. The
 /// window's models are the source, so a rebuild never needs the daemon.
 pub(crate) fn groups_of(

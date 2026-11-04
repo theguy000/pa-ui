@@ -1408,9 +1408,9 @@ impl Role {
             Role::ComposerStopMark => Derivation::Fixed(Rgba::hex("#f0f0f0")),
             Role::ButtonQuietFill => Derivation::Veil(Palette::Background, 0x00),
             Role::ButtonQuietFillHover => Derivation::Veil(Palette::Ink, 0x1f),
-            Role::ButtonPrimaryFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0425),
+            Role::ButtonPrimaryFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0896),
             Role::ButtonPrimaryFillHover => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1415)
             }
             Role::ButtonDangerFill => Derivation::Fixed(Rgba::hex("#a2543f")),
             Role::ButtonDangerFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
