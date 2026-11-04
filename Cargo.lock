@@ -3386,6 +3386,7 @@ dependencies = [
 name = "pa-ui"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "cosmic-text",
  "fancy-regex",
  "image",

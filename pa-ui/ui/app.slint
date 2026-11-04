@@ -2,11 +2,11 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SearchEntry, SessionItem, SlashItem, TRow, Type } from "types.slint";
+import { EffortItem, ModelGroup, QueueItem, SearchEntry, SessionEntry, SessionItem, SessionMenuItem, SlashItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
-import { SessionRow } from "sidebar.slint";
+import { SessionGroupHeader, SessionRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
-import { EffortLadder, ModelMenu, SlashMenu } from "menus.slint";
+import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
 import { SearchPopup } from "search.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
@@ -84,6 +84,8 @@ export component AppWindow inherits Window {
     background: Theme.window-surface;
     default-font-family: "Segoe UI";
 
+    // The rows, in group order: active, idle, done. The section property below
+    // reads this list; nothing else writes it.
     in property <[SessionItem]> sessions;
     in property <[TRow]> transcript;
     in property <[ModelGroup]> model-groups;
@@ -241,6 +243,127 @@ export component AppWindow inherits Window {
     in-out property <bool> right-open: false;
     in-out property <bool> model-menu: false;
     in-out property <string> selected-id;
+    // The sidebar's groups: the rows of each, in the order they are drawn, and
+    // which of the three the reader has folded. The window fills all three from
+    // the one session list (src/sessions.rs `session_items`), so a row's group
+    // and the group it is drawn under are decided in one place and cannot
+    // disagree.
+    in-out property <[SessionItem]> active-items;
+    in-out property <[SessionItem]> idle-items;
+    in-out property <[SessionItem]> done-items;
+    // Which of the three groups the reader has folded. One bool per group rather
+    // than a list: a binding cannot call a function that writes.
+    in-out property <bool> active-folded: false;
+    in-out property <bool> idle-folded: false;
+    in-out property <bool> done-folded: false;
+    // The session menu: which row opened it, and where its dots were. The items
+    // are filled when the dots open, from what that row is.
+    in-out property <string> menu-id: "";
+    in-out property <[SessionMenuItem]> menu-items;
+    in-out property <length> menu-x: 0px;
+    in-out property <length> menu-y: 0px;
+    // a row's dots opened its menu: the window fills `menu-items` from what that
+    // row is, since the item set depends on whether it has a worker
+    callback session-menu-opened(string);
+    callback menu-closed();
+
+    // The three groups, drawn in the daemon's order, as one flat list: a header
+    // or a row, each with the vertical position the window computed for it.
+    //
+    // Flat on purpose. Slint's `ScrollView`, `VerticalLayout` and conditional
+    // elements all rewrite the children's sizes and positions, and every attempt
+    // to place three nested sections that way left rows drawn in the wrong
+    // place or off the bottom of the window. One list, each entry at a `y` the
+    // writer already knows, keeps the sidebar's geometry in one place.
+    in property <[SessionEntry]> session-entries: [];
+    // the height of that list, header by header and row by row: the scroll view
+    // takes it as its content height, and the window writes both
+    in-out property <length> sessions-height: 0px;
+    // A fold in flight. The window answers a header click with the rows held
+    // where they are listed plus the y each settles at; `fold-mix` then runs
+    // from 0 to 1 (opening) or 1 to 0 (closing), and the rows and the group's
+    // box both follow it.
+    in-out property <length> prev-sessions-height: 0px;
+    in-out property <bool> fold-open: false;
+    in-out property <int> fold-index: -1;
+    in-out property <bool> fold-flip: false;
+    in-out property <float> fold-mix: 0.0;
+    out property <float> fold-progress: root.fold-flip ? root.fold-mix : (1.0 - root.fold-mix);
+    out property <length> animated-sessions-height:
+        root.splice-at.length > 0
+            ? (root.prev-sessions-height + (root.sessions-height - root.prev-sessions-height) * root.fold-progress)
+            : root.sessions-height;
+    // the y every entry started from before the fold, or empty when at rest
+    in property <[float]> splice-at: [];
+
+    animate fold-mix {
+        duration: 220ms;
+        easing: ease-in-out;
+    }
+
+    public function trigger-list-anim() {
+        root.fold-flip = !root.fold-flip;
+        root.fold-mix = root.fold-flip ? 1.0 : 0.0;
+    }
+
+    // Where the entry at `index` is drawn: headers and whole groups slide from
+    // `splice-at[index]` to `entry.at`; the rows inside the group being folded
+    // keep their natural 32px spacing (`entry.target`) and rise 18px into the
+    // header as the group closes.
+    pure public function row-y(index: int) -> length {
+        let entry = root.session-entries[index];
+        if !entry.is-header && root.fold-index == entry.seam && root.splice-at.length > 0 {
+            let open-fac = root.fold-open ? root.fold-progress : (1.0 - root.fold-progress);
+            return entry.target - 18px * (1.0 - open-fac);
+        }
+        if index < 0 || index >= root.splice-at.length {
+            return entry.at;
+        }
+        let from = root.splice-at[index] * 1px;
+        from + (entry.at - from) * root.fold-progress
+    }
+
+    // Opacity for the rows of the group being folded, and for rows that arrived
+    // in a new group (fold-index == -2), which fade in as they slide.
+    pure public function row-opacity(index: int) -> float {
+        let entry = root.session-entries[index];
+        if root.fold-index == entry.seam && root.splice-at.length > 0 {
+            return root.fold-open ? root.fold-progress : (1.0 - root.fold-progress);
+        }
+        if entry.folded {
+            return 0.0;
+        }
+        if root.fold-index == -2 && index >= 0 && index < root.splice-at.length {
+            let diff = abs(entry.at - root.splice-at[index] * 1px);
+            if diff > 1px {
+                return 0.25 + 0.75 * root.fold-progress;
+            }
+        }
+        1.0
+    }
+
+    // A row is drawn at 32px while it is at all, and not at all once its group
+    // is folded shut.
+    pure public function row-h(index: int) -> length {
+        root.row-opacity(index) > 0.01 ? 32px : 0px
+    }
+
+    public function group-toggled(label: string) {
+        if label == "Active" {
+            root.active-folded = !root.active-folded;
+        } else if label == "Idle" {
+            root.idle-folded = !root.idle-folded;
+        } else {
+            root.done-folded = !root.done-folded;
+        }
+        // the positions are a function of the fold state, so the list is rebuilt
+        // from the same three arrays
+        root.fold-changed();
+    }
+
+    // the window listens to this and recomposes `session-entries` from the
+    // three item lists plus the fold state
+    callback fold-changed();
 
     // The session search: whether it is open, the field's text, the row the
     // arrows or the pointer are on, and the rows themselves. The rows are worked
@@ -363,6 +486,8 @@ export component AppWindow inherits Window {
     callback model-menu-opened;
     callback provider-toggled(string);
     callback rename-requested(string, string);
+    // A session row's menu, taken: the row's id and the action's key.
+    callback session-menu-picked(string, string);
     callback toggle-row(int);
     callback queue-act(string, int, string);
     callback queue-clear();
@@ -396,6 +521,11 @@ export component AppWindow inherits Window {
     out property <length> dbg-cy: transcript-list.content-y;
     out property <length> dbg-ch: transcript-list.content-height;
     out property <length> dbg-h: transcript-list.height;
+    pure public function get-sidebar-cy() -> length { sidebar-list.content-y }
+    public function restore-sidebar-cy(cy: length) {
+        let max-scroll = max(0px, sidebar-list.content-height - sidebar-list.height);
+        sidebar-list.content-y = clamp(cy, -max-scroll, 0px);
+    }
     changed dbg-cy => {
         root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
     }
@@ -634,11 +764,21 @@ export component AppWindow inherits Window {
             // Folded: the column keeps only its controls. The session rows cannot
             // survive at 48px - there is no room for a name - so the strip keeps the
             // mark and the three controls and drops the rows.
-            if !root.sidebar-open : Rectangle {
-                width: 48px;
+            sidebar-column := Rectangle {
+                width: root.sidebar-open ? 232px : 48px;
+                vertical-stretch: 1;
+                // Explicit height: the column holds a layout and a list, and a
+                // Rectangle sizes itself to its first children only - with the
+                // list last, everything past the button was cut away.
+                clip: true;
                 background: Theme.sidebar-surface;
-        
+
                 VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    visible: !root.sidebar-open;
                     padding-top: 4px;
                     spacing: 6px;
         
@@ -711,12 +851,13 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
-            }
-        
-            if root.sidebar-open : Rectangle {
-                width: 232px;
-                background: Theme.sidebar-surface;
+
                 VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    visible: root.sidebar-open;
                     padding-left: 8px;
                     padding-right: 8px;
                     padding-top: 2px;
@@ -725,7 +866,8 @@ export component AppWindow inherits Window {
                     // search and collapse panel control on the right.
                     Rectangle {
                         height: 36px;
-
+                        // opaque: the list runs underneath, and the band is
+                        // the edge it disappears behind
                         PrimeAgentMark {
                             x: 6px;
                             y: (parent.height - self.height) / 2;
@@ -787,58 +929,166 @@ export component AppWindow inherits Window {
                         described: "New Session";
                         clicked => { root.new-chat(); }
 
-                        IconNewChat {
-                            x: 9px;
-                            y: (parent.height - self.height) / 2;
-                            tint: new-session.hot
-                                ? Theme.sidebar-new-session-mark-hover
-                                : Theme.sidebar-new-session-mark;
-                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 7px;
 
-                        Text {
-                            x: 32px;
-                            y: (parent.height - self.height) / 2;
-                            text: "New Session";
-                            color: new-session.hot
-                                ? Theme.sidebar-new-session-ink-hover
-                                : Theme.sidebar-new-session-ink;
-                            font-size: 12px;
+                            Rectangle {
+                                width: 16px;
+                                height: parent.height;
+                                IconNewChat {
+                                    x: 0;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: new-session.hot
+                                        ? Theme.sidebar-new-session-mark-hover
+                                        : Theme.sidebar-new-session-mark;
+                                }
+                            }
+
+                            Text {
+                                height: parent.height;
+                                vertical-alignment: center;
+                                text: "New Session";
+                                color: new-session.hot
+                                    ? Theme.sidebar-new-session-ink-hover
+                                    : Theme.sidebar-new-session-ink;
+                                font-size: 12px;
+                            }
                         }
                     }
+                    Rectangle { vertical-stretch: 1; }
+                }
+                // The list starts at the column's top edge and covers the band and
+                // New Session: its entries begin at 88px, which is where the band
+                // ends, so no row is drawn over them and a scrolled list slides
+                // under the column's edge rather than through the header.
+                //
+                // A Flickable, not a ScrollView. ScrollView is a layout item: it
+                // lays its children out, and when those children are a `for`
+                // block it gives them their width once - a pass that runs before
+                // the window has a size. Every row then measured zero wide and
+                // every click fell through to the list behind it. A Flickable
+                // lays nothing out, so each entry keeps the box it is given.
+                sidebar-list := Flickable {
+                    visible: root.sidebar-open;
+                    // The list starts below the band and New Session at 88px,
+                    // matching `COLUMN_TOP`, and its entries subtract 88px so
+                    // the first header lands at y=0 inside the Flickable.
+                    x: 8px;
+                    y: 88px;
+                    width: 232px - 16px;
+                    // the window's height, not the Flickable's own or the
+                    // column's: either way back through the layout is a loop
+                    height: max(0px, root.height - 88px);
+                    content-width: self.width;
+                    content-height: max(0px, root.animated-sessions-height - 88px);
+                    interactive: true;
 
+                    sidebar-content := Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: max(0px, root.animated-sessions-height - 88px);
 
+                        for entry[k] in root.session-entries : Rectangle {
+                            visible: !entry.is-header && root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01;
+                            y: root.row-y(k) - 88px;
+                            width: 100%;
+                            height: 32px;
+                            opacity: root.row-opacity(k);
+                            clip: true;
 
-                    ListView {
-                        for item in root.sessions : SessionRow {
-                            item: item;
-                            selected: item.id == root.selected-id;
-                            editing: item.id == root.editing-id;
-                            draft <=> root.draft;
-                            picked(id) => {
-                                root.model-menu = false;
-                                root.selected-id = id;
-                                // a picked row drops the card: leaving hover as the
-                                // only way to clear it made it look stuck
-                                root.hover-title = "";
-                            }
-                            hovered(full, row-y) => {
-                                if full != "" {
-                                    root.hover-y = row-y;
+                            SessionRow {
+                                width: 100%;
+                                height: 32px;
+                                item: entry.item;
+                                selected: entry.item.id == root.selected-id;
+                                editing: entry.item.id == root.editing-id;
+                                menu-open: root.menu-id == entry.item.id;
+                                draft <=> root.draft;
+                                picked(id) => {
+                                    root.model-menu = false;
+                                    root.menu-id = "";
+                                    root.selected-id = id;
+                                    // a picked row drops the card: leaving
+                                    // hover as the only way to clear it
+                                    // made it look stuck
+                                    root.hover-title = "";
                                 }
-                                root.hover-title = full;
-                                // hover rots: hide the card if it stops being fed,
-                                // which is what made a stale title look stuck.
-                                // Toggling restarts the timer: `running` is bound,
-                                // so calling restart() on it would be overridden.
-                                root.tooltip-on = false;
-                                root.tooltip-on = true;
-                            }
-                            edit(id) => { root.editing-id = id; root.draft = item.full; }
-                            commit(id, name) => {
-                                root.editing-id = "";
-                                root.rename-requested(id, name);
+                                hovered(full, row-y) => {
+                                    if full != "" {
+                                        root.hover-y = row-y;
+                                    }
+                                    root.hover-title = full;
+                                    // hover rots: hide the card if it
+                                    // stops being fed, which is what
+                                    // made a stale title look stuck.
+                                    // Toggling restarts the timer:
+                                    // `running` is bound, so calling
+                                    // restart() on it would be
+                                    // overridden.
+                                    root.tooltip-on = false;
+                                    root.tooltip-on = true;
+                                }
+                                edit(id) => {
+                                    root.menu-id = "";
+                                    root.editing-id = id;
+                                    root.draft = entry.item.full;
+                                }
+                                commit(id, name) => {
+                                    root.editing-id = "";
+                                    root.rename-requested(id, name);
+                                }
+                                // a second press on the dots of the row whose
+                                // menu is open closes it
+                                toggled(id, x, y) => {
+                                    if root.menu-id == id {
+                                        root.menu-id = "";
+                                        root.menu-closed();
+                                    } else {
+                                        root.menu-id = id;
+                                        root.menu-x = x;
+                                        root.menu-y = y;
+                                        root.session-menu-opened(id);
+                                    }
+                                }
                             }
                         }
+
+                        for header[k] in root.session-entries : Rectangle {
+                            visible: header.is-header;
+                            y: root.row-y(k) - 88px;
+                            width: 100%;
+                            height: 32px;
+
+                            hdr := SessionGroupHeader {
+                                width: 100%;
+                                height: 32px;
+                                label: header.label;
+                                count: header.count;
+                                closed: header.folded;
+                                toggled => { root.group-toggled(header.label); }
+                            }
+                        }
+                    }
+                }
+
+                // Thin scrollbar thumb on the right edge of the sessions list
+                if root.sidebar-open && sidebar-list.content-height > sidebar-list.height : Rectangle {
+                    x: 232px - 6px;
+                    y: 88px;
+                    width: 4px;
+                    height: sidebar-list.height;
+                    property <length> range: max(1px, sidebar-list.content-height - sidebar-list.height);
+                    property <length> thumb-h: clamp(self.height * (self.height / max(1px, sidebar-list.content-height)), 28px, self.height);
+                    property <length> travel: max(0px, self.height - self.thumb-h);
+                    Rectangle {
+                        x: 0;
+                        y: clamp((-sidebar-list.content-y / parent.range) * parent.travel, 0px, parent.travel);
+                        width: 4px;
+                        height: parent.thumb-h;
+                        border-radius: 2px;
+                        background: Theme.transcript-scroll-thumb;
                     }
                 }
             }
@@ -1570,6 +1820,29 @@ export component AppWindow inherits Window {
         hovered => { root.effort-hovered(); }
     }
 
+    // Click-away backdrop for the session menu.
+    if root.menu-id != "" : TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        clicked => {
+            root.menu-id = "";
+            root.menu-closed();
+        }
+    }
+
+    // A session row's own menu, hung off the dots that opened it. At the window
+    // root like the model menu and the queue panel, so it paints over the
+    // transcript and the composer rather than under them.
+    if root.menu-id != "" : SessionMenu {
+        items: root.menu-items;
+        anchor-x: root.menu-x;
+        anchor-y: root.menu-y - 32px;
+        viewport-h: root.height;
+        picked(key) => { root.session-menu-picked(root.menu-id, key); }
+    }
+
     // The queue panel hangs off the strip, at the window root like the model
     // menu: inside the band it sat at a negative y, where it painted outside
     // the area that answers clicks.
@@ -1832,3 +2105,4 @@ export component AppWindow inherits Window {
         close => { root.titlebar-close(); }
     }
 }
+

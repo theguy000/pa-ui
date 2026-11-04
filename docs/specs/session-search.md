@@ -60,7 +60,8 @@ row is there.
 - `Ctrl+K` is handled by `root.search-key(event)`, called from the transcript's key handler and the composer's. The toolkit reports the chord as `\u{b}`, and the function accepts that, `k` and `K`.
 - Opening reads `ui.get_search_query()` before setting `search_open`. Rust sets `search-entries` and `search-index` and then `search_open`; nothing writes `search-query` from Rust while the popup is open, because writing it from inside the `edited` callback would stop the field after its first character.
 - `picked` sets `selected-id` and clears `model-menu` and `queue-open`; `picked` and `closed` both call `focus-composer()`.
-- Theme roles `search-row-ink`, `search-row-ink-highlighted`, `search-match-ink`, `search-age-ink` are added to `Role::ALL` (now 192) and to the ink-on-surface pairs in `pa-ui/src/theme/contrast.rs`. `search-match-ink` is fixed at `#e0cd7c`; `search-age-ink` is `quiet-ink` mixed toward the background at 0.5786. The header's magnifier takes the existing `sidebar-search-mark-hover` under the pointer.
+- Theme roles `search-row-ink`, `search-row-ink-highlighted`, `search-match-ink`, `search-age-ink` are added to `Role::ALL` (now 194) and to the ink-on-surface pairs in `pa-ui/src/theme/contrast.rs`. `search-match-ink` is fixed at `#e0cd7c`; `search-age-ink` is `quiet-ink` mixed toward the background at 0.5786. The magnifier, in the column's header and in the folded strip, takes the existing `sidebar-search-mark-hover` under the pointer.
+- The age column reads `last_activity`, or `modified` when the row has none. `sessions::age_label` turns the stamp into seconds with `stamp_seconds` and `days_from_civil`, kept in `pa-ui/src/sessions.rs` because no other part of the window formats a date any more.
 
 ## Testing Decisions
 
@@ -72,7 +73,6 @@ row is there.
 ## Out of Scope
 
 - Matching message bodies. A query only looks at titles.
-- The magnifier in the folded 48px strip. It stays where it is.
 - Pinning, grouping or filtering by project inside the popup.
 - Replacing the sidebar's own filter.
 - A scrim behind the popup, and animation on open or close.

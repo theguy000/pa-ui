@@ -16,6 +16,7 @@ mod sheet;
 mod search;
 mod send;
 mod sessions;
+mod share;
 mod slash;
 mod status;
 mod text;
@@ -65,7 +66,7 @@ use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use transcript::Row;
 
 const WINDOW_ROWS: usize = 300;
@@ -288,6 +289,10 @@ fn main() -> Result<(), slint::PlatformError> {
 
     interactive::sidebar::rename(&ui, &job_tx);
 
+    interactive::sidebar::menu(&ui, &job_tx);
+
+    interactive::sidebar::folds(&ui);
+
     interactive::rows::toggle(&ui, &sheet);
 
     interactive::search::opened(&ui, &sessions_cache);
@@ -465,6 +470,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 })
                 .collect();
             let items: Vec<SessionItem> = sessions::session_items(&rows);
+            let (active, idle, done) = sessions::session_groups(&items);
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
+            let column = sessions::column(
+                (&active, &idle, &done),
+                [false, false, false],
+                (&[], &[], &[]),
+                [false, false, false],
+            );
+            sessions::apply(&ui, column, -1, false);
             ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
             *sessions_cache.borrow_mut() = rows;
         }

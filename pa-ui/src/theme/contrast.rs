@@ -48,7 +48,6 @@ const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRo
 const ON_QUIET_CONTROL: &[Role] = &[Role::ButtonQuietFillHover];
 const ON_PRIMARY_CONTROL: &[Role] = &[Role::ButtonPrimaryFill];
 const ON_PRIMARY_CONTROL_HOVER: &[Role] = &[Role::ButtonPrimaryFillHover];
-const ON_RENAME_CHIP: &[Role] = &[Role::SidebarRowRenameFill];
 const ON_RENAME_CHIP_HOVER: &[Role] = &[Role::SidebarRowRenameFillHover];
 const ON_OPEN_TIP: &[Role] = &[Role::SidebarOpenTipFill];
 const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
@@ -168,6 +167,25 @@ const PAIRS: &[Pair] = &[
         what: "a session's name while it is renamed",
         floor: BODY,
     },
+    // A group's header is a label over the names under it, so it is read as body
+    // text too, under the pointer as well as at rest. Its caret is a mark, and it
+    // only appears while the pointer is on its header, so it is read on the
+    // header's hover fill.
+    Pair {
+        ink: Mark { role: Role::SidebarGroupInk, on: ON_SIDEBAR_ROW },
+        what: "a group's word at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarNameInkSelected, on: ON_SIDEBAR_ROW_HOVER },
+        what: "a group's word under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarGroupCaret, on: ON_SIDEBAR_ROW_HOVER },
+        what: "a group's caret while the pointer is on its header",
+        floor: MARK,
+    },
     // The column's controls draw a mark and nothing else, so the mark is read on
     // the column itself: there is no field between them. The strip's pen is the
     // same story — its chip is transparent until the pointer arrives, so folded
@@ -236,11 +254,6 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_PRIMARY_CONTROL_HOVER },
         what: "the words on New Session under the pointer",
         floor: BODY,
-    },
-    Pair {
-        ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP },
-        what: "the pencil a row offers, at rest",
-        floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::SidebarRowRenameMark, on: ON_RENAME_CHIP_HOVER },

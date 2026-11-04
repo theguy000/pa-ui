@@ -251,6 +251,7 @@ impl Tick {
         let selected = ui.get_selected_id().to_string();
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
+            l.selected_uuid = uuid_of(&sessions_cache.borrow(), &selected).map(str::to_string);
             l.tail_sig = None;
             l.tail_len = 0;
             // a different chat starts its own walk backwards
@@ -329,6 +330,49 @@ impl Tick {
                     // rather than asking the daemon again
                     *sessions_cache.borrow_mut() = rows.clone();
                     let items: Vec<SessionItem> = session_items(&rows);
+                    // The three groups, each taking its rows from the one sorted
+                    // list, so a group and its rows cannot disagree.
+                    let (active, idle, done) = crate::sessions::session_groups(&items);
+                    // The column is the flat list the window draws: headers and
+                    // rows, each at the y it goes at. `sessions::column` builds it
+                    // from what the groups held and what they hold now, so the
+                    // same numbers drive a fold and a poll.
+                    let previous = groups_of(
+                        &ui.get_active_items(),
+                        &ui.get_idle_items(),
+                        &ui.get_done_items(),
+                    );
+                    ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
+                    ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
+                    ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
+                    let column = crate::sessions::column(
+                        (&active, &idle, &done),
+                        [
+                            ui.get_active_folded(),
+                            ui.get_idle_folded(),
+                            ui.get_done_folded(),
+                        ],
+                        // the fold state has not changed since the last rebuild,
+                        // so the groups held now were drawn then
+                        (&previous.0, &previous.1, &previous.2),
+                        [
+                            ui.get_active_folded(),
+                            ui.get_idle_folded(),
+                            ui.get_done_folded(),
+                        ],
+                    );
+                    // a row that slid to another group says so through the one
+                    // rule in `sessions.rs`, not through its own arithmetic
+                    let any_group_move = crate::sessions::any_moved(&column.previous, &column.entries);
+
+                    if column.changed() {
+                        crate::sessions::apply(
+                            &ui,
+                            column,
+                            if any_group_move { -2 } else { -1 },
+                            false,
+                        );
+                    }
                     ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
                     if ui.get_selected_id().is_empty() {
                         let preferred = std::env::var("PA_SELECT").ok();
@@ -338,12 +382,13 @@ impl Tick {
                             .or_else(|| rows.first());
                         if let Some(first) = chosen {
                             ui.set_selected_id(first.id.clone().into());
+                            l.selected_uuid = Some(first.session_id.clone());
                         }
                     }
 
-                    // The daemon re-keys session ids across restarts. Follow the
-                    // selection by its uuid so the chat, the busy chip and the
-                    // prompt target keep pointing at the same session.
+                    // The daemon re-keys session ids when a saved session becomes resident
+                    // or across restarts. Follow the selection by its uuid so clicking a
+                    // Done session stays on that session when it moves to Idle.
                     let selected = ui.get_selected_id().to_string();
                     if !selected.is_empty() && !rows.iter().any(|row| row.id == selected) {
                         if let Some(uuid) = l.selected_uuid.as_deref() {
@@ -355,18 +400,14 @@ impl Tick {
                                 }
                                 ui.set_selected_id(rebound.clone().into());
                                 l.selected_uuid = Some(uuid.to_string());
-                                l.loaded = None;
-                                l.tail_len = 0;
-                                l.tail_sig = None;
-                                l.last_seq = 0;
-                                l.open_live = None;
-                                sheet.answer_ended();
+                                // Keep l.loaded updated to the new resident id if we already attached
+                                l.loaded = Some(rebound);
                             }
                         }
                     }
                     let selected = ui.get_selected_id().to_string();
-                    if l.selected_uuid.is_none() {
-                        l.selected_uuid = uuid_of(&rows, &selected).map(str::to_string);
+                    if let Some(uuid) = uuid_of(&rows, &selected) {
+                        l.selected_uuid = Some(uuid.to_string());
                     }
                     // the chip names the model this session is actually on
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
@@ -1039,6 +1080,19 @@ impl Tick {
                     None => status::clear(&ui),
                 },
                 Msg::Error(error) => status::trouble(&ui, format!("error: {error}")),
+                // A share is the one action whose result is somewhere else: the
+                // viewer URL goes on the clipboard and on the status line, since
+                // the link is what the reader wanted from it.
+                Msg::Shared(Ok(shared)) => {
+                    match crate::interactive::sidebar::copy_to_clipboard(&shared.viewer_url) {
+                        Ok(()) => status::say(&ui, format!("shared: {}", shared.viewer_url)),
+                        Err(error) => status::trouble(
+                            &ui,
+                            format!("shared: {} (could not copy: {error})", shared.viewer_url),
+                        ),
+                    }
+                }
+                Msg::Shared(Err(error)) => status::trouble(&ui, format!("could not share: {error}")),
             }
         }
 
