@@ -789,21 +789,9 @@ impl Sheet {
     pub fn replace(&self, rows: Vec<Row>) {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
-            inner.index.clear();
             inner.open = None;
             inner.last_prepend_px = 0.0;
-            for (offset, row) in rows.iter().enumerate() {
-                let key = row.message.clone();
-                if key.is_empty() {
-                    continue;
-                }
-                match inner.index.get_mut(&key) {
-                    Some(range) => range.end = offset + 1,
-                    None => {
-                        inner.index.insert(key, offset..offset + 1);
-                    }
-                }
-            }
+            inner.index = reindex(&rows);
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     vs.heights = rows.iter().map(estimate_row_height).collect();
@@ -1125,8 +1113,8 @@ impl Inner {
         }
         for range in self.index.values_mut() {
             if range.start >= at {
-                range.start = (range.start as isize + delta) as usize;
-                range.end = (range.end as isize + delta) as usize;
+                range.start = range.start.saturating_add_signed(delta);
+                range.end = range.end.saturating_add_signed(delta);
             }
         }
     }
@@ -1167,7 +1155,7 @@ impl Inner {
         }
         if adjusted.len() > had {
             self.insert_rows(start + had, &adjusted[had..]);
-            self.shift_from(start + 1, (adjusted.len() - had) as isize);
+            self.shift_from(start + had, (adjusted.len() - had) as isize);
             self.index.insert(key.to_string(), start..start + adjusted.len());
         } else if adjusted.len() < had {
             for at in (start + adjusted.len()..start + had).rev() {
@@ -1182,7 +1170,7 @@ impl Inner {
                 }
                 self.drawn.remove(at);
             }
-            self.shift_from(start + 1, -((had - adjusted.len()) as isize));
+            self.shift_from(start + had, -((had - adjusted.len()) as isize));
             self.index.insert(key.to_string(), start..start + adjusted.len());
         }
     }
@@ -1190,30 +1178,35 @@ impl Inner {
 
 fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
     let mut out: Vec<(String, std::ops::Range<usize>)> = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (index, row) in rows.iter().enumerate() {
-        match out.last_mut() {
-            Some((key, range)) if *key == row.message => range.end = index + 1,
-            _ => out.push((row.message.clone(), index..index + 1)),
+        if index > 0 && rows[index - 1].message == row.message {
+            if let Some((_, range)) = out.last_mut() {
+                range.end = index + 1;
+                continue;
+            }
         }
+        let key = if row.message.is_empty() {
+            String::new()
+        } else {
+            let count = seen.entry(row.message.clone()).or_insert(0);
+            *count += 1;
+            if *count == 1 {
+                row.message.clone()
+            } else {
+                format!("{}#{}", row.message, count)
+            }
+        };
+        out.push((key, index..index + 1));
     }
     out
 }
 
 fn reindex(rows: &[Row]) -> std::collections::HashMap<String, std::ops::Range<usize>> {
-    let mut out: std::collections::HashMap<String, std::ops::Range<usize>> =
-        std::collections::HashMap::new();
-    for (offset, row) in rows.iter().enumerate() {
-        if row.message.is_empty() {
-            continue;
-        }
-        match out.get_mut(&row.message) {
-            Some(range) => range.end = offset + 1,
-            None => {
-                out.insert(row.message.clone(), offset..offset + 1);
-            }
-        }
-    }
-    out
+    group_by_message(rows)
+        .into_iter()
+        .filter(|(key, _)| !key.is_empty())
+        .collect()
 }
 
 fn row_identity(row: &Row) -> String {

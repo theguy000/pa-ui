@@ -522,6 +522,9 @@ pub(crate) fn match_rows(sessions: &[SessionRow], query: &str) -> ModelRc<Search
 }
 
 pub(crate) fn open_search(ui: &AppWindow, sessions: &[SessionRow]) {
+    // The search popup and the share card are the two surfaces that open over
+    // the whole window; only one of them is ever up.
+    ui.set_share_open(false);
     let query = ui.get_search_query();
     ui.set_search_rows(match_rows(sessions, query.as_str()));
     ui.set_search_index(0);
@@ -752,6 +755,17 @@ impl Sidebar {
                     }
                     MenuAction::Share => {
                         *confirming = None;
+                        // The card opens before the work starts: the GitHub CLI
+                        // can take a moment, and a menu that closes onto nothing
+                        // reads as a click that did not land.
+                        ui.set_search_field_typed(false);
+                        ui.set_search_open(false);
+                        ui.set_share_pending(true);
+                        ui.set_share_url("".into());
+                        ui.set_share_error("".into());
+                        ui.set_share_action_error("".into());
+                        ui.set_share_copied(false);
+                        ui.set_share_open(true);
                         let _ = jobs.send(Job::Share { session: id });
                     }
                     MenuAction::CopyId => {
@@ -874,5 +888,44 @@ impl Sidebar {
         ui.on_opens_search(|text, control, search_open| {
             search::keys::opens_search(text.as_str(), control, search_open)
         });
+
+        // 7. Share card
+        {
+            let weak = ui.as_weak();
+            ui.on_share_copy_requested(move || {
+                let Some(ui) = weak.upgrade() else { return };
+                let url = ui.get_share_url().to_string();
+                if url.is_empty() {
+                    return;
+                }
+                match copy_to_clipboard(&url) {
+                    Ok(()) => {
+                        ui.set_share_copied(true);
+                        ui.set_share_action_error("".into());
+                    }
+                    Err(error) => {
+                        ui.set_share_copied(false);
+                        ui.set_share_action_error(format!("could not copy: {error}").into());
+                    }
+                }
+            });
+        }
+        {
+            // The viewer is a browser page that spends GitHub's unauthenticated
+            // quota. Check that quota first, on the worker, so an exhausted
+            // network gets a sentence that says so instead of a blank viewer.
+            let jobs = job_tx.clone();
+            ui.on_share_open_link_requested(move || {
+                let _ = jobs.send(Job::CheckViewerQuota);
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            ui.on_share_dismissed(move || {
+                let Some(ui) = weak.upgrade() else { return };
+                ui.set_share_open(false);
+                ui.invoke_focus_composer();
+            });
+        }
     }
 }

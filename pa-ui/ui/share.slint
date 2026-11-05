@@ -1,0 +1,276 @@
+// The card that says a session was shared as a gist. The window has no status
+// line to carry the link, so the result gets a surface of its own: it opens
+// before the upload starts, shows the viewer URL once it exists, and keeps the
+// copy and open actions where the reader can reach them.
+//
+// It is a panel of the same shape as the search popup — the same radius, no
+// hairline of its own, and the popup's field and shadow — because both are
+// things that open over the window rather than parts of a column.
+
+import { Button, ButtonKind, Panel } from "primitives.slint";
+import { IconCross, IconMenuShare } from "icons.slint";
+import { Theme } from "theme.slint";
+
+export component SharePopup inherits Panel {
+    in property <bool> pending: false;
+    in property <string> url: "";
+    in property <string> error: "";
+    in property <string> action-error: "";
+    in property <bool> copied: false;
+
+    callback copy-requested();
+    callback open-requested();
+    callback dismissed();
+
+    width: 420px;
+    // The card has three states: the upload in flight, the link, and the reason
+    // it could not be made. Each has its own height so the panel never leaves a
+    // blank half under the words that are there.
+    height: root.pending ? 152px
+        : root.error != "" ? 204px
+        : root.action-error != "" ? 256px
+        : 236px;
+    border-radius: 20px;
+    border-width: 0px;
+
+    // The header: the share mark and the title on the left, the close control on
+    // the right. The mark is the same one the session menu row carries.
+    IconMenuShare {
+        x: 20px;
+        y: 20px;
+        tint: Theme.search-match-ink;
+    }
+
+    Text {
+        x: 44px;
+        y: 15px;
+        width: parent.width - 44px - 54px;
+        height: 28px;
+        text: root.pending ? "Sharing as a gist"
+            : root.error != "" ? "Could not share"
+            : "Shared as a gist";
+        color: Theme.search-row-ink-hover;
+        font-size: 16px;
+        font-weight: 600;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    close := Button {
+        width: 26px;
+        height: 26px;
+        border-radius: 13px;
+        x: parent.width - 20px - self.width;
+        y: 16px;
+        fill: transparent;
+        fill-hover: Theme.panel-row-fill-hover;
+        described: "Close the share card";
+        clicked => { root.dismissed(); }
+        IconCross {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+    }
+
+    // The hairline under the header is the same one the search popup draws under
+    // its field: the two parts of the panel are told apart by an edge, not by a
+    // second surface.
+    Rectangle {
+        x: 0;
+        y: 54px;
+        width: 100%;
+        height: 1px;
+        background: Theme.panel-edge;
+    }
+
+    if root.pending : Text {
+        x: 22px;
+        y: 70px;
+        width: parent.width - 44px;
+        height: 46px;
+        text: "Exporting the session and uploading a secret gist to GitHub. The link will appear here when it is ready.";
+        color: Theme.search-row-ink;
+        font-size: 12px;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    if root.error != "" : Text {
+        x: 22px;
+        y: 70px;
+        width: parent.width - 44px;
+        height: 78px;
+        text: root.error;
+        color: Theme.transcript-cell-ink-failed;
+        font-size: 12px;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    if !root.pending && root.error == "" : Text {
+        x: 22px;
+        y: 68px;
+        width: parent.width - 44px;
+        height: 18px;
+        text: "Share this link with anyone who should read the session.";
+        color: Theme.search-row-ink;
+        font-size: 12px;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    // The viewer URL, in a field of its own: the words can be longer than the
+    // card, so they elide rather than walking past its rounded corner. The
+    // field is not a text input; Copy is the one action that takes the link.
+    if !root.pending && root.error == "" : Rectangle {
+        x: 22px;
+        y: 92px;
+        width: parent.width - 44px;
+        height: 42px;
+        border-radius: 8px;
+        background: Theme.panel-row-fill-hover;
+        border-width: 1px;
+        border-color: Theme.panel-edge;
+
+        Text {
+            x: 12px;
+            y: 0;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.url;
+            color: Theme.transcript-link-ink;
+            font-size: 12px;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+    }
+
+    if !root.pending && root.error == "" : Text {
+        x: 22px;
+        y: 140px;
+        width: parent.width - 44px;
+        // An action failure gets room to wrap: the quota sentence is the one
+        // place the card has to explain a failed viewer, and eliding it to one
+        // line would lose the part that says when to try again.
+        height: root.action-error != "" ? 50px : 18px;
+        text: root.action-error != "" ? root.action-error
+            : root.copied ? "Copied to the clipboard."
+            : "The link is ready to copy.";
+        color: root.action-error != "" ? Theme.transcript-cell-ink-failed
+            : Theme.search-age-ink;
+        font-size: 11px;
+        vertical-alignment: center;
+        wrap: root.action-error != "" ? word-wrap : no-wrap;
+        overflow: elide;
+    }
+
+    if !root.pending && root.error == "" : Button {
+        x: 22px;
+        y: parent.height - 54px;
+        width: 108px;
+        height: 32px;
+        border-radius: 8px;
+        kind: ButtonKind.primary;
+        described: "Copy the share link";
+        clicked => { root.copy-requested(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: root.copied ? "Copy again" : "Copy link";
+            // The primary fill follows the theme's ink, so the caption is the
+            // palette's ink rather than the sidebar's fixed hover white.
+            color: Theme.search-row-ink-hover;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if !root.pending && root.error == "" : open := Button {
+        x: 138px;
+        y: parent.height - 54px;
+        width: 78px;
+        height: 32px;
+        border-radius: 8px;
+        described: "Open the share link in a browser";
+        clicked => { root.open-requested(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: "Open";
+            color: open.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if !root.pending && root.error == "" : done := Button {
+        x: parent.width - 22px - self.width;
+        y: parent.height - 54px;
+        width: 64px;
+        height: 32px;
+        border-radius: 8px;
+        described: "Close the share card";
+        clicked => { root.dismissed(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: "Done";
+            color: done.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.error != "" : close-error := Button {
+        x: parent.width - 22px - self.width;
+        y: parent.height - 52px;
+        width: 70px;
+        height: 32px;
+        border-radius: 8px;
+        described: "Close the share card";
+        clicked => { root.dismissed(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: "Close";
+            color: close-error.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Escape closes the card. The popup has no field of its own, so it takes the
+    // focus while it is up and hands it back through the window's dismiss path.
+    keys := FocusScope {
+        // Zero-sized on purpose: it takes the keyboard but must not sit over
+        // the card's controls, the way the transcript's own scope does.
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismissed();
+                return EventResult.accept;
+            }
+            reject
+        }
+    }
+}

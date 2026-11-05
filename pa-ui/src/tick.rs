@@ -706,9 +706,62 @@ impl Tick {
                 }
                 Msg::Error(_) => {}
                 Msg::Shared(Ok(shared)) => {
-                    let _ = crate::sessions::copy_to_clipboard(&shared.viewer_url);
+                    // The card opened when the menu item was taken; fill it with
+                    // the link the reader came for, and say whether the window
+                    // already put it on the clipboard.
+                    let copied = crate::sessions::copy_to_clipboard(&shared.viewer_url);
+                    let copy_error = copied
+                        .as_ref()
+                        .err()
+                        .map(|error| format!("could not copy: {error}"))
+                        .unwrap_or_default();
+                    ui.set_share_pending(false);
+                    ui.set_share_url(shared.viewer_url.into());
+                    ui.set_share_error("".into());
+                    ui.set_share_copied(copied.is_ok());
+                    ui.set_share_action_error(copy_error.into());
                 }
-                Msg::Shared(Err(_)) => {}
+                Msg::Shared(Err(error)) => {
+                    ui.set_share_pending(false);
+                    ui.set_share_url("".into());
+                    ui.set_share_error(error.into());
+                    ui.set_share_action_error("".into());
+                    ui.set_share_copied(false);
+                }
+                Msg::ViewerQuota(Ok(quota)) if quota.remaining <= 0 => {
+                    // The card's Open control is about to hand the reader to a
+                    // page that spends this quota. Say what is wrong instead of
+                    // opening a viewer that can only show GitHub's raw 403.
+                    let minutes = quota.wait_minutes();
+                    let message = if minutes > 1 {
+                        format!(
+                            "GitHub's public API quota is exhausted on this network. \
+                             The viewer will fail until it resets in about {minutes} minutes."
+                        )
+                    } else if minutes == 1 {
+                        "GitHub's public API quota is exhausted on this network. \
+                         The viewer will fail until it resets in about 1 minute."
+                            .to_string()
+                    } else {
+                        "GitHub's public API quota is exhausted on this network. \
+                         The viewer will fail until it resets."
+                            .to_string()
+                    };
+                    ui.set_share_action_error(message.into());
+                }
+                Msg::ViewerQuota(_) => {
+                    if !ui.get_share_open() {
+                        continue;
+                    }
+                    let url = ui.get_share_url().to_string();
+                    if url.is_empty() {
+                        continue;
+                    }
+                    ui.set_share_action_error("".into());
+                    if let Err(error) = crate::share::open_url(&url) {
+                        ui.set_share_action_error(error.into());
+                    }
+                }
             }
         }
 

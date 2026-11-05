@@ -264,6 +264,22 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             sessions::open_search(&ui, &sidebar.cache.borrow());
         }
+        if let Ok(url) = std::env::var("PA_SHARE") {
+            ui.set_share_url(url.as_str().into());
+            ui.set_share_open(true);
+        }
+        if let Ok(error) = std::env::var("PA_SHARE_ERROR") {
+            ui.set_share_error(error.as_str().into());
+            ui.set_share_open(true);
+        }
+        if std::env::var("PA_SHARE_PENDING").is_ok() {
+            ui.set_share_pending(true);
+            ui.set_share_open(true);
+        }
+        if let Ok(error) = std::env::var("PA_SHARE_ACTION_ERROR") {
+            ui.set_share_action_error(error.as_str().into());
+            ui.set_share_open(true);
+        }
         let shot_timer = std::rc::Rc::new(slint::Timer::default());
         let stop = shot_timer.clone();
         shot_timer.start(

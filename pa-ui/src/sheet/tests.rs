@@ -290,3 +290,32 @@ fn idle_floor_trim_evicts_prepended_pages_after_sixty_seconds_and_restores_tail_
     assert_eq!(messages(&sheet), ["m3", "m4"]);
     assert!(sheet.has_older());
 }
+
+/// Non-contiguous blocks that share a fallback key (such as `:0` notices) must
+/// not merge into one straddling range in `index` and walk intermediate blocks
+/// below zero on `merge`.
+#[test]
+fn non_contiguous_blocks_with_the_same_key_do_not_straddle_or_underflow_on_merge() {
+    let (sheet, orders) = sheet();
+    let page = vec![
+        row(":0", transcript::KIND_NOTICE, "retry", "", "first notice"),
+        row("m1", transcript::KIND_USER, "", "", "hello"),
+        row("m2", transcript::KIND_AGENT, "", "", "world"),
+        row(":0", transcript::KIND_NOTICE, "retry", "", "second notice"),
+    ];
+    sheet.replace(page.clone());
+    orders.borrow_mut().clear();
+
+    sheet.merge(page);
+
+    let bodies: Vec<String> = sheet.rows().iter().map(|r| r.body.clone()).collect();
+    assert_eq!(
+        bodies,
+        ["first notice", "hello", "world", "second notice"],
+        "merging a page with repeated non-contiguous keys must preserve every block"
+    );
+    assert!(
+        orders.borrow().is_empty(),
+        "an unchanged poll with repeated non-contiguous keys must not redraw"
+    );
+}

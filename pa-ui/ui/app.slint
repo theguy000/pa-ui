@@ -8,6 +8,7 @@ import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SessionMenu, SettingsMenu, SlashMenu, ThemeSidebar } from "menus.slint";
 import { SearchPopup } from "search.slint";
+import { SharePopup } from "share.slint";
 import { TitleBar } from "chrome.slint";
 import { BusyStrip } from "status-strip.slint";
 import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
@@ -416,6 +417,21 @@ export component AppWindow inherits Window {
         }
         false
     }
+
+    // The share card: what "Share as gist" produced. The menu opens it before the
+    // upload starts, so the reader sees that something is happening even when
+    // the GitHub CLI is slow, and it stays up with the viewer URL the moment the
+    // gist exists. `share-copied` says whether the window managed to put the
+    // link on the clipboard; the card's Copy control always offers a second try.
+    in-out property <bool> share-open: false;
+    in-out property <bool> share-pending: false;
+    in-out property <string> share-url: "";
+    in-out property <string> share-error: "";
+    in-out property <string> share-action-error: "";
+    in-out property <bool> share-copied: false;
+    callback share-copy-requested();
+    callback share-open-link-requested();
+    callback share-dismissed();
 
 
     in property <bool> busy: false;
@@ -1977,12 +1993,12 @@ export component AppWindow inherits Window {
             clicked => { root.search-outside(); }
         }
 
-        // The panel takes its place from `search-place`, which reads the panel's
-        // own size a moment before the panel paints. The popup declares its
-        // width and height, so that size is known without the panel being drawn.
+        // The popup declares its width and height, so its place in the middle
+        // of the window is known without waiting for a first paint, and it never
+        // comes nearer the title bar than the clearance.
         search-popup := SearchPopup {
-            x: search-place.panel-x;
-            y: search-place.panel-y;
+            x: max(root.search-clearance, (root.width - self.width) / 2);
+            y: max(root.search-clearance, (root.height - self.height) / 2);
             rows: root.search-rows;
             placeholder: "Search sessions";
             query <=> root.search-query;
@@ -2000,32 +2016,37 @@ export component AppWindow inherits Window {
             closed => { root.search-closed(); }
             focus-tick: root.search-focus-tick;
         }
+    }
 
-        search-place := Rectangle {
-            x: 0px;
-            y: 0px;
-            width: search-popup.width;
-            height: search-popup.height;
-            background: transparent;
-            // Where the panel goes: over the middle of the window, but never
-            // nearer the title bar than the clearance, and never off the left
-            // edge at the window's narrowest.
-            out property <length> panel-x: 0px;
-            out property <length> panel-y: 0px;
-            // A change on either axis writes the panel's place, which the panel
-            // above reads. The `init` writes it once so the first frame is placed.
-            init => {
-                search-place.panel-x = max(root.search-clearance, (root.width - self.width) / 2);
-                search-place.panel-y = max(root.search-clearance, (root.height - self.height) / 2);
-            }
-            changed width => {
-                search-place.panel-x = max(root.search-clearance, (root.width - self.width) / 2);
-            }
-            changed height => {
-                search-place.panel-y = max(root.search-clearance, (root.height - self.height) / 2);
-            }
+    // The share card over the middle of the window: the same place and the same
+    // shape as the search popup, because the two are the window's only surfaces
+    // that open over everything rather than hanging off a control. The strips
+    // around it are the window itself: a click there dismisses the card, and a
+    // click on the panel never reaches them.
+    if root.share-open : Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { root.share-dismissed(); }
         }
 
+        share-popup := SharePopup {
+            x: max(root.search-clearance, (root.width - self.width) / 2);
+            y: max(root.search-clearance, (root.height - self.height) / 2);
+            pending: root.share-pending;
+            url: root.share-url;
+            error: root.share-error;
+            action-error: root.share-action-error;
+            copied: root.share-copied;
+            copy-requested => { root.share-copy-requested(); }
+            open-requested => { root.share-open-link-requested(); }
+            dismissed => { root.share-dismissed(); }
+        }
     }
 
 

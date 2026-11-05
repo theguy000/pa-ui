@@ -13,6 +13,8 @@ pub(crate) enum Job {
     /// ask the daemon to export a session and the GitHub CLI to share it, the
     /// TUI's `/share`
     Share { session: String },
+    /// check the unauthenticated GitHub quota the share viewer will spend
+    CheckViewerQuota,
     Attach { session: String, generation: u64 },
     Tail { session: String, fresh: bool },
     /// the page before the one already loaded, walked from a row id
@@ -109,9 +111,11 @@ pub(crate) enum Msg {
     Stats { session: String, stats: pa_client::SessionStats },
     State { state: pa_client::SessionState },
     Activity { label: String },
-    /// a share finished: the gist URL to copy and the viewer URL to open, or
+    /// a share finished: the viewer URL the card shows, copies and opens, or
     /// the reason it could not be made
     Shared(Result<crate::share::Shared, String>),
+    /// the public GitHub API quota, before the card opens the viewer
+    ViewerQuota(Result<crate::share::ViewerQuota, String>),
     Error(String),
 }
 
@@ -273,6 +277,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 Job::Share { session } => {
                     out.send(Msg::Shared(crate::share::share_as_gist(active, &session)));
                 }
+                Job::CheckViewerQuota => {
+                    out.send(Msg::ViewerQuota(crate::share::viewer_quota()));
+                }
                 Job::Attach {
                     session,
                     generation,
@@ -285,8 +292,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         resume = None;
                     }
                     match attach_as(active, &session, Some(&client_id), resume.clone()) {
-                        Ok(messages) => {
+                        Ok(fallback) => {
                             attached = Some(session.clone());
+                            let messages = pa_client::get_page(active, &session, None, WINDOW_ROWS)
+                                .map(|page| page.messages)
+                                .unwrap_or(fallback);
                             let (rows, skipped) = crate::transcript::build(&messages, window_rows);
                             out.send(Msg::Transcript { session, rows, skipped, messages });
                             last_list = SystemTime::now() - Duration::from_secs(60);
