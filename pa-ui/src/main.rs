@@ -14,6 +14,7 @@ mod sessions;
 mod share;
 mod sheet;
 mod slash;
+mod command_word;
 mod text;
 mod theme;
 mod tick;
@@ -29,6 +30,7 @@ pub(crate) use models::*;
 pub(crate) use sessions::*;
 pub(crate) use sheet::*;
 pub(crate) use slash::*;
+pub(crate) use command_word::*;
 pub(crate) use text::*;
 pub(crate) use tick::*;
 pub(crate) use worker::*;
@@ -141,7 +143,8 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let models = models::ModelMenu::new(&ui, &job_tx);
-    let composer = composer::Composer::new(&ui, &job_tx, &models);
+    let command_word = CommandWord::new();
+    let composer = composer::Composer::new(&ui, &job_tx, &models, command_word.clone());
     let sidebar = sessions::Sidebar::new(&ui, &job_tx);
 
     let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
@@ -178,6 +181,7 @@ fn main() -> Result<(), slint::PlatformError> {
         sheet: sheet.clone(),
         sidebar: sidebar.clone(),
         composer: composer.clone(),
+        command_word: command_word.clone(),
         models: models.clone(),
         busy_since: busy_since.clone(),
         window_rows,
@@ -186,7 +190,6 @@ fn main() -> Result<(), slint::PlatformError> {
         live_state: std::cell::Cell::new(String::new()),
         live_since: std::cell::Cell::new(SystemTime::now()),
         busy_label: std::cell::Cell::new(String::new()),
-        command_label: std::cell::Cell::new(None),
         last_seq: std::cell::Cell::new(0),
         open_live: std::cell::Cell::new(None),
         stream_started: std::cell::Cell::new(SystemTime::now()),

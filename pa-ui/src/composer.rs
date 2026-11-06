@@ -79,9 +79,7 @@ pub(crate) fn apply_queue(
 pub(crate) struct Composer {
     pub in_flight: Rc<std::cell::Cell<bool>>,
     pub pending_user: Rc<RefCell<Option<String>>>,
-    /// The word a slash command gave the running turn, if any. The poll tick
-    /// adopts it so stream events cannot replace `Refining` with `Thinking`.
-    pub command_label: Rc<RefCell<Option<String>>>,
+    command_word: CommandWord,
     pub editing: Editing,
     pub extra_commands: SlashCommands,
     pub sent_thumbs: SentThumbs,
@@ -92,10 +90,14 @@ pub(crate) struct Composer {
 }
 
 impl Composer {
-    pub fn new(ui: &AppWindow, job_tx: &Sender<Job>, models: &Rc<ModelMenu>) -> Rc<Self> {
+    pub fn new(
+        ui: &AppWindow,
+        job_tx: &Sender<Job>,
+        models: &Rc<ModelMenu>,
+        command_word: CommandWord,
+    ) -> Rc<Self> {
         let in_flight = Rc::new(std::cell::Cell::new(false));
         let pending_user = Rc::new(RefCell::new(None));
-        let command_label = Rc::new(RefCell::new(None));
         let editing: Editing = Rc::new(RefCell::new(None));
         let extra_commands: SlashCommands = Rc::new(RefCell::new(Vec::new()));
         let slash_token = Rc::new(RefCell::new((0usize, 0usize)));
@@ -113,7 +115,7 @@ impl Composer {
         let composer = Rc::new(Self {
             in_flight,
             pending_user,
-            command_label,
+            command_word,
             editing,
             extra_commands,
             sent_thumbs,
@@ -182,14 +184,6 @@ impl Composer {
         }
     }
 
-    pub fn held_command_label(&self) -> Option<String> {
-        self.command_label.borrow().clone()
-    }
-
-    pub fn clear_command_label(&self) {
-        self.command_label.borrow_mut().take();
-    }
-
     fn bind_ui(
         &self,
         ui: &AppWindow,
@@ -202,7 +196,7 @@ impl Composer {
             let weak = ui.as_weak();
             let jobs = job_tx.clone();
             let pending_user = self.pending_user.clone();
-            let command_label = self.command_label.clone();
+            let command_word = self.command_word.clone();
             let attachments = self.attachments.clone();
             let attachment_model = self.attachment_model.clone();
             let models = models.clone();
@@ -315,9 +309,8 @@ impl Composer {
                 // A send while a turn runs is a parked message: it has no
                 // status word yet. The word starts when the message does.
                 if !ui.get_busy() {
-                    let label = status_label(&message);
-                    *command_label.borrow_mut() = label.map(str::to_string);
-                    if let Some(label) = label {
+                    command_word.clear();
+                    if let Some(label) = command_word.hold(&message) {
                         ui.set_busy_label(label.into());
                         ui.set_busy(true);
                     } else {

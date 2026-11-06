@@ -95,21 +95,6 @@ pub(crate) fn slash_dispatch(text: &str) -> SlashAction {
 }
 
 
-/// The status strip's word for a session-side command that does its own kind of
-/// work. A plain prompt has no such word; its activity comes from the stream.
-pub(crate) fn status_label(text: &str) -> Option<&'static str> {
-    let body = text.trim().strip_prefix('/')?;
-    let name = body.split_whitespace().next()?;
-    if name.eq_ignore_ascii_case("compact") {
-        Some("Compacting")
-    } else if name.eq_ignore_ascii_case("refine") {
-        Some("Refining")
-    } else {
-        None
-    }
-}
-
-
 /// The decision above, as a value so the send path stays readable.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SlashAction {
@@ -169,7 +154,6 @@ mod slash_menu_tests {
 #[cfg(test)]
 mod slash_rows_tests {
     use super::slash_rows;
-    use super::status_label;
 
     #[test]
     fn the_table_comes_first_and_the_sessions_own_follow() {
@@ -213,14 +197,4 @@ mod slash_rows_tests {
         assert!(names.contains(&"compact".to_string()));
         assert!(names.contains(&"refine".to_string()));
     }
-    #[test]
-    fn compact_and_refine_name_the_status_strip() {
-        assert_eq!(status_label("/compact"), Some("Compacting"));
-        assert_eq!(status_label("/compact keep the plan"), Some("Compacting"));
-        assert_eq!(status_label("  /refine  "), Some("Refining"));
-        assert_eq!(status_label("/refine tighten the notes"), Some("Refining"));
-        assert_eq!(status_label("/model"), None);
-        assert_eq!(status_label("please /refine this"), None);
-    }
-
 }

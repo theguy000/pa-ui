@@ -14,6 +14,7 @@ pub(crate) struct Tick {
     pub sheet: Rc<sheet::Sheet>,
     pub sidebar: Rc<sessions::Sidebar>,
     pub composer: Rc<composer::Composer>,
+    pub command_word: CommandWord,
     pub models: Rc<models::ModelMenu>,
     pub busy_since: Rc<std::cell::Cell<SystemTime>>,
     pub window_rows: usize,
@@ -22,9 +23,6 @@ pub(crate) struct Tick {
     pub live_state: std::cell::Cell<String>,
     pub live_since: std::cell::Cell<SystemTime>,
     pub busy_label: std::cell::Cell<String>,
-    /// The word a slash command gave the turn (`Refining`, `Compacting`), held
-    /// until the turn ends so stream events do not replace it with `Thinking`.
-    pub command_label: std::cell::Cell<Option<String>>,
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
@@ -41,7 +39,6 @@ pub(crate) struct Local {
     live_state: String,
     live_since: SystemTime,
     busy_label: String,
-    command_label: Option<String>,
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
@@ -60,7 +57,6 @@ impl Local {
             live_state: tick.live_state.take(),
             live_since: tick.live_since.get(),
             busy_label: tick.busy_label.take(),
-            command_label: tick.command_label.take(),
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
@@ -78,7 +74,6 @@ impl Local {
         tick.live_state.set(self.live_state);
         tick.live_since.set(self.live_since);
         tick.busy_label.set(self.busy_label);
-        tick.command_label.set(self.command_label);
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
@@ -118,9 +113,8 @@ impl Tick {
 
     /// Take the Status strip down and forget the command word that held it.
     fn clear_status(&self, ui: &AppWindow, l: &mut Local) {
-        l.command_label = None;
+        self.command_word.clear();
         l.busy_label.clear();
-        self.composer.clear_command_label();
         ui.set_busy_label("".into());
         ui.set_busy(false);
     }
@@ -144,16 +138,6 @@ impl Tick {
         let models = &self.models;
         let busy_since = &self.busy_since;
         let window_rows = self.window_rows;
-        // The composer opens the strip before the tick sees a roster update. If
-        // it named a slash command, adopt that word and restart the clock: the
-        // strip is showing a new turn now, not the last one's stale timer.
-        if l.command_label.is_none() {
-            if let Some(label) = composer.held_command_label() {
-                l.command_label = Some(label.clone());
-                l.busy_label = label;
-                busy_since.set(SystemTime::now());
-            }
-        }
         if ui.get_busy() && l.busy_label.is_empty() {
             let label = ui.get_busy_label().to_string();
             if !label.is_empty() {
@@ -303,9 +287,7 @@ impl Tick {
                             // A slash command's word outranks the stream's
                             // generic Thinking/Writing labels; compaction
                             // outranks both while the daemon reports it.
-                            let desired = if state == "Compacting" {
-                                Some("Compacting".to_string())
-                            } else if let Some(label) = l.command_label.as_deref() {
+                            let desired = if let Some(label) = self.command_word.word_for_state(state) {
                                 Some(label.to_string())
                             } else if state_changed || l.busy_label.is_empty() {
                                 Some(state.to_string())
@@ -336,13 +318,7 @@ impl Tick {
                 }
                 Msg::Sessions(Err(_)) => {}
                 Msg::Activity { label } => {
-                    let desired = if l.live_state == "Compacting" {
-                        "Compacting".to_string()
-                    } else if let Some(held) = l.command_label.as_deref() {
-                        held.to_string()
-                    } else {
-                        label
-                    };
+                    let desired = self.command_word.displayed(&l.live_state, &label);
                     if desired != l.busy_label {
                         l.busy_label = desired;
                         busy_since.set(SystemTime::now());
@@ -600,9 +576,8 @@ impl Tick {
                         // Only a turn already in flight counts: a replayed user
                         // message must not wake an idle strip.
                         if ui.get_busy() {
-                            if let Some(label) = status_label(&text) {
-                                if l.command_label.as_deref() != Some(label) {
-                                    l.command_label = Some(label.to_string());
+                            if let Some(label) = self.command_word.hold(&text) {
+                                if l.busy_label != label {
                                     l.busy_label = label.to_string();
                                     busy_since.set(SystemTime::now());
                                     ui.set_busy_label(label.into());
@@ -789,8 +764,7 @@ impl Tick {
                 }
                 Msg::PromptResult { error } => {
                     if error.is_some() {
-                        l.command_label = None;
-                        composer.clear_command_label();
+                        self.command_word.clear();
                     }
                     composer.on_prompt_result(sheet, error);
                 }
@@ -880,7 +854,8 @@ mod status_strip_tests {
             sheet.bind_ui(&ui);
             ui.set_transcript(transcript);
             let models = models::ModelMenu::new(&ui, &job_tx);
-            let composer = composer::Composer::new(&ui, &job_tx, &models);
+            let command_word = CommandWord::new();
+            let composer = composer::Composer::new(&ui, &job_tx, &models, command_word.clone());
             let sidebar = sessions::Sidebar::new(&ui, &job_tx);
             let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
             let tick = Rc::new(Tick {
@@ -892,6 +867,7 @@ mod status_strip_tests {
                 sheet,
                 sidebar,
                 composer,
+                command_word,
                 models,
                 busy_since,
                 window_rows: 300,
@@ -900,7 +876,6 @@ mod status_strip_tests {
                 live_state: std::cell::Cell::new(String::new()),
                 live_since: std::cell::Cell::new(SystemTime::now()),
                 busy_label: std::cell::Cell::new(String::new()),
-                command_label: std::cell::Cell::new(None),
                 last_seq: std::cell::Cell::new(0),
                 open_live: std::cell::Cell::new(None),
                 stream_started: std::cell::Cell::new(SystemTime::now()),
@@ -976,8 +951,7 @@ mod status_strip_tests {
         h.send(turn_end());
         h.run();
         assert_strip(&h, false, "");
-        assert!(h.tick.command_label.take().is_none());
-        assert!(h.tick.composer.held_command_label().is_none());
+        assert_eq!(h.tick.command_word.word_for_state("Thinking"), None);
     }
 
     fn a_rejected_prompt_takes_the_status_strip_down() {
@@ -1027,7 +1001,7 @@ mod status_strip_tests {
         h.ui.invoke_send_requested("/refine".into());
 
         assert_strip(&h, true, "Thinking");
-        assert!(h.tick.composer.held_command_label().is_none());
+        assert_eq!(h.tick.command_word.word_for_state("Thinking"), None);
         match h.jobs.try_recv() {
             Ok(Job::Prompt { message, .. }) => assert_eq!(message, "/refine"),
             _ => panic!("the composer did not send the command"),

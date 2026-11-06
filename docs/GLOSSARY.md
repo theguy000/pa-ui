@@ -36,6 +36,10 @@ _Avoid_: input box, text area, prompt box, message box
 The strip above the composer that says what the running turn is doing: the spinner, the current activity's word, the elapsed time, and the count of messages waiting in the queue. It folds away when the session is idle.
 _Avoid_: status bar, status tag, busy strip
 
+**Command word**:
+The word the Status strip keeps for a slash command that starts a turn: `Refining` or `Compacting`. It holds until the turn ends.
+_Avoid_: busy label, status label
+
 **Reader**:
 The person looking at the window. They own the scroll position and whatever they have opened.
 _Avoid_: user (that is the role a message carries, or the person the agent serves)
