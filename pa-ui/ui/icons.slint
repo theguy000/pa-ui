@@ -390,6 +390,23 @@ export component IconAlert inherits Path {
     fill: transparent;
 }
 
+// The warning mark used by the generic Sheet error row. Its triangle is the
+// selected soft-triangle shape: rounded apex and base, one exclamation stem,
+// one dot. The stroke matches the window's other 16px line glyphs.
+export component IconWarning inherits Path {
+    in property <color> tint: Theme.transcript-cell-ink-failed;
+    width: 16px;
+    height: 16px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 10.3 4.5 A 2 2 0 0 1 13.7 4.5 L 20.3 16 A 2 2 0 0 1 18.6 19 L 5.4 19 A 2 2 0 0 1 3.7 16 Z M 12 9.5 L 12 13 M 12 16.2 L 12.01 16.2";
+}
+
 // composer
 
 export component IconSend inherits Path {

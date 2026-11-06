@@ -1,4 +1,13 @@
 
+#[test]
+fn a_generic_error_row_keeps_only_the_first_line() {
+    let row = Row::error("Background shell command failed: exit 1\n  at shell.rs:42");
+    assert_eq!(row.kind, KIND_ERROR);
+    assert!(row.body.contains("Background shell command failed: exit 1"));
+    assert!(!row.body.contains("shell.rs:42"));
+    assert!(row.body.contains("Error:"));
+}
+
 use super::*;
 
 mod build_tests {

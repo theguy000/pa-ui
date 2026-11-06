@@ -139,6 +139,15 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
+        5 | 9 => {
+            let lines = row
+                .body
+                .lines()
+                .map(|line| (line.chars().count() / 80) + 1)
+                .sum::<usize>()
+                .max(1);
+            (lines as f32 * 21.5) + 8.0
+        }
         _ => {
             if row.expanded {
                 let code_lines = row.code.lines().count().min(12);
@@ -784,6 +793,27 @@ impl Sheet {
 
     pub fn rows(&self) -> Ref<'_, Vec<Row>> {
         Ref::map(self.inner.borrow(), |inner| &inner.rows)
+    }
+
+    /// Put one generic error row into the Sheet. It lands after the open live
+    /// Message group, so a streaming answer stays contiguous; with no live
+    /// answer it lands at the end. It never changes busy state, the Command
+    /// word, the Composer, or the live Turn.
+    pub fn show_error(&self, message: &str) {
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            let at = inner
+                .open
+                .as_ref()
+                .and_then(|key| inner.index.get(key))
+                .map_or(inner.rows.len(), |range| range.end);
+            inner.insert_rows(at, &[Row::error(message)]);
+            inner.shift_from(at, 1);
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
     }
 
     pub fn replace(&self, rows: Vec<Row>) {

@@ -318,9 +318,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // a provider that is not signed in fails here: say so rather
                     // than leaving the chip naming a model the session is not on
                     if let Err(error) = outcome {
-                        out.send(Msg::Activity {
-                            label: format!("{provider}/{model}: {error}"),
-                        });
+                        out.send(Msg::Error(format!(
+                            "Could not change the model to {provider}/{model}: {error}"
+                        )));
                     }
                 }
                 Job::NewChat => match create_session(active) {
@@ -331,9 +331,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         out.send(Msg::NewChat(id));
                     }
                     Err(error) => {
-                        out.send(Msg::Activity {
-                            label: format!("new chat: {error}"),
-                        });
+                        out.send(Msg::Error(format!(
+                            "Could not start a new Session: {error}"
+                        )));
                     }
                 },
                 Job::QueueEdit {
@@ -408,9 +408,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         Ok(String::new())
                     };
                     if let Err(error) = switched {
-                        out.send(Msg::Activity {
-                            label: format!("{provider}/{model}: {error}"),
-                        });
+                        out.send(Msg::Error(format!(
+                            "Could not change the model to {provider}/{model}: {error}"
+                        )));
                         continue;
                     }
                     match set_thinking_level(active, &session, &level) {
@@ -423,9 +423,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                         }
                         Err(error) => {
-                            out.send(Msg::Activity {
-                                label: format!("effort {level}: {error}"),
-                            });
+                            out.send(Msg::Error(format!(
+                                "Could not change the effort to {level}: {error}"
+                            )));
                         }
                     }
                 }
@@ -438,9 +438,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             out.send(Msg::ModelCatalog(catalog));
                         }
                         Err(error) => {
-                            out.send(Msg::Activity {
-                                label: format!("model catalog: {error}"),
-                            });
+                            out.send(Msg::Error(format!(
+                                "Could not load the model list: {error}"
+                            )));
                         }
                     }
                 }
@@ -495,12 +495,15 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                         }
                         Ok(_) => {
-                            out.send(Msg::Activity {
-                                label: "that queue row changed already".into(),
-                            });
+                            out.send(Msg::Error(
+                                "Could not change the parked message: it changed already"
+                                    .into(),
+                            ));
                         }
                         Err(error) => {
-                            out.send(Msg::Activity { label: error.to_string() });
+                            out.send(Msg::Error(format!(
+                                "Could not change the parked message: {error}"
+                            )));
                         }
                     }
                 }

@@ -511,6 +511,21 @@ impl Tick {
                         continue;
                     }
                     if matches!(kind, Some("turn_end" | "agent_end")) {
+                        if kind == Some("turn_end") {
+                            if let Some(error) = event
+                                .get("error")
+                                .and_then(serde_json::Value::as_str)
+                                .filter(|error| !error.trim().is_empty())
+                            {
+                                let failed =
+                                    match self.command_word.word_for_state(&l.live_state) {
+                                        Some("Refining") => "Refining failed",
+                                        Some("Compacting") => "Compacting failed",
+                                        _ => "Turn failed",
+                                    };
+                                sheet.show_error(&format!("{failed}: {error}"));
+                            }
+                        }
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
@@ -763,12 +778,15 @@ impl Tick {
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
-                    if error.is_some() {
+                    if let Some(error) = &error {
                         self.command_word.clear();
+                        sheet.show_error(error);
                     }
                     composer.on_prompt_result(sheet, error);
                 }
-                Msg::Error(_) => {}
+                Msg::Error(message) => {
+                    sheet.show_error(&message);
+                }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
                     // the link the reader came for, and say whether the window
@@ -992,6 +1010,48 @@ mod status_strip_tests {
         assert_strip(&h, false, "");
     }
 
+    fn a_failed_refine_names_the_command_in_the_sheet() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        assert_strip(&h, true, "Refining");
+
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "error": "provider returned 429"
+            }),
+        });
+        h.run();
+
+        assert_strip(&h, false, "");
+        let rows = h.tick.sheet.rows();
+        let error = rows.last().expect("the failure row landed");
+        assert_eq!(error.kind, crate::transcript::KIND_ERROR);
+        assert!(error.body.contains("Refining failed: provider returned 429"));
+    }
+
+    fn an_error_lands_in_the_sheet_without_touching_the_strip() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        assert_strip(&h, true, "Refining");
+
+        h.send(Msg::Error(
+            "Background shell command failed: exit 1".to_string(),
+        ));
+        h.run();
+
+        assert_strip(&h, true, "Refining");
+        let rows = h.tick.sheet.rows();
+        let error = rows.last().expect("the error row landed");
+        assert_eq!(error.kind, crate::transcript::KIND_ERROR);
+        assert!(error.body.contains("Background shell command failed: exit 1"));
+    }
+
     fn a_parked_command_does_not_claim_the_running_turn() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
@@ -1018,5 +1078,7 @@ mod status_strip_tests {
         a_reconnect_takes_the_status_strip_down();
         a_new_chat_takes_the_status_strip_down();
         a_parked_command_does_not_claim_the_running_turn();
+        an_error_lands_in_the_sheet_without_touching_the_strip();
+        a_failed_refine_names_the_command_in_the_sheet();
     }
 }
