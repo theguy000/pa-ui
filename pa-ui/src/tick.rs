@@ -510,18 +510,19 @@ impl Tick {
                         composer.project_queue(&ui, &lane("steering"), &lane("followUps"));
                         continue;
                     }
-                    if matches!(kind, Some("turn_end" | "agent_end")) {
-                        if kind == Some("turn_end") {
-                            if let Some(error) = event
-                                .get("error")
-                                .and_then(serde_json::Value::as_str)
-                                .filter(|error| !error.trim().is_empty())
-                            {
-                                let failed =
-                                    self.command_word.failure_label().unwrap_or("Turn failed");
-                                sheet.show_error(&format!("{failed}: {error}"));
-                            }
+                    if kind == Some("turn_end") {
+                        if let Some(error) = turn_failure(&event) {
+                            let failed =
+                                self.command_word.failure_label().unwrap_or("Turn failed");
+                            sheet.show_error(&format!("{failed}: {error}"));
                         }
+                    }
+                    if kind == Some("compaction_end") {
+                        if let Some(error) = compaction_failure(&event) {
+                            sheet.show_error(&error);
+                        }
+                    }
+                    if matches!(kind, Some("turn_end" | "agent_end" | "compaction_end")) {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
@@ -774,12 +775,13 @@ impl Tick {
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
-                    if error.is_some() {
+                    let failed = error.is_some();
+                    if failed {
                         self.command_word.clear();
                     }
                     // The take-back removes the user's echo while it is still the
                     // last Row; append the error only after that.
-                    composer.on_prompt_result(sheet, error.clone());
+                    composer.on_prompt_result(sheet, failed);
                     if let Some(error) = error {
                         sheet.show_error(&error);
                     }
@@ -852,6 +854,53 @@ impl Tick {
 
         l.store(self);
     }
+}
+
+/// The failure a `turn_end` carries. A provider refusal is on the empty
+/// assistant message (`message.errorMessage`, `stopReason: "error"`), while an
+/// engine failure can arrive as the top-level `error`. A deliberate Stop is
+/// not an error row: its aborted message already says the Turn was stopped.
+fn turn_failure(event: &serde_json::Value) -> Option<String> {
+    let message = event.get("message");
+    let aborted = event.get("aborted").and_then(serde_json::Value::as_bool) == Some(true)
+        || message
+            .and_then(|message| message.get("stopReason"))
+            .and_then(serde_json::Value::as_str)
+            == Some("aborted");
+    if aborted {
+        return None;
+    }
+    event
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            message
+                .and_then(|message| message.get("errorMessage"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter(|error| !error.trim().is_empty())
+        .map(str::to_string)
+}
+
+/// A compaction failure arrives as `compaction_end`, not as a Turn error.
+/// The daemon's message may already start with "Compaction failed:"; keep one
+/// operation prefix rather than stacking "Compacting failed: Compaction failed:".
+fn compaction_failure(event: &serde_json::Value) -> Option<String> {
+    if event
+        .get("errorSeverity")
+        .and_then(serde_json::Value::as_str)
+        != Some("error")
+    {
+        return None;
+    }
+    let error = event
+        .get("errorMessage")
+        .and_then(serde_json::Value::as_str)
+        .filter(|error| !error.trim().is_empty())?;
+    if let Some(rest) = error.strip_prefix("Compaction failed:") {
+        return Some(format!("Compacting failed:{rest}"));
+    }
+    Some(format!("Compacting failed: {error}"))
 }
 
 #[cfg(test)]
@@ -1045,7 +1094,10 @@ mod status_strip_tests {
             session: "s".to_string(),
             event: serde_json::json!({
                 "type": "turn_end",
-                "error": "provider returned 429"
+                "message": {
+                    "stopReason": "error",
+                    "errorMessage": "provider returned 429"
+                }
             }),
         });
         h.run();
@@ -1055,6 +1107,49 @@ mod status_strip_tests {
         let error = rows.last().expect("the failure row landed");
         assert_eq!(error.kind, crate::transcript::KIND_ERROR);
         assert!(error.body.contains("Refining failed: provider returned 429"));
+    }
+
+    fn a_deliberate_stop_does_not_write_an_error_row() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "message": { "stopReason": "aborted", "errorMessage": "No response produced." }
+            }),
+        });
+        h.run();
+        assert!(!h
+            .tick
+            .sheet
+            .rows()
+            .iter()
+            .any(|row| row.kind == crate::transcript::KIND_ERROR));
+    }
+
+    fn a_failed_compaction_names_the_operation() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/compact"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "compaction_end",
+                "errorSeverity": "error",
+                "errorMessage": "Compaction failed: context too large"
+            }),
+        });
+        h.run();
+        let rows = h.tick.sheet.rows();
+        let error = rows.last().expect("the compaction failure landed");
+        assert_eq!(error.kind, crate::transcript::KIND_ERROR);
+        assert!(error.body.contains("Compacting failed: context too large"));
+        assert!(!error.body.contains("Compaction failed"));
     }
 
     fn an_error_lands_in_the_sheet_without_touching_the_strip() {
@@ -1105,6 +1200,8 @@ mod status_strip_tests {
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();
+        a_deliberate_stop_does_not_write_an_error_row();
+        a_failed_compaction_names_the_operation();
         an_error_for_another_session_does_not_land_in_this_sheet();
     }
 }

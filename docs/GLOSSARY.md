@@ -57,7 +57,7 @@ One drawn block of the transcript: prose, a code block, a table, a tool cell, an
 _Avoid_: entry, line, block, item
 
 **Error row**:
-The Row the window adds when an operation fails: one warning mark and one plain message, drawn in the Sheet. It is not a Cell and not a Message.
+The Row the window adds when an operation fails: one warning mark, an `Error:` label, and one plain message, drawn in the Sheet. It is not a Cell and not a Message.
 _Avoid_: error card, error toast, status error
 
 **Cell**:

@@ -32,6 +32,13 @@ impl Word {
             Self::Compacting => "Compacting",
         }
     }
+
+    const fn failure_text(self) -> &'static str {
+        match self {
+            Self::Refining => "Refining failed",
+            Self::Compacting => "Compacting failed",
+        }
+    }
 }
 
 /// The one owner of the command word held for the running Turn.
@@ -81,10 +88,7 @@ impl CommandWord {
     /// words. An automatic compaction has no held word; its Turn failure stays
     /// the generic "Turn failed".
     pub(crate) fn failure_label(&self) -> Option<&'static str> {
-        self.held.borrow().map(|word| match word {
-            Word::Refining => "Refining failed",
-            Word::Compacting => "Compacting failed",
-        })
+        self.held.borrow().map(|word| word.failure_text())
     }
 
     /// The word the Status strip should show for the current state.

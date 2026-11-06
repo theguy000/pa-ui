@@ -1277,7 +1277,7 @@ impl Role {
             Role::TranscriptNoticeInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
-            Role::TranscriptErrorInk => Derivation::Fixed(Rgba::hex("#c98a7f")),
+            Role::TranscriptErrorInk => Derivation::Mix(Palette::Danger, Palette::Ink, 0.5),
             Role::TranscriptHeadingInk => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.7594)
             }
