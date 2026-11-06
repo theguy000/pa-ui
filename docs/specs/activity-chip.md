@@ -36,9 +36,8 @@ The TUI's activity dock is the parity source.
   without a running kernel has zero live shells.
 
 The worker reads all three on the activity cadence. A failed read keeps the last
-good number instead of clearing it. The window's outbox tags every reply with the
-attach generation, so a Session the reader has left cannot write into the new
-Session's chip.
+good number instead of clearing it. The window's outbox tags every reply with the Session id it was read for, so a
+Session the reader has left cannot write into the new Session's chip.
 
 ## Layout
 
