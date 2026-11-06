@@ -125,7 +125,13 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 }
 
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
-    let mut items: Vec<SessionItem> = rows.iter().map(to_item).collect();
+    // Spawned subagents live under their parent Session; the sidebar lists
+    // top-level Sessions only. Family cost still reads the unfiltered roster.
+    let mut items: Vec<SessionItem> = rows
+        .iter()
+        .filter(|row| row.parent.is_empty())
+        .map(to_item)
+        .collect();
     items.sort_by_key(|item| tag_word_rank(&item.status));
     items
 }
@@ -550,6 +556,19 @@ impl Sidebar {
         });
         sidebar.bind_ui(ui, job_tx);
         sidebar
+    }
+
+    /// The durable session id of a row, for session-scoped reads (heartbeats).
+    pub(crate) fn session_id_for(&self, selected: &str) -> String {
+        let groups = self.groups.borrow();
+        groups
+            .0
+            .iter()
+            .chain(groups.1.iter())
+            .chain(groups.2.iter())
+            .find(|item| item.id == selected)
+            .map(|item| item.uuid.to_string())
+            .unwrap_or_default()
     }
 
     pub fn track_selection(&self, selected: &str) {

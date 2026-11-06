@@ -444,3 +444,37 @@ fn family_cost_sums_spawned_children_with_parent_session_id() {
     assert!(has_children);
     assert!((total - 2.00).abs() < 1e-6);
 }
+
+fn subagent(active: &str, session: &str, parent: &str, status: &str) -> SessionRow {
+    let mut fields = serde_json::json!({
+        "activeSessionId": active, "sessionId": session,
+        "parentSessionId": parent, "lifecycle": "live",
+    });
+    if let Some(object) = fields.as_object_mut() {
+        match status {
+            "running" => {
+                object.insert("workerState".into(), serde_json::json!("ready"));
+                object.insert("activity".into(), serde_json::json!("working"));
+                object.insert("isSessionActive".into(), serde_json::json!(true));
+            }
+            "idle" => {
+                object.insert("workerState".into(), serde_json::json!("ready"));
+                object.insert("activity".into(), serde_json::json!("idle"));
+            }
+            _ => {}
+        }
+    }
+    row(fields)
+}
+
+#[test]
+fn a_subagent_is_not_a_sidebar_session() {
+    let child = subagent("child", "uuid-child", "uuid-parent", "running");
+    let rows = vec![row(serde_json::json!({
+        "activeSessionId": "parent", "sessionId": "uuid-parent",
+        "lifecycle": "live", "workerState": "ready", "activity": "idle"
+    })), child];
+    let items = session_items(&rows);
+    assert_eq!(items.len(), 1, "the child belongs under its parent");
+    assert_eq!(items[0].id, "parent");
+}

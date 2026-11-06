@@ -80,15 +80,15 @@ user drag or wheel.
 
 
 **The activity chip's marks.** The chip carries the three live groups the TUI
-keeps under its prompt, in the composer rather than in a separate strip. The
-branching tree says *subagents* (one node over two children), the pulse wave says
-*heartbeats* (the chosen ECG line), and the framed prompt says *shells* (the
-rounded terminal frame shared with `PanelIcon`). The chip keeps only the marks
-and counts so it can sit beside the model control; the popover supplies the
-labels, the paused cluster, and the running/active wording. All three marks use
-the same 24-unit grid, rounded caps and joins, and a 1.6px stroke so they read as
-one family at 13px. The counts are UI-only for now: the worker will fill them once
-the daemon reads land.
+keeps under its prompt, at the left of the composer's tool row rather than in a
+separate strip. The branching tree says *subagents* (one node over two children),
+the pulse wave says *heartbeats* (the chosen ECG line), and the framed prompt
+says *shells* (the rounded terminal frame shared with `PanelIcon`). It is a
+display-only readout: three marks and three numbers, vertically centred, with no
+separators and no click target. The counts are the TUI's: running subagent
+descendants, the Session-scoped heartbeat catalog, and running shell commands.
+All three marks use the same 24-unit grid, rounded caps and joins, and a 1.6px
+stroke so they read as one family at 13px.
 
 ## The rule: **`assets/` is build input, `design/` is authoring source.** A new file
 belongs in `design/` unless `build.rs` or the app reads it at build time.

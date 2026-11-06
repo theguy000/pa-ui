@@ -30,6 +30,7 @@ pub(crate) struct Tick {
     pub tail_at: std::cell::Cell<SystemTime>,
     pub queue_at: std::cell::Cell<SystemTime>,
     pub stats_at: std::cell::Cell<SystemTime>,
+    pub activity_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
     /// Error lines that belong to a Session other than the one on screen.
     /// They are replayed when that Session's Sheet is attached again.
@@ -51,6 +52,7 @@ pub(crate) struct Local {
     tail_at: SystemTime,
     queue_at: SystemTime,
     stats_at: SystemTime,
+    activity_at: SystemTime,
     scroll_ticks: u64,
 }
 
@@ -69,6 +71,7 @@ impl Local {
             tail_at: tick.tail_at.get(),
             queue_at: tick.queue_at.get(),
             stats_at: tick.stats_at.get(),
+            activity_at: tick.activity_at.get(),
             scroll_ticks: tick.scroll_ticks.get(),
         }
     }
@@ -86,6 +89,7 @@ impl Local {
         tick.tail_at.set(self.tail_at);
         tick.queue_at.set(self.queue_at);
         tick.stats_at.set(self.stats_at);
+        tick.activity_at.set(self.activity_at);
         tick.scroll_ticks.set(self.scroll_ticks);
     }
 }
@@ -253,15 +257,41 @@ impl Tick {
 
         // follow the selection
         let selected = ui.get_selected_id().to_string();
+        if selected.is_empty() {
+            ui.set_activity_subagents(0);
+            ui.set_activity_heartbeats(0);
+            ui.set_activity_shells(0);
+        }
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
+            ui.set_activity_subagents(0);
+            ui.set_activity_heartbeats(0);
+            ui.set_activity_shells(0);
+            let session_id = sidebar.session_id_for(&selected);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
             let _ = jobs.send(Job::Attach {
-                session: selected,
+                session: selected.clone(),
                 generation,
+            });
+            let _ = jobs.send(Job::Activity {
+                session: selected.clone(),
+                session_id,
+            });
+        }
+
+        // The roster answers subagents; heartbeats and shells need the daemon.
+        // Two seconds is the TUI's activity cadence and keeps the chip live
+        // without turning every repaint into a request.
+        if !selected.is_empty()
+            && l.activity_at.elapsed().unwrap_or_default() >= Duration::from_secs(2)
+        {
+            l.activity_at = SystemTime::now();
+            let _ = jobs.send(Job::Activity {
+                session: selected.clone(),
+                session_id: sidebar.session_id_for(&selected),
             });
         }
 
@@ -810,6 +840,24 @@ impl Tick {
                     );
                     ui.set_cost_family_on(has_children);
                 }
+                Msg::ActivityCounts {
+                    session,
+                    subagents,
+                    heartbeats,
+                    shells,
+                } => {
+                    if session == ui.get_selected_id().as_str() {
+                        if let Some(count) = subagents {
+                            ui.set_activity_subagents(i32::try_from(count).unwrap_or(i32::MAX));
+                        }
+                        if let Some(count) = heartbeats {
+                            ui.set_activity_heartbeats(i32::try_from(count).unwrap_or(i32::MAX));
+                        }
+                        if let Some(count) = shells {
+                            ui.set_activity_shells(i32::try_from(count).unwrap_or(i32::MAX));
+                        }
+                    }
+                }
                 Msg::State { state, .. } => {
                     models.sync_session_state(&ui, &state);
                 }
@@ -1039,6 +1087,7 @@ mod status_strip_tests {
                 tail_at: std::cell::Cell::new(SystemTime::now()),
                 queue_at: std::cell::Cell::new(SystemTime::now()),
                 stats_at: std::cell::Cell::new(SystemTime::now()),
+                activity_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -1490,5 +1539,58 @@ mod status_strip_tests {
         a_failed_tool_stays_a_failed_cell_not_an_error_row();
         a_session_close_is_an_error_row_and_stops_the_turn();
         a_session_close_for_another_session_is_retained();
+        the_activity_readout_is_selected_session_owned();
+    }
+
+    fn the_activity_readout_is_selected_session_owned() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.send_at(1, Msg::ActivityCounts {
+            session: "s".to_string(),
+            subagents: Some(1),
+            heartbeats: Some(2),
+            shells: Some(1),
+        });
+        h.run();
+        assert_eq!(h.ui.get_activity_subagents(), 1);
+        assert_eq!(h.ui.get_activity_heartbeats(), 2);
+        assert_eq!(h.ui.get_activity_shells(), 1);
+
+        h.send_at(1, Msg::ActivityCounts {
+            session: "other".to_string(),
+            subagents: Some(9),
+            heartbeats: Some(9),
+            shells: Some(9),
+        });
+        h.run();
+        assert_eq!(h.ui.get_activity_subagents(), 1);
+        assert_eq!(h.ui.get_activity_heartbeats(), 2);
+        assert_eq!(h.ui.get_activity_shells(), 1);
+
+        // One failed half keeps the other half's last good value.
+        h.send_at(1, Msg::ActivityCounts {
+            session: "s".to_string(),
+            subagents: None,
+            heartbeats: None,
+            shells: Some(0),
+        });
+        h.run();
+        assert_eq!(h.ui.get_activity_subagents(), 1);
+        assert_eq!(h.ui.get_activity_heartbeats(), 2);
+        assert_eq!(h.ui.get_activity_shells(), 0);
+
+        // A new selection resets the readout; the roster then supplies the
+        // running-subagent number through the activity reply.
+        h.ui.set_selected_id("parent".into());
+        h.run();
+        assert_eq!(h.ui.get_activity_subagents(), 0);
+        h.send_at(2, Msg::ActivityCounts {
+            session: "parent".to_string(),
+            subagents: Some(2),
+            heartbeats: Some(0),
+            shells: Some(0),
+        });
+        h.run();
+        assert_eq!(h.ui.get_activity_subagents(), 2);
     }
 }
