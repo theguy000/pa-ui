@@ -1,9 +1,9 @@
 // The composer's furniture: the model chip, the context ring and the card that
 // opens off it.
 
-import { IconCaret } from "icons.slint";
+import { IconCaret, IconHeartbeat, IconShells, IconSubagents } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button, ButtonKind } from "primitives.slint";
+import { Button, ButtonKind, Panel } from "primitives.slint";
 
 // One line of the context ledger: the label, then the value flush right in a
 // fixed slot so the whole column of numbers has one edge to line up on.
@@ -106,6 +106,212 @@ export component ContextCard inherits Rectangle {
                 label: "with subagents";
                 value: root.cost-family;
                 ink: Theme.composer-card-cost-ink;
+            }
+        }
+    }
+}
+
+// The three live groups the TUI keeps under its prompt. The chip is the
+// desktop's compact form: three marks and counts in the composer's tool row;
+// the panel spells the labels out. The counts are in-out so the worker can
+// fill them when the daemon wiring lands; today they rest at zero.
+export enum ActivityKind {
+    subagents,
+    heartbeats,
+    shells,
+}
+
+component ActivityIcon inherits Rectangle {
+    in property <ActivityKind> kind;
+    in property <color> tint;
+    width: 13px;
+    height: 13px;
+    background: transparent;
+
+    if root.kind == ActivityKind.subagents : IconSubagents {
+        tint: root.tint;
+    }
+    if root.kind == ActivityKind.heartbeats : IconHeartbeat {
+        tint: root.tint;
+    }
+    if root.kind == ActivityKind.shells : IconShells {
+        tint: root.tint;
+    }
+}
+
+component ActivityMetric inherits Rectangle {
+    in property <ActivityKind> kind;
+    in property <int> count;
+    in property <color> ink: Theme.composer-card-label-ink;
+    height: 13px;
+    width: metric-row.preferred-width;
+    background: transparent;
+
+    HorizontalLayout {
+        metric-row := HorizontalLayout {
+            spacing: 4px;
+            ActivityIcon {
+                kind: root.kind;
+                tint: root.ink;
+            }
+            Text {
+                text: root.count;
+                color: root.ink;
+                font-family: "Cascadia Code";
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component ActivityRow inherits Rectangle {
+    in property <ActivityKind> kind;
+    in property <string> label;
+    in property <string> value;
+    in property <int> paused: 0;
+    in property <bool> live;
+    height: 18px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 7px;
+        ActivityIcon {
+            kind: root.kind;
+            tint: root.live ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+        }
+        Text {
+            text: root.label;
+            width: 74px;
+            color: Theme.composer-card-label-ink;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.value;
+            horizontal-stretch: 1;
+            color: Theme.composer-card-ledger-ink;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        if root.paused > 0 : Text {
+            text: "· ◐ " + root.paused + " paused";
+            color: Theme.transcript-error-ink;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ActivityChip inherits Button {
+    in property <int> subagents: 0;
+    in property <int> heartbeats: 0;
+    in property <int> paused-heartbeats: 0;
+    in property <int> shells: 0;
+    in-out property <bool> open: false;
+    callback toggled;
+
+    height: 23px;
+    horizontal-stretch: 0;
+    border-radius: 6px;
+    border-width: 1px;
+    kind: ButtonKind.chip;
+    border-color: root.on ? Theme.composer-chip-edge-hover : Theme.composer-chip-edge;
+    lit: root.open;
+    fade: 0ms;
+    described: "Session activity";
+    clicked => { root.toggled(); }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: center;
+
+        ActivityMetric {
+            kind: ActivityKind.subagents;
+            count: root.subagents;
+            ink: root.subagents > 0
+                ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+        }
+        Text {
+            text: "·";
+            color: Theme.composer-chip-caret-mark;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        ActivityMetric {
+            kind: ActivityKind.heartbeats;
+            count: root.heartbeats;
+            ink: root.heartbeats > 0
+                ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+        }
+        Text {
+            text: "·";
+            color: Theme.composer-chip-caret-mark;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        ActivityMetric {
+            kind: ActivityKind.shells;
+            count: root.shells;
+            ink: root.shells > 0
+                ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+        }
+    }
+
+    // The labels and the paused cluster live here: the chip stays three counts,
+    // the panel says what they are. It hangs off the chip like the context card
+    // hangs off the ring, not off the window edge.
+    if root.open : Panel {
+        x: 0;
+        y: -self.height - 12px;
+        width: 246px;
+        height: self.preferred-height;
+        border-radius: 8px;
+        surface: Theme.composer-card-surface;
+        edge: Theme.composer-card-edge;
+        shadow: Theme.composer-card-shadow;
+        drop-shadow-blur: 10px;
+
+        VerticalLayout {
+            padding-left: 11px;
+            padding-right: 11px;
+            padding-top: 9px;
+            padding-bottom: 9px;
+            spacing: 4px;
+
+            Text {
+                text: "SESSION ACTIVITY";
+                color: Theme.composer-card-label-ink;
+                font-size: 9px;
+                letter-spacing: 1.2px;
+                vertical-alignment: center;
+            }
+            ActivityRow {
+                kind: ActivityKind.subagents;
+                label: "subagents";
+                value: root.subagents + " running";
+                live: root.subagents > 0;
+            }
+            ActivityRow {
+                kind: ActivityKind.heartbeats;
+                label: "heartbeats";
+                value: root.heartbeats + " active";
+                paused: root.paused-heartbeats;
+                live: root.heartbeats > 0;
+            }
+            ActivityRow {
+                kind: ActivityKind.shells;
+                label: "shells";
+                value: root.shells + " running";
+                live: root.shells > 0;
             }
         }
     }

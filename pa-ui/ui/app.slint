@@ -5,7 +5,7 @@ import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon
 import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
-import { Chip, ContextCard, ContextRing } from "composer.slint";
+import { ActivityChip, Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SessionMenu, SettingsMenu, SlashMenu, ThemeSidebar } from "menus.slint";
 import { SearchPopup } from "search.slint";
 import { SharePopup } from "share.slint";
@@ -44,7 +44,12 @@ export component AppWindow inherits Window {
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
         // a click that lands on nothing in particular dismisses the model menu
-        clicked => { root.model-menu = false; root.queue-open = false; root.settings-menu = false; }
+        clicked => {
+            root.model-menu = false;
+            root.queue-open = false;
+            root.settings-menu = false;
+            root.activity-open = false;
+        }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
                 root.pointer-moved();
@@ -227,6 +232,13 @@ export component AppWindow inherits Window {
     in-out property <string> cost-family: "";
     in-out property <bool> cost-family-on: false;
     in-out property <bool> ctx-hover: false;
+    // The activity chip's counts and disclosure. The UI ships at zero until the
+    // worker reads subagents, heartbeats, and shells from the daemon.
+    in-out property <int> activity-subagents: 0;
+    in-out property <int> activity-heartbeats: 0;
+    in-out property <int> activity-paused-heartbeats: 0;
+    in-out property <int> activity-shells: 0;
+    in-out property <bool> activity-open: false;
     in-out property <string> editing-id: "";
     in-out property <string> hover-title: "";
     in-out property <length> hover-y: 0px;
@@ -1583,6 +1595,18 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
+            ActivityChip {
+                subagents: root.activity-subagents;
+                heartbeats: root.activity-heartbeats;
+                paused-heartbeats: root.activity-paused-heartbeats;
+                shells: root.activity-shells;
+                open: root.activity-open;
+                toggled => {
+                    root.model-menu = false;
+                    root.settings-menu = false;
+                    root.activity-open = !root.activity-open;
+                }
+            }
             Rectangle {
                 horizontal-stretch: 1;
                 background: transparent;
@@ -1667,6 +1691,7 @@ export component AppWindow inherits Window {
                 open: root.model-menu;
                 toggled => {
                     root.settings-menu = false;
+                    root.activity-open = false;
                     root.model-menu = !root.model-menu;
                     if root.model-menu {
                         root.model-menu-opened();
@@ -1692,6 +1717,7 @@ export component AppWindow inherits Window {
                 described: root.stop-mode ? "Stop the turn" : "Send";
                 clicked => {
                     root.model-menu = false;
+                    root.activity-open = false;
                     if root.stop-mode {
                         // the daemon keeps the queue flowing behind the stopped
                         // run, so the next waiting message is not stranded

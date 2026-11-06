@@ -78,5 +78,17 @@ growing at the bottom rewrites the offset, and for one frame the distance to the
 floor reads as zero. `scrolled` distinguishes the two, because it fires only for a
 user drag or wheel.
 
+
+**The activity chip's marks.** The chip carries the three live groups the TUI
+keeps under its prompt, in the composer rather than in a separate strip. The
+branching tree says *subagents* (one node over two children), the pulse wave says
+*heartbeats* (the chosen ECG line), and the framed prompt says *shells* (the
+rounded terminal frame shared with `PanelIcon`). The chip keeps only the marks
+and counts so it can sit beside the model control; the popover supplies the
+labels, the paused cluster, and the running/active wording. All three marks use
+the same 24-unit grid, rounded caps and joins, and a 1.6px stroke so they read as
+one family at 13px. The counts are UI-only for now: the worker will fill them once
+the daemon reads land.
+
 ## The rule: **`assets/` is build input, `design/` is authoring source.** A new file
 belongs in `design/` unless `build.rs` or the app reads it at build time.
