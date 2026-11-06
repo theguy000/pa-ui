@@ -517,10 +517,8 @@ impl Tick {
                                 .and_then(serde_json::Value::as_str)
                                 .filter(|error| !error.trim().is_empty())
                             {
-                                let failed = self
-                                    .command_word
-                                    .failure_label(&l.live_state)
-                                    .unwrap_or("Turn failed");
+                                let failed =
+                                    self.command_word.failure_label().unwrap_or("Turn failed");
                                 sheet.show_error(&format!("{failed}: {error}"));
                             }
                         }
