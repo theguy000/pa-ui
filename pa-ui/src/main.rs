@@ -198,6 +198,8 @@ fn main() -> Result<(), slint::PlatformError> {
         queue_at: std::cell::Cell::new(SystemTime::now()),
         stats_at: std::cell::Cell::new(SystemTime::now()),
         scroll_ticks: std::cell::Cell::new(0),
+        retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
+        retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
     });
 
     let poll = Timer::default();
