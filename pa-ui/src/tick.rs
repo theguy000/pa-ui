@@ -22,6 +22,9 @@ pub(crate) struct Tick {
     pub live_state: std::cell::Cell<String>,
     pub live_since: std::cell::Cell<SystemTime>,
     pub busy_label: std::cell::Cell<String>,
+    /// The word a slash command gave the turn (`Refining`, `Compacting`), held
+    /// until the turn ends so stream events do not replace it with `Thinking`.
+    pub command_label: std::cell::Cell<Option<String>>,
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
@@ -38,6 +41,7 @@ pub(crate) struct Local {
     live_state: String,
     live_since: SystemTime,
     busy_label: String,
+    command_label: Option<String>,
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
@@ -56,6 +60,7 @@ impl Local {
             live_state: tick.live_state.take(),
             live_since: tick.live_since.get(),
             busy_label: tick.busy_label.take(),
+            command_label: tick.command_label.take(),
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
@@ -73,6 +78,7 @@ impl Local {
         tick.live_state.set(self.live_state);
         tick.live_since.set(self.live_since);
         tick.busy_label.set(self.busy_label);
+        tick.command_label.set(self.command_label);
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
@@ -129,6 +135,23 @@ impl Tick {
         let models = &self.models;
         let busy_since = &self.busy_since;
         let window_rows = self.window_rows;
+        // The composer opens the strip before the tick sees a roster update. If
+        // it named a slash command, adopt that word and restart the clock: the
+        // strip is showing a new turn now, not the last one's stale timer.
+        if l.command_label.is_none() {
+            if let Some(label) = composer.held_command_label() {
+                l.command_label = Some(label.clone());
+                l.busy_label = label;
+                busy_since.set(SystemTime::now());
+            }
+        }
+        if ui.get_busy() && l.busy_label.is_empty() {
+            let label = ui.get_busy_label().to_string();
+            if !label.is_empty() {
+                l.busy_label = label;
+                busy_since.set(SystemTime::now());
+            }
+        }
 
         if crate::env_cfg::cfg().debug {
             eprintln!(
@@ -240,15 +263,32 @@ impl Tick {
                     if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
                         ui.set_busy(false);
                         l.busy_label.clear();
+                        l.command_label = None;
+                        composer.clear_command_label();
                     }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
-                        if state != l.live_state {
+                        let state_changed = state != l.live_state;
+                        if state_changed {
                             l.live_state = state.to_string();
                             l.live_since = SystemTime::now();
                         }
                         let busy_now = state != "idle" && state != "archived";
-                        if !busy_now && ui.get_busy() {
+                        // A roster answer can cross a prompt that has just been
+                        // accepted but not yet picked up. While that send is in
+                        // flight, an idle row is stale; keep the strip and its
+                        // command word up until the turn starts or the send fails.
+                        let sending = composer.in_flight.get()
+                            && busy_since.get().elapsed().unwrap_or_default()
+                                < Duration::from_secs(5);
+                        if !busy_now && !sending {
+                            l.command_label = None;
+                            composer.clear_command_label();
+                            if !ui.get_busy() {
+                                l.busy_label.clear();
+                            }
+                        }
+                        if !busy_now && ui.get_busy() && !sending {
                             ui.set_busy(false);
                             l.busy_label.clear();
                             if let Some(session) = l.loaded.clone() {
@@ -258,13 +298,34 @@ impl Tick {
                                 });
                             }
                         }
-                        if busy_now && !ui.get_busy() {
-                            if l.busy_label.is_empty() {
-                                l.busy_label = state.to_string();
-                                busy_since.set(SystemTime::now());
-                                ui.set_busy_label(l.busy_label.clone().into());
+                        if busy_now {
+                            // A slash command's word outranks the stream's
+                            // generic Thinking/Writing labels; compaction
+                            // outranks both while the daemon reports it.
+                            let desired = if state == "Compacting" {
+                                Some("Compacting".to_string())
+                            } else if let Some(label) = l.command_label.as_deref() {
+                                Some(label.to_string())
+                            } else if state_changed || l.busy_label.is_empty() {
+                                Some(state.to_string())
+                            } else {
+                                None
+                            };
+                            if let Some(label) = desired {
+                                if label != l.busy_label {
+                                    l.busy_label = label;
+                                    busy_since.set(SystemTime::now());
+                                    ui.set_busy_label(l.busy_label.clone().into());
+                                }
                             }
-                            ui.set_busy(true);
+                            if !ui.get_busy() {
+                                if l.busy_label.is_empty() {
+                                    l.busy_label = state.to_string();
+                                    busy_since.set(SystemTime::now());
+                                    ui.set_busy_label(l.busy_label.clone().into());
+                                }
+                                ui.set_busy(true);
+                            }
                         }
                         if ui.get_busy() {
                             let held = busy_since.get().elapsed().unwrap_or_default().as_secs();
@@ -274,8 +335,15 @@ impl Tick {
                 }
                 Msg::Sessions(Err(_)) => {}
                 Msg::Activity { label } => {
-                    if label != l.busy_label {
-                        l.busy_label = label;
+                    let desired = if l.live_state == "Compacting" {
+                        "Compacting".to_string()
+                    } else if let Some(held) = l.command_label.as_deref() {
+                        held.to_string()
+                    } else {
+                        label
+                    };
+                    if desired != l.busy_label {
+                        l.busy_label = desired;
                         busy_since.set(SystemTime::now());
                         ui.set_busy_label(l.busy_label.clone().into());
                     }
@@ -434,9 +502,6 @@ impl Tick {
                     }
                 }
                 Msg::Event { session, event } => {
-                    if let Some(label) = pa_client::activity_label(&event) {
-                        ui.set_busy_label(label.into());
-                    }
                     if let Some(sequence) = event
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
@@ -472,6 +537,8 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
+                        l.command_label = None;
+                        composer.clear_command_label();
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -527,6 +594,21 @@ impl Tick {
                     let role = message.get("role").and_then(serde_json::Value::as_str);
                     if role == Some("user") {
                         let text = message_text(message);
+                        // The stream says "Thinking" for every message, including
+                        // the command that started the turn. Keep the command's
+                        // own word on the status strip for as long as it runs.
+                        // Only a turn already in flight counts: a replayed user
+                        // message must not wake an idle strip.
+                        if ui.get_busy() {
+                            if let Some(label) = status_label(&text) {
+                                if l.command_label.as_deref() != Some(label) {
+                                    l.command_label = Some(label.to_string());
+                                    l.busy_label = label.to_string();
+                                    busy_since.set(SystemTime::now());
+                                    ui.set_busy_label(label.into());
+                                }
+                            }
+                        }
                         let stamp = message
                             .get("timestamp")
                             .and_then(serde_json::Value::as_i64)
@@ -634,6 +716,9 @@ impl Tick {
                 }
                 Msg::NewChat(id) => {
                     composer.reset_for_new_chat(&ui, &id);
+                    l.command_label = None;
+                    composer.clear_command_label();
+                    l.busy_label.clear();
                 }
                 Msg::QueueEdit { text } => {
                     ui.set_composer_text(text.into());
@@ -694,14 +779,23 @@ impl Tick {
                 Msg::Reconnected => {
                     l.loaded = None;
                     l.open_live = None;
+                    l.command_label = None;
+                    composer.clear_command_label();
+                    composer.in_flight.set(false);
                     sheet.answer_ended();
                     sheet.clear_tail_sig();
                     l.last_seq = 0;
                 }
                 Msg::PromptRejected { text } => {
+                    l.command_label = None;
+                    composer.clear_command_label();
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
+                    if error.is_some() {
+                        l.command_label = None;
+                        composer.clear_command_label();
+                    }
                     composer.on_prompt_result(sheet, error);
                 }
                 Msg::Error(_) => {}

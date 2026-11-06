@@ -79,6 +79,9 @@ pub(crate) fn apply_queue(
 pub(crate) struct Composer {
     pub in_flight: Rc<std::cell::Cell<bool>>,
     pub pending_user: Rc<RefCell<Option<String>>>,
+    /// The word a slash command gave the running turn, if any. The poll tick
+    /// adopts it so stream events cannot replace `Refining` with `Thinking`.
+    pub command_label: Rc<RefCell<Option<String>>>,
     pub editing: Editing,
     pub extra_commands: SlashCommands,
     pub sent_thumbs: SentThumbs,
@@ -92,6 +95,7 @@ impl Composer {
     pub fn new(ui: &AppWindow, job_tx: &Sender<Job>, models: &Rc<ModelMenu>) -> Rc<Self> {
         let in_flight = Rc::new(std::cell::Cell::new(false));
         let pending_user = Rc::new(RefCell::new(None));
+        let command_label = Rc::new(RefCell::new(None));
         let editing: Editing = Rc::new(RefCell::new(None));
         let extra_commands: SlashCommands = Rc::new(RefCell::new(Vec::new()));
         let slash_token = Rc::new(RefCell::new((0usize, 0usize)));
@@ -109,6 +113,7 @@ impl Composer {
         let composer = Rc::new(Self {
             in_flight,
             pending_user,
+            command_label,
             editing,
             extra_commands,
             sent_thumbs,
@@ -134,6 +139,7 @@ impl Composer {
     }
 
     pub fn reset_for_new_chat(&self, ui: &AppWindow, id: &str) {
+        self.in_flight.set(false);
         if let Ok(opening) = std::env::var("PA_SLASH") {
             ui.set_composer_text(opening.as_str().into());
             ui.set_composer_has_text(!opening.is_empty());
@@ -159,6 +165,7 @@ impl Composer {
     }
 
     pub fn on_prompt_rejected(&self, ui: &AppWindow, sheet: &sheet::Sheet, text: &str) {
+        self.in_flight.set(false);
         if ui.get_composer_text().is_empty() {
             ui.set_composer_text(text.into());
             ui.set_composer_has_text(!ui.get_composer_text().is_empty());
@@ -169,9 +176,18 @@ impl Composer {
 
     pub fn on_prompt_result(&self, sheet: &sheet::Sheet, error: Option<String>) {
         if error.is_some() {
+            self.in_flight.set(false);
             let text = self.pending_user.borrow_mut().take().unwrap_or_default();
             sheet.take_back_prompt(&text);
         }
+    }
+
+    pub fn held_command_label(&self) -> Option<String> {
+        self.command_label.borrow().clone()
+    }
+
+    pub fn clear_command_label(&self) {
+        self.command_label.borrow_mut().take();
     }
 
     fn bind_ui(
@@ -186,6 +202,7 @@ impl Composer {
             let weak = ui.as_weak();
             let jobs = job_tx.clone();
             let pending_user = self.pending_user.clone();
+            let command_label = self.command_label.clone();
             let attachments = self.attachments.clone();
             let attachment_model = self.attachment_model.clone();
             let models = models.clone();
@@ -295,7 +312,12 @@ impl Composer {
                     return;
                 }
                 *pending_user.borrow_mut() = Some(message.clone());
-                if !ui.get_busy() {
+                let label = status_label(&message);
+                *command_label.borrow_mut() = label.map(str::to_string);
+                if let Some(label) = label {
+                    ui.set_busy_label(label.into());
+                    ui.set_busy(true);
+                } else if !ui.get_busy() {
                     ui.set_busy_label("Waiting".into());
                     ui.set_busy(true);
                 }
