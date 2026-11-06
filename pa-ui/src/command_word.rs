@@ -32,6 +32,13 @@ impl Word {
             Self::Compacting => "Compacting",
         }
     }
+
+    const fn failure_text(self) -> &'static str {
+        match self {
+            Self::Refining => "Refining failed",
+            Self::Compacting => "Compacting failed",
+        }
+    }
 }
 
 /// The one owner of the command word held for the running Turn.
@@ -76,6 +83,14 @@ impl CommandWord {
         }
     }
 
+    /// The operation name a failed command Turn carries into the Sheet. This
+    /// is the single owner of the mapping: the Tick never compares the display
+    /// words. An automatic compaction has no held word; its Turn failure stays
+    /// the generic "Turn failed".
+    pub(crate) fn failure_label(&self) -> Option<&'static str> {
+        self.held.borrow().map(|word| word.failure_text())
+    }
+
     /// The word the Status strip should show for the current state.
     ///
     /// Compaction outranks a slash command's word, which outranks the stream's
@@ -112,6 +127,17 @@ mod tests {
         assert_eq!(word.displayed("Thinking", "Thinking"), "Refining");
         assert_eq!(word.displayed("Refining", "Writing"), "Refining");
         assert_eq!(word.displayed("Compacting", "Writing"), "Compacting");
+    }
+
+    #[test]
+    fn a_failure_names_the_held_command() {
+        let word = CommandWord::new();
+        word.hold("/refine");
+        assert_eq!(word.failure_label(), Some("Refining failed"));
+        word.hold("/compact");
+        assert_eq!(word.failure_label(), Some("Compacting failed"));
+        word.clear();
+        assert_eq!(word.failure_label(), None);
     }
 
     #[test]

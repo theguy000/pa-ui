@@ -176,8 +176,8 @@ impl Composer {
         sheet.take_back_prompt(text);
     }
 
-    pub fn on_prompt_result(&self, sheet: &sheet::Sheet, error: Option<String>) {
-        if error.is_some() {
+    pub fn on_prompt_result(&self, sheet: &sheet::Sheet, failed: bool) {
+        if failed {
             self.in_flight.set(false);
             let text = self.pending_user.borrow_mut().take().unwrap_or_default();
             sheet.take_back_prompt(&text);

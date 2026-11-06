@@ -117,6 +117,7 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptMessageInk => global.set_transcript_message_ink(value),
         Role::TranscriptLinkInk => global.set_transcript_link_ink(value),
         Role::TranscriptNoticeInk => global.set_transcript_notice_ink(value),
+        Role::TranscriptErrorInk => global.set_transcript_error_ink(value),
         Role::TranscriptHeadingInk => global.set_transcript_heading_ink(value),
         Role::TranscriptInlineCodeInk => global.set_transcript_inline_code_ink(value),
         Role::TranscriptCaretMark => global.set_transcript_caret_mark(value),

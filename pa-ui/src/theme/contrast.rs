@@ -324,6 +324,11 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
+        ink: Mark { role: Role::TranscriptErrorInk, on: ON_TRANSCRIPT },
+        what: "the words of an error row",
+        floor: BODY,
+    },
+    Pair {
         ink: Mark { role: Role::TranscriptLinkInk, on: ON_TRANSCRIPT },
         what: "a link in prose",
         floor: BODY,

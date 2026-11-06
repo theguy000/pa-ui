@@ -4,7 +4,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { TRow, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
-import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash } from "icons.slint";
+import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash, IconWarning } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Button } from "primitives.slint";
 
@@ -507,6 +507,37 @@ export component TranscriptRow inherits VerticalLayout {
             text: data.title;
             color: Theme.transcript-notice-ink;
             font-size: 10px;
+        }
+    }
+
+    // The generic error row: one line, the whole line in the failure ink. It is
+    // a transcript row, not a Status strip state and not a card. Long text wraps
+    // like prose; the Rust side has already collapsed multi-line errors to one
+    // summary line.
+    if data.kind == 9 : Rectangle {
+        height: error-line.preferred-height + 8px;
+        IconWarning {
+            x: 24px;
+            y: 3px;
+            width: 16px;
+            height: 16px;
+        }
+        Text {
+            x: 48px;
+            y: 4px;
+            width: 38px;
+            text: data.title;
+            color: Theme.transcript-error-ink;
+            font-size: Type.body;
+            font-weight: 600;
+        }
+        error-line := StyledText {
+            x: 94px;
+            y: 4px;
+            width: parent.width - 118px;
+            text: data.body;
+            default-color: Theme.transcript-error-ink;
+            default-font-size: Type.body;
         }
     }
 

@@ -139,6 +139,18 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
+        5 => 28.0,
+        9 => {
+            // The error text box is 118px narrower than prose, and the row
+            // carries markup; estimate from the plain words at that width.
+            let body = transcript::plain(&row.body);
+            let lines = body
+                .lines()
+                .map(|line| (line.chars().count() / 64) + 1)
+                .sum::<usize>()
+                .max(1);
+            (lines as f32 * 21.5) + 8.0
+        }
         _ => {
             if row.expanded {
                 let code_lines = row.code.lines().count().min(12);
@@ -786,6 +798,21 @@ impl Sheet {
         Ref::map(self.inner.borrow(), |inner| &inner.rows)
     }
 
+    /// Put one generic error row into the Sheet. It lands after the open live
+    /// Message group, so a streaming answer stays contiguous; with no live
+    /// answer it lands at the end. It never changes busy state, the Command
+    /// word, the Composer, or the live Turn.
+    pub fn show_error(&self, message: &str) {
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            inner.place_after_open(&[Row::error(message)]);
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
     pub fn replace(&self, rows: Vec<Row>) {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
@@ -1094,17 +1121,30 @@ impl Inner {
         }
     }
 
-    fn place(&mut self, rows: &[Row]) {
-        let at = self.landing();
+    fn place_at(&mut self, at: usize, rows: &[Row]) {
         self.insert_rows(at, rows);
         self.shift_from(at, rows.len() as isize);
     }
 
+    fn place(&mut self, rows: &[Row]) {
+        self.place_at(self.landing(), rows);
+    }
+
     fn place_keyed(&mut self, key: &str, rows: &[Row]) {
         let at = self.landing();
-        self.insert_rows(at, rows);
-        self.shift_from(at, rows.len() as isize);
+        self.place_at(at, rows);
         self.index.insert(key.to_string(), at..at + rows.len());
+    }
+
+    /// An error row follows the open live Message group, so the group stays
+    /// contiguous while the error lands at the point the reader saw it.
+    fn place_after_open(&mut self, rows: &[Row]) {
+        let at = self
+            .open
+            .as_ref()
+            .and_then(|key| self.index.get(key))
+            .map_or(self.rows.len(), |range| range.end);
+        self.place_at(at, rows);
     }
 
     fn shift_from(&mut self, at: usize, delta: isize) {

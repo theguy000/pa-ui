@@ -36,6 +36,11 @@ pub const KIND_CELL: i32 = 3;
 
 pub const KIND_NOTICE: i32 = 5;
 
+/// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
+/// Status strip state and not a card. The message is collapsed to its first
+/// non-empty line, as the TUI's error row does.
+pub const KIND_ERROR: i32 = 9;
+
 /// A fenced code block, rendered on its own surface rather than as prose.
 pub const KIND_CODE: i32 = 6;
 
@@ -72,7 +77,28 @@ pub struct Row {
     pub elapsed: String,
 }
 
+/// The one line a generic error row carries: the first non-empty line, with
+/// the TUI's trailing-space convention omitted. Empty input still says Error.
+fn error_line(message: &str) -> String {
+    message
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("unknown error")
+        .to_string()
+}
+
 impl Row {
+    /// The generic one-line error row. `message` is plain text; the markup
+    /// builder escapes it so an error that quotes HTML cannot break the row.
+    pub(crate) fn error(message: &str) -> Self {
+        let line = error_line(message);
+        let mut row = Self::new(KIND_ERROR);
+        row.title = "Error:".to_string();
+        row.body = plain_markup(&line);
+        row
+    }
+
     fn new(kind: i32) -> Self {
         Self {
             kind,

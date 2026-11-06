@@ -72,6 +72,35 @@ fn messages(sheet: &Sheet) -> Vec<String> {
 }
 
 #[test]
+fn an_error_is_one_generic_row_in_the_sheet() {
+    let (sheet, orders) = sheet();
+    sheet.replace(vec![row("m1", transcript::KIND_AGENT, "", "", "working")]);
+
+    sheet.show_error("Background shell command failed: exit 1");
+
+    let rows = sheet.rows();
+    assert_eq!(rows.len(), 2, "the error is one extra row, not a panel");
+    assert_eq!(rows[1].kind, transcript::KIND_ERROR);
+    assert!(rows[1].body.contains("Background shell command failed: exit 1"));
+    assert!(matches!(orders.borrow().last(), Some(Order::Insert { at: 1 })));
+}
+
+#[test]
+fn an_error_after_an_open_answer_stays_after_that_answer() {
+    let (sheet, orders) = sheet();
+    sheet.replace(vec![
+        row("m1", transcript::KIND_AGENT, "", "", "first"),
+        row("m2", transcript::KIND_AGENT, "", "", "live"),
+    ]);
+    sheet.answer_began("m2");
+
+    sheet.show_error("Background shell command failed: exit 1");
+
+    assert_eq!(sheet.rows()[2].kind, transcript::KIND_ERROR);
+    assert!(matches!(orders.borrow().last(), Some(Order::Insert { at: 2 })));
+}
+
+#[test]
 fn an_open_row_stays_open_when_the_poll_rebuilds_it() {
     let (sheet, _) = sheet();
     let code = row("m1", transcript::KIND_CODE, "rust", "", "fn work() {}");
