@@ -20,7 +20,7 @@ Worker errors, prompt failures, `turn_end` failures, and `compaction_end` failur
 - The row carries the selected soft-triangle icon, an `Error:` label, and the message.
 - Worker errors carry their Session target and do not enter another Session's Sheet.
 - An error for a hidden Session is retained, up to 20 per Session, and replayed when that Session's Sheet is attached again.
-- A prompt refusal carries its Session; it does not clear the current sheet's Status strip or draft when that Session is no longer on screen.
+- A prompt refusal carries its Session; it does not clear the current sheet's Status strip or draft when that Session is no longer on screen, and its draft is restored when that Session returns.
 - A `session_closed` frame with `shutdown`, `replaced`, or `killed` is an Error row; it also ends the Turn.
 - A provider failure is read from `turn_end.message.errorMessage` when the message's `stopReason` is `error`.
 - A `/compact` failure is read from `compaction_end` (`errorSeverity: error`) and reads `Compacting failed: …`.

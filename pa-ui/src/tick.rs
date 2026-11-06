@@ -34,6 +34,8 @@ pub(crate) struct Tick {
     /// Error lines that belong to a Session other than the one on screen.
     /// They are replayed when that Session's Sheet is attached again.
     pub retained_errors: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>>,
+    /// The draft a refused prompt should restore when its Session comes back.
+    pub retained_rejections: std::cell::RefCell<std::collections::HashMap<String, String>>,
 }
 
 pub(crate) struct Local {
@@ -149,6 +151,13 @@ impl Tick {
             .unwrap_or_default();
         for message in errors {
             self.sheet.show_error(&message);
+        }
+    }
+
+    fn restore_rejection(&self, ui: &AppWindow, sheet: &sheet::Sheet, session: &str) {
+        let text = self.retained_rejections.borrow_mut().remove(session);
+        if let Some(text) = text {
+            self.composer.on_prompt_rejected(ui, sheet, &text);
         }
     }
 
@@ -386,6 +395,7 @@ impl Tick {
                     }
                     sheet.replace(built);
                     self.restore_errors(&session);
+                    self.restore_rejection(&ui, sheet, &session);
                     sheet::dump(&sheet.rows());
                     let _ = jobs.send(Job::SessionState {
                         session: session.clone(),
@@ -819,6 +829,10 @@ impl Tick {
                     {
                         self.clear_status(&ui, &mut l);
                         composer.on_prompt_rejected(&ui, sheet, &text);
+                    } else if let Some(session) = session.filter(|session| !session.is_empty()) {
+                        self.retained_rejections
+                            .borrow_mut()
+                            .insert(session, text);
                     }
                 }
                 Msg::PromptResult { session, error } => {
@@ -1027,6 +1041,7 @@ mod status_strip_tests {
                 stats_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
+                retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
             });
             Self {
                 ui,
@@ -1273,6 +1288,7 @@ mod status_strip_tests {
         let errors = error_rows(&h);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("session a refused the prompt"));
+        assert_eq!(h.ui.get_composer_text().as_str(), "the refused prompt");
     }
 
     fn a_failed_tool_stays_a_failed_cell_not_an_error_row() {
