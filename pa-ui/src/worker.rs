@@ -197,7 +197,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut resume: Option<(String, u64)> = None;
-    // the outage line is already on the status bar for this stretch of failure
+    // the outage line is already on the status strip for this stretch of failure
     let mut offline = false;
     let window_rows: usize = std::env::var("PA_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(WINDOW_ROWS);
 

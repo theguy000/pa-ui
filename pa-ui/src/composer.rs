@@ -79,6 +79,7 @@ pub(crate) fn apply_queue(
 pub(crate) struct Composer {
     pub in_flight: Rc<std::cell::Cell<bool>>,
     pub pending_user: Rc<RefCell<Option<String>>>,
+    command_word: CommandWord,
     pub editing: Editing,
     pub extra_commands: SlashCommands,
     pub sent_thumbs: SentThumbs,
@@ -89,7 +90,12 @@ pub(crate) struct Composer {
 }
 
 impl Composer {
-    pub fn new(ui: &AppWindow, job_tx: &Sender<Job>, models: &Rc<ModelMenu>) -> Rc<Self> {
+    pub fn new(
+        ui: &AppWindow,
+        job_tx: &Sender<Job>,
+        models: &Rc<ModelMenu>,
+        command_word: CommandWord,
+    ) -> Rc<Self> {
         let in_flight = Rc::new(std::cell::Cell::new(false));
         let pending_user = Rc::new(RefCell::new(None));
         let editing: Editing = Rc::new(RefCell::new(None));
@@ -109,6 +115,7 @@ impl Composer {
         let composer = Rc::new(Self {
             in_flight,
             pending_user,
+            command_word,
             editing,
             extra_commands,
             sent_thumbs,
@@ -134,6 +141,7 @@ impl Composer {
     }
 
     pub fn reset_for_new_chat(&self, ui: &AppWindow, id: &str) {
+        self.in_flight.set(false);
         if let Ok(opening) = std::env::var("PA_SLASH") {
             ui.set_composer_text(opening.as_str().into());
             ui.set_composer_has_text(!opening.is_empty());
@@ -159,6 +167,7 @@ impl Composer {
     }
 
     pub fn on_prompt_rejected(&self, ui: &AppWindow, sheet: &sheet::Sheet, text: &str) {
+        self.in_flight.set(false);
         if ui.get_composer_text().is_empty() {
             ui.set_composer_text(text.into());
             ui.set_composer_has_text(!ui.get_composer_text().is_empty());
@@ -169,6 +178,7 @@ impl Composer {
 
     pub fn on_prompt_result(&self, sheet: &sheet::Sheet, error: Option<String>) {
         if error.is_some() {
+            self.in_flight.set(false);
             let text = self.pending_user.borrow_mut().take().unwrap_or_default();
             sheet.take_back_prompt(&text);
         }
@@ -186,6 +196,7 @@ impl Composer {
             let weak = ui.as_weak();
             let jobs = job_tx.clone();
             let pending_user = self.pending_user.clone();
+            let command_word = self.command_word.clone();
             let attachments = self.attachments.clone();
             let attachment_model = self.attachment_model.clone();
             let models = models.clone();
@@ -295,9 +306,17 @@ impl Composer {
                     return;
                 }
                 *pending_user.borrow_mut() = Some(message.clone());
+                // A send while a turn runs is a parked message: it has no
+                // status word yet. The word starts when the message does.
                 if !ui.get_busy() {
-                    ui.set_busy_label("Waiting".into());
-                    ui.set_busy(true);
+                    command_word.clear();
+                    if let Some(label) = command_word.hold(&message) {
+                        ui.set_busy_label(label.into());
+                        ui.set_busy(true);
+                    } else {
+                        ui.set_busy_label("Waiting".into());
+                        ui.set_busy(true);
+                    }
                 }
                 in_flight_for_send.set(true);
                 let _ = jobs.send(Job::Prompt {
