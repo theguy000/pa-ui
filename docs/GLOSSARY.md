@@ -53,8 +53,12 @@ The rows of a transcript as the reader sees them: what is scrolled, paged, opene
 _Avoid_: list, model, view, buffer, pane
 
 **Row**:
-One drawn block of the transcript: prose, a code block, a table, a tool cell, an image. Rows are what the reader opens and closes.
+One drawn block of the transcript: prose, a code block, a table, a tool cell, an image, or an error row. Rows are what the reader opens and closes.
 _Avoid_: entry, line, block, item
+
+**Error row**:
+The Row the window adds when an operation fails: one warning mark and one plain message, drawn in the Sheet. It is not a Cell and not a Message.
+_Avoid_: error card, error toast, status error
 
 **Cell**:
 The row that stands for one tool call: what ran, what it printed, and whether it failed.

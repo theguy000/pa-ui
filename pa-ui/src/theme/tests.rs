@@ -632,6 +632,7 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-message-ink": "#ffffff",
                "transcript-link-ink": "#c9a7ff",
                "transcript-notice-ink": "#8a7fa0",
+               "transcript-error-ink": "#ff9f8f",
                "transcript-heading-ink": "#d8ccee",
                "transcript-inline-code-ink": "#e0b6ff",
                "transcript-caret-mark": "#a99bc4",

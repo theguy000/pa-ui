@@ -116,7 +116,7 @@ pub(crate) enum Msg {
     Shared(Result<crate::share::Shared, String>),
     /// the public GitHub API quota, before the card opens the viewer
     ViewerQuota(Result<crate::share::ViewerQuota, String>),
-    Error(String),
+    Error { session: Option<String>, message: String },
 }
 
 /// The worker's outbox. Every reply carries the generation it was produced
@@ -163,6 +163,12 @@ pub(crate) fn page_cursor(last_entry: &str) -> u64 {
 }
 
 
+/// The one wording for a model change that does not land. Both the model job
+/// and the effort job's prerequisite switch report the same operation.
+fn model_change_error(provider: &str, model: &str, error: &impl std::fmt::Display) -> String {
+    format!("Could not change the model to {provider}/{model}: {error}")
+}
+
 /// A worker that panics used to vanish without a word: no events, no replies,
 /// no poll - a window that keeps painting a transcript nobody is updating. The
 /// work happens behind a catch so a panic in one frame is loud.
@@ -173,7 +179,7 @@ pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<(u64, Msg)>, client_id: St
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
-        let _ = reporter.send((0, Msg::Error("engine stopped \u{2014} reopen the window".into())));
+        let _ = reporter.send((0, Msg::Error { session: None, message: "engine stopped \u{2014} reopen the window".into() }));
     }
 }
 
@@ -220,7 +226,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // prompt typed while the daemon is away is still answered
                     // and the list keeps its rows instead of freezing.
                     if !offline {
-                        out.send(Msg::Error(error.to_string()));
+                        out.send(Msg::Error { session: None, message: error.to_string() });
                         offline = true;
                     }
                     std::thread::sleep(Duration::from_secs(2));
@@ -240,7 +246,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             client = None;
             attached = None;
             offline = false;
-            out.send(Msg::Error("daemon connection lost \u{2014} reconnecting".into()));
+            out.send(Msg::Error { session: None, message: "daemon connection lost \u{2014} reconnecting".into() });
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -257,7 +263,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 Job::RenameSaved { session_path, name } => {
                     match pa_client::rename_saved_session(active, &session_path, &name) {
                         Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
-                        Err(error) => out.send(Msg::Error(error.to_string())),
+                        Err(error) => out.send(Msg::Error { session: None, message: error.to_string() }),
                     }
                 }
                 Job::MarkDone { session } => {
@@ -265,13 +271,16 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // way out, and the row moves to done on the next poll
                     match pa_client::mark_done(active, &session) {
                         Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
-                        Err(error) => out.send(Msg::Error(error.to_string())),
+                        Err(error) => out.send(Msg::Error {
+                            session: Some(session),
+                            message: error.to_string(),
+                        }),
                     }
                 }
                 Job::DeleteSaved { session_path } => {
                     match pa_client::delete_saved_session(active, &session_path) {
                         Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
-                        Err(error) => out.send(Msg::Error(error.to_string())),
+                        Err(error) => out.send(Msg::Error { session: None, message: error.to_string() }),
                     }
                 }
                 Job::Share { session } => {
@@ -302,7 +311,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             last_list = SystemTime::now() - Duration::from_secs(60);
                         }
                         Err(error) => {
-                            out.send(Msg::Error(error.to_string()));
+                            out.send(Msg::Error {
+                                session: Some(session),
+                                message: error.to_string(),
+                            });
                         }
                     }
                 }
@@ -318,9 +330,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // a provider that is not signed in fails here: say so rather
                     // than leaving the chip naming a model the session is not on
                     if let Err(error) = outcome {
-                        out.send(Msg::Error(format!(
-                            "Could not change the model to {provider}/{model}: {error}"
-                        )));
+                        out.send(Msg::Error {
+                            session: Some(session.clone()),
+                            message: model_change_error(&provider, &model, &error),
+                        });
                     }
                 }
                 Job::NewChat => match create_session(active) {
@@ -331,9 +344,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         out.send(Msg::NewChat(id));
                     }
                     Err(error) => {
-                        out.send(Msg::Error(format!(
-                            "Could not start a new Session: {error}"
-                        )));
+                        out.send(Msg::Error {
+                            session: None,
+                            message: format!("Could not start a new Session: {error}"),
+                        });
                     }
                 },
                 Job::QueueEdit {
@@ -408,9 +422,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         Ok(String::new())
                     };
                     if let Err(error) = switched {
-                        out.send(Msg::Error(format!(
-                            "Could not change the model to {provider}/{model}: {error}"
-                        )));
+                        out.send(Msg::Error {
+                            session: Some(session.clone()),
+                            message: model_change_error(&provider, &model, &error),
+                        });
                         continue;
                     }
                     match set_thinking_level(active, &session, &level) {
@@ -423,9 +438,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                         }
                         Err(error) => {
-                            out.send(Msg::Error(format!(
-                                "Could not change the effort to {level}: {error}"
-                            )));
+                            out.send(Msg::Error {
+                                session: Some(session.clone()),
+                                message: format!("Could not change the effort to {level}: {error}"),
+                            });
                         }
                     }
                 }
@@ -438,9 +454,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             out.send(Msg::ModelCatalog(catalog));
                         }
                         Err(error) => {
-                            out.send(Msg::Error(format!(
-                                "Could not load the model list: {error}"
-                            )));
+                            out.send(Msg::Error {
+                                session: Some(session.clone()),
+                                message: format!("Could not load the Model menu: {error}"),
+                            });
                         }
                     }
                 }
@@ -495,15 +512,17 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                         }
                         Ok(_) => {
-                            out.send(Msg::Error(
-                                "Could not change the parked message: it changed already"
+                            out.send(Msg::Error {
+                                session: Some(session.clone()),
+                                message: "Could not change the parked message: it changed already"
                                     .into(),
-                            ));
+                            });
                         }
                         Err(error) => {
-                            out.send(Msg::Error(format!(
-                                "Could not change the parked message: {error}"
-                            )));
+                            out.send(Msg::Error {
+                                session: Some(session.clone()),
+                                message: format!("Could not change the parked message: {error}"),
+                            });
                         }
                     }
                 }
@@ -700,7 +719,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or("rejected by the daemon");
                             out.send(Msg::PromptRejected { text });
-                            out.send(Msg::Error(reason.to_string()));
+                            out.send(Msg::Error { session: None, message: reason.to_string() });
                         }
                     }
                     continue;
@@ -892,7 +911,7 @@ mod tests {
         assert!(!Msg::NewChat(String::new()).is_session_scoped());
         assert!(!Msg::QueueEdit { text: String::new() }.is_session_scoped());
         assert!(!Msg::Sessions(Ok(Vec::new())).is_session_scoped());
-        assert!(!Msg::Error(String::new()).is_session_scoped());
+        assert!(!Msg::Error { session: None, message: String::new() }.is_session_scoped());
         assert!(!Msg::Activity { label: String::new() }.is_session_scoped());
     }
 }

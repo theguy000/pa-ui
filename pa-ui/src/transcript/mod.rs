@@ -37,7 +37,7 @@ pub const KIND_CELL: i32 = 3;
 pub const KIND_NOTICE: i32 = 5;
 
 /// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
-/// status-line state and not a card. The message is collapsed to its first
+/// Status strip state and not a card. The message is collapsed to its first
 /// non-empty line, as the TUI's error row does.
 pub const KIND_ERROR: i32 = 9;
 
@@ -94,7 +94,8 @@ impl Row {
     pub(crate) fn error(message: &str) -> Self {
         let line = error_line(message);
         let mut row = Self::new(KIND_ERROR);
-        row.body = plain_markup(&format!("Error: {line}"));
+        row.title = "Error:".to_string();
+        row.body = plain_markup(&line);
         row
     }
 

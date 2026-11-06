@@ -517,12 +517,10 @@ impl Tick {
                                 .and_then(serde_json::Value::as_str)
                                 .filter(|error| !error.trim().is_empty())
                             {
-                                let failed =
-                                    match self.command_word.word_for_state(&l.live_state) {
-                                        Some("Refining") => "Refining failed",
-                                        Some("Compacting") => "Compacting failed",
-                                        _ => "Turn failed",
-                                    };
+                                let failed = self
+                                    .command_word
+                                    .failure_label(&l.live_state)
+                                    .unwrap_or("Turn failed");
                                 sheet.show_error(&format!("{failed}: {error}"));
                             }
                         }
@@ -778,14 +776,21 @@ impl Tick {
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
-                    if let Some(error) = &error {
+                    if error.is_some() {
                         self.command_word.clear();
-                        sheet.show_error(error);
                     }
-                    composer.on_prompt_result(sheet, error);
+                    // The take-back removes the user's echo while it is still the
+                    // last Row; append the error only after that.
+                    composer.on_prompt_result(sheet, error.clone());
+                    if let Some(error) = error {
+                        sheet.show_error(&error);
+                    }
                 }
-                Msg::Error(message) => {
-                    sheet.show_error(&message);
+                Msg::Error { session, message } => {
+                    let current = ui.get_selected_id();
+                    if session.as_deref().is_none_or(|target| target == current.as_str()) {
+                        sheet.show_error(&message);
+                    }
                 }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
@@ -1010,6 +1015,27 @@ mod status_strip_tests {
         assert_strip(&h, false, "");
     }
 
+    fn an_error_for_another_session_does_not_land_in_this_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+
+        h.send(Msg::Error {
+            session: Some("a".to_string()),
+            message: "Session a failed".to_string(),
+        });
+        h.run();
+        assert!(h.tick.sheet.rows().is_empty());
+
+        h.send(Msg::Error {
+            session: Some("b".to_string()),
+            message: "Session b failed".to_string(),
+        });
+        h.run();
+        let rows = h.tick.sheet.rows();
+        let error = rows.last().expect("the current Session's error landed");
+        assert!(error.body.contains("Session b failed"));
+    }
+
     fn a_failed_refine_names_the_command_in_the_sheet() {
         let h = Harness::new();
         h.ui.set_busy(true);
@@ -1040,9 +1066,10 @@ mod status_strip_tests {
         h.run();
         assert_strip(&h, true, "Refining");
 
-        h.send(Msg::Error(
-            "Background shell command failed: exit 1".to_string(),
-        ));
+        h.send(Msg::Error {
+            session: None,
+            message: "Background shell command failed: exit 1".to_string(),
+        });
         h.run();
 
         assert_strip(&h, true, "Refining");
@@ -1080,5 +1107,6 @@ mod status_strip_tests {
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();
+        an_error_for_another_session_does_not_land_in_this_sheet();
     }
 }

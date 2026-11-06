@@ -139,7 +139,8 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
-        5 | 9 => {
+        5 => 28.0,
+        9 => {
             let lines = row
                 .body
                 .lines()
@@ -802,13 +803,7 @@ impl Sheet {
     pub fn show_error(&self, message: &str) {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
-            let at = inner
-                .open
-                .as_ref()
-                .and_then(|key| inner.index.get(key))
-                .map_or(inner.rows.len(), |range| range.end);
-            inner.insert_rows(at, &[Row::error(message)]);
-            inner.shift_from(at, 1);
+            inner.place_after_open(&[Row::error(message)]);
             inner.virtual_state.clone()
         };
         if let Some(vs) = vstate {
@@ -1135,6 +1130,18 @@ impl Inner {
         self.insert_rows(at, rows);
         self.shift_from(at, rows.len() as isize);
         self.index.insert(key.to_string(), at..at + rows.len());
+    }
+
+    /// A local notice follows the open live Message group, so the group stays
+    /// contiguous while the notice lands at the point the reader saw it.
+    fn place_after_open(&mut self, rows: &[Row]) {
+        let at = self
+            .open
+            .as_ref()
+            .and_then(|key| self.index.get(key))
+            .map_or(self.rows.len(), |range| range.end);
+        self.insert_rows(at, rows);
+        self.shift_from(at, rows.len() as isize);
     }
 
     fn shift_from(&mut self, at: usize, delta: isize) {

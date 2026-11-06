@@ -86,6 +86,21 @@ fn an_error_is_one_generic_row_in_the_sheet() {
 }
 
 #[test]
+fn an_error_after_an_open_answer_stays_after_that_answer() {
+    let (sheet, orders) = sheet();
+    sheet.replace(vec![
+        row("m1", transcript::KIND_AGENT, "", "", "first"),
+        row("m2", transcript::KIND_AGENT, "", "", "live"),
+    ]);
+    sheet.answer_began("m2");
+
+    sheet.show_error("Background shell command failed: exit 1");
+
+    assert_eq!(sheet.rows()[2].kind, transcript::KIND_ERROR);
+    assert!(matches!(orders.borrow().last(), Some(Order::Insert { at: 2 })));
+}
+
+#[test]
 fn an_open_row_stays_open_when_the_poll_rebuilds_it() {
     let (sheet, _) = sheet();
     let code = row("m1", transcript::KIND_CODE, "rust", "", "fn work() {}");
