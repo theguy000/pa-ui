@@ -286,6 +286,7 @@ impl Tick {
                 session: selected.clone(),
                 generation,
             });
+            l.activity_at = SystemTime::now();
             let _ = jobs.send(Job::ActivityRead {
                 session: selected.clone(),
                 session_id: selected_session_id.clone(),

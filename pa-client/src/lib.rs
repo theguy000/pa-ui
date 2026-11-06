@@ -146,21 +146,12 @@ impl Client {
         payload: Value,
         timeout: Duration,
     ) -> std::io::Result<Frame> {
-        self.request_anyhow(ty, payload, timeout)
-            .map_err(|error| std::io::Error::other(error.to_string()))
-    }
-
-    fn request_anyhow(
-        &self,
-        ty: &str,
-        payload: Value,
-        timeout: Duration,
-    ) -> anyhow::Result<Frame> {
-        let command = typed_command(ty, payload).map_err(anyhow::Error::from)?;
+        let command = typed_command(ty, payload)?;
         let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
         let response = self
             .rt
-            .block_on(self.inner.request_with_timeout(command, millis))?;
+            .block_on(self.inner.request_with_timeout(command, millis))
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         Ok(serde_json::to_value(response).unwrap_or(Value::Null))
     }
 
@@ -1192,13 +1183,15 @@ fn roster_key(prefix: &str, value: Option<&str>) -> Option<String> {
 
 fn roster_keys(summary: &Value, parent: bool) -> Vec<String> {
     let fields = if parent {
-        ["parentActiveSessionId", "parentSessionId"]
+        [
+            ("active", "parentActiveSessionId"),
+            ("session", "parentSessionId"),
+        ]
     } else {
-        ["activeSessionId", "sessionId"]
+        [("active", "activeSessionId"), ("session", "sessionId")]
     };
-    ["active", "session"]
+    fields
         .into_iter()
-        .zip(fields)
         .filter_map(|(prefix, field)| {
             roster_key(prefix, summary.get(field).and_then(Value::as_str))
         })
@@ -1298,7 +1291,7 @@ pub fn heartbeat_count(data: &Value, active_session_id: &str, session_id: &str) 
                 .get("activeSessionId")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            (!session_id.is_empty() && job_session == session_id)
+            job_session == session_id
                 || (!active_session_id.is_empty() && job_active == active_session_id)
         })
         .count()
@@ -1360,7 +1353,7 @@ pub fn running_shells(
     client: &Client,
     active_session_id: &str,
 ) -> std::io::Result<usize> {
-    match client.request_anyhow(
+    match client.request(
         "list_kernel_bash",
         json!({"activeSessionId": active_session_id}),
         Duration::from_secs(3),

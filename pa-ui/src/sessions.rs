@@ -419,14 +419,12 @@ pub(crate) fn compute_family_cost(rows: &[SessionRow], session: &str, own_cost: 
         .map(|row| row.session_id.as_str())
         .filter(|sid| !sid.is_empty());
     let own_active = own.map(|row| row.id.as_str()).filter(|id| !id.is_empty());
-    if own_sid.is_some() || own_active.is_some() {
-        for row in rows.iter().filter(|row| {
-            own_sid.is_some_and(|sid| row.parent == sid)
-                || own_active.is_some_and(|id| row.parent_active == id)
-        }) {
-            has_children = true;
-            children_cost += row.cost;
-        }
+    for row in rows.iter().filter(|row| {
+        own_sid.is_some_and(|sid| row.parent == sid)
+            || own_active.is_some_and(|id| row.parent_active == id)
+    }) {
+        has_children = true;
+        children_cost += row.cost;
     }
     (own_cost + children_cost, has_children)
 }

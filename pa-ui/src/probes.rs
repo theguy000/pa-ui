@@ -1,4 +1,5 @@
-//! Probes: ignored measurements. Run with --ignored; they report numbers and assert nothing.
+//! Probes: ignored measurements plus cheap source contracts. Run measurements
+//! with --ignored; the contracts run with the normal suite.
 
 #[cfg(test)]
 mod efficiency_probe {
@@ -274,10 +275,9 @@ mod activity_chip_contract {
             chip.contains("padding-top: 5.5px") && chip.contains("padding-bottom: 5.5px"),
             "the icon/count line is no longer vertically centred in the tag"
         );
+        let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
         assert!(
-            app.contains(
-                "HorizontalLayout {\n            spacing: 8px;\n            ActivityChip {"
-            ),
+            compact.contains("HorizontalLayout{spacing:8px;ActivityChip{"),
             "the composer row was centred or the chip moved off the left edge"
         );
     }
