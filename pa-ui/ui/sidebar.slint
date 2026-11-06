@@ -185,8 +185,12 @@ export component SessionRow inherits Rectangle {
             width: 22px;
             height: 22px;
             border-radius: 5px;
-            lit: root.menu-open;
-            fill: Theme.button-quiet-fill;
+            lit: root.menu-open || ta.has-hover;
+            // The button is always mounted so the 22px slot still takes the
+            // pointer; at rest it is transparent instead of opacity: 0. A
+            // per-row Opacity item with children allocates a layer for every
+            // row, even off screen, which made a 150-row fold crawl.
+            fill: transparent;
             fill-hover: Theme.sidebar-row-rename-fill-hover;
             enabled: !root.editing;
             described: "Session menu";
@@ -197,12 +201,11 @@ export component SessionRow inherits Rectangle {
                     self.absolute-position.y + self.height);
             }
             visible: !root.editing;
-            opacity: ta.has-hover || menu.hot || root.menu-open ? 1 : 0;
-            animate opacity { duration: 100ms; }
             IconMore {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                tint: menu.on ? Theme.sidebar-name-ink-selected : Theme.sidebar-row-menu-mark;
+                tint: menu.on ? Theme.sidebar-name-ink-selected : transparent;
+                animate tint { duration: 100ms; }
             }
         }
     }

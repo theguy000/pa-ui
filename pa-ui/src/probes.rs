@@ -189,3 +189,56 @@ mod efficiency_stream {
         }
     }
 }
+
+#[cfg(test)]
+mod sidebar_fold_motion {
+    //! The fold's fade is deliberately skipped for large groups: every row
+    //! opacity becomes its own render layer. `examples/sidebar_anim_probe.rs`
+    //! reproduces the frame-rate difference; this locks the policy.
+
+    use crate::{AppWindow, SessionEntry, SessionItem};
+    use slint::{ModelRc, VecModel};
+    use std::rc::Rc;
+
+    fn done_items(count: usize) -> ModelRc<SessionItem> {
+        ModelRc::from(Rc::new(VecModel::from(
+            (0..count)
+                .map(|_| SessionItem::default())
+                .collect::<Vec<_>>(),
+        )))
+    }
+
+    fn one_entry() -> ModelRc<SessionEntry> {
+        ModelRc::from(Rc::new(VecModel::from(vec![SessionEntry {
+            is_header: false,
+            label: "".into(),
+            count: 0,
+            folded: false,
+            item: SessionItem::default(),
+            at: 0.0,
+            target: 0.0,
+            seam: 2,
+        }])))
+    }
+
+    #[test]
+    #[ignore = "opens a window; run alone with --ignored"]
+    fn large_folds_skip_the_per_row_fade_and_small_folds_keep_it() {
+        let ui = AppWindow::new().expect("window");
+        ui.set_fold_index(2);
+        ui.set_done_items(done_items(13));
+        assert_eq!(ui.invoke_fold_size(), 13);
+        assert_eq!(ui.invoke_row_fade(0), 1.0);
+
+        ui.set_fold_open(true);
+        ui.set_fold_flip(true);
+        ui.set_fold_mix(0.5);
+        ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(vec![0.0f32]))));
+        ui.set_session_entries(one_entry());
+        ui.set_done_items(done_items(12));
+        assert_eq!(ui.invoke_fold_size(), 12);
+        // The fade is allowed to start at zero; the point is that a small fold
+        // reads the row's own opacity instead of the forced 1.0 large folds use.
+        assert!(ui.invoke_row_fade(0) < 1.0);
+    }
+}
