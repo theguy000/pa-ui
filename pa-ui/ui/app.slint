@@ -44,11 +44,7 @@ export component AppWindow inherits Window {
         mouse-cursor: root.handle-hover || root.dragging ? MouseCursor.row-resize
             : MouseCursor.default;
         // a click that lands on nothing in particular dismisses the model menu
-        clicked => {
-            root.model-menu = false;
-            root.queue-open = false;
-            root.settings-menu = false;
-        }
+        clicked => { root.model-menu = false; root.queue-open = false; root.settings-menu = false; }
         pointer-event(event) => {
             if event.kind == PointerEventKind.move {
                 root.pointer-moved();

@@ -19,7 +19,7 @@ shows three centred icon/count pairs, with no separators and no click target:
 - the Session-scoped heartbeat total (active and paused)
 - running shell commands in the selected Session
 
-Subagent Sessions no longer appear as sidebar rows. Counts refresh while a
+Subagent Sessions no longer appear as sidebar rows or search results. Counts refresh while a
 Session is selected and reset when the reader selects another Session. Opening
 the subagent, heartbeat, or shell views is not part of this surface.
 
@@ -36,8 +36,9 @@ The TUI's activity dock is the parity source.
   without a running kernel has zero live shells.
 
 The worker reads all three on the activity cadence. A failed read keeps the last
-good number instead of clearing it; the reply carries the attach generation so a
-Session the reader has left cannot write into the new Session's chip.
+good number instead of clearing it. The window's outbox tags every reply with the
+attach generation, so a Session the reader has left cannot write into the new
+Session's chip.
 
 ## Layout
 

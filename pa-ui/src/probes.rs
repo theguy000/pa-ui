@@ -242,3 +242,43 @@ mod sidebar_fold_motion {
         assert!(ui.invoke_row_fade(0) < 1.0);
     }
 }
+
+
+#[cfg(test)]
+mod activity_chip_contract {
+    //! The chip is a readout, not a control, and it belongs at the left edge of
+    //! the composer row. This source-level contract guards the two layout
+    //! regressions the prototype caught: centring the row and reintroducing a
+    //! click surface.
+
+    #[test]
+    fn the_activity_chip_stays_left_aligned_and_display_only() {
+        let app = include_str!("../ui/app.slint");
+        let composer = include_str!("../ui/composer.slint");
+        let start = composer
+            .find("export component ActivityChip")
+            .expect("activity chip");
+        let end = composer[start..]
+            .find("export component Chip")
+            .map(|offset| start + offset)
+            .expect("next composer chip");
+        let chip = &composer[start..end];
+
+        assert!(chip.contains("inherits Rectangle"), "the chip is not a control");
+        assert!(!chip.contains("TouchArea"), "the chip grew a hit area");
+        assert!(!chip.contains("callback"), "the chip grew a callback");
+        assert!(!chip.contains("clicked"), "the chip grew a click handler");
+        assert!(!chip.contains("Panel"), "the chip grew a popover");
+        assert!(chip.contains("height: 24px"), "the chip no longer matches the tool row");
+        assert!(
+            chip.contains("padding-top: 5.5px") && chip.contains("padding-bottom: 5.5px"),
+            "the icon/count line is no longer vertically centred in the tag"
+        );
+        assert!(
+            app.contains(
+                "HorizontalLayout {\n            spacing: 8px;\n            ActivityChip {"
+            ),
+            "the composer row was centred or the chip moved off the left edge"
+        );
+    }
+}

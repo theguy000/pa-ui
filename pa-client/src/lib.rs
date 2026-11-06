@@ -146,12 +146,21 @@ impl Client {
         payload: Value,
         timeout: Duration,
     ) -> std::io::Result<Frame> {
-        let command = typed_command(ty, payload)?;
+        self.request_anyhow(ty, payload, timeout)
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
+    fn request_anyhow(
+        &self,
+        ty: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Frame> {
+        let command = typed_command(ty, payload).map_err(anyhow::Error::from)?;
         let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
         let response = self
             .rt
-            .block_on(self.inner.request_with_timeout(command, millis))
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            .block_on(self.inner.request_with_timeout(command, millis))?;
         Ok(serde_json::to_value(response).unwrap_or(Value::Null))
     }
 
@@ -261,6 +270,9 @@ pub struct SessionRow {
     /// The parent's `sessionId` for a subagent's own session: the link the
     /// family cost rolls up.
     pub parent: String,
+    /// The parent's live `activeSessionId`, present on queued children that
+    /// have not been rebound to a durable parent session yet.
+    pub parent_active: String,
     pub last_activity: String,
     pub modified: String,
 }
@@ -405,6 +417,7 @@ impl SessionRow {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             parent: text("parentSessionId"),
+            parent_active: text("parentActiveSessionId"),
             last_activity: text("lastActivityAt"),
             modified: text("modified"),
         }
@@ -1148,9 +1161,9 @@ pub fn session_stats(client: &Client, session: &str) -> std::io::Result<SessionS
 ///
 /// # Errors
 /// Fails on transport errors or a non-success response.
-pub fn roster(client: &Client) -> std::io::Result<Vec<Value>> {
+pub fn list_roster(client: &Client) -> std::io::Result<Vec<Value>> {
     let response = client.request("roster_subscribe", json!({}), Duration::from_secs(3))?;
-    if response.get("success").and_then(Value::as_bool) == Some(false) {
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(std::io::Error::other(format!(
             "roster_subscribe failed: {}",
             response
@@ -1159,11 +1172,12 @@ pub fn roster(client: &Client) -> std::io::Result<Vec<Value>> {
                 .unwrap_or("?")
         )));
     }
-    Ok(response
+    let roster = response
         .pointer("/data/roster")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default())
+        .ok_or_else(|| std::io::Error::other("roster_subscribe returned no roster"))?;
+    Ok(roster)
 }
 
 fn roster_summary(entry: &Value) -> Option<&Value> {
@@ -1176,32 +1190,27 @@ fn roster_key(prefix: &str, value: Option<&str>) -> Option<String> {
         .map(|value| format!("{prefix}:{value}"))
 }
 
-fn roster_identity_keys(summary: &Value) -> Vec<String> {
-    ["active", "session", "file"]
+fn roster_keys(summary: &Value, parent: bool) -> Vec<String> {
+    let fields = if parent {
+        ["parentActiveSessionId", "parentSessionId"]
+    } else {
+        ["activeSessionId", "sessionId"]
+    };
+    ["active", "session"]
         .into_iter()
-        .filter_map(|prefix| {
-            let field = match prefix {
-                "active" => "activeSessionId",
-                "session" => "sessionId",
-                _ => "sessionFile",
-            };
+        .zip(fields)
+        .filter_map(|(prefix, field)| {
             roster_key(prefix, summary.get(field).and_then(Value::as_str))
         })
         .collect()
 }
 
+fn roster_identity_keys(summary: &Value) -> Vec<String> {
+    roster_keys(summary, false)
+}
+
 fn roster_parent_keys(summary: &Value) -> Vec<String> {
-    ["active", "session", "file"]
-        .into_iter()
-        .filter_map(|prefix| {
-            let field = match prefix {
-                "active" => "parentActiveSessionId",
-                "session" => "parentSessionId",
-                _ => "parentSessionPath",
-            };
-            roster_key(prefix, summary.get(field).and_then(Value::as_str))
-        })
-        .collect()
+    roster_keys(summary, true)
 }
 
 /// The number of running subagent descendants of one Session in the raw
@@ -1237,6 +1246,17 @@ pub fn running_subagents(
             if identity.iter().any(|key| root.contains(key)) {
                 continue;
             }
+            // A depth-0 path binding is a fork's source, a sibling chat, never
+            // a descendant. Roster entries without a depth are accepted when
+            // their runtime kind says subagent.
+            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
+            let subagent = summary
+                .get("runtimeKind")
+                .and_then(Value::as_str)
+                .map_or(depth > 0, |kind| kind == "subagent");
+            if !subagent {
+                continue;
+            }
             if !roster_parent_keys(summary).iter().any(|key| key == &parent) {
                 continue;
             }
@@ -1264,6 +1284,9 @@ pub fn running_subagents(
 /// count includes paused jobs.
 #[must_use]
 pub fn heartbeat_count(data: &Value, active_session_id: &str, session_id: &str) -> usize {
+    if session_id.is_empty() {
+        return 0;
+    }
     data.get("heartbeats")
         .and_then(Value::as_array)
         .into_iter()
@@ -1311,7 +1334,18 @@ pub fn scoped_heartbeat_count(
         json!({}),
         Duration::from_secs(3),
     )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "heartbeats_list failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
     let data = response.get("data").unwrap_or(&Value::Null);
+    if data.get("heartbeats").and_then(Value::as_array).is_none() {
+        return Err(std::io::Error::other(
+            "heartbeats_list returned no heartbeats array",
+        ));
+    }
     Ok(heartbeat_count(data, active_session_id, session_id))
 }
 
@@ -1322,27 +1356,40 @@ pub fn scoped_heartbeat_count(
 /// # Errors
 /// Fails on transport errors or a non-success response other than the
 /// kernel-not-running refusal.
-pub fn running_shell_count_for(
+pub fn running_shells(
     client: &Client,
     active_session_id: &str,
 ) -> std::io::Result<usize> {
-    match client.request(
+    match client.request_anyhow(
         "list_kernel_bash",
         json!({"activeSessionId": active_session_id}),
         Duration::from_secs(3),
     ) {
-        Ok(response) => Ok(running_shell_count(
-            response.get("data").unwrap_or(&Value::Null),
-        )),
-        Err(error)
-            if error
-                .to_string()
-                .to_lowercase()
-                .contains(&KERNEL_NOT_RUNNING_MESSAGE.to_lowercase()) =>
-        {
-            Ok(0)
+        Ok(response) => {
+            let message = response
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            // `Client::request` returns a daemon refusal as a response frame,
+            // not as a typed error: the kernel-not-running refusal is the one
+            // definitive zero in this lane.
+            if response.get("success").and_then(Value::as_bool) != Some(true) {
+                if message == KERNEL_NOT_RUNNING_MESSAGE {
+                    return Ok(0);
+                }
+                return Err(std::io::Error::other(format!(
+                    "list_kernel_bash failed: {message}"
+                )));
+            }
+            let data = response.get("data").unwrap_or(&Value::Null);
+            if data.get("activities").and_then(Value::as_array).is_none() {
+                return Err(std::io::Error::other(
+                    "list_kernel_bash returned no activities array",
+                ));
+            }
+            Ok(running_shell_count(data))
         }
-        Err(error) => Err(error),
+        Err(error) => Err(std::io::Error::other(error.to_string())),
     }
 }
 
@@ -1981,7 +2028,7 @@ mod activity_tests {
             {"job": {"id": "d", "sessionId": "durable", "status": "paused"}}
         ]});
         assert_eq!(heartbeat_count(&data, "live", "durable"), 3);
-        assert_eq!(heartbeat_count(&data, "live", ""), 1);
+        assert_eq!(heartbeat_count(&data, "live", ""), 0);
         assert_eq!(heartbeat_count(&data, "", "durable"), 2);
         assert_eq!(heartbeat_count(&data, "missing", "missing"), 0);
     }
@@ -2006,12 +2053,13 @@ mod activity_tests {
             .filter(|row| row.is_resident() && !row.id.is_empty())
             .collect();
         assert!(!live.is_empty(), "no live Session to read");
-        let roster = roster(&client).expect("agent roster");
+        let roster = list_roster(&client).expect("agent roster");
+        assert!(!roster.is_empty(), "the daemon returned an empty roster");
         for row in live {
             let subagents = running_subagents(&roster, &row.id, &row.session_id);
             let heartbeats = scoped_heartbeat_count(&client, &row.id, &row.session_id)
                 .expect("heartbeat catalog");
-            let shells = running_shell_count_for(&client, &row.id).expect("shell registry");
+            let shells = running_shells(&client, &row.id).expect("shell registry");
             println!(
                 "{}: subagents={subagents} heartbeats={heartbeats} shells={shells}",
                 if row.name.is_empty() { &row.id } else { &row.name }
@@ -2023,23 +2071,33 @@ mod activity_tests {
     fn running_subagents_walks_direct_and_nested_roster_children() {
         let roster = vec![
             json!({"agentId": "root", "status": "running", "summary": {
-                "activeSessionId": "parent", "sessionId": "uuid-parent"
+                "activeSessionId": "parent", "sessionId": "uuid-parent",
+                "sessionFile": "parent.jsonl"
             }}),
             json!({"agentId": "child-1", "status": "running", "summary": {
                 "activeSessionId": "child-1", "sessionId": "uuid-child-1",
-                "parentActiveSessionId": "parent", "parentSessionId": "uuid-parent"
+                "parentActiveSessionId": "parent", "parentSessionId": "uuid-parent",
+                "rlmDepth": 1, "runtimeKind": "subagent"
             }}),
             json!({"agentId": "child-2", "status": "running", "summary": {
                 "activeSessionId": "child-2", "sessionId": "uuid-child-2",
-                "parentActiveSessionId": "child-1", "parentSessionId": "uuid-child-1"
+                "parentActiveSessionId": "child-1", "parentSessionId": "uuid-child-1",
+                "rlmDepth": 2, "runtimeKind": "subagent"
             }}),
             json!({"agentId": "child-3", "status": "idle", "summary": {
                 "activeSessionId": "child-3", "sessionId": "uuid-child-3",
-                "parentSessionId": "uuid-parent"
+                "parentSessionId": "uuid-parent", "rlmDepth": 1,
+                "runtimeKind": "subagent"
             }}),
             json!({"agentId": "child-4", "status": "inactive", "summary": {
                 "activeSessionId": "child-4", "sessionId": "uuid-child-4",
-                "parentSessionId": "uuid-parent"
+                "parentSessionId": "uuid-parent", "rlmDepth": 1,
+                "runtimeKind": "subagent"
+            }}),
+            json!({"agentId": "fork", "status": "running", "summary": {
+                "activeSessionId": "fork", "sessionId": "uuid-fork", "rlmDepth": 0,
+                "runtimeKind": "top-level", "parentActiveSessionId": "parent",
+                "parentSessionPath": "parent.jsonl"
             }})
         ];
         assert_eq!(running_subagents(&roster, "parent", "uuid-parent"), 2);

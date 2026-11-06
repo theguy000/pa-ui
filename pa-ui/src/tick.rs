@@ -94,6 +94,16 @@ impl Local {
     }
 }
 
+fn reset_activity(ui: &AppWindow) {
+    ui.set_activity_subagents(0);
+    ui.set_activity_heartbeats(0);
+    ui.set_activity_shells(0);
+}
+
+fn count_i32(count: usize) -> i32 {
+    i32::try_from(count).unwrap_or(i32::MAX)
+}
+
 impl Tick {
     fn request_older(&self, ui: &AppWindow) {
         let session = ui.get_selected_id().to_string();
@@ -257,28 +267,28 @@ impl Tick {
 
         // follow the selection
         let selected = ui.get_selected_id().to_string();
+        let selected_session_id = if selected.is_empty() {
+            String::new()
+        } else {
+            sidebar.session_id_for(&selected)
+        };
         if selected.is_empty() {
-            ui.set_activity_subagents(0);
-            ui.set_activity_heartbeats(0);
-            ui.set_activity_shells(0);
+            reset_activity(&ui);
         }
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
-            ui.set_activity_subagents(0);
-            ui.set_activity_heartbeats(0);
-            ui.set_activity_shells(0);
-            let session_id = sidebar.session_id_for(&selected);
+            reset_activity(&ui);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
             let _ = jobs.send(Job::Attach {
                 session: selected.clone(),
                 generation,
             });
-            let _ = jobs.send(Job::Activity {
+            let _ = jobs.send(Job::ActivityRead {
                 session: selected.clone(),
-                session_id,
+                session_id: selected_session_id.clone(),
             });
         }
 
@@ -289,9 +299,9 @@ impl Tick {
             && l.activity_at.elapsed().unwrap_or_default() >= Duration::from_secs(2)
         {
             l.activity_at = SystemTime::now();
-            let _ = jobs.send(Job::Activity {
+            let _ = jobs.send(Job::ActivityRead {
                 session: selected.clone(),
-                session_id: sidebar.session_id_for(&selected),
+                session_id: selected_session_id,
             });
         }
 
@@ -848,13 +858,13 @@ impl Tick {
                 } => {
                     if session == ui.get_selected_id().as_str() {
                         if let Some(count) = subagents {
-                            ui.set_activity_subagents(i32::try_from(count).unwrap_or(i32::MAX));
+                            ui.set_activity_subagents(count_i32(count));
                         }
                         if let Some(count) = heartbeats {
-                            ui.set_activity_heartbeats(i32::try_from(count).unwrap_or(i32::MAX));
+                            ui.set_activity_heartbeats(count_i32(count));
                         }
                         if let Some(count) = shells {
-                            ui.set_activity_shells(i32::try_from(count).unwrap_or(i32::MAX));
+                            ui.set_activity_shells(count_i32(count));
                         }
                     }
                 }

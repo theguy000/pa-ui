@@ -112,9 +112,9 @@ export component ContextCard inherits Rectangle {
 }
 
 // The three live groups the TUI keeps under its prompt. The chip is the
-// desktop's compact form: three marks and counts in the composer's tool row;
-// the panel spells the labels out. The counts are in-out so the worker can
-// fill them when the daemon wiring lands; today they rest at zero.
+// desktop's compact form: three marks and counts in the composer's tool row,
+// a readout with no labels and no click target. The window fills the counts
+// from the selected Session's activity read.
 export enum ActivityKind {
     subagents,
     heartbeats,
@@ -144,6 +144,7 @@ component ActivityMetric inherits Rectangle {
     in property <int> count;
     in property <color> ink: Theme.composer-card-label-ink;
     height: 13px;
+    // 13px mark + 4px gap + room for three digits at 10px.
     width: 36px;
     background: transparent;
 
@@ -169,8 +170,13 @@ export component ActivityChip inherits Rectangle {
     in property <int> heartbeats: 0;
     in property <int> shells: 0;
 
+    pure function ink(count: int) -> color {
+        count > 0 ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink
+    }
+
+    // three 36px metrics, two 6px gaps, 8px padding each side
     width: 136px;
-    height: 25px;
+    height: 24px;
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.composer-chip-edge;
@@ -180,28 +186,25 @@ export component ActivityChip inherits Rectangle {
         HorizontalLayout {
             padding-left: 8px;
             padding-right: 8px;
-            padding-top: 6px;
-            padding-bottom: 6px;
+            padding-top: 5.5px;
+            padding-bottom: 5.5px;
             spacing: 6px;
             alignment: center;
 
             ActivityMetric {
                 kind: ActivityKind.subagents;
                 count: root.subagents;
-                ink: root.subagents > 0
-                    ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+                ink: root.ink(root.subagents);
             }
             ActivityMetric {
                 kind: ActivityKind.heartbeats;
                 count: root.heartbeats;
-                ink: root.heartbeats > 0
-                    ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+                ink: root.ink(root.heartbeats);
             }
             ActivityMetric {
                 kind: ActivityKind.shells;
                 count: root.shells;
-                ink: root.shells > 0
-                    ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink;
+                ink: root.ink(root.shells);
             }
         }
     }

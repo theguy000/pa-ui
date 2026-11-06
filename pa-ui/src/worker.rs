@@ -54,9 +54,9 @@ pub(crate) enum Job {
         images: Vec<serde_json::Value>,
     },
     Stats { session: String },
-    /// the selected Session's live activity readout: scoped heartbeats and
-    /// running shell commands (subagents come from the roster)
-    Activity { session: String, session_id: String },
+    /// one live activity read for the selected Session: roster descendants,
+    /// scoped heartbeats, and running shell commands
+    ActivityRead { session: String, session_id: String },
     /// the session's own slash commands (templates and skills)
     Commands { session: String },
     SetModel { session: String, provider: String, model: String },
@@ -112,7 +112,7 @@ pub(crate) enum Msg {
     /// a `create` came back: the id of the brand new session
     NewChat(String),
     Stats { session: String, stats: pa_client::SessionStats },
-    /// one activity refresh; a failed half is `None` so the window keeps its
+    /// one activity refresh; a failed part is `None` so the window keeps its
     /// last good number
     ActivityCounts {
         session: String,
@@ -411,16 +411,16 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         out.send(Msg::Stats { session, stats });
                     }
                 }
-                Job::Activity {
+                Job::ActivityRead {
                     session,
                     session_id,
                 } => {
-                    let subagents = pa_client::roster(active).ok().map(|roster| {
+                    let subagents = pa_client::list_roster(active).ok().map(|roster| {
                         pa_client::running_subagents(&roster, &session, &session_id)
                     });
                     let heartbeats =
                         pa_client::scoped_heartbeat_count(active, &session, &session_id).ok();
-                    let shells = pa_client::running_shell_count_for(active, &session).ok();
+                    let shells = pa_client::running_shells(active, &session).ok();
                     if subagents.is_some() || heartbeats.is_some() || shells.is_some() {
                         out.send(Msg::ActivityCounts {
                             session,
