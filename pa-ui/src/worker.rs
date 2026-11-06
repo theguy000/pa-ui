@@ -117,6 +117,9 @@ pub(crate) enum Msg {
     /// the public GitHub API quota, before the card opens the viewer
     ViewerQuota(Result<crate::share::ViewerQuota, String>),
     Error { session: Option<String>, message: String },
+    /// The daemon closed this Session. The transcript stays readable, but the
+    /// turn is over and the close reason is an Error row in that Sheet.
+    SessionClosed { session: String, reason: String },
 }
 
 /// The worker's outbox. Every reply carries the generation it was produced
@@ -246,7 +249,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             client = None;
             attached = None;
             offline = false;
-            out.send(Msg::Error { session: None, message: "daemon connection lost \u{2014} reconnecting".into() });
+            out.send(Msg::Error { session: None, message: "Daemon connection lost; reconnecting\u{2026}".into() });
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
@@ -709,6 +712,23 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         eprintln!("[dump] {text}");
                     }
                 }
+                if frame_type == "session_closed" {
+                    let session = frame
+                        .get("activeSessionId")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if session.is_empty() {
+                        continue;
+                    }
+                    let reason = frame
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    out.send(Msg::SessionClosed { session, reason });
+                    continue;
+                }
                 if frame_type == "response" {
                     let id = frame.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
                     if let Some(position) = pending_prompts.iter().position(|(open, _)| open == id) {
@@ -912,6 +932,11 @@ mod tests {
         assert!(!Msg::QueueEdit { text: String::new() }.is_session_scoped());
         assert!(!Msg::Sessions(Ok(Vec::new())).is_session_scoped());
         assert!(!Msg::Error { session: None, message: String::new() }.is_session_scoped());
+        assert!(!Msg::SessionClosed {
+            session: String::new(),
+            reason: String::new(),
+        }
+        .is_session_scoped());
         assert!(!Msg::Activity { label: String::new() }.is_session_scoped());
     }
 }

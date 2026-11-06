@@ -31,6 +31,9 @@ pub(crate) struct Tick {
     pub queue_at: std::cell::Cell<SystemTime>,
     pub stats_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
+    /// Error lines that belong to a Session other than the one on screen.
+    /// They are replayed when that Session's Sheet is attached again.
+    pub retained_errors: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>>,
 }
 
 pub(crate) struct Local {
@@ -117,6 +120,36 @@ impl Tick {
         l.busy_label.clear();
         ui.set_busy_label("".into());
         ui.set_busy(false);
+    }
+
+    /// Record one error against its Session. A current Session gets the row
+    /// immediately; every Session keeps it so a later attach can put it back.
+    fn record_error(&self, ui: &AppWindow, session: Option<&str>, message: &str) {
+        let current = ui.get_selected_id();
+        if current.is_empty() || session.is_none_or(|target| target == current.as_str()) {
+            self.sheet.show_error(message);
+        }
+        if let Some(session) = session.filter(|session| !session.is_empty()) {
+            const KEPT_PER_SESSION: usize = 20;
+            let mut kept = self.retained_errors.borrow_mut();
+            let errors = kept.entry(session.to_string()).or_default();
+            if errors.len() == KEPT_PER_SESSION {
+                errors.remove(0);
+            }
+            errors.push(message.to_string());
+        }
+    }
+
+    fn restore_errors(&self, session: &str) {
+        let errors = self
+            .retained_errors
+            .borrow()
+            .get(session)
+            .cloned()
+            .unwrap_or_default();
+        for message in errors {
+            self.sheet.show_error(&message);
+        }
     }
 
     /// One pass: drain what the worker sent, then let the window catch up.
@@ -352,6 +385,7 @@ impl Tick {
                         built.extend(transcript::markdown_demo_rows());
                     }
                     sheet.replace(built);
+                    self.restore_errors(&session);
                     sheet::dump(&sheet.rows());
                     let _ = jobs.send(Job::SessionState {
                         session: session.clone(),
@@ -512,14 +546,22 @@ impl Tick {
                     }
                     if kind == Some("turn_end") {
                         if let Some(error) = turn_failure(&event) {
-                            let failed =
-                                self.command_word.failure_label().unwrap_or("Turn failed");
-                            sheet.show_error(&format!("{failed}: {error}"));
+                            let current = ui.get_selected_id();
+                            let failed = if current.is_empty() || session == current.as_str() {
+                                self.command_word.failure_label().unwrap_or("Turn failed")
+                            } else {
+                                "Turn failed"
+                            };
+                            self.record_error(
+                                &ui,
+                                Some(&session),
+                                &format!("{failed}: {error}"),
+                            );
                         }
                     }
                     if kind == Some("compaction_end") {
                         if let Some(error) = compaction_failure(&event) {
-                            sheet.show_error(&error);
+                            self.record_error(&ui, Some(&session), &error);
                         }
                     }
                     if matches!(kind, Some("turn_end" | "agent_end" | "compaction_end")) {
@@ -787,10 +829,18 @@ impl Tick {
                     }
                 }
                 Msg::Error { session, message } => {
+                    self.record_error(&ui, session.as_deref(), &message);
+                }
+                Msg::SessionClosed { session, reason } => {
                     let current = ui.get_selected_id();
-                    if session.as_deref().is_none_or(|target| target == current.as_str()) {
-                        sheet.show_error(&message);
+                    if current.is_empty() || session == current.as_str() {
+                        composer.in_flight.set(false);
+                        sheet.answer_ended();
+                        l.open_live = None;
+                        self.clear_status(&ui, &mut l);
                     }
+                    let message = session_closed_message(&reason);
+                    self.record_error(&ui, Some(&session), &message);
                 }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
@@ -853,6 +903,18 @@ impl Tick {
         }
 
         l.store(self);
+    }
+}
+
+/// The TUI's close-reason table. A known close is a specific Error row; an
+/// unknown reason still says the Session closed rather than dropping the frame.
+fn session_closed_message(reason: &str) -> String {
+    match reason {
+        "shutdown" => "The Prime Agent daemon shut down while this window was attached. The session transcript remains saved; restart Prime Agent and reopen it from Agents View.".to_string(),
+        "replaced" => "The daemon replaced this agent session with another session. Reopen the current session from Agents View.".to_string(),
+        "killed" => "The daemon stopped this agent session. Its transcript remains saved and can be reopened from Agents View.".to_string(),
+        "" => "The daemon closed this session. Its transcript remains saved.".to_string(),
+        other => format!("The daemon closed this session ({other}). Its transcript remains saved."),
     }
 }
 
@@ -954,6 +1016,7 @@ mod status_strip_tests {
                 queue_at: std::cell::Cell::new(SystemTime::now()),
                 stats_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
+                retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
             });
             Self {
                 ui,
@@ -965,6 +1028,10 @@ mod status_strip_tests {
 
         fn send(&self, message: Msg) {
             self.tx.send((0, message)).expect("message");
+        }
+
+        fn send_at(&self, generation: u64, message: Msg) {
+            self.tx.send((generation, message)).expect("message");
         }
 
         fn run(&self) {
@@ -995,6 +1062,31 @@ mod status_strip_tests {
     fn assert_strip(h: &Harness, busy: bool, label: &str) {
         assert_eq!(h.ui.get_busy(), busy);
         assert_eq!(h.ui.get_busy_label().as_str(), label);
+    }
+
+    fn attach(h: &Harness, session: &str) {
+        h.ui.set_selected_id(session.into());
+        h.run();
+        h.send_at(
+            h.tick.attach_generation.get(),
+            Msg::Transcript {
+                session: session.to_string(),
+                rows: Vec::new(),
+                skipped: 0,
+                messages: Vec::new(),
+            },
+        );
+        h.run();
+    }
+
+    fn error_rows(h: &Harness) -> Vec<String> {
+        h.tick
+            .sheet
+            .rows()
+            .iter()
+            .filter(|row| row.kind == crate::transcript::KIND_ERROR)
+            .map(|row| row.body.clone())
+            .collect()
     }
 
     fn a_command_word_survives_the_streams_thinking_activity() {
@@ -1081,6 +1173,141 @@ mod status_strip_tests {
         let rows = h.tick.sheet.rows();
         let error = rows.last().expect("the current Session's error landed");
         assert!(error.body.contains("Session b failed"));
+    }
+
+    fn an_error_for_another_session_is_replayed_when_that_session_opens() {
+        let h = Harness::new();
+        attach(&h, "a");
+        attach(&h, "b");
+
+        h.send(Msg::Error {
+            session: Some("a".to_string()),
+            message: "Session a failed while it was hidden".to_string(),
+        });
+        h.run();
+        assert!(error_rows(&h).is_empty());
+
+        attach(&h, "a");
+        let errors = error_rows(&h);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("Session a failed while it was hidden"));
+    }
+
+    fn an_error_already_shown_comes_back_when_the_reader_returns() {
+        let h = Harness::new();
+        attach(&h, "a");
+        h.send(Msg::Error {
+            session: Some("a".to_string()),
+            message: "Session a failed on screen".to_string(),
+        });
+        h.run();
+        assert_eq!(error_rows(&h).len(), 1);
+
+        attach(&h, "b");
+        assert!(error_rows(&h).is_empty());
+
+        attach(&h, "a");
+        let errors = error_rows(&h);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("Session a failed on screen"));
+    }
+
+    fn errors_from_two_sessions_do_not_mix() {
+        let h = Harness::new();
+        attach(&h, "a");
+        h.send(Msg::Error {
+            session: Some("a".to_string()),
+            message: "a failed".to_string(),
+        });
+        h.run();
+        attach(&h, "b");
+        h.send(Msg::Error {
+            session: Some("b".to_string()),
+            message: "b failed".to_string(),
+        });
+        h.run();
+
+        let shown = error_rows(&h);
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].contains("b failed"));
+
+        attach(&h, "a");
+        let shown = error_rows(&h);
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].contains("a failed"));
+        assert!(!shown[0].contains("b failed"));
+    }
+
+    fn a_failed_tool_stays_a_failed_cell_not_an_error_row() {
+        let h = Harness::new();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "m1", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": "call_1",
+                "toolName": "bash",
+                "args": {"code": "exit 1"}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_end",
+                "toolCallId": "call_1",
+                "isError": true,
+                "result": {"content": [{"type": "text", "text": "exit 1"}]}
+            }),
+        });
+        h.run();
+
+        let rows = h.tick.sheet.rows();
+        assert!(rows.iter().any(|row| row.kind == crate::transcript::KIND_CELL && row.failed));
+        assert!(!rows.iter().any(|row| row.kind == crate::transcript::KIND_ERROR));
+    }
+
+    fn a_session_close_is_an_error_row_and_stops_the_turn() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.ui.set_busy(true);
+        h.ui.set_busy_label("Refining".into());
+
+        h.send(Msg::SessionClosed {
+            session: "s".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+
+        assert_strip(&h, false, "");
+        let errors = error_rows(&h);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("daemon stopped this agent session"));
+    }
+
+    fn a_session_close_for_another_session_is_retained() {
+        let h = Harness::new();
+        attach(&h, "a");
+        attach(&h, "b");
+
+        h.send(Msg::SessionClosed {
+            session: "a".to_string(),
+            reason: "shutdown".to_string(),
+        });
+        h.run();
+        assert!(error_rows(&h).is_empty());
+
+        attach(&h, "a");
+        let errors = error_rows(&h);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("daemon shut down"));
     }
 
     fn a_failed_refine_names_the_command_in_the_sheet() {
@@ -1203,5 +1430,11 @@ mod status_strip_tests {
         a_deliberate_stop_does_not_write_an_error_row();
         a_failed_compaction_names_the_operation();
         an_error_for_another_session_does_not_land_in_this_sheet();
+        an_error_for_another_session_is_replayed_when_that_session_opens();
+        an_error_already_shown_comes_back_when_the_reader_returns();
+        errors_from_two_sessions_do_not_mix();
+        a_failed_tool_stays_a_failed_cell_not_an_error_row();
+        a_session_close_is_an_error_row_and_stops_the_turn();
+        a_session_close_for_another_session_is_retained();
     }
 }
