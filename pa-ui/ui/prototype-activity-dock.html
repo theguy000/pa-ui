@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en" data-prototype="true">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE — Session activity · Prime Agent</title>
+<!-- Throwaway. One question: where should the TUI activity line live in the desktop
+     window? Three placements, switchable with ?variant=A|B|C, plus ?state=zero|live|paused.
+     Browser adaptation: pa-ui has no web routes. All colours resolve existing shipped
+     Theme roles. No real daemon reads; no mutations. -->
+<style>
+:root {
+  --window-surface: #10110e;
+  --sidebar-surface: #10110e;
+  --sidebar-row-fill-selected: #1c1d1a;
+  --sidebar-name-ink: #b0b1a8;
+  --sidebar-name-ink-selected: #e7e5df;
+  --sidebar-group-ink: #77786f;
+  --transcript-surface: #121310;
+  --transcript-prose-ink: #d3d1cb;
+  --transcript-message-fill: #2e2916;
+  --transcript-message-ink: #e7e5df;
+  --transcript-cell-fill: #141512;
+  --transcript-cell-title-ink: #8b8c84;
+  --transcript-cell-meta-ink: #4b4c47;
+  --composer-surface: #0f100d;
+  --composer-edge: #232421;
+  --composer-draft-ink: #e7e5df;
+  --composer-chip-fill: #191a17;
+  --composer-chip-edge: #232421;
+  --composer-chip-ink: #b0b1a8;
+  --composer-chip-ink-hover: #e7e5df;
+  --composer-chip-caret: #77786f;
+  --composer-card-surface: #171815;
+  --composer-card-edge: #2a2b27;
+  --composer-card-label: #8b8c84;
+  --composer-card-ink: #e7e5df;
+  --composer-card-rule: #252622;
+  --status-strip-surface: #181916;
+  --status-strip-edge: #2d2e2b;
+  --status-strip-working-ink: #c9a86a;
+  --status-strip-elapsed-ink: #575853;
+  --activity-live: #c9a86a;
+  --activity-zero: #77786f;
+  --activity-rule: #2d2e2b;
+  --activity-hover: #1c1d1a;
+  --activity-warning: #c58a73;
+}
+* { box-sizing: border-box; }
+html, body { height:100%; }
+body { margin:0; overflow:hidden; background:var(--window-surface); color:var(--transcript-prose-ink); font:13px/1.6 "Segoe UI",sans-serif; }
+button,textarea { font:inherit; }
+button { cursor:pointer; color:inherit; border:0; background:none; }
+button:focus-visible, textarea:focus-visible { outline:2px solid var(--status-strip-working-ink); outline-offset:2px; }
+.desktop { display:grid; grid-template-columns:218px minmax(0,1fr); height:calc(100vh - 64px); min-height:560px; }
+.sidebar { padding:17px 11px; background:var(--sidebar-surface); color:var(--sidebar-name-ink); overflow:hidden; }
+.brand { padding:0 12px; display:flex; align-items:center; gap:10px; font-weight:600; font-size:15px; color:var(--sidebar-name-ink-selected); margin-bottom:22px; }
+.brand svg { width:22px; height:27px; fill:currentColor; }
+.new { display:block; text-align:left; border-radius:7px; padding:7px 12px; width:100%; background:var(--composer-chip-fill); margin-bottom:19px; }
+.group { font-size:11px; padding:5px 12px; color:var(--sidebar-group-ink); display:flex; justify-content:space-between; }
+.session { padding:7px 12px; border-radius:7px; margin:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.session.active { background:var(--sidebar-row-fill-selected); color:var(--sidebar-name-ink-selected); }
+.dot { color:var(--status-strip-working-ink); margin-right:7px; }
+.workspace { padding:0 10px 10px 0; display:flex; flex-direction:column; min-width:0; min-height:0; }
+.titlebar { height:42px; flex:0 0 42px; display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--sidebar-name-ink); padding:0 10px; }
+.titlebar .name { color:var(--sidebar-name-ink-selected); }
+.caption { display:flex; gap:30px; font-size:15px; }
+.sheet { background:var(--transcript-surface); border-radius:13px; flex:1; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.rows { overflow:auto; padding:27px 27px 10px; flex:1; min-height:0; scrollbar-width:thin; scrollbar-color:#2d2e2b transparent; }
+.rows > * { max-width:850px; margin-left:auto; margin-right:auto; }
+.reader-row { display:flex; justify-content:flex-end; margin-bottom:22px; }
+.message { padding:8px 13px; border-radius:10px; background:var(--transcript-message-fill); color:var(--transcript-message-ink); }
+.prose { margin-bottom:14px; }
+.thinking { color:var(--transcript-cell-title-ink); font-size:11px; margin:8px 0 18px; }
+.thinking span { margin-left:9px; color:var(--transcript-cell-meta-ink); }
+.cell { border-radius:6px; padding:5px 9px; background:var(--transcript-cell-fill); color:var(--transcript-cell-title-ink); font:11px/1.6 "Cascadia Code",monospace; margin-bottom:19px; }
+.cell small { color:var(--transcript-cell-meta-ink); margin-left:12px; }
+.footer { flex:0 0 auto; padding:0 27px 18px; position:relative; }
+.status { height:27px; border:1px solid var(--status-strip-edge); border-bottom:0; background:var(--status-strip-surface); border-radius:12px 12px 0 0; padding:3px 13px; display:flex; gap:9px; align-items:center; font:11px "Cascadia Code",monospace; color:var(--status-strip-working-ink); }
+.status .elapsed { color:var(--status-strip-elapsed-ink); }
+.spin { font-size:16px; line-height:16px; }
+.composer { border:1px solid var(--composer-edge); border-radius:12px; background:var(--composer-surface); padding:10px 12px 8px; min-height:98px; position:relative; }
+.handle { width:70px; height:3px; background:var(--composer-edge); margin:-12px auto 9px; border-radius:2px; }
+textarea { resize:none; background:transparent; border:0; outline:0; color:var(--composer-draft-ink); width:100%; height:40px; font-size:13px; padding:0; }
+textarea::placeholder { color:var(--transcript-cell-title-ink); }
+.composer-tools { display:flex; align-items:center; gap:8px; min-height:25px; }
+.tools-right { display:flex; align-items:center; gap:8px; margin-left:auto; }
+.context-ring { width:20px; height:20px; border-radius:50%; background:conic-gradient(var(--status-strip-working-ink) 0 68%, #3b3c36 68% 100%); -webkit-mask:radial-gradient(circle at center, transparent 7px, #000 7.5px); mask:radial-gradient(circle at center, transparent 7px, #000 7.5px); flex:0 0 20px; }
+.attach { width:20px; height:20px; border-radius:6px; background:var(--composer-chip-fill); color:var(--composer-chip-ink); display:grid; place-items:center; font-size:15px; line-height:1; }
+.chip { padding:3px 8px; border-radius:6px; color:var(--composer-chip-ink); background:var(--composer-chip-fill); border:1px solid var(--composer-chip-edge); font-size:11px; white-space:nowrap; }
+.chip .caret { color:var(--composer-chip-caret); margin-left:5px; font-size:9px; }
+.send { height:25px; width:25px; border-radius:50%; background:#a18e41; color:#12130f; display:grid; place-items:center; font-size:14px; font-weight:700; flex:0 0 25px; }
+
+/* TUI activity grammar, shared by every variant. */
+.activity-group { height:22px; padding:0 4px; border-radius:5px; display:inline-flex; align-items:center; gap:4px; font:10px/1 "Cascadia Code","Consolas",monospace; white-space:nowrap; color:var(--activity-zero); }
+.activity-group:hover { background:var(--activity-hover); color:var(--sidebar-name-ink-selected); }
+.activity-group .glyph { font-size:10px; }
+.activity-group .count { min-width:6px; text-align:right; }
+.activity-group .label { color:inherit; }
+.activity-group.live { color:var(--activity-live); }
+.activity-group.live .label { color:var(--activity-zero); }
+.activity-group.paused { color:var(--activity-warning); }
+.activity-sep { color:var(--transcript-cell-meta-ink); font:10px "Cascadia Code",monospace; padding:0 1px; }
+.activity-inline { display:flex; align-items:center; gap:1px; min-width:0; overflow:hidden; }
+.activity-inline .activity-group { flex:0 0 auto; }
+.activity-inline .activity-group.selected { background:var(--activity-hover); color:var(--sidebar-name-ink-selected); }
+@media(max-width:1030px) { .activity-inline .label { display:none; } }
+
+/* B: the activity shelf, above the composer. */
+.activity-shelf { border-top:1px solid var(--activity-rule); padding:6px 2px 7px; margin-bottom:0; }
+.activity-shelf .shelf-line { display:flex; align-items:center; gap:2px; font:10px "Cascadia Code",monospace; min-width:0; overflow:hidden; }
+.activity-shelf .shelf-hint { margin-left:auto; padding-right:4px; color:var(--transcript-cell-meta-ink); font:9px "Cascadia Code",monospace; white-space:nowrap; }
+.activity-shelf .shelf-detail { margin-top:4px; padding:5px 4px 4px; border-top:1px solid #1f201d; display:grid; grid-template-columns:88px minmax(0,1fr); gap:3px 10px; font:10px/1.5 "Cascadia Code",monospace; color:var(--transcript-cell-title-ink); }
+.activity-shelf .shelf-detail .detail-name { color:var(--activity-live); }
+.activity-shelf .shelf-detail .detail-items { color:var(--sidebar-name-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* C: one chip, one popover. */
+.activity-chip-wrap { position:relative; }
+.activity-chip { height:23px; padding:0 7px; border-radius:6px; border:1px solid var(--composer-chip-edge); background:var(--composer-chip-fill); display:inline-flex; align-items:center; gap:5px; color:var(--activity-zero); font:10px "Cascadia Code",monospace; white-space:nowrap; }
+.activity-chip:hover, .activity-chip.open { border-color:#3a3b35; color:var(--sidebar-name-ink-selected); }
+.activity-chip .glyph { font-size:10px; }
+.activity-chip .chip-sep { color:var(--transcript-cell-meta-ink); }
+.activity-chip .live { color:var(--activity-live); }
+.activity-popover { position:absolute; left:0; bottom:calc(100% + 12px); width:246px; background:var(--composer-card-surface); border:1px solid var(--composer-card-edge); border-radius:8px; box-shadow:0 8px 24px #0009; padding:9px 11px; z-index:4; }
+.activity-popover .pop-title { color:var(--composer-card-label); font-size:9px; letter-spacing:1.2px; text-transform:uppercase; margin-bottom:7px; }
+.activity-popover .pop-row { display:grid; grid-template-columns:18px 74px 1fr; gap:7px; align-items:baseline; padding:4px 0; font:10px/1.5 "Cascadia Code",monospace; border-top:1px solid var(--composer-card-rule); }
+.activity-popover .pop-row:first-of-type { border-top:0; }
+.activity-popover .pop-glyph { color:var(--activity-live); }
+.activity-popover .pop-name { color:var(--composer-card-label); }
+.activity-popover .pop-value { color:var(--composer-card-ink); text-align:right; }
+.activity-popover .pop-note { margin-top:6px; color:var(--transcript-cell-meta-ink); font:9px/1.5 "Segoe UI",sans-serif; }
+
+.prototype-switcher { position:fixed; bottom:17px; left:50%; transform:translateX(-50%); border:1px solid var(--status-strip-edge); border-radius:15px; background:#191a17; display:flex; align-items:center; gap:6px; padding:6px; box-shadow:0 8px 24px #000b; z-index:20; }
+.prototype-switcher button { min-width:31px; height:32px; border-radius:9px; background:var(--sidebar-row-fill-selected); }
+.prototype-switcher .label { text-align:center; width:245px; line-height:1.35; }
+.prototype-switcher .label small { display:block; color:var(--sidebar-name-ink); font-size:9px; letter-spacing:1px; }
+.prototype-state { position:fixed; left:22px; bottom:80px; width:186px; max-width:186px; padding:7px 9px; border:1px solid var(--composer-edge); border-radius:7px; background:#10110ecc; font:9px/1.6 "Cascadia Code",monospace; color:var(--sidebar-name-ink); white-space:pre-line; z-index:10; }
+.state-control { position:fixed; bottom:18px; right:24px; padding:6px 10px; border:1px solid var(--composer-edge); border-radius:7px; font-size:11px; color:var(--sidebar-name-ink); background:var(--composer-chip-fill); z-index:10; }
+.state-control:hover { color:var(--sidebar-name-ink-selected); }
+@media(max-width:1000px) { .prototype-state { bottom:74px; left:25px; } .activity-shelf .shelf-hint { display:none; } }
+</style>
+</head>
+<body>
+<div class="desktop">
+ <aside class="sidebar">
+  <div class="brand"><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M5 0h19L11 12H0zm6 13 7 4-9 13H1z"/></svg>prime-agent</div>
+  <button class="new" type="button">↗ &nbsp; New Session</button>
+  <div class="group"><span>Active</span><span>1</span></div>
+  <div class="session active"><span class="dot">●</span>Session activity placement</div>
+  <div class="group" style="margin-top:15px"><span>Idle</span><span>3</span></div>
+  <div class="session">Share as gist</div><div class="session">Command word module</div><div class="session">Session search</div>
+  <div class="group" style="margin-top:15px"><span>Done</span><span>170</span></div>
+ </aside>
+ <main class="workspace">
+  <div class="titlebar"><span class="name">Session activity placement</span><span class="caption" aria-hidden="true">− &nbsp; □ &nbsp; ×</span></div>
+  <section class="sheet" aria-label="Sheet">
+   <div class="rows">
+    <div class="reader-row"><div class="message">Where should the activity line go?</div></div>
+    <div class="prose">The TUI keeps one line of live counts under the prompt: subagents, heartbeats, and shells. I’m prototyping three homes for the same information in the desktop window.</div>
+    <div class="thinking">thinking <span>6s</span> &nbsp;⌄</div>
+    <div class="cell">python · inspect the composer and theme roles <small>4 lines · 0.2s</small> &nbsp;⌄</div>
+    <div class="prose">All three variants keep the counts visible at zero, and use the same group order. Pick the one whose home feels right; the winner gets a proper implementation pass.</div>
+   </div>
+   <div class="footer" id="activity-host">
+    <!-- The variant's activity placement is inserted here, directly above or inside the composer. -->
+    <div id="activity-placement"></div>
+    <div id="status-strip"></div>
+    <div class="composer" id="composer">
+     <div class="handle"></div>
+     <textarea placeholder="Write a Message…" aria-label="Composer draft"></textarea>
+     <div class="composer-tools" id="composer-tools"></div>
+    </div>
+   </div>
+  </section>
+ </main>
+</div>
+<div class="prototype-state" id="prototype-state"></div>
+<button class="state-control" id="state-control" type="button">State: zero</button>
+<div class="prototype-switcher" id="prototype-switcher" hidden>
+ <button id="previous" aria-label="Previous variant">←</button>
+ <div class="label"><small>THROWAWAY PROTOTYPE</small><span id="variant-label"></span></div>
+ <button id="next" aria-label="Next variant">→</button>
+</div>
+<script>
+const names = {
+  A: 'Composer ledger',
+  B: 'Activity shelf',
+  C: 'Activity chip'
+};
+const placements = {
+  A: 'inside the composer, on the bottom tool row',
+  B: 'above the composer, as a full-width shelf',
+  C: 'inside the composer, folded into one chip'
+};
+const states = {
+  zero: {
+    subagents: 0, idle: 0, inactive: 0,
+    heartbeats: 0, paused: 0,
+    shells: 0,
+    subagentItems: [],
+    heartbeatItems: [],
+    shellItems: [],
+    turn: false
+  },
+  live: {
+    subagents: 2, idle: 1, inactive: 0,
+    heartbeats: 1, paused: 0,
+    shells: 2,
+    subagentItems: ['worker-a · running', 'worker-b · running', 'worker-c · idle'],
+    heartbeatItems: ['5m lane canary'],
+    shellItems: ['cargo test · 12.0s', 'sleep 600 · 1m 04s'],
+    turn: true
+  },
+  paused: {
+    subagents: 1, idle: 0, inactive: 1,
+    heartbeats: 3, paused: 2,
+    shells: 1,
+    subagentItems: ['worker-a · running', 'worker-c · inactive'],
+    heartbeatItems: ['5m lane canary', '12m deploy check'],
+    shellItems: ['cargo test · 28.4s'],
+    turn: true
+  }
+};
+const state = { variant:'A', sample:'zero', selected:null, popover:true };
+const prototypeOnly = document.documentElement.dataset.prototype === 'true';
+
+function esc(text) { const el=document.createElement('span'); el.textContent=text; return el.innerHTML; }
+function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+function sampleData() { return states[state.sample]; }
+function isLive(n) { return n > 0; }
+function groupClass(n, extra='') { return `activity-group ${isLive(n) ? 'live' : ''} ${extra}`; }
+function groupButton(group, glyph, count, label, extra='') {
+  const selected = state.selected === group ? 'selected' : '';
+  return `<button type="button" class="${groupClass(count, extra+' '+selected)}" data-group="${group}" title="Open ${label}">`+
+    `<span class="glyph">${glyph}</span><span class="count">${count}</span><span class="label">${label}</span></button>`;
+}
+function groupLabel(count, one, many) { return count === 1 ? one : many; }
+function pausedCluster(n) {
+  return n > 0 ? `<span class="activity-sep">·</span><span class="activity-group paused"><span class="glyph">◐</span><span class="count">${n}</span><span class="label">paused</span></span>` : '';
+}
+function activityLine() {
+  const d=sampleData();
+  return groupButton('subagents','◆',d.subagents,groupLabel(d.subagents,'subagent','subagents'))+
+    '<span class="activity-sep">·</span>'+
+    groupButton('heartbeats','◷',d.heartbeats,groupLabel(d.heartbeats,'heartbeat','heartbeats'))+
+    pausedCluster(d.paused)+
+    '<span class="activity-sep">·</span>'+
+    groupButton('shells','▸',d.shells,groupLabel(d.shells,'shell','shells'));
+}
+function detailRows() {
+  const d=sampleData();
+  const rows=[];
+  if (state.selected === 'subagents') {
+    rows.push(['◆ subagents', d.subagentItems.length ? d.subagentItems.join('  ·  ') : 'none running']);
+  } else if (state.selected === 'heartbeats') {
+    rows.push(['◷ heartbeats', d.heartbeatItems.length ? d.heartbeatItems.join('  ·  ') : 'none active']);
+  } else if (state.selected === 'shells') {
+    rows.push(['▸ shells', d.shellItems.length ? d.shellItems.join('  ·  ') : 'none running']);
+  }
+  return rows.map(([name,value])=>`<span class="detail-name">${name}</span><span class="detail-items">${esc(value)}</span>`).join('');
+}
+function shelfMarkup() {
+  const d=sampleData();
+  return `<section class="activity-shelf" aria-label="Session activity">
+    <div class="shelf-line">${activityLine()}<span class="shelf-hint">${state.selected ? 'click again to close' : 'click a group to inspect'}</span></div>
+    ${state.selected ? `<div class="shelf-detail">${detailRows()}</div>` : ''}
+  </section>`;
+}
+function chipMarkup() {
+  const d=sampleData();
+  const glyph=(g,n)=>`<span class="${isLive(n)?'live':''}">${g} ${n}</span>`;
+  return `<div class="activity-chip-wrap">
+    <button type="button" class="activity-chip ${state.popover?'open':''}" id="activity-chip" aria-expanded="${state.popover}" title="Session activity">
+      ${glyph('◆',d.subagents)}<span class="chip-sep">·</span>${glyph('◷',d.heartbeats)}<span class="chip-sep">·</span>${glyph('▸',d.shells)}
+    </button>
+    ${state.popover ? `<div class="activity-popover" role="dialog" aria-label="Session activity">
+      <div class="pop-title">Session activity</div>
+      <div class="pop-row"><span class="pop-glyph">◆</span><span class="pop-name">subagents</span><span class="pop-value">${plural(d.subagents,'running','running')}</span></div>
+      <div class="pop-row"><span class="pop-glyph">◷</span><span class="pop-name">heartbeats</span><span class="pop-value">${plural(d.heartbeats,'active','active')}${d.paused ? ` · ${d.paused} paused` : ''}</span></div>
+      <div class="pop-row"><span class="pop-glyph">▸</span><span class="pop-name">shells</span><span class="pop-value">${plural(d.shells,'running','running')}</span></div>
+      <div class="pop-note">The same three groups the TUI keeps under the prompt.</div>
+    </div>` : ''}
+  </div>`;
+}
+function composerTools(variant) {
+  const activity = variant === 'A' ? `<div class="activity-inline" aria-label="Session activity">${activityLine()}</div>` : '';
+  const chip = variant === 'C' ? chipMarkup() : '';
+  return `${activity}${chip}
+    <div class="tools-right">
+      <span class="context-ring" title="Context 68%"></span>
+      <button class="attach" type="button" aria-label="Attach a picture">+</button>
+      <button class="chip" type="button">Claude Sonnet 4.5 <span class="caret">⌄</span></button>
+      <button class="send" type="button" aria-label="Send">↑</button>
+    </div>`;
+}
+function statusMarkup() {
+  const d=sampleData();
+  return d.turn ? `<div class="status" aria-label="Status strip"><span class="spin">◌</span><span>Working</span><span class="elapsed">00:18</span></div>` : '';
+}
+function render() {
+  const variant = names[state.variant] ? state.variant : 'A';
+  state.variant = variant;
+  const d=sampleData();
+  const placement = document.getElementById('activity-placement');
+  const host = document.getElementById('activity-host');
+  placement.innerHTML = variant === 'B' ? shelfMarkup() : '';
+  host.classList.toggle('has-shelf', variant === 'B');
+  document.getElementById('status-strip').innerHTML = statusMarkup();
+  document.getElementById('composer-tools').innerHTML = composerTools(variant);
+  document.getElementById('variant-label').textContent = `${variant} — ${names[variant]}`;
+  document.getElementById('state-control').textContent = `State: ${state.sample}`;
+  document.getElementById('prototype-state').textContent =
+    `Variant ${variant} — ${names[variant]}\n`+
+    `${placements[variant]}\n`+
+    `◆ ${d.subagents}  ◷ ${d.heartbeats}${d.paused ? ` (${d.paused} paused)` : ''}  ▸ ${d.shells}`;
+  const url = new URL(location.href);
+  url.searchParams.set('variant', variant);
+  url.searchParams.set('state', state.sample);
+  history.replaceState(null,'',url);
+  console.log('PROTOTYPE state', JSON.stringify({variant, sample:state.sample, selected:state.selected, counts:{subagents:d.subagents, heartbeats:d.heartbeats, shells:d.shells}}));
+}
+function cycleVariant(delta) {
+  const keys=Object.keys(names);
+  state.selected=null;
+  state.variant=keys[(keys.indexOf(state.variant)+delta+keys.length)%keys.length];
+  render();
+}
+function cycleState() {
+  const keys=Object.keys(states);
+  state.sample=keys[(keys.indexOf(state.sample)+1)%keys.length];
+  state.selected=null;
+  render();
+}
+function bindDynamic() {
+  document.querySelectorAll('[data-group]').forEach(el=>el.addEventListener('click',()=>{
+    const group=el.dataset.group;
+    state.selected=state.selected===group?null:group;
+    render();
+  }));
+  const chip=document.getElementById('activity-chip');
+  if (chip) chip.addEventListener('click',()=>{ state.popover=!state.popover; render(); });
+}
+document.getElementById('prototype-switcher').hidden=!prototypeOnly;
+document.getElementById('previous').onclick=()=>cycleVariant(-1);
+document.getElementById('next').onclick=()=>cycleVariant(1);
+document.getElementById('state-control').onclick=cycleState;
+window.addEventListener('keydown',event=>{
+  if(event.target.closest('input,textarea,[contenteditable]')) return;
+  if(event.key==='ArrowLeft'||event.key==='ArrowRight') { event.preventDefault(); cycleVariant(event.key==='ArrowRight'?1:-1); }
+});
+window.addEventListener('popstate',()=>{
+  state.variant=new URL(location.href).searchParams.get('variant')||'A';
+  state.sample=new URL(location.href).searchParams.get('state')||'zero';
+  state.selected=null;
+  render();
+});
+const initial=new URL(location.href);
+state.variant=initial.searchParams.get('variant')||'A';
+state.sample=initial.searchParams.get('state')||'zero';
+render();
+bindDynamic();
+new MutationObserver(bindDynamic).observe(document.getElementById('activity-host'),{subtree:true,childList:true});
+window.prototypeState=state;
+</script>
+</body></html>
