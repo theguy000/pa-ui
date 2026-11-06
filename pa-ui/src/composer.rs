@@ -312,14 +312,18 @@ impl Composer {
                     return;
                 }
                 *pending_user.borrow_mut() = Some(message.clone());
-                let label = status_label(&message);
-                *command_label.borrow_mut() = label.map(str::to_string);
-                if let Some(label) = label {
-                    ui.set_busy_label(label.into());
-                    ui.set_busy(true);
-                } else if !ui.get_busy() {
-                    ui.set_busy_label("Waiting".into());
-                    ui.set_busy(true);
+                // A send while a turn runs is a parked message: it has no
+                // status word yet. The word starts when the message does.
+                if !ui.get_busy() {
+                    let label = status_label(&message);
+                    *command_label.borrow_mut() = label.map(str::to_string);
+                    if let Some(label) = label {
+                        ui.set_busy_label(label.into());
+                        ui.set_busy(true);
+                    } else {
+                        ui.set_busy_label("Waiting".into());
+                        ui.set_busy(true);
+                    }
                 }
                 in_flight_for_send.set(true);
                 let _ = jobs.send(Job::Prompt {

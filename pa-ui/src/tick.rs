@@ -116,6 +116,15 @@ impl Tick {
         });
     }
 
+    /// Take the Status strip down and forget the command word that held it.
+    fn clear_status(&self, ui: &AppWindow, l: &mut Local) {
+        l.command_label = None;
+        l.busy_label.clear();
+        self.composer.clear_command_label();
+        ui.set_busy_label("".into());
+        ui.set_busy(false);
+    }
+
     /// One pass: drain what the worker sent, then let the window catch up.
     pub fn run(&self) {
         let now = SystemTime::now();
@@ -261,10 +270,7 @@ impl Tick {
                         models.sync_session_row(&ui, row);
                     }
                     if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
-                        ui.set_busy(false);
-                        l.busy_label.clear();
-                        l.command_label = None;
-                        composer.clear_command_label();
+                        self.clear_status(&ui, &mut l);
                     }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
@@ -282,20 +288,15 @@ impl Tick {
                             && busy_since.get().elapsed().unwrap_or_default()
                                 < Duration::from_secs(5);
                         if !busy_now && !sending {
-                            l.command_label = None;
-                            composer.clear_command_label();
-                            if !ui.get_busy() {
-                                l.busy_label.clear();
-                            }
-                        }
-                        if !busy_now && ui.get_busy() && !sending {
-                            ui.set_busy(false);
-                            l.busy_label.clear();
-                            if let Some(session) = l.loaded.clone() {
-                                let _ = jobs.send(Job::Tail {
-                                    session,
-                                    fresh: false,
-                                });
+                            let was_busy = ui.get_busy();
+                            self.clear_status(&ui, &mut l);
+                            if was_busy {
+                                if let Some(session) = l.loaded.clone() {
+                                    let _ = jobs.send(Job::Tail {
+                                        session,
+                                        fresh: false,
+                                    });
+                                }
                             }
                         }
                         if busy_now {
@@ -537,8 +538,7 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
-                        l.command_label = None;
-                        composer.clear_command_label();
+                        self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
@@ -716,9 +716,7 @@ impl Tick {
                 }
                 Msg::NewChat(id) => {
                     composer.reset_for_new_chat(&ui, &id);
-                    l.command_label = None;
-                    composer.clear_command_label();
-                    l.busy_label.clear();
+                    self.clear_status(&ui, &mut l);
                 }
                 Msg::QueueEdit { text } => {
                     ui.set_composer_text(text.into());
@@ -779,16 +777,14 @@ impl Tick {
                 Msg::Reconnected => {
                     l.loaded = None;
                     l.open_live = None;
-                    l.command_label = None;
-                    composer.clear_command_label();
+                    self.clear_status(&ui, &mut l);
                     composer.in_flight.set(false);
                     sheet.answer_ended();
                     sheet.clear_tail_sig();
                     l.last_seq = 0;
                 }
                 Msg::PromptRejected { text } => {
-                    l.command_label = None;
-                    composer.clear_command_label();
+                    self.clear_status(&ui, &mut l);
                     composer.on_prompt_rejected(&ui, sheet, &text);
                 }
                 Msg::PromptResult { error } => {
@@ -860,5 +856,193 @@ impl Tick {
         }
 
         l.store(self);
+    }
+}
+
+#[cfg(test)]
+mod status_strip_tests {
+    use super::*;
+
+    struct Harness {
+        ui: AppWindow,
+        tick: Rc<Tick>,
+        tx: Sender<(u64, Msg)>,
+        jobs: Receiver<Job>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let ui = AppWindow::new().expect("window");
+            let (job_tx, jobs) = channel::<Job>();
+            let (tx, rx) = channel::<(u64, Msg)>();
+            let (sheet, transcript) = sheet::Sheet::new();
+            let sheet = Rc::new(sheet);
+            sheet.bind_ui(&ui);
+            ui.set_transcript(transcript);
+            let models = models::ModelMenu::new(&ui, &job_tx);
+            let composer = composer::Composer::new(&ui, &job_tx, &models);
+            let sidebar = sessions::Sidebar::new(&ui, &job_tx);
+            let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
+            let tick = Rc::new(Tick {
+                weak: ui.as_weak(),
+                jobs: job_tx,
+                msg_rx: rx,
+                attach_generation: std::cell::Cell::new(0),
+                last_tick: std::cell::Cell::new(SystemTime::now()),
+                sheet,
+                sidebar,
+                composer,
+                models,
+                busy_since,
+                window_rows: 300,
+                drawn_user: std::cell::Cell::new(None),
+                loaded: std::cell::Cell::new(None),
+                live_state: std::cell::Cell::new(String::new()),
+                live_since: std::cell::Cell::new(SystemTime::now()),
+                busy_label: std::cell::Cell::new(String::new()),
+                command_label: std::cell::Cell::new(None),
+                last_seq: std::cell::Cell::new(0),
+                open_live: std::cell::Cell::new(None),
+                stream_started: std::cell::Cell::new(SystemTime::now()),
+                _stream_at: std::cell::Cell::new(SystemTime::now()),
+                tail_at: std::cell::Cell::new(SystemTime::now()),
+                queue_at: std::cell::Cell::new(SystemTime::now()),
+                stats_at: std::cell::Cell::new(SystemTime::now()),
+                scroll_ticks: std::cell::Cell::new(0),
+            });
+            Self {
+                ui,
+                tick,
+                tx,
+                jobs,
+            }
+        }
+
+        fn send(&self, message: Msg) {
+            self.tx.send((0, message)).expect("message");
+        }
+
+        fn run(&self) {
+            self.tick.run();
+        }
+    }
+
+    fn user_start(text: &str) -> Msg {
+        Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": text}]
+                }
+            }),
+        }
+    }
+
+    fn turn_end() -> Msg {
+        Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "turn_end"}),
+        }
+    }
+
+    fn assert_strip(h: &Harness, busy: bool, label: &str) {
+        assert_eq!(h.ui.get_busy(), busy);
+        assert_eq!(h.ui.get_busy_label().as_str(), label);
+    }
+
+    fn a_command_word_survives_the_streams_thinking_activity() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        assert_strip(&h, true, "Refining");
+
+        h.send(Msg::Activity {
+            label: "Thinking".to_string(),
+        });
+        h.run();
+        assert_strip(&h, true, "Refining");
+    }
+
+    fn a_turn_end_takes_the_command_word_off_the_status_strip() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/compact"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+
+        h.send(turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+        assert!(h.tick.command_label.take().is_none());
+        assert!(h.tick.composer.held_command_label().is_none());
+    }
+
+    fn a_rejected_prompt_takes_the_status_strip_down() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        assert_strip(&h, true, "Refining");
+
+        h.send(Msg::PromptRejected {
+            text: "/refine".to_string(),
+        });
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    fn a_reconnect_takes_the_status_strip_down() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/refine"));
+        h.run();
+        assert_strip(&h, true, "Refining");
+
+        h.send(Msg::Reconnected);
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    fn a_new_chat_takes_the_status_strip_down() {
+        let h = Harness::new();
+        h.ui.set_busy(true);
+        h.send(user_start("/compact"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+
+        h.send(Msg::NewChat("new".to_string()));
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    fn a_parked_command_does_not_claim_the_running_turn() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.ui.set_busy(true);
+        h.ui.set_busy_label("Thinking".into());
+
+        h.ui.invoke_send_requested("/refine".into());
+
+        assert_strip(&h, true, "Thinking");
+        assert!(h.tick.composer.held_command_label().is_none());
+        match h.jobs.try_recv() {
+            Ok(Job::Prompt { message, .. }) => assert_eq!(message, "/refine"),
+            _ => panic!("the composer did not send the command"),
+        }
+    }
+
+    // One test, not six: Slint binds its platform to the test thread, and the
+    // harness runs each test on a new thread. The scenarios share this thread.
+    #[test]
+    fn the_status_strip_holds_and_clears_command_words() {
+        a_command_word_survives_the_streams_thinking_activity();
+        a_turn_end_takes_the_command_word_off_the_status_strip();
+        a_rejected_prompt_takes_the_status_strip_down();
+        a_reconnect_takes_the_status_strip_down();
+        a_new_chat_takes_the_status_strip_down();
+        a_parked_command_does_not_claim_the_running_turn();
     }
 }
