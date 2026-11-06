@@ -53,7 +53,9 @@ branching tree, pulse wave, and framed prompt.
   self-referential cases.
 - Pure heartbeat and shell parsing covers durable/live scoping, empty
   identities, paused jobs, finished shells, and nameless rows.
-- The window harness covers selected-Session ownership, failed-half retention,
+- The window harness covers selected-Session ownership, failed-part retention,
   and selection reset.
+- A layout-contract probe covers left placement, vertical centring, and the
+  absence of a click surface; a visual check covers the rendered result.
 - The ignored live-daemon smoke test reads the real roster, heartbeat catalog,
-  and kernel registry.
+  and kernel registry, and fails when their wire shapes are missing.

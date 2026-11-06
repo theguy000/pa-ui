@@ -125,7 +125,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 }
 
 pub(crate) fn is_top_level(row: &SessionRow) -> bool {
-    row.parent.is_empty() && row.parent_active.is_empty()
+    row.depth == 0 && row.parent.is_empty() && row.parent_active.is_empty()
 }
 
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {

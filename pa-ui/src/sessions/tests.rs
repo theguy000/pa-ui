@@ -452,7 +452,7 @@ fn family_cost_sums_spawned_children_with_parent_session_id() {
 fn subagent(active: &str, session: &str, parent: &str, status: &str) -> SessionRow {
     let mut fields = serde_json::json!({
         "activeSessionId": active, "sessionId": session,
-        "parentSessionId": parent, "lifecycle": "live",
+        "parentSessionId": parent, "lifecycle": "live", "rlmDepth": 1,
     });
     if let Some(object) = fields.as_object_mut() {
         match status {
@@ -474,10 +474,14 @@ fn subagent(active: &str, session: &str, parent: &str, status: &str) -> SessionR
 #[test]
 fn a_subagent_is_not_a_sidebar_session() {
     let child = subagent("child", "uuid-child", "uuid-parent", "running");
+    let passive = row(serde_json::json!({
+        "activeSessionId": "passive", "sessionId": "uuid-passive",
+        "lifecycle": "live", "rlmDepth": 1, "runtimeKind": "subagent"
+    }));
     let rows = vec![row(serde_json::json!({
         "activeSessionId": "parent", "sessionId": "uuid-parent",
         "lifecycle": "live", "workerState": "ready", "activity": "idle"
-    })), child];
+    })), child, passive];
     let items = session_items(&rows);
     assert_eq!(items.len(), 1, "the child belongs under its parent");
     assert_eq!(items[0].id, "parent");

@@ -264,6 +264,8 @@ pub struct SessionRow {
     /// The parent's live `activeSessionId`, present on queued children that
     /// have not been rebound to a durable parent session yet.
     pub parent_active: String,
+    /// `rlmDepth` from the roster: 0 for a top-level Session, >0 for a spawn.
+    pub depth: u64,
     pub last_activity: String,
     pub modified: String,
 }
@@ -409,6 +411,7 @@ impl SessionRow {
                 .unwrap_or(false),
             parent: text("parentSessionId"),
             parent_active: text("parentActiveSessionId"),
+            depth: value.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0),
             last_activity: text("lastActivityAt"),
             modified: text("modified"),
         }
@@ -1206,42 +1209,69 @@ fn roster_parent_keys(summary: &Value) -> Vec<String> {
     roster_keys(summary, true)
 }
 
+fn normalize_session_path(path: &str) -> String {
+    path.replace('/', "\\").to_lowercase()
+}
+
 /// The number of running subagent descendants of one Session in the raw
 /// roster: direct and nested, the TUI activity dock's one running number.
+/// Id links count at any depth; a path link counts only one level below the
+/// parent whose file it names, which keeps a depth-0 fork out.
 #[must_use]
 pub fn running_subagents(
     roster: &[Value],
     active_session_id: &str,
     session_id: &str,
 ) -> usize {
-    let mut parents: Vec<String> = [
+    let mut parents: Vec<(String, u64, Option<String>)> = [
         roster_key("active", Some(active_session_id)),
         roster_key("session", Some(session_id)),
     ]
     .into_iter()
     .flatten()
+    .collect::<Vec<_>>()
+    .into_iter()
+    .map(|key| (key, 0, None))
     .collect();
     if parents.is_empty() {
         return 0;
     }
-    let root: std::collections::HashSet<String> = parents.iter().cloned().collect();
+    let root_ids: std::collections::HashSet<String> =
+        parents.iter().map(|(key, _, _)| key.clone()).collect();
+    if let Some(root) = roster.iter().find(|entry| {
+        roster_summary(entry).is_some_and(|summary| {
+            roster_identity_keys(summary)
+                .iter()
+                .any(|key| root_ids.contains(key))
+        })
+    }) {
+        if let Some(summary) = roster_summary(root) {
+            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
+            let file = summary
+                .get("sessionFile")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(normalize_session_path);
+            for parent in &mut parents {
+                parent.1 = depth;
+                parent.2.clone_from(&file);
+            }
+        }
+    }
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut running = 0;
     let mut index = 0;
     while index < parents.len() {
-        let parent = parents[index].clone();
+        let (parent_key, parent_depth, parent_file) = parents[index].clone();
         index += 1;
         for entry in roster {
             let Some(summary) = roster_summary(entry) else {
                 continue;
             };
             let identity = roster_identity_keys(summary);
-            if identity.iter().any(|key| root.contains(key)) {
+            if identity.iter().any(|key| root_ids.contains(key)) {
                 continue;
             }
-            // A depth-0 path binding is a fork's source, a sibling chat, never
-            // a descendant. Roster entries without a depth are accepted when
-            // their runtime kind says subagent.
             let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
             let subagent = summary
                 .get("runtimeKind")
@@ -1250,7 +1280,17 @@ pub fn running_subagents(
             if !subagent {
                 continue;
             }
-            if !roster_parent_keys(summary).iter().any(|key| key == &parent) {
+            let matches_id = roster_parent_keys(summary)
+                .iter()
+                .any(|key| key == &parent_key);
+            let matches_path = parent_file.as_deref().is_some_and(|file| {
+                depth == parent_depth + 1
+                    && summary
+                        .get("parentSessionPath")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| normalize_session_path(path) == file)
+            });
+            if !matches_id && !matches_path {
                 continue;
             }
             let key = entry
@@ -1259,14 +1299,21 @@ pub fn running_subagents(
                 .filter(|id| !id.is_empty())
                 .map(str::to_string)
                 .or_else(|| identity.first().cloned())
-                .unwrap_or_else(|| format!("{parent}:{}", seen.len()));
+                .unwrap_or_else(|| format!("{parent_key}:{}", seen.len()));
             if !seen.insert(key) {
                 continue;
             }
             if entry.get("status").and_then(Value::as_str) == Some("running") {
                 running += 1;
             }
-            parents.extend(identity);
+            let file = summary
+                .get("sessionFile")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(normalize_session_path);
+            for child_key in identity {
+                parents.push((child_key, depth, file.clone()));
+            }
         }
     }
     running
@@ -2087,13 +2134,23 @@ mod activity_tests {
                 "parentSessionId": "uuid-parent", "rlmDepth": 1,
                 "runtimeKind": "subagent"
             }}),
+            json!({"agentId": "path-child", "status": "running", "summary": {
+                "activeSessionId": "path-child", "sessionId": "uuid-path-child",
+                "rlmDepth": 1, "runtimeKind": "subagent",
+                "parentSessionPath": "parent.jsonl", "sessionFile": "path-child.jsonl"
+            }}),
+            json!({"agentId": "path-grandchild", "status": "running", "summary": {
+                "activeSessionId": "path-grandchild", "sessionId": "uuid-path-grandchild",
+                "rlmDepth": 2, "runtimeKind": "subagent",
+                "parentSessionPath": "path-child.jsonl", "sessionFile": "grandchild.jsonl"
+            }}),
             json!({"agentId": "fork", "status": "running", "summary": {
                 "activeSessionId": "fork", "sessionId": "uuid-fork", "rlmDepth": 0,
                 "runtimeKind": "top-level", "parentActiveSessionId": "parent",
                 "parentSessionPath": "parent.jsonl"
             }})
         ];
-        assert_eq!(running_subagents(&roster, "parent", "uuid-parent"), 2);
+        assert_eq!(running_subagents(&roster, "parent", "uuid-parent"), 4);
         assert_eq!(running_subagents(&roster, "child-1", "uuid-child-1"), 1);
         assert_eq!(running_subagents(&roster, "missing", "missing"), 0);
     }

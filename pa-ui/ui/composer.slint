@@ -142,7 +142,7 @@ component ActivityIcon inherits Rectangle {
 component ActivityMetric inherits Rectangle {
     in property <ActivityKind> kind;
     in property <int> count;
-    in property <color> ink: Theme.composer-card-label-ink;
+    in property <color> ink;
     height: 13px;
     // 13px mark + 4px gap + room for three digits at 10px.
     width: 36px;
