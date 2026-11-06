@@ -92,9 +92,9 @@ pub(crate) enum Msg {
     },
     /// one `session_event` from the attached session, forwarded verbatim
     Event { session: String, event: serde_json::Value },
-    PromptResult { error: Option<String> },
+    PromptResult { session: Option<String>, error: Option<String> },
     /// the daemon refused a prompt: hand the text back to the composer
-    PromptRejected { text: String },
+    PromptRejected { session: Option<String>, text: String },
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
     Queue { steering: Vec<String>, follow_up: Vec<String> },
@@ -533,7 +533,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // `stop` = abort_and_send_queued when the daemon has it, so the
                     // queue keeps flowing behind the stopped run
                     if let Err(error) = stop(active, &session) {
-                        out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                        out.send(Msg::PromptResult {
+                            session: Some(session.clone()),
+                            error: Some(error.to_string()),
+                        });
                     }
                 }
                 Job::Steer { session, message, images } => {
@@ -545,7 +548,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         );
                     }
                     if let Err(error) = outcome {
-                        out.send(Msg::PromptResult { error: Some(error.to_string()) });
+                        out.send(Msg::PromptResult {
+                            session: Some(session.clone()),
+                            error: Some(error.to_string()),
+                        });
                     }
                 }
                 Job::Prompt { session, message, images } => {
@@ -571,8 +577,12 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 if crate::env_cfg::cfg().debug {
                                     eprintln!("[prompt] bind before send failed: {error}");
                                 }
-                                out.send(Msg::PromptRejected { text: message });
+                                out.send(Msg::PromptRejected {
+                                    session: Some(session.clone()),
+                                    text: message,
+                                });
                                 out.send(Msg::PromptResult {
+                                    session: Some(session.clone()),
                                     error: Some(format!(
                                         "the window could not reach this chat: {error}"
                                     )),
@@ -599,13 +609,20 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     }
                     match outcome {
                         Ok(()) => {
-                            out.send(Msg::PromptResult { error: None });
+                            out.send(Msg::PromptResult {
+                                session: Some(session.clone()),
+                                error: None,
+                            });
                         }
                         Err(reason) => {
                             // The text goes back to the composer and the reason
                             // is said plainly, instead of the message vanishing.
-                            out.send(Msg::PromptRejected { text: message });
+                            out.send(Msg::PromptRejected {
+                                session: Some(session.clone()),
+                                text: message,
+                            });
                             out.send(Msg::PromptResult {
+                                session: Some(session.clone()),
                                 error: Some(reason),
                             });
                         }
@@ -738,7 +755,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 .get("error")
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or("rejected by the daemon");
-                            out.send(Msg::PromptRejected { text });
+                            out.send(Msg::PromptRejected { session: None, text });
                             out.send(Msg::Error { session: None, message: reason.to_string() });
                         }
                     }
@@ -926,8 +943,16 @@ mod tests {
         // reader who switches chats still needs the refusal of their own
         // prompt, the reconnection notice, and the fresh chat's id
         assert!(!Msg::Reconnected.is_session_scoped());
-        assert!(!Msg::PromptResult { error: None }.is_session_scoped());
-        assert!(!Msg::PromptRejected { text: String::new() }.is_session_scoped());
+        assert!(!Msg::PromptResult {
+            session: None,
+            error: None
+        }
+        .is_session_scoped());
+        assert!(!Msg::PromptRejected {
+            session: None,
+            text: String::new()
+        }
+        .is_session_scoped());
         assert!(!Msg::NewChat(String::new()).is_session_scoped());
         assert!(!Msg::QueueEdit { text: String::new() }.is_session_scoped());
         assert!(!Msg::Sessions(Ok(Vec::new())).is_session_scoped());

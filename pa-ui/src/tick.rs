@@ -812,20 +812,30 @@ impl Tick {
                     sheet.clear_tail_sig();
                     l.last_seq = 0;
                 }
-                Msg::PromptRejected { text } => {
-                    self.clear_status(&ui, &mut l);
-                    composer.on_prompt_rejected(&ui, sheet, &text);
+                Msg::PromptRejected { session, text } => {
+                    let current = ui.get_selected_id();
+                    if current.is_empty()
+                        || session.as_deref().is_none_or(|target| target == current.as_str())
+                    {
+                        self.clear_status(&ui, &mut l);
+                        composer.on_prompt_rejected(&ui, sheet, &text);
+                    }
                 }
-                Msg::PromptResult { error } => {
+                Msg::PromptResult { session, error } => {
+                    let current = ui.get_selected_id();
+                    let on_screen = current.is_empty()
+                        || session.as_deref().is_none_or(|target| target == current.as_str());
                     let failed = error.is_some();
-                    if failed {
+                    if failed && on_screen {
                         self.command_word.clear();
                     }
-                    // The take-back removes the user's echo while it is still the
-                    // last Row; append the error only after that.
-                    composer.on_prompt_result(sheet, failed);
+                    if on_screen {
+                        // The take-back removes the user's echo while it is still
+                        // the last Row; append the error only after that.
+                        composer.on_prompt_result(sheet, failed);
+                    }
                     if let Some(error) = error {
-                        sheet.show_error(&error);
+                        self.record_error(&ui, session.as_deref(), &error);
                     }
                 }
                 Msg::Error { session, message } => {
@@ -1124,6 +1134,7 @@ mod status_strip_tests {
         assert_strip(&h, true, "Refining");
 
         h.send(Msg::PromptRejected {
+            session: None,
             text: "/refine".to_string(),
         });
         h.run();
@@ -1236,6 +1247,32 @@ mod status_strip_tests {
         assert_eq!(shown.len(), 1);
         assert!(shown[0].contains("a failed"));
         assert!(!shown[0].contains("b failed"));
+    }
+
+    fn a_refusal_for_another_session_does_not_touch_the_current_sheet() {
+        let h = Harness::new();
+        attach(&h, "a");
+        attach(&h, "b");
+
+        h.send(Msg::PromptRejected {
+            session: Some("a".to_string()),
+            text: "the refused prompt".to_string(),
+        });
+        h.run();
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+
+        h.send(Msg::PromptResult {
+            session: Some("a".to_string()),
+            error: Some("session a refused the prompt".to_string()),
+        });
+        h.run();
+        assert!(error_rows(&h).is_empty());
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+
+        attach(&h, "a");
+        let errors = error_rows(&h);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("session a refused the prompt"));
     }
 
     fn a_failed_tool_stays_a_failed_cell_not_an_error_row() {
@@ -1433,6 +1470,7 @@ mod status_strip_tests {
         an_error_for_another_session_is_replayed_when_that_session_opens();
         an_error_already_shown_comes_back_when_the_reader_returns();
         errors_from_two_sessions_do_not_mix();
+        a_refusal_for_another_session_does_not_touch_the_current_sheet();
         a_failed_tool_stays_a_failed_cell_not_an_error_row();
         a_session_close_is_an_error_row_and_stops_the_turn();
         a_session_close_for_another_session_is_retained();
