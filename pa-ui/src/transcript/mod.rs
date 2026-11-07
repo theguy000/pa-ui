@@ -142,8 +142,6 @@ fn custom_message_text(message: &Value) -> String {
     }
 }
 
-/// One parsed custom message: what the row says, what it shows beside the
-/// label, whether it failed, and whether it has a body to open.
 struct CustomMessageMeta {
     label: String,
     meta: String,
@@ -169,7 +167,6 @@ fn failed_meta(label: &str, has_body: bool) -> CustomMessageMeta {
     }
 }
 
-/// The command name attached to a session slash-command row.
 fn custom_slash_name(details: &Value) -> Option<&str> {
     details.pointer("/command/name").and_then(Value::as_str)
 }
@@ -205,8 +202,8 @@ fn refinement_state(details: &Value) -> (String, String, bool) {
     (label, meta, failed)
 }
 
-/// A custom message's readable label and state. The dispatch is intentionally
-/// one match so adding a custom type has one place to change.
+/// One match owns custom-type treatment, so adding a type has one place to
+/// change.
 fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> CustomMessageMeta {
     let has_body = !body.trim().is_empty();
     match custom_type {
@@ -289,8 +286,7 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
     }
 }
 
-/// One daemon custom message -> one custom-message row. The body is visible
-/// by default; the row can be closed from its header like a tool cell.
+/// The body is visible by default; the header closes it.
 fn custom_message_row(
     custom_type: &str,
     body: &str,
