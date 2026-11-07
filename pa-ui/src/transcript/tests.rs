@@ -525,10 +525,11 @@ mod custom_message_tests {
             "details": {"command": {"name": "refine", "args": "--global tighten the policy", "text": "/refine --global tighten the policy"}}
         }));
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].kind, KIND_NOTICE);
-        assert_eq!(rows[0].title, "/refine --global tighten the policy");
-        assert!(!rows[0].has_body);
-        assert!(!rows[0].expanded);
+        assert_eq!(rows[0].kind, KIND_CUSTOM_MESSAGE);
+        assert_eq!(rows[0].title, "/refine");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(plain(&rows[0].body).contains("--global tighten the policy"));
     }
 
     #[test]
@@ -582,27 +583,30 @@ mod custom_message_tests {
             "role": "custom",
             "customType": "async_bash_completion",
             "display": true,
-            "content": "[bash-done pid:42 exit:0]\n\nCommand: \"cargo test\""
+            "content": "[bash-done pid:42 exit:0]\n\nCommand: \"cargo test\"",
+            "details": {"exitCode": 0, "command": "cargo test", "pid": 42}
         }));
         assert_eq!(rows[0].title, "Background shell command finished");
+        assert_eq!(rows[0].meta, "exit 0");
+        assert!(!rows[0].failed);
         assert!(plain(&rows[0].body).contains("cargo test"));
     }
 
     #[test]
-    fn an_unknown_custom_type_gets_a_human_fallback_and_body() {
+    fn an_unknown_custom_type_gets_a_safe_fallback_and_body() {
         let rows = one(json!({
             "role": "custom",
             "customType": "future_notice",
             "display": true,
             "content": "a future daemon message"
         }));
-        assert_eq!(rows[0].title, "Future notice");
+        assert_eq!(rows[0].title, "Custom message");
         assert!(rows[0].has_body);
         assert!(plain(&rows[0].body).contains("a future daemon message"));
     }
 
     #[test]
-    fn a_long_custom_body_starts_closed_but_is_kept() {
+    fn a_long_custom_body_is_visible_by_default() {
         let body = "a long agent report\n".repeat(12);
         let rows = one(json!({
             "role": "custom",
@@ -611,8 +615,79 @@ mod custom_message_tests {
             "content": body
         }));
         assert!(rows[0].has_body);
-        assert!(!rows[0].expanded);
+        assert!(rows[0].expanded);
         assert!(plain(&rows[0].body).contains("a long agent report"));
+    }
+
+    #[test]
+    fn a_slash_command_with_arguments_keeps_the_full_command_in_the_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command",
+            "display": true,
+            "content": "/goal ship the desktop transcript fix"
+        }));
+        assert_eq!(rows[0].title, "/goal");
+        assert!(rows[0].has_body);
+        assert!(plain(&rows[0].body).contains("ship the desktop transcript fix"));
+    }
+
+    #[test]
+    fn a_failed_background_shell_is_marked_failed() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "async_bash_completion",
+            "display": true,
+            "content": "[bash-done pid:42 exit:1]\n\nCommand: \"cargo test\"",
+            "details": {"exitCode": 1, "command": "cargo test", "pid": 42}
+        }));
+        assert!(rows[0].failed);
+        assert_eq!(rows[0].meta, "exit 1");
+    }
+
+    #[test]
+    fn a_subagent_failure_and_exit_keep_their_reason() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "rlm_child_failure",
+            "display": true,
+            "content": "[child-failed child:nested-worker]\n\nthe worktree disappeared"
+        }));
+        assert_eq!(failed[0].title, "Subagent failed");
+        assert!(failed[0].failed);
+        assert!(plain(&failed[0].body).contains("worktree disappeared"));
+
+        let exited = one(json!({
+            "role": "custom",
+            "customType": "rlm_child_terminal_notice",
+            "display": true,
+            "content": "[child-exited: no-reply child:nested-worker]\n\nlast words"
+        }));
+        assert_eq!(exited[0].title, "Subagent finished");
+        assert!(!exited[0].failed);
+        assert!(plain(&exited[0].body).contains("last words"));
+    }
+
+    #[test]
+    fn a_refinement_error_is_failed_but_a_completed_refinement_is_not() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement failed: the applier rejected the plan",
+            "details": {"error": "the applier rejected the plan"}
+        }));
+        assert!(failed[0].failed);
+        assert!(plain(&failed[0].body).contains("applier rejected"));
+
+        let ok = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement complete: tightened the policy",
+            "details": {"edits": [{"applied": true}]}
+        }));
+        assert!(!ok[0].failed);
     }
 
     #[test]

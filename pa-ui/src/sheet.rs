@@ -141,7 +141,7 @@ fn estimate_row_height(row: &Row) -> f32 {
         }
         5 => {
             if !row.expanded || !row.has_body {
-                30.0
+                34.0
             } else {
                 let body = transcript::plain(&row.body);
                 let lines = body
