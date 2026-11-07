@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+Issues for this repo live as GitHub issues. Checked-in specs under `docs/specs/` are source material when present; the GitHub issues are the action tracker. Use the `gh` CLI for all operations.
 
 ## Conventions
 
