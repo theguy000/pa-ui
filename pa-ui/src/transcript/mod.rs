@@ -39,6 +39,11 @@ pub const KIND_CELL: i32 = 3;
 /// dispatch key, never the visible title.
 pub const KIND_CUSTOM_MESSAGE: i32 = 5;
 
+/// A compaction or branch summary: the context that explains why the
+/// transcript jumped. It shares the body-first row treatment with a custom
+/// message but has its own kind so the two can be styled apart.
+pub const KIND_SUMMARY: i32 = 10;
+
 /// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
 /// Status strip state and not a card. The message is collapsed to its first
 /// non-empty line, as the TUI's error row does.
@@ -306,6 +311,76 @@ fn custom_message_row(
     row
 }
 
+fn summary_meta(parts: impl IntoIterator<Item = String>) -> String {
+    parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" \u{00b7} ")
+}
+
+/// A summary role is a first-class transcript event, not a custom message.
+/// Compaction summaries are emitted before the retained messages; branch
+/// summaries stay where the conversation returned from the branch.
+fn summary_row(message: &Value, theme: &Resolved) -> Option<Row> {
+    let role = message.get("role").and_then(Value::as_str)?;
+    let summary = message.get("summary").and_then(Value::as_str).unwrap_or_default();
+    let mut row = Row::new(KIND_SUMMARY);
+    match role {
+        "compactionSummary" => {
+            row.title = "Context compacted".to_string();
+            let tokens = message
+                .get("tokensBefore")
+                .or_else(|| message.get("tokens_before"))
+                .and_then(Value::as_u64);
+            let retained = message
+                .get("retainedMessageCount")
+                .or_else(|| message.get("retained_message_count"))
+                .and_then(Value::as_u64);
+            row.meta = summary_meta([
+                tokens.map_or_else(String::new, |value| format!("{value} tokens before")),
+                retained.map_or_else(String::new, |value| format!("{value} retained")),
+            ]);
+            let focus = message
+                .get("customInstructions")
+                .or_else(|| message.get("custom_instructions"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let body = if focus.is_empty() {
+                summary.to_string()
+            } else {
+                format!("**Focus:** {focus}\n\n{summary}")
+            };
+            row.has_body = !body.trim().is_empty();
+            if row.has_body {
+                row.body = markdown_markup(&body, theme);
+                row.expanded = true;
+            }
+        }
+        "branchSummary" => {
+            row.title = "Branch summary".to_string();
+            let from = message
+                .get("fromId")
+                .or_else(|| message.get("from_id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            row.meta = if from.is_empty() {
+                String::new()
+            } else {
+                format!("from {from}")
+            };
+            row.has_body = !summary.trim().is_empty();
+            if row.has_body {
+                row.body = markdown_markup(summary, theme);
+                row.expanded = true;
+            }
+        }
+        _ => return None,
+    }
+    Some(row)
+}
+
 /// One message -> its rows. `owner` is stamped on every row so a rebuild can
 /// replace a message where it stands.
 fn build_message(
@@ -318,6 +393,10 @@ fn build_message(
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    if let Some(mut row) = summary_row(message, theme) {
+        row.message = owner.to_string();
+        return vec![row];
+    }
     if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
         // The wire carries internal bookkeeping rows (kernel state, harness
         // digests, model-facing refinement notices). They are deliberately

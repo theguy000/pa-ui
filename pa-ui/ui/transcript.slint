@@ -498,10 +498,10 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    // A custom daemon message: a readable label, and the body the old
-    // title-only notice dropped. Its body opens by default; the header
-    // toggles it closed.
-    if data.kind == 5 : VerticalLayout {
+    // A custom daemon message or a compaction/branch summary: a readable
+    // label and the body the old title-only notice dropped. The body opens by
+    // default; the header toggles it closed.
+    if data.kind == 5 || data.kind == 10 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
         padding-top: 4px;
@@ -540,9 +540,11 @@ export component TranscriptRow inherits VerticalLayout {
 
                 Text {
                     text: data.title;
-                    color: data.failed ? Theme.transcript-cell-ink-failed
+                    color: data.kind == 10 ? Theme.transcript-heading-ink
+                        : data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-notice-ink;
                     font-size: 11px;
+                    font-weight: data.kind == 10 ? 600 : 400;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;

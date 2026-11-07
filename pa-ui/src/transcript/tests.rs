@@ -730,3 +730,66 @@ mod custom_message_tests {
         assert!(!skipped[0].failed);
     }
 }
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_compaction_summary_is_visible_before_retained_messages() {
+        let messages = vec![
+            json!({
+                "role": "compactionSummary",
+                "summary": "## Plan\nThe retained work continues here.",
+                "tokensBefore": 12345,
+                "retainedMessageCount": 2,
+                "customInstructions": "keep the plan",
+                "timestamp": 10
+            }),
+            json!({
+                "role": "user",
+                "content": [{"type": "text", "text": "the retained question"}],
+                "timestamp": 11
+            }),
+            json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "the retained answer"}],
+                "timestamp": 12
+            }),
+        ];
+        let rows = build(&messages, 20).0;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, KIND_SUMMARY);
+        assert_eq!(rows[0].title, "Context compacted");
+        assert_eq!(rows[0].meta, "12345 tokens before \u{00b7} 2 retained");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        let body = plain(&rows[0].body);
+        assert!(body.contains("The retained work continues here."));
+        assert!(body.contains("keep the plan"));
+        assert_eq!(rows[1].kind, KIND_USER);
+        assert_eq!(rows[2].kind, KIND_AGENT);
+    }
+
+    #[test]
+    fn a_branch_summary_keeps_its_source_and_body() {
+        let rows = build(
+            &[json!({
+                "role": "branchSummary",
+                "summary": "## Goal\nRecover the branch context.",
+                "fromId": "branch-entry-7",
+                "timestamp": 20
+            })],
+            20,
+        )
+        .0;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_SUMMARY);
+        assert_eq!(rows[0].title, "Branch summary");
+        assert_eq!(rows[0].meta, "from branch-entry-7");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(plain(&rows[0].body).contains("Recover the branch context."));
+    }
+}
