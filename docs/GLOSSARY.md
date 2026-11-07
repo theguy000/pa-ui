@@ -18,6 +18,10 @@ _Avoid_: run, request, exchange
 One entry in a session's store: a prompt, an assistant reply, or a tool result. A message is not a row; one message can occupy several rows.
 _Avoid_: entry, record, item
 
+**Custom message**:
+A daemon message outside ordinary prose and tool results: a slash-command echo or result, an outcome, an agent message, a heartbeat, or an operational notice. Its `customType` selects the transcript treatment; the type name is not reader copy.
+_Avoid_: raw type, custom row, notice
+
 **Store**:
 The daemon's record of a session's messages, and the authority on what happened there. The window reconciles toward it rather than trusting the live stream.
 _Avoid_: cache, database, history, backend
@@ -53,7 +57,7 @@ The rows of a transcript as the reader sees them: what is scrolled, paged, opene
 _Avoid_: list, model, view, buffer, pane
 
 **Row**:
-One drawn block of the transcript: prose, a code block, a table, a tool cell, an image, or an error row. Rows are what the reader opens and closes.
+One drawn block of the transcript: prose, a code block, a table, a tool cell, a custom-message row, an image, or an error row. Rows are what the reader opens and closes.
 _Avoid_: entry, line, block, item
 
 **Error row**:

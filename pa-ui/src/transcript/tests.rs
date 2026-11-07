@@ -494,3 +494,239 @@ mod markup_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod custom_message_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn one(message: Value) -> Vec<Row> {
+        build(&[message], 20).0
+    }
+
+    #[test]
+    fn display_false_custom_rows_stay_out_of_the_transcript() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "ipython_state",
+            "display": false,
+            "content": "[python-state] internal"
+        }));
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn a_slash_command_echo_keeps_the_command_as_its_title() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command",
+            "display": true,
+            "content": "/refine --global tighten the policy",
+            "details": {"command": {"name": "refine", "args": "--global tighten the policy", "text": "/refine --global tighten the policy"}}
+        }));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_CUSTOM_MESSAGE);
+        assert_eq!(rows[0].title, "/refine");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(plain(&rows[0].body).contains("--global tighten the policy"));
+    }
+
+    #[test]
+    fn a_slash_command_result_uses_a_readable_label_and_keeps_its_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command_result",
+            "display": true,
+            "content": "Refined continual harness state: 2 edits applied.",
+            "details": {"command": {"name": "refine"}, "success": true}
+        }));
+        assert_eq!(rows[0].title, "Refinement");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(!rows[0].failed);
+        assert!(plain(&rows[0].body).contains("2 edits applied"));
+    }
+
+    #[test]
+    fn a_failed_slash_result_is_explicitly_failed() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command_result",
+            "display": true,
+            "content": "Command failed: the model did not return valid JSON",
+            "details": {"command": {"name": "goal"}, "success": false}
+        }));
+        assert_eq!(rows[0].title, "Goal");
+        assert!(rows[0].failed);
+        assert!(plain(&rows[0].body).contains("did not return valid JSON"));
+    }
+
+    #[test]
+    fn an_agent_message_keeps_the_sender_and_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "agent_message",
+            "display": true,
+            "content": "[agent-message from child:visual-test-child]\n\nready when you are"
+        }));
+        assert_eq!(rows[0].title, "Agent message");
+        assert!(rows[0].has_body);
+        let body = plain(&rows[0].body);
+        assert!(body.contains("from child:visual-test-child"));
+        assert!(body.contains("ready when you are"));
+    }
+
+    #[test]
+    fn a_background_shell_completion_has_a_readable_label() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "async_bash_completion",
+            "display": true,
+            "content": "[bash-done pid:42 exit:0]\n\nCommand: \"cargo test\"",
+            "details": {"exitCode": 0, "command": "cargo test", "pid": 42}
+        }));
+        assert_eq!(rows[0].title, "Background shell command finished");
+        assert_eq!(rows[0].meta, "exit 0");
+        assert!(!rows[0].failed);
+        assert!(plain(&rows[0].body).contains("cargo test"));
+    }
+
+    #[test]
+    fn an_unknown_custom_type_gets_a_safe_fallback_and_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "future_notice",
+            "display": true,
+            "content": "a future daemon message"
+        }));
+        assert_eq!(rows[0].title, "Custom message");
+        assert!(rows[0].has_body);
+        assert!(plain(&rows[0].body).contains("a future daemon message"));
+    }
+
+    #[test]
+    fn a_long_custom_body_is_visible_by_default() {
+        let body = "a long agent report\n".repeat(12);
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "agent_message",
+            "display": true,
+            "content": body
+        }));
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(plain(&rows[0].body).contains("a long agent report"));
+    }
+
+    #[test]
+    fn a_slash_command_with_arguments_keeps_the_full_command_in_the_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command",
+            "display": true,
+            "content": "/goal ship the desktop transcript fix"
+        }));
+        assert_eq!(rows[0].title, "/goal");
+        assert!(rows[0].has_body);
+        assert!(plain(&rows[0].body).contains("ship the desktop transcript fix"));
+    }
+
+    #[test]
+    fn a_failed_background_shell_is_marked_failed() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "async_bash_completion",
+            "display": true,
+            "content": "[bash-done pid:42 exit:1]\n\nCommand: \"cargo test\"",
+            "details": {"exitCode": 1, "command": "cargo test", "pid": 42}
+        }));
+        assert!(rows[0].failed);
+        assert_eq!(rows[0].meta, "exit 1");
+    }
+
+    #[test]
+    fn a_subagent_failure_and_exit_keep_their_reason() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "rlm_child_failure",
+            "display": true,
+            "content": "[child-failed child:nested-worker]\n\nthe worktree disappeared"
+        }));
+        assert_eq!(failed[0].title, "Subagent failed");
+        assert!(failed[0].failed);
+        assert!(plain(&failed[0].body).contains("worktree disappeared"));
+
+        let exited = one(json!({
+            "role": "custom",
+            "customType": "rlm_child_terminal_notice",
+            "display": true,
+            "content": "[child-exited: no-reply child:nested-worker]\n\nlast words"
+        }));
+        assert_eq!(exited[0].title, "Subagent finished");
+        assert!(!exited[0].failed);
+        assert!(plain(&exited[0].body).contains("last words"));
+    }
+
+    #[test]
+    fn a_refinement_outcome_reads_the_applied_edit_flags() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement complete: tighten the policy",
+            "details": {"edits": [
+                {"action": "update", "kind": "memory", "id": "m1", "applied": false, "error": "the applier rejected the plan"}
+            ]}
+        }));
+        assert_eq!(failed[0].title, "Refinement failed");
+        assert!(failed[0].failed);
+        assert_eq!(failed[0].meta, "0/1 edits");
+
+        let partial = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement complete: tighten the policy",
+            "details": {"edits": [
+                {"action": "update", "kind": "memory", "id": "m1", "applied": true},
+                {"action": "update", "kind": "skill", "id": "s1", "applied": false}
+            ]}
+        }));
+        assert_eq!(partial[0].title, "Refinement partial");
+        assert!(!partial[0].failed);
+        assert_eq!(partial[0].meta, "1/2 edits");
+
+        let ok = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement complete: tightened the policy",
+            "details": {"edits": [{"action": "update", "kind": "memory", "id": "m1", "applied": true}]}
+        }));
+        assert_eq!(ok[0].title, "Refinement");
+        assert!(!ok[0].failed);
+        assert_eq!(ok[0].meta, "1/1 edits");
+    }
+
+    #[test]
+    fn a_compaction_failure_is_failed_but_a_skip_is_not() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "compaction_outcome",
+            "display": true,
+            "content": "Auto-compaction failed",
+            "details": {"outcome": "failed"}
+        }));
+        assert!(failed[0].failed);
+
+        let skipped = one(json!({
+            "role": "custom",
+            "customType": "compaction_outcome",
+            "display": true,
+            "content": "Nothing to compact",
+            "details": {"outcome": "skipped"}
+        }));
+        assert!(!skipped[0].failed);
+    }
+}

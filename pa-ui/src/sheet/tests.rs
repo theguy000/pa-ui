@@ -52,6 +52,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         output: String::new(),
         has_code: false,
         has_output: false,
+        has_body: false,
         expanded: false,
         failed: false,
         reason: String::new(),
@@ -327,10 +328,10 @@ fn idle_floor_trim_evicts_prepended_pages_after_sixty_seconds_and_restores_tail_
 fn non_contiguous_blocks_with_the_same_key_do_not_straddle_or_underflow_on_merge() {
     let (sheet, orders) = sheet();
     let page = vec![
-        row(":0", transcript::KIND_NOTICE, "retry", "", "first notice"),
+        row(":0", transcript::KIND_CUSTOM_MESSAGE, "retry", "", "first custom"),
         row("m1", transcript::KIND_USER, "", "", "hello"),
         row("m2", transcript::KIND_AGENT, "", "", "world"),
-        row(":0", transcript::KIND_NOTICE, "retry", "", "second notice"),
+        row(":0", transcript::KIND_CUSTOM_MESSAGE, "retry", "", "second custom"),
     ];
     sheet.replace(page.clone());
     orders.borrow_mut().clear();
@@ -340,7 +341,7 @@ fn non_contiguous_blocks_with_the_same_key_do_not_straddle_or_underflow_on_merge
     let bodies: Vec<String> = sheet.rows().iter().map(|r| r.body.clone()).collect();
     assert_eq!(
         bodies,
-        ["first notice", "hello", "world", "second notice"],
+        ["first custom", "hello", "world", "second custom"],
         "merging a page with repeated non-contiguous keys must preserve every block"
     );
     assert!(

@@ -34,7 +34,10 @@ pub const KIND_THINKING: i32 = 2;
 
 pub const KIND_CELL: i32 = 3;
 
-pub const KIND_NOTICE: i32 = 5;
+/// A custom daemon message: a readable label, an optional body, and the same
+/// open/closed contract as a tool cell. The daemon's `customType` is the
+/// dispatch key, never the visible title.
+pub const KIND_CUSTOM_MESSAGE: i32 = 5;
 
 /// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
 /// Status strip state and not a card. The message is collapsed to its first
@@ -63,6 +66,9 @@ pub struct Row {
     pub output: String,
     pub has_code: bool,
     pub has_output: bool,
+    /// A custom message has content to show under its label. Tool cells use
+    /// `has_output` for their result; this is the custom-row equivalent.
+    pub has_body: bool,
     pub expanded: bool,
     pub failed: bool,
     pub reason: String,
@@ -110,6 +116,7 @@ impl Row {
             output: String::new(),
             has_code: false,
             has_output: false,
+            has_body: false,
             expanded: false,
             failed: false,
             reason: String::new(),
@@ -118,6 +125,185 @@ impl Row {
             message: String::new(),
         }
     }
+}
+
+/// The text a custom message carries. Custom messages are usually a string,
+/// but injected prompts may carry content blocks; only text blocks belong on
+/// this row, and non-text blocks are not silently shown as prose.
+fn custom_message_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+struct CustomMessageMeta {
+    label: String,
+    meta: String,
+    failed: bool,
+    has_body: bool,
+}
+
+fn plain_meta(label: &str, has_body: bool) -> CustomMessageMeta {
+    CustomMessageMeta {
+        label: label.to_string(),
+        meta: String::new(),
+        failed: false,
+        has_body,
+    }
+}
+
+fn failed_meta(label: &str, has_body: bool) -> CustomMessageMeta {
+    CustomMessageMeta {
+        label: label.to_string(),
+        meta: String::new(),
+        failed: true,
+        has_body,
+    }
+}
+
+fn custom_slash_name(details: &Value) -> Option<&str> {
+    details.pointer("/command/name").and_then(Value::as_str)
+}
+
+/// The refinement outcome's state from the daemon's edit list. The daemon
+/// writes `edits` per operation with applied flags; the summary text alone is
+/// optimistic and must not decide whether the row failed.
+fn refinement_state(details: &Value) -> (String, String, bool) {
+    let Some(edits) = details.get("edits").and_then(Value::as_array) else {
+        let failed = details.get("success").and_then(Value::as_bool) == Some(false)
+            || details.get("error").is_some();
+        return ("Refinement".to_string(), String::new(), failed);
+    };
+    let total = edits.len();
+    let applied = edits
+        .iter()
+        .filter(|edit| edit.get("applied").and_then(Value::as_bool) == Some(true))
+        .count();
+    let (label, failed) = if total == 0 {
+        ("Refinement".to_string(), false)
+    } else if applied == 0 {
+        ("Refinement failed".to_string(), true)
+    } else if applied < total {
+        ("Refinement partial".to_string(), false)
+    } else {
+        ("Refinement".to_string(), false)
+    };
+    let meta = if total == 0 {
+        String::new()
+    } else {
+        format!("{applied}/{total} edits")
+    };
+    (label, meta, failed)
+}
+
+/// One match owns custom-type treatment, so adding a type has one place to
+/// change.
+fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> CustomMessageMeta {
+    let has_body = !body.trim().is_empty();
+    match custom_type {
+        "session_slash_command" => {
+            let text = body.trim();
+            let label = text.split_whitespace().next().unwrap_or("Command").to_string();
+            // A bare command is the whole row. Arguments stay available in
+            // the body instead of being cut from the one-line label.
+            let has_arguments =
+                text.lines().count() > 1 || text.split_whitespace().count() > 1;
+            CustomMessageMeta {
+                label,
+                meta: String::new(),
+                failed: false,
+                has_body: has_arguments && has_body,
+            }
+        }
+        "session_slash_command_result" => CustomMessageMeta {
+            label: match custom_slash_name(details) {
+                Some("compact") => "Compaction",
+                Some("refine") => "Refinement",
+                Some("goal") => "Goal",
+                Some("autonomous") => "Autonomous mode",
+                _ => "Command result",
+            }
+            .to_string(),
+            meta: String::new(),
+            failed: details.get("success").and_then(Value::as_bool) == Some(false),
+            has_body,
+        },
+        "agent_message" => plain_meta("Agent message", has_body),
+        "async_bash_completion" => {
+            let exit_code = details
+                .get("exitCode")
+                .or_else(|| details.get("exit_code"))
+                .and_then(Value::as_i64);
+            CustomMessageMeta {
+                label: "Background shell command finished".to_string(),
+                meta: exit_code.map_or_else(String::new, |code| format!("exit {code}")),
+                failed: exit_code.is_some_and(|code| code != 0),
+                has_body,
+            }
+        }
+        "rlm_child_terminal_notice" => plain_meta("Subagent finished", has_body),
+        "rlm_child_failure" => failed_meta("Subagent failed", has_body),
+        "compaction_outcome" => {
+            let outcome = details.get("outcome").and_then(Value::as_str).unwrap_or("");
+            CustomMessageMeta {
+                label: "Compaction".to_string(),
+                meta: outcome.to_string(),
+                failed: matches!(outcome, "failed" | "cancelled"),
+                has_body,
+            }
+        }
+        "refinement_outcome" => {
+            let (label, meta, failed) = refinement_state(details);
+            CustomMessageMeta {
+                label,
+                meta,
+                failed,
+                has_body,
+            }
+        }
+        "provider_retry_outcome" => CustomMessageMeta {
+            label: "Provider retry".to_string(),
+            meta: String::new(),
+            failed: details.get("success").and_then(Value::as_bool) == Some(false),
+            has_body,
+        },
+        "model_prompt_error" => failed_meta("Model prompt error", has_body),
+        "heartbeat_prompt" => plain_meta("Heartbeat", has_body),
+        "goal_context" => plain_meta("Goal context", has_body),
+        "ipython_state_restored" => plain_meta("Python state restored", has_body),
+        "python_skills_unavailable" => failed_meta("Python skills unavailable", has_body),
+        "autonomous_status" => plain_meta("Autonomous mode", has_body),
+        "session_renamed" => plain_meta("Session renamed", has_body),
+        "factory_progress_notice" => plain_meta("Factory progress", has_body),
+        "mcp_connection_outcome" => plain_meta("MCP connection", has_body),
+        _ => plain_meta("Custom message", has_body),
+    }
+}
+
+/// The body is visible by default; the header closes it.
+fn custom_message_row(
+    custom_type: &str,
+    body: &str,
+    details: &Value,
+    theme: &Resolved,
+) -> Row {
+    let meta = custom_message_meta(custom_type, body, details);
+    let mut row = Row::new(KIND_CUSTOM_MESSAGE);
+    row.title = meta.label;
+    row.meta = meta.meta;
+    row.failed = meta.failed;
+    row.has_body = meta.has_body;
+    if row.has_body {
+        row.body = markdown_markup(body, theme);
+        row.expanded = true;
+    }
+    row
 }
 
 /// One message -> its rows. `owner` is stamped on every row so a rebuild can
@@ -132,19 +318,18 @@ fn build_message(
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
-    if message.get("customType").is_some() {
-        let text = message.get("content").and_then(Value::as_str).unwrap_or_default();
-        let mut row = Row::new(KIND_NOTICE);
-        row.body = plain_markup(text);
-        row.title = message
-            .get("customType")
-            .and_then(Value::as_str)
-            .unwrap_or("notice")
-            .to_string();
-        rows.push(row);
-        for row in &mut rows {
-            row.message = owner.to_string();
+    if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
+        // The wire carries internal bookkeeping rows (kernel state, harness
+        // digests, model-facing refinement notices). They are deliberately
+        // not transcript material.
+        if message.get("display").and_then(Value::as_bool) == Some(false) {
+            return rows;
         }
+        let body = custom_message_text(message);
+        let details = message.get("details").unwrap_or(&Value::Null);
+        let mut row = custom_message_row(custom_type, &body, details, theme);
+        row.message = owner.to_string();
+        rows.push(row);
         return rows;
     }
 
