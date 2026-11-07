@@ -669,25 +669,44 @@ mod custom_message_tests {
     }
 
     #[test]
-    fn a_refinement_error_is_failed_but_a_completed_refinement_is_not() {
+    fn a_refinement_outcome_reads_the_applied_edit_flags() {
         let failed = one(json!({
             "role": "custom",
             "customType": "refinement_outcome",
             "display": true,
-            "content": "Refinement failed: the applier rejected the plan",
-            "details": {"error": "the applier rejected the plan"}
+            "content": "Refinement complete: tighten the policy",
+            "details": {"edits": [
+                {"action": "update", "kind": "memory", "id": "m1", "applied": false, "error": "the applier rejected the plan"}
+            ]}
         }));
+        assert_eq!(failed[0].title, "Refinement failed");
         assert!(failed[0].failed);
-        assert!(plain(&failed[0].body).contains("applier rejected"));
+        assert_eq!(failed[0].meta, "0/1 edits");
+
+        let partial = one(json!({
+            "role": "custom",
+            "customType": "refinement_outcome",
+            "display": true,
+            "content": "Refinement complete: tighten the policy",
+            "details": {"edits": [
+                {"action": "update", "kind": "memory", "id": "m1", "applied": true},
+                {"action": "update", "kind": "skill", "id": "s1", "applied": false}
+            ]}
+        }));
+        assert_eq!(partial[0].title, "Refinement partial");
+        assert!(!partial[0].failed);
+        assert_eq!(partial[0].meta, "1/2 edits");
 
         let ok = one(json!({
             "role": "custom",
             "customType": "refinement_outcome",
             "display": true,
             "content": "Refinement complete: tightened the policy",
-            "details": {"edits": [{"applied": true}]}
+            "details": {"edits": [{"action": "update", "kind": "memory", "id": "m1", "applied": true}]}
         }));
+        assert_eq!(ok[0].title, "Refinement");
         assert!(!ok[0].failed);
+        assert_eq!(ok[0].meta, "1/1 edits");
     }
 
     #[test]

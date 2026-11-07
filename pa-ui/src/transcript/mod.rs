@@ -151,18 +151,58 @@ struct CustomMessageMeta {
     has_body: bool,
 }
 
-fn plain_meta(label: &str, failed: bool, has_body: bool) -> CustomMessageMeta {
+fn plain_meta(label: &str, has_body: bool) -> CustomMessageMeta {
     CustomMessageMeta {
         label: label.to_string(),
         meta: String::new(),
-        failed,
+        failed: false,
+        has_body,
+    }
+}
+
+fn failed_meta(label: &str, has_body: bool) -> CustomMessageMeta {
+    CustomMessageMeta {
+        label: label.to_string(),
+        meta: String::new(),
+        failed: true,
         has_body,
     }
 }
 
 /// The command name attached to a session slash-command row.
-fn custom_slash_name<'a>(details: &'a Value) -> Option<&'a str> {
+fn custom_slash_name(details: &Value) -> Option<&str> {
     details.pointer("/command/name").and_then(Value::as_str)
+}
+
+/// The refinement outcome's state from the daemon's edit list. The daemon
+/// writes `edits` per operation with applied flags; the summary text alone is
+/// optimistic and must not decide whether the row failed.
+fn refinement_state(details: &Value) -> (String, String, bool) {
+    let Some(edits) = details.get("edits").and_then(Value::as_array) else {
+        let failed = details.get("success").and_then(Value::as_bool) == Some(false)
+            || details.get("error").is_some();
+        return ("Refinement".to_string(), String::new(), failed);
+    };
+    let total = edits.len();
+    let applied = edits
+        .iter()
+        .filter(|edit| edit.get("applied").and_then(Value::as_bool) == Some(true))
+        .count();
+    let (label, failed) = if total == 0 {
+        ("Refinement".to_string(), false)
+    } else if applied == 0 {
+        ("Refinement failed".to_string(), true)
+    } else if applied < total {
+        ("Refinement partial".to_string(), false)
+    } else {
+        ("Refinement".to_string(), false)
+    };
+    let meta = if total == 0 {
+        String::new()
+    } else {
+        format!("{applied}/{total} edits")
+    };
+    (label, meta, failed)
 }
 
 /// A custom message's readable label and state. The dispatch is intentionally
@@ -184,18 +224,20 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
                 has_body: has_arguments && has_body,
             }
         }
-        "session_slash_command_result" => plain_meta(
-            match custom_slash_name(details) {
+        "session_slash_command_result" => CustomMessageMeta {
+            label: match custom_slash_name(details) {
                 Some("compact") => "Compaction",
                 Some("refine") => "Refinement",
                 Some("goal") => "Goal",
                 Some("autonomous") => "Autonomous mode",
                 _ => "Command result",
-            },
-            details.get("success").and_then(Value::as_bool) == Some(false),
+            }
+            .to_string(),
+            meta: String::new(),
+            failed: details.get("success").and_then(Value::as_bool) == Some(false),
             has_body,
-        ),
-        "agent_message" => plain_meta("Agent message", false, has_body),
+        },
+        "agent_message" => plain_meta("Agent message", has_body),
         "async_bash_completion" => {
             let exit_code = details
                 .get("exitCode")
@@ -208,8 +250,8 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
                 has_body,
             }
         }
-        "rlm_child_terminal_notice" => plain_meta("Subagent finished", false, has_body),
-        "rlm_child_failure" => plain_meta("Subagent failed", true, has_body),
+        "rlm_child_terminal_notice" => plain_meta("Subagent finished", has_body),
+        "rlm_child_failure" => failed_meta("Subagent failed", has_body),
         "compaction_outcome" => {
             let outcome = details.get("outcome").and_then(Value::as_str).unwrap_or("");
             CustomMessageMeta {
@@ -219,27 +261,31 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
                 has_body,
             }
         }
-        "refinement_outcome" => plain_meta(
-            "Refinement",
-            details.get("success").and_then(Value::as_bool) == Some(false)
-                || details.get("error").is_some(),
+        "refinement_outcome" => {
+            let (label, meta, failed) = refinement_state(details);
+            CustomMessageMeta {
+                label,
+                meta,
+                failed,
+                has_body,
+            }
+        }
+        "provider_retry_outcome" => CustomMessageMeta {
+            label: "Provider retry".to_string(),
+            meta: String::new(),
+            failed: details.get("success").and_then(Value::as_bool) == Some(false),
             has_body,
-        ),
-        "provider_retry_outcome" => plain_meta(
-            "Provider retry",
-            details.get("success").and_then(Value::as_bool) == Some(false),
-            has_body,
-        ),
-        "model_prompt_error" => plain_meta("Model prompt error", true, has_body),
-        "heartbeat_prompt" => plain_meta("Heartbeat", false, has_body),
-        "goal_context" => plain_meta("Goal context", false, has_body),
-        "ipython_state_restored" => plain_meta("Python state restored", false, has_body),
-        "python_skills_unavailable" => plain_meta("Python skills unavailable", true, has_body),
-        "autonomous_status" => plain_meta("Autonomous mode", false, has_body),
-        "session_renamed" => plain_meta("Session renamed", false, has_body),
-        "factory_progress_notice" => plain_meta("Factory progress", false, has_body),
-        "mcp_connection_outcome" => plain_meta("MCP connection", false, has_body),
-        _ => plain_meta("Custom message", false, has_body),
+        },
+        "model_prompt_error" => failed_meta("Model prompt error", has_body),
+        "heartbeat_prompt" => plain_meta("Heartbeat", has_body),
+        "goal_context" => plain_meta("Goal context", has_body),
+        "ipython_state_restored" => plain_meta("Python state restored", has_body),
+        "python_skills_unavailable" => failed_meta("Python skills unavailable", has_body),
+        "autonomous_status" => plain_meta("Autonomous mode", has_body),
+        "session_renamed" => plain_meta("Session renamed", has_body),
+        "factory_progress_notice" => plain_meta("Factory progress", has_body),
+        "mcp_connection_outcome" => plain_meta("MCP connection", has_body),
+        _ => plain_meta("Custom message", has_body),
     }
 }
 

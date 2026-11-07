@@ -499,8 +499,8 @@ export component TranscriptRow inherits VerticalLayout {
     }
 
     // A custom daemon message: a readable label, and the body the old
-    // title-only notice dropped. Short results open by default; long agent
-    // messages start closed and open from the caret.
+    // title-only notice dropped. Its body opens by default; the header
+    // toggles it closed.
     if data.kind == 5 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
@@ -511,11 +511,11 @@ export component TranscriptRow inherits VerticalLayout {
         Rectangle {
             height: 26px;
             border-radius: 6px;
-            background: notice-hot ? Theme.transcript-cell-fill-hover : transparent;
+            background: custom-hot ? Theme.transcript-cell-fill-hover : transparent;
 
-            property <bool> notice-hot: notice-touch.has-hover;
+            property <bool> custom-hot: custom-touch.has-hover;
 
-            notice-touch := TouchArea {
+            custom-touch := TouchArea {
                 x: 0;
                 y: 0;
                 width: 100%;
@@ -562,13 +562,13 @@ export component TranscriptRow inherits VerticalLayout {
             border-color: Theme.transcript-cell-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
-            height: notice-text.preferred-height + 24px;
+            height: custom-text.preferred-height + 24px;
             VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
                 padding-top: 10px;
                 padding-bottom: 10px;
-                notice-text := StyledText {
+                custom-text := StyledText {
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
