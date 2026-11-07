@@ -124,8 +124,14 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+pub(crate) fn is_top_level(row: &SessionRow) -> bool {
+    row.depth == 0 && row.parent.is_empty() && row.parent_active.is_empty()
+}
+
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
-    let mut items: Vec<SessionItem> = rows.iter().map(to_item).collect();
+    // Spawned subagents live under their parent Session; the sidebar lists
+    // top-level Sessions only. Family cost still reads the unfiltered roster.
+    let mut items: Vec<SessionItem> = rows.iter().filter(|row| is_top_level(row)).map(to_item).collect();
     items.sort_by_key(|item| tag_word_rank(&item.status));
     items
 }
@@ -408,16 +414,17 @@ pub(crate) fn resolve_rebound_id(
 pub(crate) fn compute_family_cost(rows: &[SessionRow], session: &str, own_cost: f64) -> (f64, bool) {
     let mut children_cost = 0.0f64;
     let mut has_children = false;
-    let own_sid = rows
-        .iter()
-        .find(|row| row.id == session)
+    let own = rows.iter().find(|row| row.id == session);
+    let own_sid = own
         .map(|row| row.session_id.as_str())
         .filter(|sid| !sid.is_empty());
-    if let Some(own_sid) = own_sid {
-        for row in rows.iter().filter(|row| row.parent == own_sid) {
-            has_children = true;
-            children_cost += row.cost;
-        }
+    let own_active = own.map(|row| row.id.as_str()).filter(|id| !id.is_empty());
+    for row in rows.iter().filter(|row| {
+        own_sid.is_some_and(|sid| row.parent == sid)
+            || own_active.is_some_and(|id| row.parent_active == id)
+    }) {
+        has_children = true;
+        children_cost += row.cost;
     }
     (own_cost + children_cost, has_children)
 }
@@ -507,7 +514,12 @@ fn populate_themes(ui: &AppWindow, active: &str) {
 
 /// The rows the search popup draws for one query.
 pub(crate) fn match_rows(sessions: &[SessionRow], query: &str) -> ModelRc<SearchRow> {
-    let rows: Vec<SearchRow> = search::matches(sessions, query)
+    let top_level: Vec<SessionRow> = sessions
+        .iter()
+        .filter(|row| is_top_level(row))
+        .cloned()
+        .collect();
+    let rows: Vec<SearchRow> = search::matches(&top_level, query)
         .into_iter()
         .map(|(row, offsets)| {
             let name = search::elide(&display_name(row));
@@ -550,6 +562,13 @@ impl Sidebar {
         });
         sidebar.bind_ui(ui, job_tx);
         sidebar
+    }
+
+    /// The durable session id of a row, for session-scoped reads (heartbeats).
+    pub(crate) fn session_id_for(&self, selected: &str) -> String {
+        uuid_of(&self.cache.borrow(), selected)
+            .unwrap_or_default()
+            .to_string()
     }
 
     pub fn track_selection(&self, selected: &str) {

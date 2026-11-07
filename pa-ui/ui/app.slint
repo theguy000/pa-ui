@@ -5,7 +5,7 @@ import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon
 import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
-import { Chip, ContextCard, ContextRing } from "composer.slint";
+import { ActivityChip, Chip, ContextCard, ContextRing } from "composer.slint";
 import { EffortLadder, ModelMenu, SessionMenu, SettingsMenu, SlashMenu, ThemeSidebar } from "menus.slint";
 import { SearchPopup } from "search.slint";
 import { SharePopup } from "share.slint";
@@ -227,6 +227,11 @@ export component AppWindow inherits Window {
     in-out property <string> cost-family: "";
     in-out property <bool> cost-family-on: false;
     in-out property <bool> ctx-hover: false;
+    // The activity chip's live counts: running subagent descendants, scoped
+    // heartbeats, and running shell commands for the selected Session.
+    in-out property <int> activity-subagents: 0;
+    in-out property <int> activity-heartbeats: 0;
+    in-out property <int> activity-shells: 0;
     in-out property <string> editing-id: "";
     in-out property <string> hover-title: "";
     in-out property <length> hover-y: 0px;
@@ -1583,6 +1588,11 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
+            ActivityChip {
+                subagents: root.activity-subagents;
+                heartbeats: root.activity-heartbeats;
+                shells: root.activity-shells;
+            }
             Rectangle {
                 horizontal-stretch: 1;
                 background: transparent;

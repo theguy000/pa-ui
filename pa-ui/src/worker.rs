@@ -54,6 +54,9 @@ pub(crate) enum Job {
         images: Vec<serde_json::Value>,
     },
     Stats { session: String },
+    /// one live activity read for the selected Session: roster descendants,
+    /// scoped heartbeats, and running shell commands
+    ActivityRead { session: String, session_id: String },
     /// the session's own slash commands (templates and skills)
     Commands { session: String },
     SetModel { session: String, provider: String, model: String },
@@ -109,6 +112,14 @@ pub(crate) enum Msg {
     /// a `create` came back: the id of the brand new session
     NewChat(String),
     Stats { session: String, stats: pa_client::SessionStats },
+    /// one activity refresh; a failed part is `None` so the window keeps its
+    /// last good number
+    ActivityCounts {
+        session: String,
+        subagents: Option<usize>,
+        heartbeats: Option<usize>,
+        shells: Option<usize>,
+    },
     State { state: pa_client::SessionState },
     Activity { label: String },
     /// a share finished: the viewer URL the card shows, copies and opens, or
@@ -150,6 +161,7 @@ impl Msg {
                 | Msg::Older { .. }
                 | Msg::Event { .. }
                 | Msg::Stats { .. }
+                | Msg::ActivityCounts { .. }
                 | Msg::State { .. }
                 | Msg::ModelCatalog(_)
                 | Msg::ExtraCommands(_)
@@ -397,6 +409,25 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 Job::Stats { session } => {
                     if let Ok(stats) = session_stats(active, &session) {
                         out.send(Msg::Stats { session, stats });
+                    }
+                }
+                Job::ActivityRead {
+                    session,
+                    session_id,
+                } => {
+                    let subagents = pa_client::list_roster(active).ok().map(|roster| {
+                        pa_client::running_subagents(&roster, &session, &session_id)
+                    });
+                    let heartbeats =
+                        pa_client::scoped_heartbeat_count(active, &session, &session_id).ok();
+                    let shells = pa_client::running_shells(active, &session).ok();
+                    if subagents.is_some() || heartbeats.is_some() || shells.is_some() {
+                        out.send(Msg::ActivityCounts {
+                            session,
+                            subagents,
+                            heartbeats,
+                            shells,
+                        });
                     }
                 }
                 Job::SessionState { session } => {

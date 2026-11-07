@@ -1,7 +1,7 @@
 // The composer's furniture: the model chip, the context ring and the card that
 // opens off it.
 
-import { IconCaret } from "icons.slint";
+import { IconCaret, IconHeartbeat, IconShells, IconSubagents } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Button, ButtonKind } from "primitives.slint";
 
@@ -106,6 +106,105 @@ export component ContextCard inherits Rectangle {
                 label: "with subagents";
                 value: root.cost-family;
                 ink: Theme.composer-card-cost-ink;
+            }
+        }
+    }
+}
+
+// The three live groups the TUI keeps under its prompt. The chip is the
+// desktop's compact form: three marks and counts in the composer's tool row,
+// a readout with no labels and no click target. The window fills the counts
+// from the selected Session's activity read.
+export enum ActivityKind {
+    subagents,
+    heartbeats,
+    shells,
+}
+
+component ActivityIcon inherits Rectangle {
+    in property <ActivityKind> kind;
+    in property <color> tint;
+    width: 13px;
+    height: 13px;
+    background: transparent;
+
+    if root.kind == ActivityKind.subagents : IconSubagents {
+        tint: root.tint;
+    }
+    if root.kind == ActivityKind.heartbeats : IconHeartbeat {
+        tint: root.tint;
+    }
+    if root.kind == ActivityKind.shells : IconShells {
+        tint: root.tint;
+    }
+}
+
+component ActivityMetric inherits Rectangle {
+    in property <ActivityKind> kind;
+    in property <int> count;
+    in property <color> ink;
+    height: 13px;
+    // 13px mark + 4px gap + room for three digits at 10px.
+    width: 36px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: center;
+        ActivityIcon {
+            kind: root.kind;
+            tint: root.ink;
+        }
+        Text {
+            text: root.count;
+            color: root.ink;
+            font-family: "Cascadia Code";
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ActivityChip inherits Rectangle {
+    in property <int> subagents: 0;
+    in property <int> heartbeats: 0;
+    in property <int> shells: 0;
+
+    pure function ink(count: int) -> color {
+        count > 0 ? Theme.composer-ring-tick-lit : Theme.composer-card-label-ink
+    }
+
+    // three 36px metrics, two 6px gaps, 8px padding each side
+    width: 136px;
+    height: 24px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.composer-chip-edge;
+    background: Theme.composer-chip-fill;
+
+    HorizontalLayout {
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            padding-top: 5.5px;
+            padding-bottom: 5.5px;
+            spacing: 6px;
+            alignment: center;
+
+            ActivityMetric {
+                kind: ActivityKind.subagents;
+                count: root.subagents;
+                ink: root.ink(root.subagents);
+            }
+            ActivityMetric {
+                kind: ActivityKind.heartbeats;
+                count: root.heartbeats;
+                ink: root.ink(root.heartbeats);
+            }
+            ActivityMetric {
+                kind: ActivityKind.shells;
+                count: root.shells;
+                ink: root.ink(root.shells);
             }
         }
     }
