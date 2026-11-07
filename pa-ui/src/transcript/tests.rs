@@ -494,3 +494,145 @@ mod markup_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod custom_message_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn one(message: Value) -> Vec<Row> {
+        build(&[message], 20).0
+    }
+
+    #[test]
+    fn display_false_custom_rows_stay_out_of_the_transcript() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "ipython_state",
+            "display": false,
+            "content": "[python-state] internal"
+        }));
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn a_slash_command_echo_keeps_the_command_as_its_title() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command",
+            "display": true,
+            "content": "/refine --global tighten the policy",
+            "details": {"command": {"name": "refine", "args": "--global tighten the policy", "text": "/refine --global tighten the policy"}}
+        }));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_NOTICE);
+        assert_eq!(rows[0].title, "/refine --global tighten the policy");
+        assert!(!rows[0].has_body);
+        assert!(!rows[0].expanded);
+    }
+
+    #[test]
+    fn a_slash_command_result_uses_a_readable_label_and_keeps_its_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command_result",
+            "display": true,
+            "content": "Refined continual harness state: 2 edits applied.",
+            "details": {"command": {"name": "refine"}, "success": true}
+        }));
+        assert_eq!(rows[0].title, "Refinement");
+        assert!(rows[0].has_body);
+        assert!(rows[0].expanded);
+        assert!(!rows[0].failed);
+        assert!(plain(&rows[0].body).contains("2 edits applied"));
+    }
+
+    #[test]
+    fn a_failed_slash_result_is_explicitly_failed() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "session_slash_command_result",
+            "display": true,
+            "content": "Command failed: the model did not return valid JSON",
+            "details": {"command": {"name": "goal"}, "success": false}
+        }));
+        assert_eq!(rows[0].title, "Goal");
+        assert!(rows[0].failed);
+        assert!(plain(&rows[0].body).contains("did not return valid JSON"));
+    }
+
+    #[test]
+    fn an_agent_message_keeps_the_sender_and_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "agent_message",
+            "display": true,
+            "content": "[agent-message from child:visual-test-child]\n\nready when you are"
+        }));
+        assert_eq!(rows[0].title, "Agent message");
+        assert!(rows[0].has_body);
+        let body = plain(&rows[0].body);
+        assert!(body.contains("from child:visual-test-child"));
+        assert!(body.contains("ready when you are"));
+    }
+
+    #[test]
+    fn a_background_shell_completion_has_a_readable_label() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "async_bash_completion",
+            "display": true,
+            "content": "[bash-done pid:42 exit:0]\n\nCommand: \"cargo test\""
+        }));
+        assert_eq!(rows[0].title, "Background shell command finished");
+        assert!(plain(&rows[0].body).contains("cargo test"));
+    }
+
+    #[test]
+    fn an_unknown_custom_type_gets_a_human_fallback_and_body() {
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "future_notice",
+            "display": true,
+            "content": "a future daemon message"
+        }));
+        assert_eq!(rows[0].title, "Future notice");
+        assert!(rows[0].has_body);
+        assert!(plain(&rows[0].body).contains("a future daemon message"));
+    }
+
+    #[test]
+    fn a_long_custom_body_starts_closed_but_is_kept() {
+        let body = "a long agent report\n".repeat(12);
+        let rows = one(json!({
+            "role": "custom",
+            "customType": "agent_message",
+            "display": true,
+            "content": body
+        }));
+        assert!(rows[0].has_body);
+        assert!(!rows[0].expanded);
+        assert!(plain(&rows[0].body).contains("a long agent report"));
+    }
+
+    #[test]
+    fn a_compaction_failure_is_failed_but_a_skip_is_not() {
+        let failed = one(json!({
+            "role": "custom",
+            "customType": "compaction_outcome",
+            "display": true,
+            "content": "Auto-compaction failed",
+            "details": {"outcome": "failed"}
+        }));
+        assert!(failed[0].failed);
+
+        let skipped = one(json!({
+            "role": "custom",
+            "customType": "compaction_outcome",
+            "display": true,
+            "content": "Nothing to compact",
+            "details": {"outcome": "skipped"}
+        }));
+        assert!(!skipped[0].failed);
+    }
+}

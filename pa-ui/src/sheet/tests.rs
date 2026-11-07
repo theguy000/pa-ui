@@ -52,6 +52,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         output: String::new(),
         has_code: false,
         has_output: false,
+        has_body: false,
         expanded: false,
         failed: false,
         reason: String::new(),

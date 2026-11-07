@@ -34,6 +34,9 @@ pub const KIND_THINKING: i32 = 2;
 
 pub const KIND_CELL: i32 = 3;
 
+/// A custom daemon message: a readable label, an optional body, and the same
+/// open/closed contract as a tool cell. The daemon's `customType` is the
+/// dispatch key, never the visible title.
 pub const KIND_NOTICE: i32 = 5;
 
 /// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
@@ -63,6 +66,9 @@ pub struct Row {
     pub output: String,
     pub has_code: bool,
     pub has_output: bool,
+    /// A custom message has content to show under its label. Tool cells use
+    /// `has_output` for their result; this is the custom-row equivalent.
+    pub has_body: bool,
     pub expanded: bool,
     pub failed: bool,
     pub reason: String,
@@ -110,6 +116,7 @@ impl Row {
             output: String::new(),
             has_code: false,
             has_output: false,
+            has_body: false,
             expanded: false,
             failed: false,
             reason: String::new(),
@@ -118,6 +125,124 @@ impl Row {
             message: String::new(),
         }
     }
+}
+
+/// The text a custom message carries. Custom messages are usually a string,
+/// but injected prompts may carry content blocks; the text blocks are the
+/// readable ones, and images are handled by their own row in ordinary prose.
+fn custom_message_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The command name attached to a session slash-command row.
+fn custom_slash_name<'a>(details: &'a Value) -> Option<&'a str> {
+    details.pointer("/command/name").and_then(Value::as_str)
+}
+
+/// A custom message's readable label. Raw daemon type names are a developer
+/// vocabulary, not transcript copy.
+fn custom_message_label(custom_type: &str, body: &str, details: &Value) -> String {
+    match custom_type {
+        "session_slash_command" => {
+            if body.trim().is_empty() {
+                "Command".to_string()
+            } else {
+                body.trim().lines().next().unwrap_or("Command").to_string()
+            }
+        }
+        "session_slash_command_result" => match custom_slash_name(details) {
+            Some("compact") => "Compaction".to_string(),
+            Some("refine") => "Refinement".to_string(),
+            Some("goal") => "Goal".to_string(),
+            Some("autonomous") => "Autonomous mode".to_string(),
+            _ => "Command result".to_string(),
+        },
+        "agent_message" => "Agent message".to_string(),
+        "async_bash_completion" => "Background shell command finished".to_string(),
+        "rlm_child_terminal_notice" => "Subagent finished".to_string(),
+        "rlm_child_failure" => "Subagent failed".to_string(),
+        "compaction_outcome" => "Compaction".to_string(),
+        "refinement_outcome" => "Refinement".to_string(),
+        "provider_retry_outcome" => "Provider retry".to_string(),
+        "model_prompt_error" => "Model prompt error".to_string(),
+        "heartbeat_prompt" => "Heartbeat".to_string(),
+        "goal_context" => "Goal context".to_string(),
+        "ipython_state_restored" => "Python state restored".to_string(),
+        "python_skills_unavailable" => "Python skills unavailable".to_string(),
+        "autonomous_status" => "Autonomous mode".to_string(),
+        "session_renamed" => "Session renamed".to_string(),
+        "factory_progress_notice" => "Factory progress".to_string(),
+        "mcp_connection_outcome" => "MCP connection".to_string(),
+        other => humanize_type(other),
+    }
+}
+
+/// A fallback for a custom type the viewer does not know yet. It keeps the
+/// message readable instead of making the raw wire name the headline.
+fn humanize_type(custom_type: &str) -> String {
+    let text = custom_type.replace('_', " ").replace('-', " ");
+    let mut words = text.split_whitespace();
+    let Some(first) = words.next() else {
+        return "Custom message".to_string();
+    };
+    let mut chars = first.chars();
+    let initial = chars.next().unwrap_or('C');
+    let mut label: String = initial.to_uppercase().collect();
+    label.push_str(chars.as_str());
+    for word in words {
+        label.push(' ');
+        label.push_str(word);
+    }
+    label
+}
+
+/// Whether a custom row is an error or failed operation.
+fn custom_message_failed(custom_type: &str, details: &Value) -> bool {
+    match custom_type {
+        "session_slash_command_result" | "provider_retry_outcome" => {
+            details.get("success").and_then(Value::as_bool) == Some(false)
+        }
+        "model_prompt_error" | "rlm_child_failure" | "python_skills_unavailable" => true,
+        "compaction_outcome" => matches!(
+            details.get("outcome").and_then(Value::as_str),
+            Some("failed" | "cancelled")
+        ),
+        _ => false,
+    }
+}
+
+/// Short results open themselves; a long agent message starts closed so it
+/// does not take the whole sheet before the reader asks for it.
+fn custom_message_is_short(body: &str) -> bool {
+    let body = body.trim();
+    body.lines().count() <= 4 && body.chars().count() <= 320
+}
+
+/// One daemon custom message -> one notice row. The row carries the body the
+/// old title-only notice dropped, and it can open and close like a cell.
+fn custom_message_row(
+    custom_type: &str,
+    body: &str,
+    details: &Value,
+    theme: &Resolved,
+) -> Row {
+    let mut row = Row::new(KIND_NOTICE);
+    row.title = custom_message_label(custom_type, body, details);
+    row.failed = custom_message_failed(custom_type, details);
+    row.has_body = custom_type != "session_slash_command" && !body.trim().is_empty();
+    if row.has_body {
+        row.body = markdown_markup(body, theme);
+        row.expanded = custom_message_is_short(body);
+    }
+    row
 }
 
 /// One message -> its rows. `owner` is stamped on every row so a rebuild can
@@ -132,19 +257,18 @@ fn build_message(
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
-    if message.get("customType").is_some() {
-        let text = message.get("content").and_then(Value::as_str).unwrap_or_default();
-        let mut row = Row::new(KIND_NOTICE);
-        row.body = plain_markup(text);
-        row.title = message
-            .get("customType")
-            .and_then(Value::as_str)
-            .unwrap_or("notice")
-            .to_string();
-        rows.push(row);
-        for row in &mut rows {
-            row.message = owner.to_string();
+    if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
+        // The wire carries internal bookkeeping rows (kernel state, harness
+        // digests, model-facing refinement notices). They are deliberately
+        // not transcript material.
+        if message.get("display").and_then(Value::as_bool) == Some(false) {
+            return rows;
         }
+        let body = custom_message_text(message);
+        let details = message.get("details").unwrap_or(&Value::Null);
+        let mut row = custom_message_row(custom_type, &body, details, theme);
+        row.message = owner.to_string();
+        rows.push(row);
         return rows;
     }
 

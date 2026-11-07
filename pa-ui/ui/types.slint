@@ -12,7 +12,7 @@ export global Type {
 }
 
 export struct TRow {
-    kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 notice
+    kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 custom notice
     title: string,
     meta: string,
     body: styled-text,
@@ -20,6 +20,7 @@ export struct TRow {
     output: styled-text,
     has-code: bool,
     has-output: bool,
+    has-body: bool,
     expanded: bool,
     failed: bool,
     reason: string,

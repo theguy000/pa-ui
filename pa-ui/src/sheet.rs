@@ -139,7 +139,25 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
-        5 => 28.0,
+        5 => {
+            if !row.expanded || !row.has_body {
+                30.0
+            } else {
+                let body = transcript::plain(&row.body);
+                let lines = body
+                    .lines()
+                    .map(|line| {
+                        if line.trim().is_empty() {
+                            1
+                        } else {
+                            (line.chars().count() / 80) + 1
+                        }
+                    })
+                    .sum::<usize>()
+                    .max(1);
+                60.0 + (lines as f32 * 19.0)
+            }
+        }
         9 => {
             // The error text box is 118px narrower than prose, and the row
             // carries markup; estimate from the plain words at that width.
@@ -1266,6 +1284,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         output: transcript::styled(&row.output),
         has_code: row.has_code,
         has_output: row.has_output,
+        has_body: row.has_body,
         expanded: row.expanded,
         failed: row.failed,
         reason: transcript::plain(&row.reason).into(),
