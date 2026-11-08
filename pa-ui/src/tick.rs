@@ -1681,6 +1681,7 @@ mod status_strip_tests {
         h.run();
         assert!(sheet_text(&h).contains("the old session"));
 
+        h.ui.set_follow_bottom(false);
         h.ui.set_selected_id("a".into());
         h.run();
         assert!(
