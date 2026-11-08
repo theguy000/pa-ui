@@ -104,6 +104,14 @@ fn count_i32(count: usize) -> i32 {
     i32::try_from(count).unwrap_or(i32::MAX)
 }
 
+/// A reply belongs on screen only while the window is still showing its
+/// session. An empty selection is the startup state, before the roster picks
+/// one; tests and the first attach still need that reply.
+fn session_is_current(ui: &AppWindow, session: &str) -> bool {
+    let selected = ui.get_selected_id();
+    selected.is_empty() || selected.as_str() == session
+}
+
 impl Tick {
     fn request_older(&self, ui: &AppWindow) {
         let session = ui.get_selected_id().to_string();
@@ -279,6 +287,7 @@ impl Tick {
             l.loaded = Some(selected.clone());
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
+            sheet.replace(Vec::new());
             reset_activity(&ui);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
@@ -415,6 +424,9 @@ impl Tick {
                     skipped,
                     messages,
                 } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     let _ = jobs.send(Job::Commands {
                         session: session.clone(),
                     });
@@ -462,6 +474,9 @@ impl Tick {
                     more,
                     fresh,
                 } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     let follow = ui.get_follow_bottom() && !ui.get_scrollbar_dragging();
                     if crate::env_cfg::cfg().debug {
                         eprintln!(
@@ -532,12 +547,15 @@ impl Tick {
                     }
                 }
                 Msg::Older {
+                    session,
                     rows,
                     messages,
                     first_entry,
                     more,
-                    ..
                 } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     ui.set_loading_older(false);
                     let before_y = ui.get_dbg_cy();
                     let older_len = rows.len();
@@ -564,6 +582,9 @@ impl Tick {
                     }
                 }
                 Msg::Event { session, event } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     if let Some(sequence) = event
                         .pointer("/meta/sequence")
                         .and_then(serde_json::Value::as_u64)
@@ -809,6 +830,9 @@ impl Tick {
                     models.set_catalog(&ui, entries);
                 }
                 Msg::Stats { session, stats } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     let fill = if stats.context_window > 0 {
                         (stats.context_tokens as f64 / stats.context_window as f64) as f32
                     } else {
@@ -1551,6 +1575,10 @@ mod status_strip_tests {
         a_session_close_is_an_error_row_and_stops_the_turn();
         a_session_close_for_another_session_is_retained();
         the_activity_readout_is_selected_session_owned();
+        a_transcript_from_another_session_cannot_replace_the_sheet();
+        a_tail_from_another_session_cannot_replace_the_sheet();
+        an_older_page_from_another_session_cannot_enter_the_sheet();
+        switching_sessions_clears_the_previous_sheet();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1604,4 +1632,155 @@ mod status_strip_tests {
         h.run();
         assert_eq!(h.ui.get_activity_subagents(), 2);
     }
+
+    fn rows_for(text: &str) -> Vec<transcript::Row> {
+        transcript::build(
+            &[serde_json::json!({
+                "role": "user",
+                "content": [{"type": "text", "text": text}],
+                "timestamp": 1 + text.len() as u64
+            })],
+            1,
+        )
+        .0
+    }
+
+    fn sheet_text(h: &Harness) -> String {
+        h.tick
+            .sheet
+            .rows()
+            .iter()
+            .map(|row| transcript::plain(&row.body))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn messages_for(text: &str) -> Vec<serde_json::Value> {
+        vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+            "timestamp": 1 + text.len() as u64
+        })]
+    }
+
+    fn switching_sessions_clears_the_previous_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the old session"),
+                skipped: 0,
+                messages: messages_for("the old session"),
+            },
+        );
+        h.run();
+        assert!(sheet_text(&h).contains("the old session"));
+
+        h.ui.set_selected_id("a".into());
+        h.run();
+        assert!(
+            h.tick.sheet.rows().is_empty(),
+            "a new selection must not keep painting the old session"
+        );
+    }
+
+    fn a_transcript_from_another_session_cannot_replace_the_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the selected session"),
+                skipped: 0,
+                messages: messages_for("the selected session"),
+            },
+        );
+        h.run();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "a".to_string(),
+                rows: rows_for("a different session"),
+                skipped: 0,
+                messages: messages_for("a different session"),
+            },
+        );
+        h.run();
+        let text = sheet_text(&h);
+        assert!(text.contains("the selected session"), "{text}");
+        assert!(!text.contains("a different session"), "{text}");
+    }
+
+    fn a_tail_from_another_session_cannot_replace_the_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the selected session"),
+                skipped: 0,
+                messages: messages_for("the selected session"),
+            },
+        );
+        h.run();
+        h.send_at(
+            generation,
+            Msg::Tail {
+                session: "a".to_string(),
+                rows: rows_for("a different session"),
+                skipped: 0,
+                messages: messages_for("a different session"),
+                last_entry: "a1".to_string(),
+                first_entry: "a1".to_string(),
+                more: false,
+                fresh: true,
+            },
+        );
+        h.run();
+        let text = sheet_text(&h);
+        assert!(text.contains("the selected session"), "{text}");
+        assert!(!text.contains("a different session"), "{text}");
+    }
+
+    fn an_older_page_from_another_session_cannot_enter_the_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the selected session"),
+                skipped: 0,
+                messages: messages_for("the selected session"),
+            },
+        );
+        h.run();
+        h.send_at(
+            generation,
+            Msg::Older {
+                session: "a".to_string(),
+                rows: rows_for("a different session"),
+                messages: messages_for("a different session"),
+                first_entry: "a1".to_string(),
+                more: false,
+            },
+        );
+        h.run();
+        let text = sheet_text(&h);
+        assert!(text.contains("the selected session"), "{text}");
+        assert!(!text.contains("a different session"), "{text}");
+    }
+
 }
