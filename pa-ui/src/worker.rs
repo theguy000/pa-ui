@@ -218,6 +218,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // prompts awaiting a daemon verdict: a fire-and-forget send would otherwise
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
+    let mut pending_renames: Vec<(String, String)> = Vec::new();
     let mut resume: Option<(String, u64)> = None;
     // the outage line is already on the status strip for this stretch of failure
     let mut offline = false;
@@ -270,10 +271,16 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         while let Ok(job) = jobs.try_recv() {
             match job {
                 Job::Rename { session, name } => {
-                    let _ = active.send(
+                    match active.send(
                         "rename",
                         serde_json::json!({"activeSessionId": session, "name": name}),
-                    );
+                    ) {
+                        Ok(id) => pending_renames.push((id, session)),
+                        Err(error) => out.send(Msg::Error {
+                            session: Some(session),
+                            message: error.to_string(),
+                        }),
+                    }
                     last_list = SystemTime::now() - Duration::from_secs(60);
                 }
                 Job::RenameSaved { session_path, name } => {
@@ -791,6 +798,20 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 .unwrap_or("rejected by the daemon");
                             out.send(Msg::PromptRejected { session: None, text });
                             out.send(Msg::Error { session: None, message: reason.to_string() });
+                        }
+                    } else if let Some(position) =
+                        pending_renames.iter().position(|(open, _)| open == id)
+                    {
+                        let (_, session) = pending_renames.remove(position);
+                        if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                            let reason = frame
+                                .get("error")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("rename rejected by the daemon");
+                            out.send(Msg::Error {
+                                session: Some(session),
+                                message: reason.to_string(),
+                            });
                         }
                     }
                     continue;
