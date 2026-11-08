@@ -5,6 +5,8 @@
 //!   {role:"assistant", content:[{type:"thinking"|"text"|"toolCall", ...}]}
 //!   {role:"toolResult", toolCallId, toolName, content:[{text}]}
 //!   {customType, content, display}
+//!   {role:"compactionSummary", summary, tokensBefore, retainedMessageCount, ...}
+//!   {role:"branchSummary", summary, fromId}
 
 
 use serde_json::Value;
@@ -303,47 +305,45 @@ fn custom_message_row(
     row.title = meta.label;
     row.meta = meta.meta;
     row.failed = meta.failed;
-    row.has_body = meta.has_body;
-    if row.has_body {
-        row.body = markdown_markup(body, theme);
-        row.expanded = true;
+    if meta.has_body {
+        set_body(&mut row, body, theme);
     }
     row
 }
 
-fn summary_meta(parts: impl IntoIterator<Item = String>) -> String {
-    parts
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" \u{00b7} ")
+/// Opens a body-first row: the body is visible when it has words, and the
+/// header toggles it closed.
+fn set_body(row: &mut Row, body: &str, theme: &Resolved) {
+    row.has_body = !body.trim().is_empty();
+    if row.has_body {
+        row.body = markdown_markup(body, theme);
+        row.expanded = true;
+    }
 }
 
-/// A summary role is a first-class transcript event, not a custom message.
-/// Compaction summaries are emitted before the retained messages; branch
-/// summaries stay where the conversation returned from the branch.
-fn summary_row(message: &Value, theme: &Resolved) -> Option<Row> {
-    let role = message.get("role").and_then(Value::as_str)?;
+/// A summary role is a summary row, not a custom message. Compaction summaries
+/// are emitted before the retained messages; branch summaries stay where the
+/// conversation returned from the branch.
+fn summary_row(message: &Value, role: &str, theme: &Resolved) -> Option<Row> {
     let summary = message.get("summary").and_then(Value::as_str).unwrap_or_default();
     let mut row = Row::new(KIND_SUMMARY);
     match role {
         "compactionSummary" => {
             row.title = "Context compacted".to_string();
-            let tokens = message
-                .get("tokensBefore")
-                .or_else(|| message.get("tokens_before"))
-                .and_then(Value::as_u64);
+            let tokens = message.get("tokensBefore").and_then(Value::as_u64);
             let retained = message
                 .get("retainedMessageCount")
-                .or_else(|| message.get("retained_message_count"))
                 .and_then(Value::as_u64);
-            row.meta = summary_meta([
+            row.meta = [
                 tokens.map_or_else(String::new, |value| format!("{value} tokens before")),
                 retained.map_or_else(String::new, |value| format!("{value} retained")),
-            ]);
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" \u{00b7} ");
             let focus = message
                 .get("customInstructions")
-                .or_else(|| message.get("custom_instructions"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .trim();
@@ -352,29 +352,17 @@ fn summary_row(message: &Value, theme: &Resolved) -> Option<Row> {
             } else {
                 format!("**Focus:** {focus}\n\n{summary}")
             };
-            row.has_body = !body.trim().is_empty();
-            if row.has_body {
-                row.body = markdown_markup(&body, theme);
-                row.expanded = true;
-            }
+            set_body(&mut row, &body, theme);
         }
         "branchSummary" => {
             row.title = "Branch summary".to_string();
-            let from = message
-                .get("fromId")
-                .or_else(|| message.get("from_id"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let from = message.get("fromId").and_then(Value::as_str).unwrap_or_default();
             row.meta = if from.is_empty() {
                 String::new()
             } else {
                 format!("from {from}")
             };
-            row.has_body = !summary.trim().is_empty();
-            if row.has_body {
-                row.body = markdown_markup(summary, theme);
-                row.expanded = true;
-            }
+            set_body(&mut row, summary, theme);
         }
         _ => return None,
     }
@@ -393,7 +381,7 @@ fn build_message(
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
-    if let Some(mut row) = summary_row(message, theme) {
+    if let Some(mut row) = summary_row(message, role, theme) {
         row.message = owner.to_string();
         return vec![row];
     }
