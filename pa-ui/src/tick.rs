@@ -448,6 +448,7 @@ impl Tick {
                         built.extend(transcript::markdown_demo_rows());
                     }
                     sheet.replace(built);
+                    sheet::force_scroll_to_end(&ui);
                     self.restore_errors(&session);
                     self.restore_rejection(&ui, sheet, &session);
                     sheet::dump(&sheet.rows());
@@ -463,7 +464,6 @@ impl Tick {
                         session: session.clone(),
                         fresh: true,
                     });
-                    scroll_to_end_when_ready(&ui.as_weak());
                 }
                 Msg::Tail {
                     session,
@@ -1580,6 +1580,7 @@ mod status_strip_tests {
         a_tail_from_another_session_cannot_replace_the_sheet();
         an_older_page_from_another_session_cannot_enter_the_sheet();
         switching_sessions_clears_the_previous_sheet();
+        attaching_a_session_resumes_follow_bottom();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1691,6 +1692,28 @@ mod status_strip_tests {
         assert!(
             h.ui.get_follow_bottom(),
             "a new selection must resume following the newest row"
+        );
+    }
+
+    fn attaching_a_session_resumes_follow_bottom() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        h.ui.set_follow_bottom(false);
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the selected session"),
+                skipped: 0,
+                messages: messages_for("the selected session"),
+            },
+        );
+        h.run();
+        assert!(
+            h.ui.get_follow_bottom(),
+            "attaching a session must show its newest row"
         );
     }
 
