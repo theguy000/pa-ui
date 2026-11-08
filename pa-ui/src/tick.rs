@@ -600,6 +600,14 @@ impl Tick {
                     }
 
                     let kind = event.get("type").and_then(serde_json::Value::as_str);
+                    if kind == Some("message_start")
+                        && event
+                            .pointer("/message/role")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("user")
+                    {
+                        sheet::force_scroll_to_end(&ui);
+                    }
                     if kind == Some("session_action_update") {
                         let lane = |name: &str| -> Vec<String> {
                             event
@@ -1581,6 +1589,7 @@ mod status_strip_tests {
         an_older_page_from_another_session_cannot_enter_the_sheet();
         switching_sessions_clears_the_previous_sheet();
         attaching_a_session_resumes_follow_bottom();
+        a_new_user_prompt_brings_the_transcript_to_the_floor();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1714,6 +1723,28 @@ mod status_strip_tests {
         assert!(
             h.ui.get_follow_bottom(),
             "attaching a session must show its newest row"
+        );
+    }
+
+    fn a_new_user_prompt_brings_the_transcript_to_the_floor() {
+        let h = Harness::new();
+        h.ui.set_follow_bottom(false);
+        h.send(
+            Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "a new prompt"}]
+                    }
+                }),
+            },
+        );
+        h.run();
+        assert!(
+            h.ui.get_follow_bottom(),
+            "a new user prompt must bring the newest row into view"
         );
     }
 
