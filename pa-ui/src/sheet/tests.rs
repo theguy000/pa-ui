@@ -32,6 +32,7 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
             last_prepend_px: 0.0,
             index: std::collections::HashMap::new(),
             open: None,
+            after_open_end: None,
             virtual_state: None,
             drawn: Box::new(Recording(orders.clone())),
         }),

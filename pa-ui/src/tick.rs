@@ -1613,6 +1613,7 @@ mod status_strip_tests {
         a_user_prompt_is_drawn_before_its_reply();
         a_steering_prompt_follows_the_open_reply();
         a_custom_message_renders_live_and_reconciles_on_tail();
+        a_second_custom_message_keeps_arrival_order();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -2121,6 +2122,63 @@ mod status_strip_tests {
         assert!(
             r1 < mid && mid < r2,
             "expected first_reply ({r1}) < agent_message ({mid}) < second_reply ({r2})"
+        );
+    }
+
+    fn a_second_custom_message_keeps_arrival_order() {
+        let h = Harness::new();
+        let reply = serde_json::json!({
+            "id": "a1",
+            "role": "assistant",
+            "timestamp": 100,
+            "content": [{"type": "text", "text": "reply"}]
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "a1", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": reply,
+                "assistantMessageEvent": {"type": "text_delta", "delta": "reply"}
+            }),
+        });
+        h.run();
+        for (body, stamp) in [("first check-in", 101), ("second check-in", 102)] {
+            h.send(Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "role": "custom",
+                        "customType": "agent_message",
+                        "content": body,
+                        "display": true,
+                        "details": {"id": format!("agentmsg_{stamp}")},
+                        "timestamp": stamp
+                    }
+                }),
+            });
+            h.run();
+        }
+        let rows = h.tick.sheet.rows();
+        let first = rows
+            .iter()
+            .position(|row| row.body.contains("first check-in"))
+            .expect("first custom row");
+        let second = rows
+            .iter()
+            .position(|row| row.body.contains("second check-in"))
+            .expect("second custom row");
+        assert!(
+            first < second,
+            "after-open customs keep arrival order: first={first}, second={second}"
         );
     }
 

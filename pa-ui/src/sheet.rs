@@ -508,6 +508,11 @@ struct Inner {
     last_prepend_px: f32,
     index: std::collections::HashMap<String, std::ops::Range<usize>>,
     open: Option<String>,
+    /// Where the next row that must follow the open answer lands. The open
+    /// range itself never grows when a row is placed after it, so without this
+    /// cursor every later row would land at the same boundary and reverse the
+    /// arrival order.
+    after_open_end: Option<usize>,
     drawn: Box<dyn Redraw>,
     virtual_state: Option<Rc<RefCell<VirtualSlintRows>>>,
 }
@@ -530,6 +535,7 @@ impl Sheet {
                 last_prepend_px: 0.0,
                 index: std::collections::HashMap::new(),
                 open: None,
+                after_open_end: None,
                 drawn: Box::new(SharedVirtualAdapter(vstate.clone())),
                 virtual_state: Some(vstate.clone()),
             }),
@@ -835,6 +841,7 @@ impl Sheet {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
             inner.open = None;
+            inner.after_open_end = None;
             inner.last_prepend_px = 0.0;
             inner.index = reindex(&rows);
             if let Some(vs_rc) = &inner.virtual_state {
@@ -976,12 +983,16 @@ impl Sheet {
 
     pub fn answer_began(&self, key: &str) {
         if !key.is_empty() {
-            self.inner.borrow_mut().open = Some(key.to_string());
+            let mut inner = self.inner.borrow_mut();
+            inner.open = Some(key.to_string());
+            inner.after_open_end = None;
         }
     }
 
     pub fn answer_ended(&self) {
-        self.inner.borrow_mut().open = None;
+        let mut inner = self.inner.borrow_mut();
+        inner.open = None;
+        inner.after_open_end = None;
     }
 
     pub fn toggle(&self, at: usize) {
@@ -1168,6 +1179,11 @@ impl Inner {
     fn place_at(&mut self, at: usize, rows: &[Row]) {
         self.insert_rows(at, rows);
         self.shift_from(at, rows.len() as isize);
+        if let Some(cursor) = self.after_open_end {
+            if at <= cursor {
+                self.after_open_end = Some(cursor + rows.len());
+            }
+        }
     }
 
     fn place(&mut self, rows: &[Row]) {
@@ -1188,12 +1204,17 @@ impl Inner {
     /// A row that must not split the open live Message group: it lands after
     /// the group, at the point the reader is already looking.
     fn place_after_open(&mut self, rows: &[Row]) -> usize {
-        let at = self
+        let open_end = self
             .open
             .as_ref()
             .and_then(|key| self.index.get(key))
             .map_or(self.rows.len(), |range| range.end);
+        let at = self
+            .after_open_end
+            .map_or(open_end, |cursor| cursor.max(open_end))
+            .min(self.rows.len());
         self.place_at(at, rows);
+        self.after_open_end = Some(at + rows.len());
         at
     }
 
