@@ -2153,7 +2153,9 @@ mod status_strip_tests {
             }),
         });
         h.run();
-        for (body, stamp) in [("first check-in", 101), ("second check-in", 102)] {
+        for (index, (body, stamp)) in
+            [("first check-in", 101), ("second check-in", 102)].into_iter().enumerate()
+        {
             h.send(Msg::Event {
                 session: "s".to_string(),
                 event: serde_json::json!({
@@ -2169,6 +2171,18 @@ mod status_strip_tests {
                 }),
             });
             h.run();
+            if index == 0 {
+                h.send(Msg::Event {
+                    session: "s".to_string(),
+                    event: serde_json::json!({
+                        "type": "tool_execution_start",
+                        "toolCallId": "call-live",
+                        "toolName": "python_repl",
+                        "args": {"code": "x = 1"}
+                    }),
+                });
+                h.run();
+            }
         }
         let rows = h.tick.sheet.rows();
         let first = rows
@@ -2225,13 +2239,61 @@ mod status_strip_tests {
             });
             h.run();
         }
-        let rows = h.tick.sheet.rows();
+        {
+            let rows = h.tick.sheet.rows();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                    .count(),
+                2,
+                "repeated custom bodies must not collapse into one row"
+            );
+        }
+
+        let messages = vec![
+            serde_json::json!({
+                "id": "a1",
+                "role": "assistant",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "reply"}]
+            }),
+            serde_json::json!({
+                "id": "c1",
+                "role": "custom",
+                "customType": "autonomous_status",
+                "content": "same body",
+                "display": true,
+                "timestamp": "2026-11-08T19:00:01Z"
+            }),
+            serde_json::json!({
+                "id": "c2",
+                "role": "custom",
+                "customType": "autonomous_status",
+                "content": "same body",
+                "display": true,
+                "timestamp": "2026-11-08T19:00:02Z"
+            }),
+        ];
+        let (page, _) = transcript::build(&messages, 10);
+        h.send(Msg::Tail {
+            session: "s".to_string(),
+            rows: page,
+            skipped: 0,
+            messages,
+            last_entry: "c2".to_string(),
+            first_entry: "a1".to_string(),
+            more: false,
+            fresh: true,
+        });
+        h.run();
+        let after = h.tick.sheet.rows();
         assert_eq!(
-            rows.iter()
+            after
+                .iter()
                 .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
                 .count(),
             2,
-            "repeated custom bodies must not collapse into one row"
+            "tail reconciliation must not duplicate repeated custom bodies"
         );
     }
 

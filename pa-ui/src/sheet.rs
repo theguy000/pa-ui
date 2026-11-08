@@ -1319,11 +1319,20 @@ impl Inner {
             self.drawn.set(at, to_slint(row));
         }
         if adjusted.len() > had {
-            self.insert_rows(start + had, &adjusted[had..]);
-            self.shift_from(start + had, (adjusted.len() - had) as isize);
+            let at = start + had;
+            let delta = (adjusted.len() - had) as isize;
+            self.insert_rows(at, &adjusted[had..]);
+            self.shift_from(at, delta);
+            if let Some(cursor) = self.after_open_end {
+                if at <= cursor {
+                    self.after_open_end = Some(cursor.saturating_add_signed(delta));
+                }
+            }
             self.index.insert(key.to_string(), start..start + adjusted.len());
         } else if adjusted.len() < had {
-            for at in (start + adjusted.len()..start + had).rev() {
+            let removed_start = start + adjusted.len();
+            let removed_end = start + had;
+            for at in (removed_start..removed_end).rev() {
                 self.rows.remove(at);
                 if let Some(vs_rc) = &self.virtual_state {
                     if let Ok(mut vs) = vs_rc.try_borrow_mut() {
@@ -1335,7 +1344,15 @@ impl Inner {
                 }
                 self.drawn.remove(at);
             }
-            self.shift_from(start + had, -((had - adjusted.len()) as isize));
+            let removed = (had - adjusted.len()) as isize;
+            self.shift_from(removed_end, -removed);
+            if let Some(cursor) = self.after_open_end {
+                if cursor >= removed_end {
+                    self.after_open_end = Some(cursor.saturating_sub(removed as usize));
+                } else if cursor >= removed_start {
+                    self.after_open_end = Some(removed_start);
+                }
+            }
             self.index.insert(key.to_string(), start..start + adjusted.len());
         }
     }
@@ -1345,7 +1362,10 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
     let mut out: Vec<(String, std::ops::Range<usize>)> = Vec::new();
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (index, row) in rows.iter().enumerate() {
-        if index > 0 && rows[index - 1].message == row.message {
+        if index > 0
+            && rows[index - 1].message == row.message
+            && row.kind != crate::transcript::KIND_CUSTOM_MESSAGE
+        {
             if let Some((_, range)) = out.last_mut() {
                 range.end = index + 1;
                 continue;
