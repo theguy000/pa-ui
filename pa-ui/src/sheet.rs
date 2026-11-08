@@ -969,6 +969,9 @@ impl Sheet {
                 range.start += total;
                 range.end += total;
             }
+            if let Some(cursor) = inner.after_open_end {
+                inner.after_open_end = Some(cursor + total);
+            }
 
             let mut added_px = 0.0f32;
             let mut new_rows = Vec::with_capacity(total);
@@ -1077,6 +1080,9 @@ impl Sheet {
             }
             inner.rows.drain(0..from);
             inner.index = reindex(&inner.rows);
+            if let Some(cursor) = inner.after_open_end {
+                inner.after_open_end = Some(cursor.saturating_sub(from));
+            }
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
