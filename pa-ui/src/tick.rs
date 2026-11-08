@@ -748,6 +748,18 @@ impl Tick {
                         }
                         continue;
                     }
+                    if message.get("customType").is_some() {
+                        if kind == Some("message_start") {
+                            let (rows, _) = transcript::build(std::slice::from_ref(message), 1);
+                            if l.open_live.is_some() {
+                                sheet.merge_after_open(rows);
+                            } else {
+                                sheet.merge(rows);
+                            }
+                            scroll_if_parked(&ui);
+                        }
+                        continue;
+                    }
                     if role != Some("assistant") {
                         continue;
                     }
@@ -1600,6 +1612,7 @@ mod status_strip_tests {
         a_new_user_prompt_brings_the_transcript_to_the_floor();
         a_user_prompt_is_drawn_before_its_reply();
         a_steering_prompt_follows_the_open_reply();
+        a_custom_message_renders_live_and_reconciles_on_tail();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1934,6 +1947,180 @@ mod status_strip_tests {
         assert!(
             reply < steering,
             "a steering prompt follows the reply already on screen"
+        );
+    }
+
+    fn a_custom_message_renders_live_and_reconciles_on_tail() {
+        let h = Harness::new();
+        let pre_custom = serde_json::json!({
+            "role": "custom",
+            "customType": "autonomous_status",
+            "content": "Autonomous mode active",
+            "display": true,
+            "timestamp": 100
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "message_start", "message": pre_custom}),
+        });
+        h.run();
+        assert_eq!(
+            h.tick
+                .sheet
+                .rows()
+                .iter()
+                .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                .count(),
+            1,
+            "a custom message before the reply renders immediately"
+        );
+
+        let reply_1 = serde_json::json!({
+            "id": "a1",
+            "role": "assistant",
+            "timestamp": 101,
+            "content": [{"type": "text", "text": "first reply"}]
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "a1", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": reply_1.clone(),
+                "assistantMessageEvent": {"type": "text_delta", "delta": "first reply"}
+            }),
+        });
+        h.run();
+
+        let agent_msg_live = serde_json::json!({
+            "role": "custom",
+            "customType": "agent_message",
+            "content": "subagent check-in",
+            "display": true,
+            "details": {"id": "agentmsg_1"},
+            "timestamp": 102
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "message_start", "message": agent_msg_live}),
+        });
+        h.run();
+
+        {
+            let live_rows = h.tick.sheet.rows();
+            assert_eq!(
+                live_rows
+                    .iter()
+                    .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                    .count(),
+                2,
+                "the mid-turn agent message renders before the next reply"
+            );
+            let first_live = live_rows
+                .iter()
+                .position(|row| row.kind == transcript::KIND_AGENT && row.body.contains("first reply"))
+                .expect("first reply");
+            let mid_live = live_rows
+                .iter()
+                .position(|row| {
+                    row.kind == transcript::KIND_CUSTOM_MESSAGE
+                        && row.body.contains("subagent check-in")
+                })
+                .expect("live agent message");
+            assert!(
+                first_live < mid_live,
+                "the live agent message lands after the reply already streaming"
+            );
+        }
+
+        let reply_2 = serde_json::json!({
+            "id": "a2",
+            "role": "assistant",
+            "timestamp": 103,
+            "content": [{"type": "text", "text": "second reply"}]
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "a2", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": reply_2.clone(),
+                "assistantMessageEvent": {"type": "text_delta", "delta": "second reply"}
+            }),
+        });
+        h.run();
+
+        let messages = vec![
+            serde_json::json!({
+                "role": "custom",
+                "customType": "autonomous_status",
+                "content": "Autonomous mode active",
+                "display": true,
+                "timestamp": "2026-11-08T19:00:00Z"
+            }),
+            reply_1,
+            serde_json::json!({
+                "role": "custom",
+                "customType": "agent_message",
+                "content": "subagent check-in",
+                "display": true,
+                "details": {"id": "agentmsg_1"},
+                "timestamp": "2026-11-08T19:00:02Z"
+            }),
+            reply_2,
+        ];
+        let (page, _) = transcript::build(&messages, 10);
+        h.send(Msg::Tail {
+            session: "s".to_string(),
+            rows: page,
+            skipped: 0,
+            messages,
+            last_entry: "a2".to_string(),
+            first_entry: "c0".to_string(),
+            more: false,
+            fresh: true,
+        });
+        h.run();
+
+        let rows = h.tick.sheet.rows();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                .count(),
+            2,
+            "tail reconciliation with ISO timestamps must not duplicate custom messages"
+        );
+        let r1 = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_AGENT && row.body.contains("first reply"))
+            .expect("first reply");
+        let mid = rows
+            .iter()
+            .position(|row| {
+                row.kind == transcript::KIND_CUSTOM_MESSAGE && row.body.contains("subagent check-in")
+            })
+            .expect("mid-turn agent message");
+        let r2 = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_AGENT && row.body.contains("second reply"))
+            .expect("second reply");
+        assert!(
+            r1 < mid && mid < r2,
+            "expected first_reply ({r1}) < agent_message ({mid}) < second_reply ({r2})"
         );
     }
 

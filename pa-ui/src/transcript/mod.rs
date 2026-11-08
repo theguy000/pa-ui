@@ -562,6 +562,21 @@ pub fn message_key(message: &Value) -> String {
             return id.to_string();
         }
     }
+    if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
+        if let Some(id) = message
+            .pointer("/details/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        {
+            return format!("custom:{custom_type}:{id}");
+        }
+        let body = custom_message_text(message);
+        return format!(
+            "custom:{custom_type}:{}:{}",
+            body.chars().count(),
+            body.chars().take(40).collect::<String>()
+        );
+    }
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
     let stamp = message
         .get("timestamp")
