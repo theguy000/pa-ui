@@ -81,9 +81,10 @@ pub struct Row {
     pub reason: String,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
-    /// which message this row belongs to: the daemon's id when it has one, a
-    /// role+timestamp key when it does not. Rows are merged per message, so a
-    /// rebuild can replace one message without touching the rest.
+    /// which message this row belongs to: the daemon's id when it has one,
+    /// a custom-message key from its details or content, and a role+timestamp
+    /// key only as the last resort. Rows are merged per message, so a rebuild
+    /// can replace one message without touching the rest.
     pub message: String,
     /// how long the call took, drawn as its own column: a separator dot between
     /// two dim runs reads as a full stop
@@ -553,10 +554,26 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     (rows, start)
 }
 
-/// The daemon's id for a message, or a stable stand-in built from what every
-/// frame carries: role and timestamp.
+/// The daemon's id for a message, or a stable stand-in. Custom rows prefer
+/// their details id, then their content: the two wire paths use different
+/// timestamp shapes, so a timestamp cannot key them together.
 #[must_use]
 pub fn message_key(message: &Value) -> String {
+    if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
+        if let Some(id) = message
+            .pointer("/details/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        {
+            return format!("custom:{custom_type}:{id}");
+        }
+        let body = custom_message_text(message);
+        return format!(
+            "custom:{custom_type}:{}:{}",
+            body.chars().count(),
+            body.chars().take(40).collect::<String>()
+        );
+    }
     if let Some(id) = message.get("id").and_then(Value::as_str) {
         if !id.is_empty() {
             return id.to_string();

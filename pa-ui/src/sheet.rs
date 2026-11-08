@@ -508,6 +508,11 @@ struct Inner {
     last_prepend_px: f32,
     index: std::collections::HashMap<String, std::ops::Range<usize>>,
     open: Option<String>,
+    /// Where the next row that must follow the open answer lands. The open
+    /// range itself never grows when a row is placed after it, so without this
+    /// cursor every later row would land at the same boundary and reverse the
+    /// arrival order.
+    after_open_end: Option<usize>,
     drawn: Box<dyn Redraw>,
     virtual_state: Option<Rc<RefCell<VirtualSlintRows>>>,
 }
@@ -530,6 +535,7 @@ impl Sheet {
                 last_prepend_px: 0.0,
                 index: std::collections::HashMap::new(),
                 open: None,
+                after_open_end: None,
                 drawn: Box::new(SharedVirtualAdapter(vstate.clone())),
                 virtual_state: Some(vstate.clone()),
             }),
@@ -835,6 +841,7 @@ impl Sheet {
         let vstate = {
             let mut inner = self.inner.borrow_mut();
             inner.open = None;
+            inner.after_open_end = None;
             inner.last_prepend_px = 0.0;
             inner.index = reindex(&rows);
             if let Some(vs_rc) = &inner.virtual_state {
@@ -869,6 +876,46 @@ impl Sheet {
                     Some(current) => inner.patch(&key, current, fresh),
                     None => inner.place_keyed(&key, fresh),
                 }
+            }
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
+    /// Merge newly arrived rows after the open live answer, giving a repeated
+    /// fallback key its own row instead of patching the earlier occurrence.
+    pub fn merge_new_after_open(&self, page: Vec<Row>) {
+        if page.is_empty() {
+            return;
+        }
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            for (key, range) in group_by_message(&page) {
+                let fresh = &page[range];
+                let key = inner.next_free_key(&key);
+                inner.place_keyed_after_open(&key, fresh);
+            }
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
+    /// Merge newly arrived rows at the landing point, keeping repeated
+    /// fallback keys as separate rows.
+    pub fn merge_new(&self, page: Vec<Row>) {
+        if page.is_empty() {
+            return;
+        }
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            for (key, range) in group_by_message(&page) {
+                let fresh = &page[range];
+                let key = inner.next_free_key(&key);
+                inner.place_keyed(&key, fresh);
             }
             inner.virtual_state.clone()
         };
@@ -921,6 +968,9 @@ impl Sheet {
             for range in inner.index.values_mut() {
                 range.start += total;
                 range.end += total;
+            }
+            if let Some(cursor) = inner.after_open_end {
+                inner.after_open_end = Some(cursor + total);
             }
 
             let mut added_px = 0.0f32;
@@ -976,12 +1026,16 @@ impl Sheet {
 
     pub fn answer_began(&self, key: &str) {
         if !key.is_empty() {
-            self.inner.borrow_mut().open = Some(key.to_string());
+            let mut inner = self.inner.borrow_mut();
+            inner.open = Some(key.to_string());
+            inner.after_open_end = None;
         }
     }
 
     pub fn answer_ended(&self) {
-        self.inner.borrow_mut().open = None;
+        let mut inner = self.inner.borrow_mut();
+        inner.open = None;
+        inner.after_open_end = None;
     }
 
     pub fn toggle(&self, at: usize) {
@@ -1026,6 +1080,9 @@ impl Sheet {
             }
             inner.rows.drain(0..from);
             inner.index = reindex(&inner.rows);
+            if let Some(cursor) = inner.after_open_end {
+                inner.after_open_end = Some(cursor.saturating_sub(from));
+            }
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
@@ -1168,6 +1225,11 @@ impl Inner {
     fn place_at(&mut self, at: usize, rows: &[Row]) {
         self.insert_rows(at, rows);
         self.shift_from(at, rows.len() as isize);
+        if let Some(cursor) = self.after_open_end {
+            if at <= cursor {
+                self.after_open_end = Some(cursor + rows.len());
+            }
+        }
     }
 
     fn place(&mut self, rows: &[Row]) {
@@ -1180,6 +1242,20 @@ impl Inner {
         self.index.insert(key.to_string(), at..at + rows.len());
     }
 
+    fn next_free_key(&self, key: &str) -> String {
+        if key.is_empty() || !self.index.contains_key(key) {
+            return key.to_string();
+        }
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{key}#{suffix}");
+            if !self.index.contains_key(&candidate) {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
     fn place_keyed_after_open(&mut self, key: &str, rows: &[Row]) {
         let at = self.place_after_open(rows);
         self.index.insert(key.to_string(), at..at + rows.len());
@@ -1188,12 +1264,17 @@ impl Inner {
     /// A row that must not split the open live Message group: it lands after
     /// the group, at the point the reader is already looking.
     fn place_after_open(&mut self, rows: &[Row]) -> usize {
-        let at = self
+        let open_end = self
             .open
             .as_ref()
             .and_then(|key| self.index.get(key))
             .map_or(self.rows.len(), |range| range.end);
+        let at = self
+            .after_open_end
+            .map_or(open_end, |cursor| cursor.max(open_end))
+            .min(self.rows.len());
         self.place_at(at, rows);
+        self.after_open_end = Some(at + rows.len());
         at
     }
 
@@ -1244,11 +1325,20 @@ impl Inner {
             self.drawn.set(at, to_slint(row));
         }
         if adjusted.len() > had {
-            self.insert_rows(start + had, &adjusted[had..]);
-            self.shift_from(start + had, (adjusted.len() - had) as isize);
+            let at = start + had;
+            let delta = (adjusted.len() - had) as isize;
+            self.insert_rows(at, &adjusted[had..]);
+            self.shift_from(at, delta);
+            if let Some(cursor) = self.after_open_end {
+                if at <= cursor {
+                    self.after_open_end = Some(cursor.saturating_add_signed(delta));
+                }
+            }
             self.index.insert(key.to_string(), start..start + adjusted.len());
         } else if adjusted.len() < had {
-            for at in (start + adjusted.len()..start + had).rev() {
+            let removed_start = start + adjusted.len();
+            let removed_end = start + had;
+            for at in (removed_start..removed_end).rev() {
                 self.rows.remove(at);
                 if let Some(vs_rc) = &self.virtual_state {
                     if let Ok(mut vs) = vs_rc.try_borrow_mut() {
@@ -1260,7 +1350,15 @@ impl Inner {
                 }
                 self.drawn.remove(at);
             }
-            self.shift_from(start + had, -((had - adjusted.len()) as isize));
+            let removed = (had - adjusted.len()) as isize;
+            self.shift_from(removed_end, -removed);
+            if let Some(cursor) = self.after_open_end {
+                if cursor >= removed_end {
+                    self.after_open_end = Some(cursor.saturating_sub(removed as usize));
+                } else if cursor >= removed_start {
+                    self.after_open_end = Some(removed_start);
+                }
+            }
             self.index.insert(key.to_string(), start..start + adjusted.len());
         }
     }
@@ -1270,7 +1368,10 @@ fn group_by_message(rows: &[Row]) -> Vec<(String, std::ops::Range<usize>)> {
     let mut out: Vec<(String, std::ops::Range<usize>)> = Vec::new();
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (index, row) in rows.iter().enumerate() {
-        if index > 0 && rows[index - 1].message == row.message {
+        if index > 0
+            && rows[index - 1].message == row.message
+            && row.kind != crate::transcript::KIND_CUSTOM_MESSAGE
+        {
             if let Some((_, range)) = out.last_mut() {
                 range.end = index + 1;
                 continue;
