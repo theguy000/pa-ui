@@ -731,7 +731,6 @@ impl Tick {
                         if kind == Some("message_start") {
                             let (rows, _) = transcript::build(std::slice::from_ref(message), 1);
                             sheet.merge(rows);
-                            sheet::force_scroll_to_end(&ui);
                         }
                         if l.drawn_user.as_deref() != Some(key.as_str()) {
                             l.drawn_user = Some(key);
@@ -1741,7 +1740,7 @@ mod status_strip_tests {
         });
         h.send(Msg::Event {
             session: "s".to_string(),
-            event: serde_json::json!({"type": "message_start", "message": user}),
+            event: serde_json::json!({"type": "message_start", "message": user.clone()}),
         });
         h.run();
         assert_eq!(
@@ -1753,6 +1752,21 @@ mod status_strip_tests {
                 .count(),
             1,
             "the prompt must be in the sheet before the reply"
+        );
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "message_start", "message": user}),
+        });
+        h.run();
+        assert_eq!(
+            h.tick
+                .sheet
+                .rows()
+                .iter()
+                .filter(|row| row.kind == transcript::KIND_USER)
+                .count(),
+            1,
+            "a replayed user message must patch the row, not duplicate it"
         );
 
         let assistant = serde_json::json!({
