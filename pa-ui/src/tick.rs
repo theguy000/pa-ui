@@ -287,6 +287,7 @@ impl Tick {
             l.loaded = Some(selected.clone());
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
+            sheet.replace(Vec::new());
             reset_activity(&ui);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
@@ -1577,6 +1578,7 @@ mod status_strip_tests {
         a_transcript_from_another_session_cannot_replace_the_sheet();
         a_tail_from_another_session_cannot_replace_the_sheet();
         an_older_page_from_another_session_cannot_enter_the_sheet();
+        switching_sessions_clears_the_previous_sheet();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1659,6 +1661,31 @@ mod status_strip_tests {
             "content": [{"type": "text", "text": text}],
             "timestamp": 1 + text.len() as u64
         })]
+    }
+
+    fn switching_sessions_clears_the_previous_sheet() {
+        let h = Harness::new();
+        h.ui.set_selected_id("b".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "b".to_string(),
+                rows: rows_for("the old session"),
+                skipped: 0,
+                messages: messages_for("the old session"),
+            },
+        );
+        h.run();
+        assert!(sheet_text(&h).contains("the old session"));
+
+        h.ui.set_selected_id("a".into());
+        h.run();
+        assert!(
+            h.tick.sheet.rows().is_empty(),
+            "a new selection must not keep painting the old session"
+        );
     }
 
     fn a_transcript_from_another_session_cannot_replace_the_sheet() {
