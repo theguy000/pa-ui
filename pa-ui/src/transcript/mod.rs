@@ -5,6 +5,8 @@
 //!   {role:"assistant", content:[{type:"thinking"|"text"|"toolCall", ...}]}
 //!   {role:"toolResult", toolCallId, toolName, content:[{text}]}
 //!   {customType, content, display}
+//!   {role:"compactionSummary", summary, tokensBefore, retainedMessageCount, ...}
+//!   {role:"branchSummary", summary, fromId}
 
 
 use serde_json::Value;
@@ -38,6 +40,11 @@ pub const KIND_CELL: i32 = 3;
 /// open/closed contract as a tool cell. The daemon's `customType` is the
 /// dispatch key, never the visible title.
 pub const KIND_CUSTOM_MESSAGE: i32 = 5;
+
+/// A compaction or branch summary: the context that explains why the
+/// transcript jumped. It shares the body-first row treatment with a custom
+/// message but has its own kind so the two can be styled apart.
+pub const KIND_SUMMARY: i32 = 10;
 
 /// One generic error line: `⚠ Error: <message>`. It is a transcript row, not a
 /// Status strip state and not a card. The message is collapsed to its first
@@ -298,12 +305,67 @@ fn custom_message_row(
     row.title = meta.label;
     row.meta = meta.meta;
     row.failed = meta.failed;
-    row.has_body = meta.has_body;
+    if meta.has_body {
+        set_body(&mut row, body, theme);
+    }
+    row
+}
+
+/// Body rows start open; the header closes them.
+fn set_body(row: &mut Row, body: &str, theme: &Resolved) {
+    row.has_body = !body.trim().is_empty();
     if row.has_body {
         row.body = markdown_markup(body, theme);
         row.expanded = true;
     }
-    row
+}
+
+/// A summary role is a summary row, not a custom message. Compaction summaries
+/// are emitted before the retained messages; branch summaries stay where the
+/// conversation returned from the branch.
+fn summary_row(message: &Value, role: &str, theme: &Resolved) -> Option<Row> {
+    let summary = message.get("summary").and_then(Value::as_str).unwrap_or_default();
+    let mut row = Row::new(KIND_SUMMARY);
+    match role {
+        "compactionSummary" => {
+            row.title = "Context compacted".to_string();
+            let tokens = message.get("tokensBefore").and_then(Value::as_u64);
+            let retained = message
+                .get("retainedMessageCount")
+                .and_then(Value::as_u64);
+            row.meta = [
+                tokens.map_or_else(String::new, |value| format!("{value} tokens before")),
+                retained.map_or_else(String::new, |value| format!("{value} retained")),
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" \u{00b7} ");
+            let focus = message
+                .get("customInstructions")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let body = if focus.is_empty() {
+                summary.to_string()
+            } else {
+                format!("**Focus:** {focus}\n\n{summary}")
+            };
+            set_body(&mut row, &body, theme);
+        }
+        "branchSummary" => {
+            row.title = "Branch summary".to_string();
+            let from = message.get("fromId").and_then(Value::as_str).unwrap_or_default();
+            row.meta = if from.is_empty() {
+                String::new()
+            } else {
+                format!("from {from}")
+            };
+            set_body(&mut row, summary, theme);
+        }
+        _ => return None,
+    }
+    Some(row)
 }
 
 /// One message -> its rows. `owner` is stamped on every row so a rebuild can
@@ -318,6 +380,10 @@ fn build_message(
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+    if let Some(mut row) = summary_row(message, role, theme) {
+        row.message = owner.to_string();
+        return vec![row];
+    }
     if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
         // The wire carries internal bookkeeping rows (kernel state, harness
         // digests, model-facing refinement notices). They are deliberately

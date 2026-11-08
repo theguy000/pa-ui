@@ -57,8 +57,12 @@ The rows of a transcript as the reader sees them: what is scrolled, paged, opene
 _Avoid_: list, model, view, buffer, pane
 
 **Row**:
-One drawn block of the transcript: prose, a code block, a table, a tool cell, a custom-message row, an image, or an error row. Rows are what the reader opens and closes.
+One drawn block of the transcript: prose, a code block, a table, a tool cell, a custom-message row, a summary row, an image, or an error row. Rows are what the reader opens and closes.
 _Avoid_: entry, line, block, item
+
+**Summary**:
+The row that explains a jump in the conversation: the compaction summary before the retained messages, or the branch summary that says where a return came from. It carries the daemon's summary text and its token or source metadata.
+_Avoid_: summary event, compaction row, branch notice
 
 **Error row**:
 The Row the window adds when an operation fails: one warning mark, an `Error:` label, and one plain message, drawn in the Sheet. It is not a Cell and not a Message.

@@ -139,7 +139,7 @@ fn estimate_row_height(row: &Row) -> f32 {
                 32.0
             }
         }
-        5 => {
+        transcript::KIND_CUSTOM_MESSAGE | transcript::KIND_SUMMARY => {
             if !row.expanded || !row.has_body {
                 34.0
             } else {
