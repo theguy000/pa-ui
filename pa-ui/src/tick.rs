@@ -751,10 +751,15 @@ impl Tick {
                     if message.get("customType").is_some() {
                         if kind == Some("message_start") {
                             let (rows, _) = transcript::build(std::slice::from_ref(message), 1);
-                            if l.open_live.is_some() {
-                                sheet.merge_new_after_open(rows);
-                            } else {
-                                sheet.merge_new(rows);
+                            let replayed = message
+                                .pointer("/details/id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|id| !id.is_empty());
+                            match (l.open_live.is_some(), replayed) {
+                                (true, true) => sheet.merge_after_open(rows),
+                                (true, false) => sheet.merge_new_after_open(rows),
+                                (false, true) => sheet.merge(rows),
+                                (false, false) => sheet.merge_new(rows),
                             }
                             scroll_if_parked(&ui);
                         }
@@ -2039,6 +2044,22 @@ mod status_strip_tests {
             assert!(
                 first_live < mid_live,
                 "the live agent message lands after the reply already streaming"
+            );
+        }
+
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "message_start", "message": agent_msg_live.clone()}),
+        });
+        h.run();
+        {
+            let rows = h.tick.sheet.rows();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                    .count(),
+                2,
+                "a replayed custom message_start patches its row"
             );
         }
 
