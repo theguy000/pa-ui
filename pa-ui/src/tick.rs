@@ -288,6 +288,7 @@ impl Tick {
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
             sheet.replace(Vec::new());
+            sheet::force_scroll_to_end(&ui);
             reset_activity(&ui);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
@@ -1685,6 +1686,10 @@ mod status_strip_tests {
         assert!(
             h.tick.sheet.rows().is_empty(),
             "a new selection must not keep painting the old session"
+        );
+        assert!(
+            h.ui.get_follow_bottom(),
+            "a new selection must resume following the newest row"
         );
     }
 
