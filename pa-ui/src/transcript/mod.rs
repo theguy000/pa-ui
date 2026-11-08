@@ -311,8 +311,7 @@ fn custom_message_row(
     row
 }
 
-/// Opens a body-first row: the body is visible when it has words, and the
-/// header toggles it closed.
+/// Body rows start open; the header closes them.
 fn set_body(row: &mut Row, body: &str, theme: &Resolved) {
     row.has_body = !body.trim().is_empty();
     if row.has_body {

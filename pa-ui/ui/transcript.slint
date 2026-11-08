@@ -499,9 +499,8 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    // A custom daemon message or a compaction/branch summary: a readable
-    // label and the body the old title-only notice dropped. The body opens by
-    // default; the header toggles it closed.
+    // Both are a label plus a payload; the summary title is the only styling
+    // difference.
     if data.kind == 5 || is-summary : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
