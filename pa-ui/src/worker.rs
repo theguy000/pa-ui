@@ -88,6 +88,7 @@ pub(crate) enum Msg {
     },
     /// an older page, to be put above what is already shown
     Older {
+        session: String,
         rows: Vec<crate::transcript::Row>,
         messages: Vec<serde_json::Value>,
         first_entry: String,
@@ -668,6 +669,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         Ok(page) => {
                             let rows = crate::transcript::build(&page.messages, page.messages.len()).0;
                             out.send(Msg::Older {
+                                session: session.clone(),
                                 rows,
                                 messages: page.messages,
                                 first_entry: page.first_entry,
@@ -681,6 +683,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             // the reader must not be left waiting on a page that
                             // will never arrive
                             out.send(Msg::Older {
+                                session: session.clone(),
                                 rows: Vec::new(),
                                 messages: Vec::new(),
                                 first_entry: String::new(),
@@ -948,6 +951,7 @@ mod tests {
         assert!(tail().is_session_scoped());
         assert!(Msg::Transcript { session: String::new(), rows: Vec::new(), skipped: 0, messages: Vec::new() }.is_session_scoped());
         assert!(Msg::Older {
+            session: String::new(),
             rows: Vec::new(),
             messages: Vec::new(),
             first_entry: String::new(),
