@@ -877,6 +877,32 @@ impl Sheet {
         }
     }
 
+    /// Merge a user prompt after the open live answer, for a steering message that
+    /// starts while the assistant is still streaming.
+    pub fn merge_after_open(&self, page: Vec<Row>) {
+        if page.is_empty() {
+            return;
+        }
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            for (key, range) in group_by_message(&page) {
+                let fresh = &page[range];
+                if key.is_empty() {
+                    inner.place_after_open(fresh);
+                    continue;
+                }
+                match inner.index.get(&key).cloned() {
+                    Some(current) => inner.patch(&key, current, fresh),
+                    None => inner.place_keyed_after_open(&key, fresh),
+                }
+            }
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
     pub fn prepend(&self, page: Vec<Row>) {
         if page.is_empty() {
             return;
@@ -1154,15 +1180,21 @@ impl Inner {
         self.index.insert(key.to_string(), at..at + rows.len());
     }
 
-    /// An error row follows the open live Message group, so the group stays
-    /// contiguous while the error lands at the point the reader saw it.
-    fn place_after_open(&mut self, rows: &[Row]) {
+    fn place_keyed_after_open(&mut self, key: &str, rows: &[Row]) {
+        let at = self.place_after_open(rows);
+        self.index.insert(key.to_string(), at..at + rows.len());
+    }
+
+    /// A row that must not split the open live Message group: it lands after
+    /// the group, at the point the reader is already looking.
+    fn place_after_open(&mut self, rows: &[Row]) -> usize {
         let at = self
             .open
             .as_ref()
             .and_then(|key| self.index.get(key))
             .map_or(self.rows.len(), |range| range.end);
         self.place_at(at, rows);
+        at
     }
 
     fn shift_from(&mut self, at: usize, delta: isize) {
