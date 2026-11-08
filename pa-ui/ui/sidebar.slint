@@ -154,14 +154,15 @@ export component SessionRow inherits Rectangle {
 
     if root.editing : input := TextInput {
         x: root.item.done ? 36px : 20px;
-        text: root.draft;
-        y: (parent.height - self.height) / 2;
+        text <=> root.draft;
+        y: 0;
         width: parent.width - self.x - 9px - 22px;
+        height: parent.height;
+        vertical-alignment: center;
         color: Theme.sidebar-name-ink-editing;
         font-size: Type.item;
         single-line: true;
-        edited => { root.draft = self.text; }
-        accepted => { root.commit(root.item.id, root.draft); }
+        accepted => { root.commit(root.item.id, self.text); }
         key-pressed(event) => {
             if event.text == Key.Escape {
                 root.commit(root.item.id, root.item.full);
