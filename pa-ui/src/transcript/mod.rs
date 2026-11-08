@@ -557,11 +557,6 @@ pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
 /// frame carries: role and timestamp.
 #[must_use]
 pub fn message_key(message: &Value) -> String {
-    if let Some(id) = message.get("id").and_then(Value::as_str) {
-        if !id.is_empty() {
-            return id.to_string();
-        }
-    }
     if let Some(custom_type) = message.get("customType").and_then(Value::as_str) {
         if let Some(id) = message
             .pointer("/details/id")
@@ -576,6 +571,11 @@ pub fn message_key(message: &Value) -> String {
             body.chars().count(),
             body.chars().take(40).collect::<String>()
         );
+    }
+    if let Some(id) = message.get("id").and_then(Value::as_str) {
+        if !id.is_empty() {
+            return id.to_string();
+        }
     }
     let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
     let stamp = message

@@ -884,6 +884,46 @@ impl Sheet {
         }
     }
 
+    /// Merge newly arrived rows after the open live answer, giving a repeated
+    /// fallback key its own row instead of patching the earlier occurrence.
+    pub fn merge_new_after_open(&self, page: Vec<Row>) {
+        if page.is_empty() {
+            return;
+        }
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            for (key, range) in group_by_message(&page) {
+                let fresh = &page[range];
+                let key = inner.next_free_key(&key);
+                inner.place_keyed_after_open(&key, fresh);
+            }
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
+    /// Merge newly arrived rows at the landing point, keeping repeated
+    /// fallback keys as separate rows.
+    pub fn merge_new(&self, page: Vec<Row>) {
+        if page.is_empty() {
+            return;
+        }
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            for (key, range) in group_by_message(&page) {
+                let fresh = &page[range];
+                let key = inner.next_free_key(&key);
+                inner.place_keyed(&key, fresh);
+            }
+            inner.virtual_state.clone()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
+    }
+
     /// Merge a user prompt after the open live answer, for a steering message that
     /// starts while the assistant is still streaming.
     pub fn merge_after_open(&self, page: Vec<Row>) {
@@ -1194,6 +1234,20 @@ impl Inner {
         let at = self.landing();
         self.place_at(at, rows);
         self.index.insert(key.to_string(), at..at + rows.len());
+    }
+
+    fn next_free_key(&self, key: &str) -> String {
+        if key.is_empty() || !self.index.contains_key(key) {
+            return key.to_string();
+        }
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{key}#{suffix}");
+            if !self.index.contains_key(&candidate) {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     fn place_keyed_after_open(&mut self, key: &str, rows: &[Row]) {

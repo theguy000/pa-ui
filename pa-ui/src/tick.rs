@@ -752,9 +752,9 @@ impl Tick {
                         if kind == Some("message_start") {
                             let (rows, _) = transcript::build(std::slice::from_ref(message), 1);
                             if l.open_live.is_some() {
-                                sheet.merge_after_open(rows);
+                                sheet.merge_new_after_open(rows);
                             } else {
-                                sheet.merge(rows);
+                                sheet.merge_new(rows);
                             }
                             scroll_if_parked(&ui);
                         }
@@ -1614,6 +1614,7 @@ mod status_strip_tests {
         a_steering_prompt_follows_the_open_reply();
         a_custom_message_renders_live_and_reconciles_on_tail();
         a_second_custom_message_keeps_arrival_order();
+        a_repeated_custom_body_gets_its_own_row();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -2067,6 +2068,7 @@ mod status_strip_tests {
 
         let messages = vec![
             serde_json::json!({
+                "id": "c1",
                 "role": "custom",
                 "customType": "autonomous_status",
                 "content": "Autonomous mode active",
@@ -2075,6 +2077,7 @@ mod status_strip_tests {
             }),
             reply_1,
             serde_json::json!({
+                "id": "c2",
                 "role": "custom",
                 "customType": "agent_message",
                 "content": "subagent check-in",
@@ -2179,6 +2182,56 @@ mod status_strip_tests {
         assert!(
             first < second,
             "after-open customs keep arrival order: first={first}, second={second}"
+        );
+    }
+
+    fn a_repeated_custom_body_gets_its_own_row() {
+        let h = Harness::new();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "a1", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": {
+                    "id": "a1",
+                    "role": "assistant",
+                    "timestamp": 100,
+                    "content": [{"type": "text", "text": "reply"}]
+                },
+                "assistantMessageEvent": {"type": "text_delta", "delta": "reply"}
+            }),
+        });
+        h.run();
+        for stamp in [101, 102] {
+            h.send(Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "role": "custom",
+                        "customType": "autonomous_status",
+                        "content": "same body",
+                        "display": true,
+                        "timestamp": stamp
+                    }
+                }),
+            });
+            h.run();
+        }
+        let rows = h.tick.sheet.rows();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == transcript::KIND_CUSTOM_MESSAGE)
+                .count(),
+            2,
+            "repeated custom bodies must not collapse into one row"
         );
     }
 
