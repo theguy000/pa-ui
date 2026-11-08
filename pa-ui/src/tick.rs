@@ -728,6 +728,11 @@ impl Tick {
                             text.chars().count(),
                             text.chars().take(40).collect::<String>()
                         );
+                        if kind == Some("message_start") {
+                            let (rows, _) = transcript::build(std::slice::from_ref(message), 1);
+                            sheet.merge(rows);
+                            sheet::force_scroll_to_end(&ui);
+                        }
                         if l.drawn_user.as_deref() != Some(key.as_str()) {
                             l.drawn_user = Some(key);
                             let _ = jobs.send(Job::Tail {
@@ -1590,6 +1595,7 @@ mod status_strip_tests {
         switching_sessions_clears_the_previous_sheet();
         attaching_a_session_resumes_follow_bottom();
         a_new_user_prompt_brings_the_transcript_to_the_floor();
+        a_user_prompt_is_drawn_before_its_reply();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -1724,6 +1730,126 @@ mod status_strip_tests {
             h.ui.get_follow_bottom(),
             "attaching a session must show its newest row"
         );
+    }
+
+    fn a_user_prompt_is_drawn_before_its_reply() {
+        let h = Harness::new();
+        let user = serde_json::json!({
+            "role": "user",
+            "content": [{"type": "text", "text": "the prompt"}],
+            "timestamp": 1
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": "message_start", "message": user}),
+        });
+        h.run();
+        assert_eq!(
+            h.tick
+                .sheet
+                .rows()
+                .iter()
+                .filter(|row| row.kind == transcript::KIND_USER)
+                .count(),
+            1,
+            "the prompt must be in the sheet before the reply"
+        );
+
+        let assistant = serde_json::json!({
+            "id": "a1",
+            "role": "assistant",
+            "timestamp": 2,
+            "content": [{"type": "text", "text": "the reply"}]
+        });
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "a1", "role": "assistant", "content": []}
+            }),
+        });
+        h.run();
+        h.send(Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": assistant,
+                "assistantMessageEvent": {"type": "text_delta", "delta": "the reply"}
+            }),
+        });
+        h.run();
+
+        let rows = h.tick.sheet.rows();
+        let user_index = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_USER)
+            .expect("the user row");
+        let reply_index = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_AGENT)
+            .expect("the reply row");
+        assert!(user_index < reply_index, "the prompt must precede its reply");
+        drop(rows);
+
+        let messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [{"type": "text", "text": "the prompt"}],
+                "timestamp": 1
+            }),
+            assistant,
+        ];
+        let (page, _) = transcript::build(&messages, 10);
+        h.send(Msg::Tail {
+            session: "s".to_string(),
+            rows: page,
+            skipped: 0,
+            messages: messages.clone(),
+            last_entry: "a1".to_string(),
+            first_entry: "u1".to_string(),
+            more: false,
+            fresh: false,
+        });
+        h.run();
+        let rows = h.tick.sheet.rows();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == transcript::KIND_USER)
+                .count(),
+            1,
+            "a skipped live tail must leave the prompt in place"
+        );
+        drop(rows);
+
+        let (page, _) = transcript::build(&messages, 10);
+        h.send(Msg::Tail {
+            session: "s".to_string(),
+            rows: page,
+            skipped: 0,
+            messages: messages.clone(),
+            last_entry: "a1".to_string(),
+            first_entry: "u1".to_string(),
+            more: false,
+            fresh: true,
+        });
+        h.run();
+        let rows = h.tick.sheet.rows();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == transcript::KIND_USER)
+                .count(),
+            1,
+            "the tail must patch the prompt, not duplicate it"
+        );
+        let user_index = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_USER)
+            .unwrap();
+        let reply_index = rows
+            .iter()
+            .position(|row| row.kind == transcript::KIND_AGENT)
+            .unwrap();
+        assert!(user_index < reply_index);
     }
 
     fn a_new_user_prompt_brings_the_transcript_to_the_floor() {
