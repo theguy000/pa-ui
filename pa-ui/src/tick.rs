@@ -1788,7 +1788,10 @@ mod status_strip_tests {
             .iter()
             .position(|row| row.kind == transcript::KIND_AGENT)
             .expect("the reply row");
-        assert!(user_index < reply_index, "the prompt must precede its reply");
+        assert!(
+            user_index < reply_index,
+            "the prompt must precede its reply"
+        );
         drop(rows);
 
         let messages = vec![
