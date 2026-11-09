@@ -234,8 +234,6 @@ fn apply_roster_update(roster: &mut RosterRows, frame: &serde_json::Value) {
     }
 }
 
-/// Whether two rows address the same Session: the stable id first, then the
-/// active id for a row whose stable id is missing.
 fn same_session(left: &SessionRow, right: &SessionRow) -> bool {
     (!right.session_id.is_empty() && left.session_id == right.session_id)
         || (!right.id.is_empty() && left.id == right.id)
@@ -262,8 +260,6 @@ fn reconcile_roster_with_saved(roster: &mut RosterRows, saved: &[SessionRow]) {
     roster.retain(|(_, live)| !saved.iter().any(|row| same_session(row, live)));
 }
 
-/// Accept one full `list` answer: the snapshot becomes the saved catalog and
-/// the cached roster rows it covers are dropped so the fresh state wins.
 fn apply_list_snapshot(
     roster: &mut RosterRows,
     saved: &mut Vec<SessionRow>,
