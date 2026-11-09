@@ -300,6 +300,7 @@ export component TranscriptRow inherits VerticalLayout {
             default-color: Theme.transcript-quote-ink;
             default-font-size: Type.body;
             link-color: Theme.transcript-link-ink;
+            link-clicked(link) => { root.open-link(link); }
         }
     }
 

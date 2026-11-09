@@ -14,6 +14,7 @@ use slint::StyledText;
 
 use crate::theme::{self, Resolved};
 
+mod autolink;
 mod cache;
 mod cells;
 mod demo;
@@ -23,6 +24,7 @@ mod tests;
 
 // The subjects below are one thing each, re-exported here so a call site keeps
 // saying `transcript::markdown_markup` and never has to know the file it lives in.
+pub(crate) use autolink::*;
 pub(crate) use cache::*;
 pub(crate) use cells::*;
 pub(crate) use demo::*;

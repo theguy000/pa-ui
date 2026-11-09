@@ -590,6 +590,16 @@ mod markup_tests {
     }
 
     #[test]
+    fn a_bare_url_in_prose_becomes_a_link() {
+        let drawn = markdown_markup("See https://example.com/docs.", &shipped());
+        assert!(
+            drawn.contains("[https://example.com/docs](https://example.com/docs)"),
+            "got {drawn}"
+        );
+        assert!(!drawn.contains("[https://example.com/docs.]"), "got {drawn}");
+    }
+
+    #[test]
     fn plain_rows_still_parse() {
         assert!(StyledText::from_markdown(&plain_markup("just words\n    and indented"))
             .is_ok());

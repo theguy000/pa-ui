@@ -260,7 +260,9 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
         if trimmed.starts_with('#') {
             // headings carry their own ink, the way the TUI colours mdHeading,
             // and bold, because there is no size step inside one text run
-            let body = escape_html(trimmed.trim_start_matches('#').trim_start());
+            let body = escape_html(&autolink_markup(
+                trimmed.trim_start_matches('#').trim_start(),
+            ));
             open_font(theme, Role::TranscriptHeadingInk, &mut out);
             out.push_str("**");
             out.push_str(&body);
@@ -272,10 +274,10 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
             out.push('│');
             out.push_str("</font> ");
             open_font(theme, Role::TranscriptQuoteInk, &mut out);
-            out.push_str(&escape_html(rest));
+            out.push_str(&escape_html(&autolink_markup(rest)));
             out.push_str("</font>");
         } else {
-            out.push_str(&escape_html(line));
+            out.push_str(&escape_html(&autolink_markup(line)));
         }
     }
     // the indentation guard has to be the last thing: an indented line is a code
