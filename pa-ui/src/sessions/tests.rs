@@ -146,6 +146,25 @@ fn the_list_is_grouped_active_then_idle_then_done() {
 }
 
 #[test]
+fn done_rows_sort_by_recency_not_catalog_order() {
+    let newer = row(serde_json::json!({
+        "activeSessionId": "newer", "sessionId": "u-new", "firstMessage": "newer",
+        "lifecycle": "live", "lastActivityAt": "2026-11-09T12:00:00Z"
+    }));
+    let older = row(serde_json::json!({
+        "activeSessionId": "older", "sessionId": "u-old", "firstMessage": "older",
+        "lifecycle": "live", "lastActivityAt": "2026-11-08T12:00:00Z"
+    }));
+    let one = session_items(&[older.clone(), newer.clone()]);
+    let two = session_items(&[newer, older]);
+    let ids = |items: &[SessionItem]| {
+        items.iter().map(|item| item.id.to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&one), ["newer", "older"]);
+    assert_eq!(ids(&one), ids(&two));
+}
+
+#[test]
 fn session_entries_positions_headers_and_rows_by_fold_state() {
     let a = vec![resident(serde_json::json!({
         "activeSessionId": "a1", "sessionId": "ua1", "lifecycle": "live", "activity": "working"
