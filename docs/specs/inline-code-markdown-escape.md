@@ -46,7 +46,9 @@ the prose pass, and re-escaping would display `&lt;` literally.
 - Raw `<`, `>`, and `&` from the model remain text; the probe text
   `<font color="#8f9088">` stays literal.
 - Existing inline-code colour, bold weight, and theme roles are unchanged.
-- Rows that are genuinely malformed still take the plain-text fallback.
+- A markup parse failure is not rendered as plain text. `styled` fails loudly
+  with the offending input; the encoder is expected to produce parseable
+  markup, and tests prove every block shape.
 
 ## Non-goals
 
@@ -60,6 +62,8 @@ the prose pass, and re-escaping would display `&lt;` literally.
   `StyledText::from_markdown` and the code body is escaped in the emitted
   markup.
 - Regression test: code spans with the other Markdown markers parse.
+- Regression test: malformed markup panics instead of falling back to plain
+  text.
 - `cargo test -p pa-ui --bin pa-ui`: 240 passed, 0 failed, 4 ignored.
 - `cargo build --profile fast -p pa-ui`: passes.
 - Mutation: removing the body escape makes the inline-code parse test fail.

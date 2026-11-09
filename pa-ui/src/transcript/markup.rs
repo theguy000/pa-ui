@@ -47,15 +47,12 @@ pub fn styled(markup: &str) -> StyledText {
     } else {
         markup
     };
-    match StyledText::from_markdown(markup) {
-        Ok(text) => text,
-        Err(error) => {
-            if std::env::var("PA_DEBUG").is_ok() {
-                eprintln!("markup error: {error}\n--- input ---\n{markup}\n-------------");
-            }
-            StyledText::from_plain_text(markup)
-        }
-    }
+    // The markup is ours: prose is escaped, inline code is escaped, and every
+    // block shape has a test. A parse failure is a bug in this encoder, not a
+    // reason to show the reader raw tags. Fail loudly with the input attached.
+    StyledText::from_markdown(markup).unwrap_or_else(|error| {
+        panic!("transcript markup must parse: {error}\n--- input ---\n{markup}")
+    })
 }
 
 

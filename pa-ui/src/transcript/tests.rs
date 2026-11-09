@@ -525,6 +525,12 @@ mod markup_tests {
     }
 
     #[test]
+    #[should_panic(expected = "transcript markup must parse")]
+    fn malformed_markup_is_not_hidden_by_a_plain_text_fallback() {
+        let _ = styled("**<font color=\"#8f9088\">**</font>**");
+    }
+
+    #[test]
     fn styled_never_returns_a_failed_parse() {
         for sample in [
             "**bold `code` bold**",
