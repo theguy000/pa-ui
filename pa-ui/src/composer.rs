@@ -384,13 +384,22 @@ impl Composer {
             let (attach_tx, attach_rx) = std::sync::mpsc::channel::<Vec<images::Attachment>>();
             let attach_rx = Rc::new(attach_rx);
             let tx_pick = attach_tx.clone();
+            let weak_pick = ui.as_weak();
             ui.on_attach_requested(move || {
                 let tx = tx_pick.clone();
+                let weak = weak_pick.clone();
                 std::thread::spawn(move || {
-                    let _ = tx.send(images::pick_files());
+                    if tx.send(images::pick_files()).is_ok() {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.invoke_attachment_ready();
+                            }
+                        });
+                    }
                 });
             });
             let tx_paste = attach_tx;
+            let weak_paste = ui.as_weak();
             ui.on_attach_pasted(move || {
                 if crate::env_cfg::cfg().debug {
                     eprintln!("[attach] paste chord");
@@ -399,8 +408,15 @@ impl Composer {
                     return false;
                 }
                 let tx = tx_paste.clone();
+                let weak = weak_paste.clone();
                 std::thread::spawn(move || {
-                    let _ = tx.send(images::read_clipboard().into_iter().collect());
+                    if tx.send(images::read_clipboard().into_iter().collect()).is_ok() {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.invoke_attachment_ready();
+                            }
+                        });
+                    }
                 });
                 true
             });
@@ -416,8 +432,7 @@ impl Composer {
             });
             let attachments_drain = self.attachments.clone();
             let model_drain = self.attachment_model.clone();
-            let drain = Timer::default();
-            drain.start(TimerMode::Repeated, Duration::from_millis(120), move || {
+            ui.on_attachment_ready(move || {
                 while let Ok(found) = attach_rx.try_recv() {
                     let mut held = attachments_drain.borrow_mut();
                     for attachment in found {
@@ -440,7 +455,6 @@ impl Composer {
                     }
                 }
             });
-            std::mem::forget(drain);
         }
 
         // 5. Slash command callbacks

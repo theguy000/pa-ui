@@ -39,13 +39,14 @@ const SIDEBAR_BAND_RIGHT: i32 = 224;
 const SIDEBAR_CONTROLS_LEFT: i32 = 160;
 
 /// Attach to this process's main window. Returns false until the window exists.
-pub fn init() -> bool {
+pub fn init(ui: slint::Weak<crate::AppWindow>) -> bool {
     #[cfg(windows)]
     {
-        imp::init()
+        imp::init(ui)
     }
     #[cfg(not(windows))]
     {
+        let _ = ui;
         true
     }
 }
@@ -57,28 +58,23 @@ pub fn close() {
     imp::close();
 }
 
-/// True while the pointer is over the maximise button. Windows owns that button
-/// through `HTMAXBUTTON`, so Slint never sees the mouse enter or leave it and the
-/// hover state has to be sampled.
-pub fn cursor_over_maximize() -> bool {
-    #[cfg(windows)]
-    {
-        imp::cursor_over_maximize()
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
-}
 
 #[cfg(windows)]
 mod imp {
-    use std::sync::atomic::{AtomicIsize, Ordering};
+    use crate::AppWindow;
+    use slint::Weak;
+    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::sync::{Mutex, OnceLock};
 
     static HWND: AtomicIsize = AtomicIsize::new(0);
+    static UI: OnceLock<Weak<AppWindow>> = OnceLock::new();
+    static HOVER: AtomicBool = AtomicBool::new(false);
+    static PUBLISHED: Mutex<(bool, bool)> = Mutex::new((false, false));
 
+    const WM_SIZE: u32 = 0x0005;
     const WM_NCCALCSIZE: u32 = 0x0083;
     const WM_NCHITTEST: u32 = 0x0084;
+    const WM_MOUSELEAVE: u32 = 0x02A3;
     const WM_NCLBUTTONDOWN: u32 = 0x00A1;
     const WM_SYSCOMMAND: u32 = 0x0112;
     const WM_CLOSE: u32 = 0x0010;
@@ -120,10 +116,11 @@ mod imp {
     }
 
     #[repr(C)]
-    #[derive(Default, Clone, Copy)]
-    struct Point {
-        x: i32,
-        y: i32,
+    struct TrackMouse {
+        size: u32,
+        flags: u32,
+        hwnd: isize,
+        hover_time: u32,
     }
 
     /// POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize
@@ -152,12 +149,12 @@ mod imp {
         fn GetDpiForWindow(hwnd: isize) -> u32;
         fn IsZoomed(hwnd: isize) -> i32;
         fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
-        fn GetCursorPos(point: *mut Point) -> i32;
         fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
         fn EnumWindows(callback: extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
         fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
         fn IsWindowVisible(hwnd: isize) -> i32;
         fn GetSystemMetrics(index: i32) -> i32;
+        fn TrackMouseEvent(event: *mut TrackMouse) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -193,7 +190,26 @@ mod imp {
         }
     }
 
-    pub(super) fn init() -> bool {
+    fn publish(hwnd: isize) {
+        let maximized = unsafe { IsZoomed(hwnd) != 0 };
+        let hover = HOVER.load(Ordering::Relaxed);
+        let mut published = PUBLISHED.lock().expect("titlebar state");
+        if *published == (maximized, hover) {
+            return;
+        }
+        *published = (maximized, hover);
+        drop(published);
+        let weak = UI.get().cloned();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = weak.and_then(|weak| weak.upgrade()) {
+                ui.set_titlebar_maximized(maximized);
+                ui.set_titlebar_max_hover(hover);
+            }
+        });
+    }
+
+    pub(super) fn init(ui: Weak<AppWindow>) -> bool {
+        let _ = UI.set(ui);
         unsafe {
             let mut hwnd: isize = 0;
             EnumWindows(first_visible, &mut hwnd as *mut isize as isize);
@@ -222,6 +238,7 @@ mod imp {
             // Make Windows re-run WM_NCCALCSIZE with the new rules.
             SetWindowPos(hwnd, 0, 0, 0, 0, 0,
                 SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            publish(hwnd);
             true
         }
     }
@@ -342,7 +359,34 @@ mod imp {
                 WM_NCHITTEST => {
                     let x = (lparam & 0xffff) as u16 as i16 as i32;
                     let y = ((lparam >> 16) & 0xffff) as u16 as i16 as i32;
-                    hit_test(hwnd, x, y)
+                    let hit = hit_test(hwnd, x, y);
+                    let hover = hit == HTMAXBUTTON;
+                    if HOVER.swap(hover, Ordering::Relaxed) != hover {
+                        publish(hwnd);
+                    }
+                    if hover {
+                        let mut track = TrackMouse {
+                            size: std::mem::size_of::<TrackMouse>() as u32,
+                            flags: 2, // TME_LEAVE
+                            hwnd,
+                            hover_time: 0,
+                        };
+                        TrackMouseEvent(&mut track);
+                    }
+                    hit
+                }
+
+                WM_MOUSELEAVE => {
+                    if HOVER.swap(false, Ordering::Relaxed) {
+                        publish(hwnd);
+                    }
+                    DefSubclassProc(hwnd, msg, wparam, lparam)
+                }
+
+                WM_SIZE => {
+                    let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+                    publish(hwnd);
+                    result
                 }
 
                 // The Snap Layouts flyout needs this button to belong to Windows, so
@@ -359,6 +403,7 @@ mod imp {
                     let result = DefSubclassProc(hwnd, msg, wparam, lparam);
                     SetWindowPos(hwnd, 0, 0, 0, 0, 0,
                         SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    publish(hwnd);
                     result
                 }
 
@@ -367,29 +412,5 @@ mod imp {
         }
     }
 
-    pub(super) fn cursor_over_maximize() -> bool {
-        unsafe {
-            let hwnd = HWND.load(Ordering::SeqCst);
-            if hwnd == 0 || GetSystemMetrics(23 /* SM_SWAPBUTTON */) == -1 {
-                return false;
-            }
-            let mut cursor = Point::default();
-            if GetCursorPos(&mut cursor) == 0 {
-                return false;
-            }
-            let mut window = Rect::default();
-            if GetWindowRect(hwnd, &mut window) == 0 {
-                return false;
-            }
-            let scale = scale(hwnd);
-            let (inset_x, inset_y) = if IsZoomed(hwnd) != 0 { frame() } else { (0, 0) };
-            let width = window.right - window.left;
-            let button = (super::BUTTON as f64 * scale).round() as i32;
-            let caption = inset_y + (super::HEIGHT as f64 * scale).round() as i32;
-            let buttons_left = width - inset_x - button * super::BUTTONS;
-            let x = cursor.x - window.left;
-            let y = cursor.y - window.top;
-            y >= inset_y && y < caption && x >= buttons_left + button && x < buttons_left + button * 2
-        }
-    }
+
 }

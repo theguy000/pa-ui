@@ -1,4 +1,4 @@
-//! The poll tick: everything the window learns by asking rather than being told.
+//! One event pass: drain worker messages, then let the window catch up.
 
 use crate::*;
 
@@ -13,8 +13,6 @@ pub(crate) struct Tick {
     /// which attach the window is waiting on: a reply that carries an older
     /// number is an answer to a question it has given up on
     pub attach_generation: std::cell::Cell<u64>,
-    /// when the poll last ran: a long gap is a stall the reader felt
-    pub last_tick: std::cell::Cell<SystemTime>,
     pub sheet: Rc<sheet::Sheet>,
     pub sidebar: Rc<sessions::Sidebar>,
     pub composer: Rc<composer::Composer>,
@@ -33,10 +31,6 @@ pub(crate) struct Tick {
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
-    pub _stream_at: std::cell::Cell<SystemTime>,
-    pub tail_at: std::cell::Cell<SystemTime>,
-    pub queue_at: std::cell::Cell<SystemTime>,
-    pub stats_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
     /// Error lines that belong to a Session other than the one on screen.
     /// They are replayed when that Session's Sheet is attached again.
@@ -55,10 +49,6 @@ pub(crate) struct Local {
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
-    _stream_at: SystemTime,
-    tail_at: SystemTime,
-    queue_at: SystemTime,
-    stats_at: SystemTime,
     scroll_ticks: u64,
 }
 
@@ -74,10 +64,6 @@ impl Local {
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
-            _stream_at: tick._stream_at.get(),
-            tail_at: tick.tail_at.get(),
-            queue_at: tick.queue_at.get(),
-            stats_at: tick.stats_at.get(),
             scroll_ticks: tick.scroll_ticks.get(),
         }
     }
@@ -92,10 +78,6 @@ impl Local {
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
-        tick._stream_at.set(self._stream_at);
-        tick.tail_at.set(self.tail_at);
-        tick.queue_at.set(self.queue_at);
-        tick.stats_at.set(self.stats_at);
         tick.scroll_ticks.set(self.scroll_ticks);
     }
 }
@@ -155,7 +137,53 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
-    fn request_older(&self, ui: &AppWindow) {
+    fn follow_selection(
+        &self,
+        ui: &AppWindow,
+        l: &mut Local,
+        sidebar: &sessions::Sidebar,
+        sheet: &sheet::Sheet,
+        composer: &composer::Composer,
+        jobs: &Sender<Job>,
+        busy_since: &std::cell::Cell<SystemTime>,
+    ) {
+        let selected = ui.get_selected_id().to_string();
+        let selected_session_id = if selected.is_empty() {
+            String::new()
+        } else {
+            sidebar.session_id_for(&selected)
+        };
+        if selected.is_empty() {
+            reset_activity(&ui);
+        }
+        if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
+            l.loaded = Some(selected.clone());
+            // The reader is looking at a different Session: no settlement from
+            // the one they left can decide what this one's strip may show.
+            l.settled_session = None;
+            sidebar.track_selection(&selected);
+            sheet.reset_paging(&ui);
+            sheet.replace(Vec::new());
+            sheet::force_scroll_to_end(&ui);
+            reset_activity(&ui);
+            l.open_live = None;
+            l.last_seq = 0;
+            composer.in_flight.set(false);
+            self.sync_status_to_selection(&ui, l, &selected, busy_since);
+            let generation = self.attach_generation.get() + 1;
+            self.attach_generation.set(generation);
+            let _ = jobs.send(Job::Attach {
+                session: selected.clone(),
+                generation,
+            });
+            let _ = jobs.send(Job::ActivityRead {
+                session: selected.clone(),
+                session_id: selected_session_id.clone(),
+            });
+        }
+    }
+
+    pub(crate) fn request_older(&self, ui: &AppWindow) {
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
             return;
@@ -260,12 +288,6 @@ impl Tick {
     /// One pass: drain what the worker sent, then let the window catch up.
     pub fn run(&self) {
         let now = SystemTime::now();
-        if let Ok(gap) = now.duration_since(self.last_tick.get()) {
-            if gap.as_millis() > 250 && crate::env_cfg::cfg().debug {
-                eprintln!("[lag] the window was busy for {} ms", gap.as_millis());
-            }
-        }
-        self.last_tick.set(now);
         let Some(ui) = self.weak.upgrade() else { return };
         let mut l = Local::load(self);
         let jobs = &self.jobs;
@@ -307,81 +329,7 @@ impl Tick {
             }
         }
 
-        // right-panel telemetry
-        if !l.loaded.as_deref().unwrap_or("").is_empty()
-            && l.stats_at.elapsed().unwrap_or_default()
-                >= Duration::from_millis(if ui.get_busy() { 3000 } else { 15000 })
-        {
-            l.stats_at = SystemTime::now();
-            if let Some(session) = l.loaded.clone() {
-                let _ = jobs.send(Job::Stats { session });
-            }
-        }
-
-        // what is stacked behind the running turn
-        if ui.get_busy()
-            && !l.loaded.as_deref().unwrap_or("").is_empty()
-            && !crate::env_cfg::cfg().queue_preset
-            && l.queue_at.elapsed().unwrap_or_default() >= Duration::from_millis(1500)
-        {
-            l.queue_at = SystemTime::now();
-            if let Some(session) = l.loaded.clone() {
-                let _ = jobs.send(Job::Queue { session });
-            }
-        }
-
-        let poll_every = if ui.get_busy() {
-            Duration::from_millis(900)
-        } else {
-            Duration::from_millis(3000)
-        };
-        if !l.loaded.as_deref().unwrap_or("").is_empty()
-            && l.tail_at.elapsed().unwrap_or_default() >= poll_every
-        {
-            l.tail_at = SystemTime::now();
-            if let Some(session) = l.loaded.clone() {
-                let _ = jobs.send(Job::Tail {
-                    session,
-                    fresh: false,
-                });
-            }
-        }
-
-        // follow the selection
-        let selected = ui.get_selected_id().to_string();
-        let selected_session_id = if selected.is_empty() {
-            String::new()
-        } else {
-            sidebar.session_id_for(&selected)
-        };
-        if selected.is_empty() {
-            reset_activity(&ui);
-        }
-        if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
-            l.loaded = Some(selected.clone());
-            // The reader is looking at a different Session: no settlement from
-            // the one they left can decide what this one's strip may show.
-            l.settled_session = None;
-            sidebar.track_selection(&selected);
-            sheet.reset_paging(&ui);
-            sheet.replace(Vec::new());
-            sheet::force_scroll_to_end(&ui);
-            reset_activity(&ui);
-            l.open_live = None;
-            l.last_seq = 0;
-            composer.in_flight.set(false);
-            self.sync_status_to_selection(&ui, &mut l, &selected, busy_since);
-            let generation = self.attach_generation.get() + 1;
-            self.attach_generation.set(generation);
-            let _ = jobs.send(Job::Attach {
-                session: selected.clone(),
-                generation,
-            });
-            let _ = jobs.send(Job::ActivityRead {
-                session: selected.clone(),
-                session_id: selected_session_id.clone(),
-            });
-        }
+        self.follow_selection(&ui, &mut l, sidebar, sheet, composer, jobs, busy_since);
 
         // reaching the top pulls in the page before this one
         self.request_older(&ui);
@@ -561,6 +509,12 @@ impl Tick {
                     let _ = jobs.send(Job::Tail {
                         session: session.clone(),
                         fresh: true,
+                    });
+                    let _ = jobs.send(Job::Stats {
+                        session: session.clone(),
+                    });
+                    let _ = jobs.send(Job::Queue {
+                        session: session.clone(),
                     });
                 }
                 Msg::Tail {
@@ -761,10 +715,12 @@ impl Tick {
                         l.open_live = None;
                         l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
-                        l._stream_at = SystemTime::now() - Duration::from_secs(60);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
+                        });
+                        let _ = jobs.send(Job::Stats {
+                            session: session.clone(),
                         });
                         continue;
                     }
@@ -804,7 +760,6 @@ impl Tick {
                         }
                         pin_offset_across_layout(&ui, held);
                         scroll_if_parked(&ui);
-                        l._stream_at = SystemTime::now();
                         continue;
                     }
                     let Some(message) = event.get("message") else {
@@ -931,7 +886,6 @@ impl Tick {
                     }
                     pin_offset_across_layout(&ui, held);
                     scroll_if_parked(&ui);
-                    l._stream_at = SystemTime::now();
                     if crate::env_cfg::cfg().debug && kind == Some("message_update") {
                         eprintln!(
                             "[stream] +{:>5}ms rows {} ({} chars, {})",
@@ -943,9 +897,13 @@ impl Tick {
                     }
                 }
                 Msg::Queue {
+                    session,
                     steering,
                     follow_up,
                 } => {
+                    if !session_is_current(&ui, &session) {
+                        continue;
+                    }
                     composer.project_queue(&ui, &steering, &follow_up);
                 }
                 Msg::Prompt {
@@ -1166,6 +1124,9 @@ impl Tick {
             }
         }
 
+        // A roster/session-binding message can move the selection. Attach the
+        // new Session in this pass instead of waiting for another wake.
+        self.follow_selection(&ui, &mut l, sidebar, sheet, composer, jobs, busy_since);
         l.store(self);
     }
 }
@@ -1259,7 +1220,6 @@ mod status_strip_tests {
                 jobs: job_tx,
                 msg_rx: rx,
                 attach_generation: std::cell::Cell::new(0),
-                last_tick: std::cell::Cell::new(SystemTime::now()),
                 sheet,
                 sidebar,
                 composer,
@@ -1276,10 +1236,6 @@ mod status_strip_tests {
                 last_seq: std::cell::Cell::new(0),
                 open_live: std::cell::Cell::new(None),
                 stream_started: std::cell::Cell::new(SystemTime::now()),
-                _stream_at: std::cell::Cell::new(SystemTime::now()),
-                tail_at: std::cell::Cell::new(SystemTime::now()),
-                queue_at: std::cell::Cell::new(SystemTime::now()),
-                stats_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -1979,6 +1935,8 @@ mod status_strip_tests {
         an_older_page_from_another_session_cannot_enter_the_sheet();
         switching_sessions_clears_the_previous_sheet();
         attaching_a_session_resumes_follow_bottom();
+        attaching_asks_for_stats_and_queue();
+        a_queue_for_another_session_does_not_touch_the_lanes();
         a_new_user_prompt_brings_the_transcript_to_the_floor();
         a_user_prompt_is_drawn_before_its_reply();
         a_steering_prompt_follows_the_open_reply();
@@ -2118,6 +2076,62 @@ mod status_strip_tests {
         assert!(
             h.ui.get_follow_bottom(),
             "attaching a session must show its newest row"
+        );
+    }
+
+    fn a_queue_for_another_session_does_not_touch_the_lanes() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        h.send_at(
+            generation,
+            Msg::Queue {
+                session: "other".to_string(),
+                steering: vec!["not mine".to_string()],
+                follow_up: Vec::new(),
+            },
+        );
+        h.run();
+        assert_eq!(h.ui.get_queued_count(), 0);
+
+        h.send_at(
+            generation,
+            Msg::Queue {
+                session: "s".to_string(),
+                steering: vec!["mine".to_string()],
+                follow_up: Vec::new(),
+            },
+        );
+        h.run();
+        assert_eq!(h.ui.get_queued_count(), 1);
+        assert_eq!(h.ui.get_queued_steering().row_count(), 1);
+    }
+
+    fn attaching_asks_for_stats_and_queue() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        let generation = h.tick.attach_generation.get();
+        let _ = take_jobs(&h);
+        h.send_at(
+            generation,
+            Msg::Transcript {
+                session: "s".to_string(),
+                rows: rows_for("the selected session"),
+                skipped: 0,
+                messages: messages_for("the selected session"),
+            },
+        );
+        h.run();
+        let jobs = take_jobs(&h);
+        assert!(
+            jobs.iter().any(|job| matches!(job, Job::Stats { session } if session == "s")),
+            "attach must refresh stats"
+        );
+        assert!(
+            jobs.iter().any(|job| matches!(job, Job::Queue { session } if session == "s")),
+            "attach must read the parked queue"
         );
     }
 
