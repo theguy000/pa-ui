@@ -631,6 +631,7 @@ impl Sidebar {
         if col.changed() {
             apply(ui, col, if any_group_move { -2 } else { -1 }, false);
         }
+        let visible_first = items.first().cloned();
         ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
 
         if ui.get_selected_id().is_empty() {
@@ -638,7 +639,11 @@ impl Sidebar {
             let chosen = preferred
                 .as_deref()
                 .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
-                .or_else(|| rows.first());
+                .or_else(|| {
+                    visible_first
+                        .as_ref()
+                        .and_then(|item| rows.iter().find(|row| row.id == item.id.as_str()))
+                });
             if let Some(first) = chosen {
                 ui.set_selected_id(first.id.clone().into());
                 *self.selected_uuid.borrow_mut() = Some(first.session_id.clone());
@@ -660,9 +665,9 @@ impl Sidebar {
         if let Some(uuid) = uuid_of(&rows, &selected) {
             *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
         } else if !selected.is_empty() && self.selected_uuid.borrow().is_none() {
-            if let Some(first) = rows.first() {
-                ui.set_selected_id(first.id.clone().into());
-                *self.selected_uuid.borrow_mut() = Some(first.session_id.clone());
+            if let Some(first) = visible_first.as_ref() {
+                ui.set_selected_id(first.id.clone());
+                *self.selected_uuid.borrow_mut() = Some(first.uuid.to_string());
             }
         }
         rebound_out
