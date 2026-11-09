@@ -932,7 +932,11 @@ impl Sidebar {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_model_menu(false);
                 ui.set_queue_open(false);
-                ui.set_selected_id(id);
+                let changed = ui.get_selected_id() != id;
+                ui.set_selected_id(id.clone());
+                if changed {
+                    ui.invoke_selection_picked(id);
+                }
                 ui.set_hover_title(SharedString::new());
                 ui.set_search_field_typed(false);
                 ui.set_search_open(false);
