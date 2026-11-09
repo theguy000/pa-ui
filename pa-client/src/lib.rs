@@ -222,6 +222,16 @@ fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
             "activeSessionId": active_session_id,
             "reason": reason,
         })),
+        wire::daemon_client::DaemonClientEvent::RosterUpdate {
+            changed,
+            removed,
+            resync,
+        } => Some(json!({
+            "type": "roster_update",
+            "changed": changed,
+            "removed": removed,
+            "resync": resync,
+        })),
         _ => None,
     }
 }
@@ -2169,4 +2179,18 @@ mod activity_tests {
         assert_eq!(running_shell_count(&json!({})), 0);
     }
 
+    #[test]
+    fn roster_update_frames_survive_the_event_pump() {
+        let frame = event_frame(wire::daemon_client::DaemonClientEvent::RosterUpdate {
+            changed: vec![json!({"agentId": "a1", "status": "idle"})],
+            removed: vec!["a2".to_string()],
+            resync: true,
+        })
+        .expect("roster update is a client frame");
+
+        assert_eq!(frame["type"], "roster_update");
+        assert_eq!(frame["changed"][0]["agentId"], "a1");
+        assert_eq!(frame["removed"][0], "a2");
+        assert_eq!(frame["resync"], true);
+    }
 }
