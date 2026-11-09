@@ -853,6 +853,13 @@ impl Tick {
                 Msg::ExtraCommands(rows) => {
                     composer.set_extra_commands(rows);
                 }
+                Msg::ModelCatalogChanged => {
+                    models.invalidate();
+                    let selected = ui.get_selected_id().to_string();
+                    if !selected.is_empty() {
+                        let _ = jobs.send(Job::ModelCatalog { session: selected });
+                    }
+                }
                 Msg::ModelCatalog(entries) => {
                     models.set_catalog(&ui, entries);
                 }
