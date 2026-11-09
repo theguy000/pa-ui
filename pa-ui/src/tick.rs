@@ -37,7 +37,6 @@ pub(crate) struct Tick {
     pub tail_at: std::cell::Cell<SystemTime>,
     pub queue_at: std::cell::Cell<SystemTime>,
     pub stats_at: std::cell::Cell<SystemTime>,
-    pub activity_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
     /// Error lines that belong to a Session other than the one on screen.
     /// They are replayed when that Session's Sheet is attached again.
@@ -60,7 +59,6 @@ pub(crate) struct Local {
     tail_at: SystemTime,
     queue_at: SystemTime,
     stats_at: SystemTime,
-    activity_at: SystemTime,
     scroll_ticks: u64,
 }
 
@@ -80,7 +78,6 @@ impl Local {
             tail_at: tick.tail_at.get(),
             queue_at: tick.queue_at.get(),
             stats_at: tick.stats_at.get(),
-            activity_at: tick.activity_at.get(),
             scroll_ticks: tick.scroll_ticks.get(),
         }
     }
@@ -99,7 +96,6 @@ impl Local {
         tick.tail_at.set(self.tail_at);
         tick.queue_at.set(self.queue_at);
         tick.stats_at.set(self.stats_at);
-        tick.activity_at.set(self.activity_at);
         tick.scroll_ticks.set(self.scroll_ticks);
     }
 }
@@ -345,23 +341,9 @@ impl Tick {
                 session: selected.clone(),
                 generation,
             });
-            l.activity_at = SystemTime::now();
             let _ = jobs.send(Job::ActivityRead {
                 session: selected.clone(),
                 session_id: selected_session_id.clone(),
-            });
-        }
-
-        // The roster answers subagents; heartbeats and shells need the daemon.
-        // Two seconds is the TUI's activity cadence and keeps the chip live
-        // without turning every repaint into a request.
-        if !selected.is_empty()
-            && l.activity_at.elapsed().unwrap_or_default() >= Duration::from_secs(2)
-        {
-            l.activity_at = SystemTime::now();
-            let _ = jobs.send(Job::ActivityRead {
-                session: selected.clone(),
-                session_id: selected_session_id,
             });
         }
 
@@ -1257,7 +1239,6 @@ mod status_strip_tests {
                 tail_at: std::cell::Cell::new(SystemTime::now()),
                 queue_at: std::cell::Cell::new(SystemTime::now()),
                 stats_at: std::cell::Cell::new(SystemTime::now()),
-                activity_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
