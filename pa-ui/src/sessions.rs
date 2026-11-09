@@ -659,6 +659,11 @@ impl Sidebar {
         let selected = ui.get_selected_id().to_string();
         if let Some(uuid) = uuid_of(&rows, &selected) {
             *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        } else if !selected.is_empty() && self.selected_uuid.borrow().is_none() {
+            if let Some(first) = rows.first() {
+                ui.set_selected_id(first.id.clone().into());
+                *self.selected_uuid.borrow_mut() = Some(first.session_id.clone());
+            }
         }
         rebound_out
     }
