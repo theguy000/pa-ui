@@ -454,6 +454,11 @@ impl Tick {
                     }
                 }
                 Msg::Sessions(Err(_)) => {}
+                Msg::DirectLinkLost { session } => {
+                    if ui.get_selected_id().to_string() == session {
+                        l.loaded = None;
+                    }
+                }
                 Msg::SessionBinding { previous, active } => {
                     if let Some(active) = binding_selection(&ui.get_selected_id(), &previous, &active)
                     {
@@ -721,13 +726,6 @@ impl Tick {
                         l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
-                        // `turn_end` closes one assistant cycle; a run with many
-                        // tools has many of them. The full `list` scans every
-                        // Session, so it runs once at the run's own end, not at
-                        // every cycle. `agent_end` is the queue-drained frame.
-                        if kind == Some("agent_end") {
-                            let _ = jobs.send(Job::RefreshSessions);
-                        }
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -938,6 +936,13 @@ impl Tick {
                 }
                 Msg::ExtraCommands(rows) => {
                     composer.set_extra_commands(rows);
+                }
+                Msg::ModelCatalogChanged => {
+                    models.invalidate();
+                    let selected = ui.get_selected_id().to_string();
+                    if !selected.is_empty() {
+                        let _ = jobs.send(Job::ModelCatalog { session: selected });
+                    }
                 }
                 Msg::ModelCatalog(entries) => {
                     models.set_catalog(&ui, entries);
@@ -1490,26 +1495,6 @@ mod status_strip_tests {
         );
     }
 
-    fn an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not() {
-        let h = Harness::new();
-        h.ui.set_selected_id("s".into());
-        h.run();
-        h.send(roster_state(true));
-        h.run();
-
-        h.send_at(h.tick.attach_generation.get(), turn_end());
-        h.run();
-        assert!(!take_jobs(&h)
-            .iter()
-            .any(|job| matches!(job, Job::RefreshSessions)));
-
-        h.send_at(h.tick.attach_generation.get(), turn_start("agent_end"));
-        h.run();
-        assert!(take_jobs(&h)
-            .iter()
-            .any(|job| matches!(job, Job::RefreshSessions)));
-    }
-
     fn an_idle_roster_releases_the_settlement() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
@@ -1908,7 +1893,6 @@ mod status_strip_tests {
         a_new_prompt_lets_the_roster_open_the_strip_again();
         a_new_turn_start_after_settlement_opens_the_strip();
         a_compaction_start_after_settlement_opens_the_strip();
-        an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not();
         an_idle_roster_releases_the_settlement();
         an_auto_retry_start_after_settlement_opens_the_strip();
         switching_sessions_clears_the_settlement();

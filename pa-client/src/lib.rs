@@ -92,6 +92,24 @@ impl Client {
         })
     }
 
+    /// Upgrade this connection with a direct worker link for the session.
+    /// Returns `false` when the daemon does not offer it; supervisor routing stays.
+    pub fn upgrade_direct(&self, active_session_id: &str) -> bool {
+        self.rt
+            .block_on(self.inner.upgrade_direct(active_session_id))
+            .unwrap_or(false)
+    }
+
+    /// Drop any direct worker link and keep supervisor routing.
+    pub fn drop_direct(&self) {
+        self.inner.drop_direct();
+    }
+
+    #[must_use]
+    pub fn direct_session_id(&self) -> Option<String> {
+        self.inner.direct_session_id()
+    }
+
     /// Whether the daemon connection is still usable.
     pub fn alive(&self) -> bool {
         !self.dead.load(Ordering::Relaxed)
@@ -2263,5 +2281,12 @@ mod activity_tests {
         assert_eq!(frame["type"], "session_binding");
         assert_eq!(frame["previousActiveSessionId"], "old");
         assert_eq!(frame["activeSessionId"], "new");
+    }
+
+    #[test]
+    fn model_catalog_changed_frames_survive_the_event_pump() {
+        let frame = event_frame(wire::daemon_client::DaemonClientEvent::ModelCatalogChanged)
+            .expect("model catalog change is a client frame");
+        assert_eq!(frame["type"], "model_catalog_changed");
     }
 }
