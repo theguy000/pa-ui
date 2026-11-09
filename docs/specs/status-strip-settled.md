@@ -1,4 +1,4 @@
-Status: Implemented in #45.
+Status: Implemented in PR #45.
 
 # The status strip settles when the turn ends
 
