@@ -396,6 +396,11 @@ impl Tick {
                     }
                 }
                 Msg::Sessions(Err(_)) => {}
+                Msg::DirectLinkLost { session } => {
+                    if ui.get_selected_id().to_string() == session {
+                        l.loaded = None;
+                    }
+                }
                 Msg::SessionBinding { previous, active } => {
                     if let Some(active) = binding_selection(&ui.get_selected_id(), &previous, &active)
                     {
