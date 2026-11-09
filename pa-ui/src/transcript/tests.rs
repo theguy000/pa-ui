@@ -408,7 +408,7 @@ mod theme_tests {
         );
         assert_eq!(
             markdown_markup("a `b` c", &shipped),
-            "a **<font color=\"#8f9088\">b</font>** c"
+            "a **<font color=\"#c9a86a\">b</font>** c"
         );
         assert_eq!(
             highlight_python("return 'x'", &shipped),

@@ -536,7 +536,7 @@ fn the_shipped_theme_resolves_todays_markup_and_canvas_inks() {
     // Inside a line of prose: the heading, and the symbol the writer put in
     // backticks.
     assert_eq!(theme.get(Role::TranscriptHeadingInk), Rgba::hex("#b3b2ad"));
-    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#8f9088"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#c9a86a"));
 
     // The three kinds of token the highlighter colours, in a cell's code and in a
     // fenced block alike. A number is not one of them: it never had a colour.
@@ -973,6 +973,33 @@ fn the_shipped_theme_draws_todays_status_strip() {
     assert_eq!(theme.get(Role::StatusStripQueueLabelInkHover), Rgba::hex("#b0b1a8"));
 }
 
+#[test]
+fn inline_code_follows_the_status_strip_working_ink() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "status-strip-working-ink": "#c9a7ff" } }"##,
+    )
+    .expect("a file that moves the busy ink");
+
+    assert_eq!(theme.get(Role::StatusStripWorkingInk), Rgba::hex("#c9a7ff"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#c9a7ff"));
+}
+
+#[test]
+fn an_explicit_inline_code_role_beats_the_status_strip_alias() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "status-strip-working-ink": "#c9a7ff",
+                        "transcript-inline-code-ink": "#e0b6ff" } }"##,
+    )
+    .expect("a file that names inline code itself");
+
+    assert_eq!(theme.get(Role::StatusStripWorkingInk), Rgba::hex("#c9a7ff"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#e0b6ff"));
+}
+
 /// The panels and the strip are made of the base values like every other part: a
 /// file that moves the window's colours carries them with it, which is what
 /// makes a light set of menus possible without naming every role by hand.
@@ -1081,11 +1108,15 @@ fn a_theme_that_names_the_status_strip_roles_moves_only_those() {
     )
     .expect("a file that repaints the strip");
 
-    // The file names every colour the strip has, and nothing else moves.
-    let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("status-strip-"));
+    // The file names every colour the strip has; inline code follows the
+    // strip's working ink, and nothing else moves.
+    let (moved, claimed) = moved_and_claimed(&theme, |name| {
+        name.starts_with("status-strip-") || name == "transcript-inline-code-ink"
+    });
     assert_eq!(moved, claimed);
 
     assert_eq!(theme.get(Role::StatusStripSurface), Rgba::hex("#1a1226"));
+    assert_eq!(theme.get(Role::TranscriptInlineCodeInk), Rgba::hex("#c9a7ff"));
     // The panels are not the strip: the same file leaves their surface alone.
     assert_eq!(theme.get(Role::PanelSurface), Resolved::shipped().get(Role::PanelSurface));
 }

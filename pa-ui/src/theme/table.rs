@@ -363,8 +363,8 @@ pub(crate) enum Role {
     TranscriptHeadingInk,
     /// A word the reader's message wrapped in backticks, inside a line of prose.
     /// The renderer's own box around it hugs the glyphs with no padding and no
-    /// styling hook, so the span is drawn as a colour instead: a step back from
-    /// the prose, which is what makes it read as a symbol and not as emphasis.
+    /// styling hook, so the span is drawn as a colour instead: the same working
+    /// accent the status strip uses for the busy word.
     TranscriptInlineCodeInk,
     /// The caret that says a row opens, in the header of a thinking row and of a
     /// cell. One role although two kinds of row draw it: it says the same thing
@@ -1281,9 +1281,7 @@ impl Role {
             Role::TranscriptHeadingInk => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.7594)
             }
-            Role::TranscriptInlineCodeInk => {
-                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7925)
-            }
+            Role::TranscriptInlineCodeInk => Derivation::Fixed(Rgba::hex("#c9a86a")),
             Role::TranscriptCaretMark => Derivation::Mix(Palette::Ink, Palette::Background, 0.5),
             Role::TranscriptCellFill => Derivation::Mix(Palette::Ink, Palette::Background, 0.0189),
             Role::TranscriptCellFillHover => {
@@ -1576,6 +1574,17 @@ impl Resolved {
         // An override always wins over the derivation it would otherwise have.
         for &(role, value) in &patch.roles {
             roles[role as usize] = value;
+        }
+        // Inline code shares the status strip's working accent. A file that
+        // changes that role moves both; a file that names inline code itself
+        // keeps its own value.
+        if !patch
+            .roles
+            .iter()
+            .any(|(role, _)| *role == Role::TranscriptInlineCodeInk)
+        {
+            roles[Role::TranscriptInlineCodeInk as usize] =
+                roles[Role::StatusStripWorkingInk as usize];
         }
         Self { palette, roles }
     }
