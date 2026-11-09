@@ -111,6 +111,8 @@ pub(crate) enum Msg {
     ExtraCommands(Vec<(String, String, String)>),
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
+    /// the daemon's catalog changed; the menu's cache is stale
+    ModelCatalogChanged,
     QueueEdit { text: String },
     /// a `create` came back: the id of the brand new session
     NewChat(String),
@@ -1055,6 +1057,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 if !previous.is_empty() && !active.is_empty() && previous != active {
                     out.send(Msg::SessionBinding { previous, active });
                 }
+                continue;
+            }
+            if frame_type == "model_catalog_changed" {
+                out.send(Msg::ModelCatalogChanged);
                 continue;
             }
             if frame_type != "session_event" {

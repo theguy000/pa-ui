@@ -2264,4 +2264,11 @@ mod activity_tests {
         assert_eq!(frame["previousActiveSessionId"], "old");
         assert_eq!(frame["activeSessionId"], "new");
     }
+
+    #[test]
+    fn model_catalog_changed_frames_survive_the_event_pump() {
+        let frame = event_frame(wire::daemon_client::DaemonClientEvent::ModelCatalogChanged)
+            .expect("model catalog change is a client frame");
+        assert_eq!(frame["type"], "model_catalog_changed");
+    }
 }

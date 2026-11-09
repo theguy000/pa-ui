@@ -31,6 +31,10 @@ impl ModelMenu {
         supports_images_in(&self.catalog.borrow(), provider, model_id)
     }
 
+    pub fn invalidate(&self) {
+        self.loaded.set(false);
+    }
+
     pub fn set_catalog(&self, ui: &AppWindow, entries: Vec<pa_client::ModelEntry>) {
         if !self.loaded.get() {
             self.collapsed
@@ -454,5 +458,20 @@ mod tests {
         assert!(!supports_images_in(&catalog, "alpha", "blind"));
         assert!(supports_images_in(&catalog, "alpha", "vision"));
         assert!(supports_images_in(&catalog, "alpha", "unknown-model"));
+    }
+
+    #[test]
+    fn invalidate_forces_the_next_catalog_load() {
+        let menu = ModelMenu {
+            catalog: Rc::new(RefCell::new(Vec::new())),
+            collapsed: Rc::new(RefCell::new(HashSet::new())),
+            loaded: Rc::new(std::cell::Cell::new(true)),
+            hovered: Rc::new(RefCell::new(None)),
+            hover_current: Rc::new(RefCell::new(None)),
+            hover_close: Rc::new(Timer::default()),
+        };
+
+        menu.invalidate();
+        assert!(!menu.loaded.get());
     }
 }
