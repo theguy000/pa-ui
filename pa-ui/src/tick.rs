@@ -2,6 +2,10 @@
 
 use crate::*;
 
+fn binding_selection(selected: &str, previous: &str, active: &str) -> Option<String> {
+    (selected == previous && !active.is_empty() && previous != active).then(|| active.to_string())
+}
+
 pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
@@ -410,6 +414,13 @@ impl Tick {
                     }
                 }
                 Msg::Sessions(Err(_)) => {}
+                Msg::SessionBinding { previous, active } => {
+                    if let Some(active) = binding_selection(&ui.get_selected_id(), &previous, &active)
+                    {
+                        ui.set_selected_id(active.into());
+                        l.loaded = None;
+                    }
+                }
                 Msg::Activity { label } => {
                     let desired = self.command_word.displayed(&l.live_state, &label);
                     if desired != l.busy_label {
@@ -2435,4 +2446,16 @@ mod status_strip_tests {
         assert!(!text.contains("a different session"), "{text}");
     }
 
+
+
+    #[test]
+    fn session_binding_selects_the_new_id_only_for_the_old_selection() {
+        assert_eq!(
+            binding_selection("old", "old", "new").as_deref(),
+            Some("new")
+        );
+        assert!(binding_selection("mine", "old", "new").is_none());
+        assert!(binding_selection("old", "old", "").is_none());
+        assert!(binding_selection("old", "old", "old").is_none());
+    }
 }

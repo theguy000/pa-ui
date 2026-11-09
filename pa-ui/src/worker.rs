@@ -72,6 +72,8 @@ pub(crate) enum Job {
 
 pub(crate) enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
+    /// the supervisor re-keyed the attached session: follow the new active id
+    SessionBinding { previous: String, active: String },
     Transcript { session: String, rows: Vec<crate::transcript::Row>, skipped: usize, messages: Vec<serde_json::Value> },
     Tail {
         session: String,
@@ -932,6 +934,22 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 roster_live = true;
                 apply_roster_update(&mut roster, &frame);
                 out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                continue;
+            }
+            if frame_type == "session_binding" {
+                let previous = frame
+                    .get("previousActiveSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let active = frame
+                    .get("activeSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if !previous.is_empty() && !active.is_empty() && previous != active {
+                    out.send(Msg::SessionBinding { previous, active });
+                }
                 continue;
             }
             if frame_type != "session_event" {

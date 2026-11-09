@@ -222,6 +222,50 @@ fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
             "activeSessionId": active_session_id,
             "reason": reason,
         })),
+        wire::daemon_client::DaemonClientEvent::DirectLinkLost { active_session_id } => {
+            Some(json!({
+                "type": "direct_link_lost",
+                "activeSessionId": active_session_id,
+            }))
+        }
+        wire::daemon_client::DaemonClientEvent::SessionListItem {
+            session,
+            request_id,
+        } => Some(json!({
+            "type": "session_list_item",
+            "session": session,
+            "requestId": request_id,
+        })),
+        wire::daemon_client::DaemonClientEvent::SessionListProgress { loaded, total } => {
+            Some(json!({
+                "type": "session_list_progress",
+                "loaded": loaded,
+                "total": total,
+            }))
+        }
+        wire::daemon_client::DaemonClientEvent::DaemonClosing { reason, update } => {
+            let payload = update.map(|update| {
+                json!({
+                    "resume": true,
+                    "updateId": update.update_id,
+                    "estSeconds": update.est_seconds,
+                    "sessions": update.sessions,
+                })
+            });
+            Some(json!({
+                "type": "daemon_closing",
+                "reason": reason,
+                "payload": payload,
+            }))
+        }
+        wire::daemon_client::DaemonClientEvent::SideQuestionEvent {
+            active_session_id,
+            event,
+        } => Some(json!({
+            "type": "side_question_event",
+            "activeSessionId": active_session_id,
+            "event": event,
+        })),
         wire::daemon_client::DaemonClientEvent::RosterUpdate {
             changed,
             removed,
@@ -232,9 +276,23 @@ fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
             "removed": removed,
             "resync": resync,
         })),
-        _ => None,
+        wire::daemon_client::DaemonClientEvent::HeartbeatsChanged => {
+            Some(json!({"type": "heartbeats_changed"}))
+        }
+        wire::daemon_client::DaemonClientEvent::ModelCatalogChanged => {
+            Some(json!({"type": "model_catalog_changed"}))
+        }
+        wire::daemon_client::DaemonClientEvent::SessionBinding {
+            previous_active_session_id,
+            active_session_id,
+        } => Some(json!({
+            "type": "session_binding",
+            "previousActiveSessionId": previous_active_session_id,
+            "activeSessionId": active_session_id,
+        })),
     }
 }
+
 
 /// The session rows the left sidebar renders.
 #[derive(Debug, Clone, Default)]
@@ -2192,5 +2250,18 @@ mod activity_tests {
         assert_eq!(frame["changed"][0]["agentId"], "a1");
         assert_eq!(frame["removed"][0], "a2");
         assert_eq!(frame["resync"], true);
+    }
+
+    #[test]
+    fn session_binding_frames_carry_the_new_id() {
+        let frame = event_frame(wire::daemon_client::DaemonClientEvent::SessionBinding {
+            previous_active_session_id: "old".into(),
+            active_session_id: "new".into(),
+        })
+        .expect("session binding is a client frame");
+
+        assert_eq!(frame["type"], "session_binding");
+        assert_eq!(frame["previousActiveSessionId"], "old");
+        assert_eq!(frame["activeSessionId"], "new");
     }
 }
