@@ -33,6 +33,9 @@ the TUI:
   the strip.
 - A new prompt or a user `message_start` releases the settlement; an idle roster
   snapshot also releases it once the Session has actually been reported idle.
+  `turn_start`, `agent_start`, `compaction_start`, and `auto_retry_start` open
+  the strip for a Turn the engine starts without this window's composer, as the
+  TUI's loader does.
 - `Msg::Activity` only changes the label of a strip that is already up. It never
   starts the strip by itself.
 - Each successful `list` snapshot reconciles the cached roster: rows covered by
@@ -47,6 +50,8 @@ the TUI:
   reopen the strip.
 - An activity frame alone does not open the strip.
 - A new prompt or user message lets the next roster snapshot open the strip.
+- A `turn_start`, `agent_start`, `compaction_start`, or `auto_retry_start`
+  after a settlement opens the strip for that Turn.
 - A stale cached roster row is cleared by the next full `list` snapshot.
 - An unmatched roster row is not dropped by reconciliation.
 - The TUI's own status behavior is unchanged.
@@ -59,6 +64,8 @@ the TUI:
 - No daemon change.
 - No new theme role.
 - No change to the sidebar's roster display beyond removing stale cached state.
+- No TUI loader redesign: the new handlers follow the TUI's existing start
+  points.
 
 ## Acceptance
 

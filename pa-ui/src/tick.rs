@@ -106,6 +106,25 @@ fn reset_activity(ui: &AppWindow) {
     ui.set_activity_shells(0);
 }
 
+/// Start the strip for a Turn the engine has just announced. The TUI starts a
+/// loader on `agent_start`/`turn_start`; the window must not stay settled just
+/// because the Turn was started by the TUI or by automatic compaction rather
+/// than by this window's composer.
+fn open_status(
+    ui: &AppWindow,
+    l: &mut Local,
+    busy_since: &std::cell::Cell<SystemTime>,
+    label: &str,
+) {
+    l.settled_session = None;
+    if !ui.get_busy() {
+        l.busy_label = label.to_string();
+        busy_since.set(SystemTime::now());
+        ui.set_busy_label(l.busy_label.clone().into());
+        ui.set_busy(true);
+    }
+}
+
 fn count_i32(count: usize) -> i32 {
     i32::try_from(count).unwrap_or(i32::MAX)
 }
@@ -635,6 +654,15 @@ impl Tick {
                         // settlement no longer holds the strip down.
                         l.settled_session = None;
                         sheet::force_scroll_to_end(&ui);
+                    }
+                    if matches!(kind, Some("turn_start" | "agent_start")) {
+                        open_status(&ui, &mut l, busy_since, "Waiting");
+                    }
+                    if kind == Some("compaction_start") {
+                        open_status(&ui, &mut l, busy_since, "Compacting");
+                    }
+                    if kind == Some("auto_retry_start") {
+                        open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("session_action_update") {
                         let lane = |name: &str| -> Vec<String> {
@@ -1241,6 +1269,13 @@ mod status_strip_tests {
         }
     }
 
+    fn turn_start(kind: &str) -> Msg {
+        Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": kind}),
+        }
+    }
+
     fn assert_strip(h: &Harness, busy: bool, label: &str) {
         assert_eq!(h.ui.get_busy(), busy);
         assert_eq!(h.ui.get_busy_label().as_str(), label);
@@ -1388,6 +1423,36 @@ mod status_strip_tests {
 
     /// The settlement is released by the next Turn, not forever: once a new
     /// prompt starts, the roster's running state is the current Turn again.
+    fn a_new_turn_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("turn_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+    }
+
+    fn a_compaction_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("compaction_start"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+    }
+
     fn a_new_prompt_lets_the_roster_open_the_strip_again() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
@@ -1714,6 +1779,8 @@ mod status_strip_tests {
         a_stale_roster_snapshot_does_not_reopen_the_strip_after_turn_end();
         an_activity_frame_does_not_open_the_strip_by_itself();
         a_new_prompt_lets_the_roster_open_the_strip_again();
+        a_new_turn_start_after_settlement_opens_the_strip();
+        a_compaction_start_after_settlement_opens_the_strip();
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();
