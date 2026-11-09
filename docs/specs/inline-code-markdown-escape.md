@@ -60,6 +60,6 @@ the prose pass, and re-escaping would display `&lt;` literally.
   `StyledText::from_markdown` and the code body is escaped in the emitted
   markup.
 - Regression test: code spans with the other Markdown markers parse.
-- `cargo test -p pa-ui`: all tests pass.
+- `cargo test -p pa-ui --bin pa-ui`: 240 passed, 0 failed, 4 ignored.
 - `cargo build --profile fast -p pa-ui`: passes.
 - Mutation: removing the body escape makes the inline-code parse test fail.
