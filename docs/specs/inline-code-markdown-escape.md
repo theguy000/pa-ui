@@ -64,6 +64,6 @@ the prose pass, and re-escaping would display `&lt;` literally.
 - Regression test: code spans with the other Markdown markers parse.
 - Regression test: malformed markup panics instead of falling back to plain
   text.
-- `cargo test -p pa-ui --bin pa-ui`: 240 passed, 0 failed, 4 ignored.
+- `cargo test -p pa-ui --bin pa-ui`: 241 passed, 0 failed, 4 ignored.
 - `cargo build --profile fast -p pa-ui`: passes.
 - Mutation: removing the body escape makes the inline-code parse test fail.
