@@ -74,6 +74,8 @@ pub(crate) enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
     /// the supervisor re-keyed the attached session: follow the new active id
     SessionBinding { previous: String, active: String },
+    /// the direct worker link died; reattach through the supervisor
+    DirectLinkLost { session: String },
     Transcript { session: String, rows: Vec<crate::transcript::Row>, skipped: usize, messages: Vec<serde_json::Value> },
     Tail {
         session: String,
@@ -173,6 +175,10 @@ impl Msg {
                 | Msg::Queue { .. }
         )
     }
+}
+
+fn direct_loss_for_attached(attached: Option<&str>, lost: &str) -> bool {
+    attached == Some(lost)
 }
 
 type RosterRows = Vec<(String, SessionRow)>;
@@ -531,6 +537,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     match attach_as(active, &session, Some(&client_id), resume.clone()) {
                         Ok(fallback) => {
                             attached = Some(session.clone());
+                            let direct = active.upgrade_direct(&session);
+                            if crate::env_cfg::cfg().debug {
+                                eprintln!("[direct] attach {session} direct={direct}");
+                            }
                             let messages = pa_client::get_page(active, &session, None, WINDOW_ROWS)
                                 .map(|page| page.messages)
                                 .unwrap_or(fallback);
@@ -809,6 +819,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         match attach_as(active, &session, Some(&client_id), None) {
                             Ok(messages) => {
                                 attached = Some(session.clone());
+                                let _ = active.upgrade_direct(&session);
                                 let (rows, skipped) = crate::transcript::build(&messages, window_rows);
                                 out.send(Msg::Transcript {
                                     session: session.clone(),
@@ -1123,6 +1134,19 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 }
                 continue;
             }
+            if frame_type == "direct_link_lost" {
+                let lost = frame
+                    .get("activeSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if direct_loss_for_attached(attached.as_deref(), lost) {
+                    active.drop_direct();
+                    out.send(Msg::DirectLinkLost {
+                        session: lost.to_string(),
+                    });
+                }
+                continue;
+            }
             if frame_type == "session_binding" {
                 let previous = frame
                     .get("previousActiveSessionId")
@@ -1200,8 +1224,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 #[cfg(test)]
 mod tests {
     use super::{
-        activity_subagents, apply_roster_entries, apply_roster_update, merged_sessions,
-        saved_rows_from_response, upsert_saved, Msg,
+        activity_subagents, apply_roster_entries, apply_roster_update, direct_loss_for_attached,
+        merged_sessions, saved_rows_from_response, upsert_saved, Msg,
     };
     use crate::SessionRow;
 
@@ -1492,5 +1516,12 @@ mod tests {
         .expect("sessions array");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "terminal");
+    }
+
+    #[test]
+    fn direct_loss_only_reattaches_the_attached_session() {
+        assert!(direct_loss_for_attached(Some("a"), "a"));
+        assert!(!direct_loss_for_attached(Some("a"), "b"));
+        assert!(!direct_loss_for_attached(None, "a"));
     }
 }
