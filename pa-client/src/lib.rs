@@ -92,6 +92,24 @@ impl Client {
         })
     }
 
+    /// Upgrade this connection with a direct worker link for the session.
+    /// Returns `false` when the daemon does not offer it; supervisor routing stays.
+    pub fn upgrade_direct(&self, active_session_id: &str) -> bool {
+        self.rt
+            .block_on(self.inner.upgrade_direct(active_session_id))
+            .unwrap_or(false)
+    }
+
+    /// Drop any direct worker link and keep supervisor routing.
+    pub fn drop_direct(&self) {
+        self.inner.drop_direct();
+    }
+
+    #[must_use]
+    pub fn direct_session_id(&self) -> Option<String> {
+        self.inner.direct_session_id()
+    }
+
     /// Whether the daemon connection is still usable.
     pub fn alive(&self) -> bool {
         !self.dead.load(Ordering::Relaxed)
