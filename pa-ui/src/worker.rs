@@ -233,6 +233,63 @@ fn apply_roster_update(roster: &mut RosterRows, frame: &serde_json::Value) {
     }
 }
 
+/// Apply one roster push to the raw entries used for running-subagent counts.
+fn apply_roster_entries(entries: &mut Vec<serde_json::Value>, frame: &serde_json::Value) {
+    if frame
+        .get("resync")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        entries.clear();
+    }
+    if let Some(changed) = frame.get("changed").and_then(serde_json::Value::as_array) {
+        for entry in changed {
+            let Some(id) = entry.get("agentId").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if let Some(position) = entries.iter().position(|known| {
+                known.get("agentId").and_then(serde_json::Value::as_str) == Some(id)
+            }) {
+                entries[position] = entry.clone();
+            } else {
+                entries.push(entry.clone());
+            }
+        }
+    }
+    if let Some(removed) = frame.get("removed").and_then(serde_json::Value::as_array) {
+        entries.retain(|entry| {
+            let id = entry.get("agentId").and_then(serde_json::Value::as_str);
+            !removed.iter().any(|gone| gone.as_str() == id)
+        });
+    }
+}
+
+fn activity_row<'a>(
+    attached: &str,
+    roster: &'a RosterRows,
+    saved: &'a [SessionRow],
+) -> Option<&'a SessionRow> {
+    roster
+        .iter()
+        .find(|(_, row)| row.id == attached)
+        .map(|(_, row)| row)
+        .or_else(|| saved.iter().find(|row| row.id == attached))
+}
+
+fn activity_subagents(
+    entries: &[serde_json::Value],
+    attached: &str,
+    roster: &RosterRows,
+    saved: &[SessionRow],
+) -> Option<usize> {
+    let row = activity_row(attached, roster, saved)?;
+    Some(pa_client::running_subagents(
+        entries,
+        attached,
+        &row.session_id,
+    ))
+}
+
 /// Merge the saved catalog with the live roster. Roster rows win for a shared
 /// session; saved-only rows keep their archived/done state.
 fn merged_sessions(saved: &[SessionRow], roster: &RosterRows) -> Vec<SessionRow> {
@@ -299,6 +356,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut pending_renames: Vec<(String, String)> = Vec::new();
     let mut roster: RosterRows = Vec::new();
+    let mut roster_entries: Vec<serde_json::Value> = Vec::new();
     let mut saved_rows: Vec<SessionRow> = Vec::new();
     let mut pending_roster: Option<String> = None;
     let mut roster_subscribed = false;
@@ -320,6 +378,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     resume = None;
                     offline = false;
                     roster.clear();
+                    roster_entries.clear();
                     pending_roster = None;
                     roster_subscribed = false;
                     roster_live = false;
@@ -897,8 +956,24 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             .pointer("/data/roster")
                             .and_then(serde_json::Value::as_array)
                         {
+                            roster_entries = entries.clone();
                             roster = roster_rows(entries);
                             out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                            if let Some(session) = attached.as_deref() {
+                                if let Some(subagents) = activity_subagents(
+                                    &roster_entries,
+                                    session,
+                                    &roster,
+                                    &saved_rows,
+                                ) {
+                                    out.send(Msg::ActivityCounts {
+                                        session: session.to_string(),
+                                        subagents: Some(subagents),
+                                        heartbeats: None,
+                                        shells: None,
+                                    });
+                                }
+                            }
                         }
                     }
                     continue;
@@ -933,7 +1008,37 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             if frame_type == "roster_update" {
                 roster_live = true;
                 apply_roster_update(&mut roster, &frame);
+                apply_roster_entries(&mut roster_entries, &frame);
                 out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                if let Some(session) = attached.as_deref() {
+                    if let Some(subagents) =
+                        activity_subagents(&roster_entries, session, &roster, &saved_rows)
+                    {
+                        out.send(Msg::ActivityCounts {
+                            session: session.to_string(),
+                            subagents: Some(subagents),
+                            heartbeats: None,
+                            shells: None,
+                        });
+                    }
+                }
+                continue;
+            }
+            if frame_type == "heartbeats_changed" {
+                if let Some(session) = attached.clone() {
+                    if let Some(row) = activity_row(&session, &roster, &saved_rows) {
+                        if let Ok(heartbeats) =
+                            pa_client::scoped_heartbeat_count(active, &session, &row.session_id)
+                        {
+                            out.send(Msg::ActivityCounts {
+                                session,
+                                subagents: None,
+                                heartbeats: Some(heartbeats),
+                                shells: None,
+                            });
+                        }
+                    }
+                }
                 continue;
             }
             if frame_type == "session_binding" {
@@ -983,6 +1088,22 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 if let Some(label) = pa_client::activity_label(event) {
                     out.send(Msg::Activity { label: label.to_string() });
                 }
+                let event_type = event
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if matches!(event_type, "bash_start" | "bash_end")
+                    && attached.as_deref() == Some(session)
+                {
+                    if let Ok(shells) = pa_client::running_shells(active, session) {
+                        out.send(Msg::ActivityCounts {
+                            session: session.to_string(),
+                            subagents: None,
+                            heartbeats: None,
+                            shells: Some(shells),
+                        });
+                    }
+                }
             }
         }
 
@@ -1007,7 +1128,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_roster_update, merged_sessions, Msg};
+    use super::{activity_subagents, apply_roster_entries, apply_roster_update, merged_sessions, Msg};
     use crate::SessionRow;
 
     // --- the session menu, at the seam between the row and the commands ------
@@ -1229,5 +1350,48 @@ mod tests {
 
         apply_roster_update(&mut roster, &serde_json::json!({"removed": ["a2"]}));
         assert!(roster.is_empty());
+    }
+
+    #[test]
+    fn raw_roster_tracks_changed_removed_and_resync() {
+        let mut entries = vec![serde_json::json!({"agentId": "a1"})];
+        apply_roster_entries(
+            &mut entries,
+            &serde_json::json!({"changed": [{"agentId": "a2"}]}),
+        );
+        assert_eq!(entries.len(), 2);
+
+        apply_roster_entries(&mut entries, &serde_json::json!({"removed": ["a1"]}));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["agentId"], "a2");
+
+        apply_roster_entries(
+            &mut entries,
+            &serde_json::json!({"resync": true, "changed": [{"agentId": "a3"}]}),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["agentId"], "a3");
+    }
+
+    #[test]
+    fn activity_count_follows_the_attached_roster_family() {
+        let entries = vec![
+            serde_json::json!({"agentId": "root", "status": "idle", "summary": {
+                "activeSessionId": "root", "sessionId": "uuid-root",
+                "rlmDepth": 0, "runtimeKind": "top-level", "sessionFile": "/root.jsonl"
+            }}),
+            serde_json::json!({"agentId": "child", "status": "running", "summary": {
+                "activeSessionId": "child", "sessionId": "uuid-child",
+                "parentActiveSessionId": "root", "parentSessionId": "uuid-root",
+                "rlmDepth": 1, "runtimeKind": "subagent"
+            }}),
+        ];
+        let roster = vec![("root".to_string(), SessionRow {
+            id: "root".to_string(),
+            session_id: "uuid-root".to_string(),
+            ..SessionRow::default()
+        })];
+
+        assert_eq!(activity_subagents(&entries, "root", &roster, &[]), Some(1));
     }
 }
