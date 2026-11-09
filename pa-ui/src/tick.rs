@@ -23,6 +23,9 @@ pub(crate) struct Tick {
     pub live_state: std::cell::Cell<String>,
     pub live_since: std::cell::Cell<SystemTime>,
     pub busy_label: std::cell::Cell<String>,
+    /// The Session whose last Turn ended and whose strip must not be reopened
+    /// by a late roster snapshot. Cleared by the next Turn.
+    pub settled_session: std::cell::Cell<Option<String>>,
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
@@ -45,6 +48,7 @@ pub(crate) struct Local {
     live_state: String,
     live_since: SystemTime,
     busy_label: String,
+    settled_session: Option<String>,
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
@@ -64,6 +68,7 @@ impl Local {
             live_state: tick.live_state.take(),
             live_since: tick.live_since.get(),
             busy_label: tick.busy_label.take(),
+            settled_session: tick.settled_session.take(),
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
@@ -82,6 +87,7 @@ impl Local {
         tick.live_state.set(self.live_state);
         tick.live_since.set(self.live_since);
         tick.busy_label.set(self.busy_label);
+        tick.settled_session.set(self.settled_session);
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
@@ -346,8 +352,11 @@ impl Tick {
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         models.sync_session_row(&ui, row);
                     }
-                    if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
-                        self.clear_status(&ui, &mut l);
+                    if !rows.iter().any(|row| row.id == selected) {
+                        l.settled_session = None;
+                        if ui.get_busy() {
+                            self.clear_status(&ui, &mut l);
+                        }
                     }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
@@ -357,6 +366,12 @@ impl Tick {
                             l.live_since = SystemTime::now();
                         }
                         let busy_now = state != "idle" && state != "archived";
+                        // The engine's terminal frame has already ended this
+                        // Session's Turn. A roster snapshot that still says it
+                        // is running is older than that frame (a dropped idle
+                        // push, or a list that crossed the end); it must not put
+                        // the strip back up. Only a new Turn may do that.
+                        let settled = l.settled_session.as_deref() == Some(selected.as_str());
                         // A roster answer can cross a prompt that has just been
                         // accepted but not yet picked up. While that send is in
                         // flight, an idle row is stale; keep the strip and its
@@ -367,6 +382,10 @@ impl Tick {
                         if !busy_now && !sending {
                             let was_busy = ui.get_busy();
                             self.clear_status(&ui, &mut l);
+                            // The roster has reported the Session idle: the
+                            // settlement has served its purpose, and the next
+                            // running row is a new Turn.
+                            l.settled_session = None;
                             if was_busy {
                                 if let Some(session) = l.loaded.clone() {
                                     let _ = jobs.send(Job::Tail {
@@ -376,7 +395,7 @@ impl Tick {
                                 }
                             }
                         }
-                        if busy_now {
+                        if busy_now && !settled {
                             // A slash command's word outranks the stream's
                             // generic Thinking/Writing labels; compaction
                             // outranks both while the daemon reports it.
@@ -411,13 +430,19 @@ impl Tick {
                 }
                 Msg::Sessions(Err(_)) => {}
                 Msg::Activity { label } => {
+                    // The TUI only changes the loader's word while a loader is
+                    // already running. An activity frame is not a Turn start:
+                    // a late frame from the Turn that has just ended must not
+                    // wake an idle strip.
+                    if !ui.get_busy() {
+                        continue;
+                    }
                     let desired = self.command_word.displayed(&l.live_state, &label);
                     if desired != l.busy_label {
                         l.busy_label = desired;
                         busy_since.set(SystemTime::now());
                         ui.set_busy_label(l.busy_label.clone().into());
                     }
-                    ui.set_busy(true);
                 }
                 Msg::Transcript {
                     session,
@@ -606,6 +631,9 @@ impl Tick {
                             .and_then(serde_json::Value::as_str)
                             == Some("user")
                     {
+                        // A user message is a new Turn: the previous Turn's
+                        // settlement no longer holds the strip down.
+                        l.settled_session = None;
                         sheet::force_scroll_to_end(&ui);
                     }
                     if kind == Some("session_action_update") {
@@ -649,8 +677,13 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
+                        l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
+                        // A roster push can lag or be dropped. Ask for the full
+                        // snapshot now so a cached running row cannot outlive
+                        // the terminal frame.
+                        let _ = jobs.send(Job::RefreshSessions);
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -842,6 +875,7 @@ impl Tick {
                     message,
                     images,
                 } => {
+                    l.settled_session = None;
                     composer.in_flight.set(true);
                     let _ = jobs.send(Job::Prompt {
                         session,
@@ -851,6 +885,7 @@ impl Tick {
                 }
                 Msg::NewChat(id) => {
                     composer.reset_for_new_chat(&ui, &id);
+                    l.settled_session = None;
                     self.clear_status(&ui, &mut l);
                 }
                 Msg::QueueEdit { text } => {
@@ -933,6 +968,7 @@ impl Tick {
                 Msg::Reconnected => {
                     l.loaded = None;
                     l.open_live = None;
+                    l.settled_session = None;
                     self.clear_status(&ui, &mut l);
                     composer.in_flight.set(false);
                     sheet.answer_ended();
@@ -944,6 +980,7 @@ impl Tick {
                     if current.is_empty()
                         || session.as_deref().is_none_or(|target| target == current.as_str())
                     {
+                        l.settled_session = None;
                         self.clear_status(&ui, &mut l);
                         composer.on_prompt_rejected(&ui, sheet, &text);
                     } else if let Some(session) = session.filter(|session| !session.is_empty()) {
@@ -978,6 +1015,7 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
+                        l.settled_session = None;
                         self.clear_status(&ui, &mut l);
                     }
                     let message = session_closed_message(&reason);
@@ -1149,6 +1187,7 @@ mod status_strip_tests {
                 live_state: std::cell::Cell::new(String::new()),
                 live_since: std::cell::Cell::new(SystemTime::now()),
                 busy_label: std::cell::Cell::new(String::new()),
+                settled_session: std::cell::Cell::new(None),
                 last_seq: std::cell::Cell::new(0),
                 open_live: std::cell::Cell::new(None),
                 stream_started: std::cell::Cell::new(SystemTime::now()),
@@ -1296,6 +1335,83 @@ mod status_strip_tests {
         h.send(Msg::NewChat("new".to_string()));
         h.run();
         assert_strip(&h, false, "");
+    }
+
+    fn roster_state(running: bool) -> Msg {
+        Msg::Sessions(Ok(vec![SessionRow {
+            id: "s".to_string(),
+            session_id: "s".to_string(),
+            name: "s".to_string(),
+            activity: if running { "working" } else { "idle" }.to_string(),
+            lifecycle: "live".to_string(),
+            is_streaming: running,
+            is_session_active: running,
+            is_running_tools: running,
+            ..SessionRow::default()
+        }]))
+    }
+
+    /// A roster snapshot that still says the Session is running can cross the
+    /// turn's own `turn_end`. It must not put the strip back up: the engine has
+    /// already said the Turn is over, and the stream's terminal frame is the
+    /// authority the TUI follows too.
+    fn a_stale_roster_snapshot_does_not_reopen_the_strip_after_turn_end() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    /// The TUI only changes the loader's word while a Turn is running. An
+    /// activity frame on its own is not a Turn start; a late frame from the
+    /// previous Turn must not wake an idle strip.
+    fn an_activity_frame_does_not_open_the_strip_by_itself() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(Msg::Activity {
+            label: "Writing code".to_string(),
+        });
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    /// The settlement is released by the next Turn, not forever: once a new
+    /// prompt starts, the roster's running state is the current Turn again.
+    fn a_new_prompt_lets_the_roster_open_the_strip_again() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(
+            h.tick.attach_generation.get(),
+            Msg::Prompt {
+                session: "s".to_string(),
+                message: "next".to_string(),
+                images: Vec::new(),
+            },
+        );
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
     }
 
     fn an_error_for_another_session_does_not_land_in_this_sheet() {
@@ -1595,6 +1711,9 @@ mod status_strip_tests {
         a_rejected_prompt_takes_the_status_strip_down();
         a_reconnect_takes_the_status_strip_down();
         a_new_chat_takes_the_status_strip_down();
+        a_stale_roster_snapshot_does_not_reopen_the_strip_after_turn_end();
+        an_activity_frame_does_not_open_the_strip_by_itself();
+        a_new_prompt_lets_the_roster_open_the_strip_again();
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();
