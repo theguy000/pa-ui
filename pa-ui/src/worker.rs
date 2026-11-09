@@ -67,14 +67,15 @@ pub(crate) enum Job {
     SetLevel { session: String, provider: String, model: String, level: String, switch: bool },
     /// start a fresh chat beside the running one (the TUI's `/new`)
     NewChat,
-    /// ask for a full `list` now: a terminal Turn must not leave a stale
-    /// roster row holding the Status strip up until the fallback poll.
-    RefreshSessions,
 }
 
 
 pub(crate) enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
+    /// the supervisor re-keyed the attached session: follow the new active id
+    SessionBinding { previous: String, active: String },
+    /// the direct worker link died; reattach through the supervisor
+    DirectLinkLost { session: String },
     Transcript { session: String, rows: Vec<crate::transcript::Row>, skipped: usize, messages: Vec<serde_json::Value> },
     Tail {
         session: String,
@@ -112,6 +113,8 @@ pub(crate) enum Msg {
     ExtraCommands(Vec<(String, String, String)>),
     /// the daemon's model catalog, as the menu builds it
     ModelCatalog(Vec<pa_client::ModelEntry>),
+    /// the daemon's catalog changed; the menu's cache is stale
+    ModelCatalogChanged,
     QueueEdit { text: String },
     /// a `create` came back: the id of the brand new session
     NewChat(String),
@@ -172,6 +175,10 @@ impl Msg {
                 | Msg::Queue { .. }
         )
     }
+}
+
+fn direct_loss_for_attached(attached: Option<&str>, lost: &str) -> bool {
+    attached == Some(lost)
 }
 
 type RosterRows = Vec<(String, SessionRow)>;
@@ -237,6 +244,101 @@ fn apply_roster_update(roster: &mut RosterRows, frame: &serde_json::Value) {
 fn same_session(left: &SessionRow, right: &SessionRow) -> bool {
     (!right.session_id.is_empty() && left.session_id == right.session_id)
         || (!right.id.is_empty() && left.id == right.id)
+}
+
+/// Apply one roster push to the raw entries used for running-subagent counts.
+fn apply_roster_entries(entries: &mut Vec<serde_json::Value>, frame: &serde_json::Value) {
+    if frame
+        .get("resync")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        entries.clear();
+    }
+    if let Some(changed) = frame.get("changed").and_then(serde_json::Value::as_array) {
+        for entry in changed {
+            let Some(id) = entry.get("agentId").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if let Some(position) = entries.iter().position(|known| {
+                known.get("agentId").and_then(serde_json::Value::as_str) == Some(id)
+            }) {
+                entries[position] = entry.clone();
+            } else {
+                entries.push(entry.clone());
+            }
+        }
+    }
+    if let Some(removed) = frame.get("removed").and_then(serde_json::Value::as_array) {
+        entries.retain(|entry| {
+            let id = entry.get("agentId").and_then(serde_json::Value::as_str);
+            !removed.iter().any(|gone| gone.as_str() == id)
+        });
+    }
+}
+
+fn activity_row<'a>(
+    attached: &str,
+    roster: &'a RosterRows,
+    saved: &'a [SessionRow],
+) -> Option<&'a SessionRow> {
+    roster
+        .iter()
+        .find(|(_, row)| row.id == attached)
+        .map(|(_, row)| row)
+        .or_else(|| saved.iter().find(|row| row.id == attached))
+}
+
+fn activity_subagents(
+    entries: &[serde_json::Value],
+    attached: &str,
+    roster: &RosterRows,
+    saved: &[SessionRow],
+) -> Option<usize> {
+    let row = activity_row(attached, roster, saved)?;
+    Some(pa_client::running_subagents(
+        entries,
+        attached,
+        &row.session_id,
+    ))
+}
+
+fn upsert_saved(rows: &mut Vec<SessionRow>, row: SessionRow) {
+    let found = rows.iter_mut().find(|known| {
+        (!row.session_id.is_empty() && known.session_id == row.session_id)
+            || (!row.id.is_empty() && known.id == row.id)
+    });
+    match found {
+        Some(known) => *known = row,
+        None => rows.push(row),
+    }
+}
+
+fn saved_rows_from_response(value: &serde_json::Value) -> Option<Vec<SessionRow>> {
+    value
+        .pointer("/data/sessions")
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| rows.iter().map(SessionRow::from_value).collect())
+}
+
+fn start_saved_catalog(active: &Client, session: Option<&str>) -> Option<String> {
+    let session = session?;
+    active
+        .send(
+            "list_saved_sessions",
+            serde_json::json!({"activeSessionId": session}),
+        )
+        .ok()
+}
+
+fn refresh_saved_catalog(
+    active: &Client,
+    session: Option<&str>,
+    pending: &mut Option<(String, Vec<SessionRow>)>,
+) {
+    if let Some(id) = start_saved_catalog(active, session) {
+        *pending = Some((id, Vec::new()));
+    }
 }
 
 /// Merge the saved catalog with the live roster. Roster rows win for a shared
@@ -311,17 +413,17 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // current messages (verified: attached 106 frozen while a fresh one read
     // 108 and kept moving).
 
-    let mut last_list = SystemTime::now() - Duration::from_secs(60);
     let mut attached: Option<String> = None;
     // prompts awaiting a daemon verdict: a fire-and-forget send would otherwise
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut pending_renames: Vec<(String, String)> = Vec::new();
     let mut roster: RosterRows = Vec::new();
+    let mut roster_entries: Vec<serde_json::Value> = Vec::new();
     let mut saved_rows: Vec<SessionRow> = Vec::new();
+    let mut pending_saved: Option<(String, Vec<SessionRow>)> = None;
     let mut pending_roster: Option<String> = None;
     let mut roster_subscribed = false;
-    let mut roster_live = false;
     let mut roster_failed = false;
     let mut resume: Option<(String, u64)> = None;
     // the outage line is already on the status strip for this stretch of failure
@@ -339,9 +441,10 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     resume = None;
                     offline = false;
                     roster.clear();
+                    roster_entries.clear();
+                    pending_saved = None;
                     pending_roster = None;
                     roster_subscribed = false;
-                    roster_live = false;
                     roster_failed = false;
                     out.send(Msg::Reconnected);
                 }
@@ -360,9 +463,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
         }
         let Some(active) = client.as_ref() else {
-            // No connection: still let the clock run. `continue` here spun the
-            // loop with nothing to do, so `last_list` never aged and no list was
-            // ever asked for once a connection came back.
+            // No connection: keep the loop alive so a later client can attach.
             std::thread::sleep(Duration::from_millis(150));
             continue;
         };
@@ -386,14 +487,6 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 
         while let Ok(job) = jobs.try_recv() {
             match job {
-                Job::RefreshSessions => {
-                    // A list scans the whole session directory. Coalesce a
-                    // duplicate request that arrives while the last snapshot is
-                    // still fresh.
-                    if last_list.elapsed().unwrap_or_default() >= Duration::from_secs(1) {
-                        last_list = SystemTime::now() - Duration::from_secs(60);
-                    }
-                }
                 Job::Rename { session, name } => {
                     match active.send(
                         "rename",
@@ -405,11 +498,15 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             message: error.to_string(),
                         }),
                     }
-                    last_list = SystemTime::now() - Duration::from_secs(60);
+                    refresh_saved_catalog(active, attached.as_deref(), &mut pending_saved);
                 }
                 Job::RenameSaved { session_path, name } => {
                     match pa_client::rename_saved_session(active, &session_path, &name) {
-                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Ok(_) => refresh_saved_catalog(
+                            active,
+                            attached.as_deref(),
+                            &mut pending_saved,
+                        ),
                         Err(error) => out.send(Msg::Error { session: None, message: error.to_string() }),
                     }
                 }
@@ -417,7 +514,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // the TUI's ctrl+x: the worker archives the session on its
                     // way out, and the row moves to done on the next poll
                     match pa_client::mark_done(active, &session) {
-                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Ok(_) => refresh_saved_catalog(
+                            active,
+                            attached.as_deref(),
+                            &mut pending_saved,
+                        ),
                         Err(error) => out.send(Msg::Error {
                             session: Some(session),
                             message: error.to_string(),
@@ -426,7 +527,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 }
                 Job::DeleteSaved { session_path } => {
                     match pa_client::delete_saved_session(active, &session_path) {
-                        Ok(_) => last_list = SystemTime::now() - Duration::from_secs(60),
+                        Ok(_) => refresh_saved_catalog(
+                            active,
+                            attached.as_deref(),
+                            &mut pending_saved,
+                        ),
                         Err(error) => out.send(Msg::Error { session: None, message: error.to_string() }),
                     }
                 }
@@ -450,12 +555,16 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     match attach_as(active, &session, Some(&client_id), resume.clone()) {
                         Ok(fallback) => {
                             attached = Some(session.clone());
+                            let direct = active.upgrade_direct(&session);
+                            if crate::env_cfg::cfg().debug {
+                                eprintln!("[direct] attach {session} direct={direct}");
+                            }
                             let messages = pa_client::get_page(active, &session, None, WINDOW_ROWS)
                                 .map(|page| page.messages)
                                 .unwrap_or(fallback);
                             let (rows, skipped) = crate::transcript::build(&messages, window_rows);
+                            refresh_saved_catalog(active, Some(&session), &mut pending_saved);
                             out.send(Msg::Transcript { session, rows, skipped, messages });
-                            last_list = SystemTime::now() - Duration::from_secs(60);
                         }
                         Err(error) => {
                             out.send(Msg::Error {
@@ -728,6 +837,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         match attach_as(active, &session, Some(&client_id), None) {
                             Ok(messages) => {
                                 attached = Some(session.clone());
+                                let _ = active.upgrade_direct(&session);
                                 let (rows, skipped) = crate::transcript::build(&messages, window_rows);
                                 out.send(Msg::Transcript {
                                     session: session.clone(),
@@ -913,6 +1023,19 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
             if frame_type == "response" {
                 let id = frame.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+                if pending_saved
+                    .as_ref()
+                    .is_some_and(|(pending, _)| pending == id)
+                {
+                    let (_, streamed) = pending_saved.take().expect("pending saved catalog");
+                    let success =
+                        frame.get("success").and_then(serde_json::Value::as_bool) == Some(true);
+                    if success {
+                        saved_rows = saved_rows_from_response(&frame).unwrap_or(streamed);
+                    }
+                    out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                    continue;
+                }
                 if pending_roster.as_deref() == Some(id) {
                     pending_roster = None;
                     let accepted =
@@ -924,13 +1047,24 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             .pointer("/data/roster")
                             .and_then(serde_json::Value::as_array)
                         {
+                            roster_entries = entries.clone();
                             roster = roster_rows(entries);
                             out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
-                            // The subscription snapshot can be older than the
-                            // last list, and an idle flip may already have been
-                            // content-diffed away. Take a full list now so the
-                            // two sources agree before the first poll window.
-                            last_list = SystemTime::now() - Duration::from_secs(60);
+                            if let Some(session) = attached.as_deref() {
+                                if let Some(subagents) = activity_subagents(
+                                    &roster_entries,
+                                    session,
+                                    &roster,
+                                    &saved_rows,
+                                ) {
+                                    out.send(Msg::ActivityCounts {
+                                        session: session.to_string(),
+                                        subagents: Some(subagents),
+                                        heartbeats: None,
+                                        shells: None,
+                                    });
+                                }
+                            }
                         }
                     }
                     continue;
@@ -963,9 +1097,92 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 continue;
             }
             if frame_type == "roster_update" {
-                roster_live = true;
                 apply_roster_update(&mut roster, &frame);
+                apply_roster_entries(&mut roster_entries, &frame);
                 out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                if let Some(session) = attached.as_deref() {
+                    if let Some(subagents) =
+                        activity_subagents(&roster_entries, session, &roster, &saved_rows)
+                    {
+                        out.send(Msg::ActivityCounts {
+                            session: session.to_string(),
+                            subagents: Some(subagents),
+                            heartbeats: None,
+                            shells: None,
+                        });
+                    }
+                }
+                continue;
+            }
+            if frame_type == "heartbeats_changed" {
+                if let Some(session) = attached.clone() {
+                    if let Some(row) = activity_row(&session, &roster, &saved_rows) {
+                        if let Ok(heartbeats) =
+                            pa_client::scoped_heartbeat_count(active, &session, &row.session_id)
+                        {
+                            out.send(Msg::ActivityCounts {
+                                session,
+                                subagents: None,
+                                heartbeats: Some(heartbeats),
+                                shells: None,
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+            if frame_type == "session_list_item" {
+                let request_id = frame
+                    .get("requestId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if let Some((pending, rows)) = pending_saved.as_mut() {
+                    if pending == request_id {
+                        if let Some(session) = frame.get("session") {
+                            upsert_saved(rows, SessionRow::from_value(session));
+                        }
+                        if rows.len() == 1 || rows.len() % 8 == 0 {
+                            let mut preview = saved_rows.clone();
+                            for row in rows.iter() {
+                                upsert_saved(&mut preview, row.clone());
+                            }
+                            out.send(Msg::Sessions(Ok(merged_sessions(&preview, &roster))));
+                        }
+                    }
+                }
+                continue;
+            }
+            if frame_type == "direct_link_lost" {
+                let lost = frame
+                    .get("activeSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if direct_loss_for_attached(attached.as_deref(), lost) {
+                    active.drop_direct();
+                    out.send(Msg::DirectLinkLost {
+                        session: lost.to_string(),
+                    });
+                }
+                continue;
+            }
+            if frame_type == "session_binding" {
+                let previous = frame
+                    .get("previousActiveSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let active = frame
+                    .get("activeSessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if !previous.is_empty() && !active.is_empty() && previous != active {
+                    out.send(Msg::SessionBinding { previous, active });
+                }
+                continue;
+            }
+            if frame_type == "model_catalog_changed" {
+                out.send(Msg::ModelCatalogChanged);
                 continue;
             }
             if frame_type != "session_event" {
@@ -999,24 +1216,25 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 if let Some(label) = pa_client::activity_label(event) {
                     out.send(Msg::Activity { label: label.to_string() });
                 }
+                let event_type = event
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if matches!(event_type, "bash_start" | "bash_end")
+                    && attached.as_deref() == Some(session)
+                {
+                    if let Ok(shells) = pa_client::running_shells(active, session) {
+                        out.send(Msg::ActivityCounts {
+                            session: session.to_string(),
+                            subagents: None,
+                            heartbeats: None,
+                            shells: Some(shells),
+                        });
+                    }
+                }
             }
         }
 
-        let list_interval = if roster_live { 30_000 } else { 2_000 };
-        if last_list.elapsed().unwrap_or_default() > Duration::from_millis(list_interval) {
-            let result = list_sessions(active);
-            match result {
-                Ok(rows) => {
-                    apply_list_snapshot(&mut roster, &mut saved_rows, rows);
-                    out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
-                }
-                Err(error) => {
-                    client = None;
-                    out.send(Msg::Sessions(Err(error.to_string())));
-                }
-            }
-            last_list = SystemTime::now();
-        }
         std::thread::sleep(Duration::from_millis(150));
     }
 }
@@ -1024,7 +1242,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_list_snapshot, apply_roster_update, merged_sessions, reconcile_roster_with_saved, Msg,
+        activity_subagents, apply_list_snapshot, apply_roster_entries, apply_roster_update,
+        direct_loss_for_attached, merged_sessions, reconcile_roster_with_saved,
+        saved_rows_from_response, upsert_saved, Msg,
     };
     use crate::SessionRow;
 
@@ -1288,5 +1508,80 @@ mod tests {
 
         apply_roster_update(&mut roster, &serde_json::json!({"removed": ["a2"]}));
         assert!(roster.is_empty());
+    }
+
+    #[test]
+    fn raw_roster_tracks_changed_removed_and_resync() {
+        let mut entries = vec![serde_json::json!({"agentId": "a1"})];
+        apply_roster_entries(
+            &mut entries,
+            &serde_json::json!({"changed": [{"agentId": "a2"}]}),
+        );
+        assert_eq!(entries.len(), 2);
+
+        apply_roster_entries(&mut entries, &serde_json::json!({"removed": ["a1"]}));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["agentId"], "a2");
+
+        apply_roster_entries(
+            &mut entries,
+            &serde_json::json!({"resync": true, "changed": [{"agentId": "a3"}]}),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["agentId"], "a3");
+    }
+
+    #[test]
+    fn activity_count_follows_the_attached_roster_family() {
+        let entries = vec![
+            serde_json::json!({"agentId": "root", "status": "idle", "summary": {
+                "activeSessionId": "root", "sessionId": "uuid-root",
+                "rlmDepth": 0, "runtimeKind": "top-level", "sessionFile": "/root.jsonl"
+            }}),
+            serde_json::json!({"agentId": "child", "status": "running", "summary": {
+                "activeSessionId": "child", "sessionId": "uuid-child",
+                "parentActiveSessionId": "root", "parentSessionId": "uuid-root",
+                "rlmDepth": 1, "runtimeKind": "subagent"
+            }}),
+        ];
+        let roster = vec![("root".to_string(), SessionRow {
+            id: "root".to_string(),
+            session_id: "uuid-root".to_string(),
+            ..SessionRow::default()
+        })];
+
+        assert_eq!(activity_subagents(&entries, "root", &roster, &[]), Some(1));
+    }
+
+    #[test]
+    fn streamed_saved_item_updates_its_existing_row() {
+        let mut rows = vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "uuid-1", "sessionName": "old"
+        }))];
+        upsert_saved(
+            &mut rows,
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "s1", "sessionId": "uuid-1", "sessionName": "new"
+            })),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "new");
+    }
+
+    #[test]
+    fn saved_catalog_response_replaces_the_streamed_rows() {
+        let rows = saved_rows_from_response(&serde_json::json!({
+            "data": {"sessions": [{"activeSessionId": "s1", "sessionName": "terminal"}]}
+        }))
+        .expect("sessions array");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "terminal");
+    }
+
+    #[test]
+    fn direct_loss_only_reattaches_the_attached_session() {
+        assert!(direct_loss_for_attached(Some("a"), "a"));
+        assert!(!direct_loss_for_attached(Some("a"), "b"));
+        assert!(!direct_loss_for_attached(None, "a"));
     }
 }

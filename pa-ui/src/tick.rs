@@ -2,6 +2,10 @@
 
 use crate::*;
 
+fn binding_selection(selected: &str, previous: &str, active: &str) -> Option<String> {
+    (selected == previous && !active.is_empty() && previous != active).then(|| active.to_string())
+}
+
 pub(crate) struct Tick {
     pub weak: slint::Weak<AppWindow>,
     pub jobs: Sender<Job>,
@@ -33,7 +37,6 @@ pub(crate) struct Tick {
     pub tail_at: std::cell::Cell<SystemTime>,
     pub queue_at: std::cell::Cell<SystemTime>,
     pub stats_at: std::cell::Cell<SystemTime>,
-    pub activity_at: std::cell::Cell<SystemTime>,
     pub scroll_ticks: std::cell::Cell<u64>,
     /// Error lines that belong to a Session other than the one on screen.
     /// They are replayed when that Session's Sheet is attached again.
@@ -56,7 +59,6 @@ pub(crate) struct Local {
     tail_at: SystemTime,
     queue_at: SystemTime,
     stats_at: SystemTime,
-    activity_at: SystemTime,
     scroll_ticks: u64,
 }
 
@@ -76,7 +78,6 @@ impl Local {
             tail_at: tick.tail_at.get(),
             queue_at: tick.queue_at.get(),
             stats_at: tick.stats_at.get(),
-            activity_at: tick.activity_at.get(),
             scroll_ticks: tick.scroll_ticks.get(),
         }
     }
@@ -95,7 +96,6 @@ impl Local {
         tick.tail_at.set(self.tail_at);
         tick.queue_at.set(self.queue_at);
         tick.stats_at.set(self.stats_at);
-        tick.activity_at.set(self.activity_at);
         tick.scroll_ticks.set(self.scroll_ticks);
     }
 }
@@ -341,23 +341,9 @@ impl Tick {
                 session: selected.clone(),
                 generation,
             });
-            l.activity_at = SystemTime::now();
             let _ = jobs.send(Job::ActivityRead {
                 session: selected.clone(),
                 session_id: selected_session_id.clone(),
-            });
-        }
-
-        // The roster answers subagents; heartbeats and shells need the daemon.
-        // Two seconds is the TUI's activity cadence and keeps the chip live
-        // without turning every repaint into a request.
-        if !selected.is_empty()
-            && l.activity_at.elapsed().unwrap_or_default() >= Duration::from_secs(2)
-        {
-            l.activity_at = SystemTime::now();
-            let _ = jobs.send(Job::ActivityRead {
-                session: selected.clone(),
-                session_id: selected_session_id,
             });
         }
 
@@ -468,6 +454,18 @@ impl Tick {
                     }
                 }
                 Msg::Sessions(Err(_)) => {}
+                Msg::DirectLinkLost { session } => {
+                    if ui.get_selected_id().to_string() == session {
+                        l.loaded = None;
+                    }
+                }
+                Msg::SessionBinding { previous, active } => {
+                    if let Some(active) = binding_selection(&ui.get_selected_id(), &previous, &active)
+                    {
+                        ui.set_selected_id(active.into());
+                        l.loaded = None;
+                    }
+                }
                 Msg::Activity { label } => {
                     // The TUI only changes the loader's word while a loader is
                     // already running. An activity frame is not a Turn start:
@@ -728,13 +726,6 @@ impl Tick {
                         l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
-                        // `turn_end` closes one assistant cycle; a run with many
-                        // tools has many of them. The full `list` scans every
-                        // Session, so it runs once at the run's own end, not at
-                        // every cycle. `agent_end` is the queue-drained frame.
-                        if kind == Some("agent_end") {
-                            let _ = jobs.send(Job::RefreshSessions);
-                        }
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -945,6 +936,13 @@ impl Tick {
                 }
                 Msg::ExtraCommands(rows) => {
                     composer.set_extra_commands(rows);
+                }
+                Msg::ModelCatalogChanged => {
+                    models.invalidate();
+                    let selected = ui.get_selected_id().to_string();
+                    if !selected.is_empty() {
+                        let _ = jobs.send(Job::ModelCatalog { session: selected });
+                    }
                 }
                 Msg::ModelCatalog(entries) => {
                     models.set_catalog(&ui, entries);
@@ -1246,7 +1244,6 @@ mod status_strip_tests {
                 tail_at: std::cell::Cell::new(SystemTime::now()),
                 queue_at: std::cell::Cell::new(SystemTime::now()),
                 stats_at: std::cell::Cell::new(SystemTime::now()),
-                activity_at: std::cell::Cell::new(SystemTime::now()),
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -1496,26 +1493,6 @@ mod status_strip_tests {
             h.tick.settled_session.take().is_none(),
             "agent_start released the previous Turn's settlement"
         );
-    }
-
-    fn an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not() {
-        let h = Harness::new();
-        h.ui.set_selected_id("s".into());
-        h.run();
-        h.send(roster_state(true));
-        h.run();
-
-        h.send_at(h.tick.attach_generation.get(), turn_end());
-        h.run();
-        assert!(!take_jobs(&h)
-            .iter()
-            .any(|job| matches!(job, Job::RefreshSessions)));
-
-        h.send_at(h.tick.attach_generation.get(), turn_start("agent_end"));
-        h.run();
-        assert!(take_jobs(&h)
-            .iter()
-            .any(|job| matches!(job, Job::RefreshSessions)));
     }
 
     fn an_idle_roster_releases_the_settlement() {
@@ -1916,7 +1893,6 @@ mod status_strip_tests {
         a_new_prompt_lets_the_roster_open_the_strip_again();
         a_new_turn_start_after_settlement_opens_the_strip();
         a_compaction_start_after_settlement_opens_the_strip();
-        an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not();
         an_idle_roster_releases_the_settlement();
         an_auto_retry_start_after_settlement_opens_the_strip();
         switching_sessions_clears_the_settlement();
@@ -2761,4 +2737,16 @@ mod status_strip_tests {
         assert!(!text.contains("a different session"), "{text}");
     }
 
+
+
+    #[test]
+    fn session_binding_selects_the_new_id_only_for_the_old_selection() {
+        assert_eq!(
+            binding_selection("old", "old", "new").as_deref(),
+            Some("new")
+        );
+        assert!(binding_selection("mine", "old", "new").is_none());
+        assert!(binding_selection("old", "old", "").is_none());
+        assert!(binding_selection("old", "old", "old").is_none());
+    }
 }

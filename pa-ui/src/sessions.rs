@@ -622,23 +622,40 @@ impl Sidebar {
                 folded,
             )
         };
+        let (previous_active, previous_idle, previous_done) = self.groups.borrow().clone();
+        let active_changed = active != previous_active;
+        let idle_changed = idle != previous_idle;
+        let done_changed = done != previous_done;
         *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
-        ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
-        ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
-        ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+        if active_changed {
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+        }
+        if idle_changed {
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+        }
+        if done_changed {
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+        }
 
         let any_group_move = any_moved(&col.previous, &col.entries);
         if col.changed() {
             apply(ui, col, if any_group_move { -2 } else { -1 }, false);
         }
-        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+        let visible_first = items.first().cloned();
+        if active_changed || idle_changed || done_changed {
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+        }
 
         if ui.get_selected_id().is_empty() {
             let preferred = std::env::var("PA_SELECT").ok();
             let chosen = preferred
                 .as_deref()
                 .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
-                .or_else(|| rows.first());
+                .or_else(|| {
+                    visible_first
+                        .as_ref()
+                        .and_then(|item| rows.iter().find(|row| row.id == item.id.as_str()))
+                });
             if let Some(first) = chosen {
                 ui.set_selected_id(first.id.clone().into());
                 *self.selected_uuid.borrow_mut() = Some(first.session_id.clone());
@@ -659,6 +676,11 @@ impl Sidebar {
         let selected = ui.get_selected_id().to_string();
         if let Some(uuid) = uuid_of(&rows, &selected) {
             *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        } else if !selected.is_empty() && self.selected_uuid.borrow().is_none() {
+            if let Some(first) = visible_first.as_ref() {
+                ui.set_selected_id(first.id.clone());
+                *self.selected_uuid.borrow_mut() = Some(first.uuid.to_string());
+            }
         }
         rebound_out
     }
