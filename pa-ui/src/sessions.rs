@@ -223,10 +223,16 @@ pub(crate) fn session_entries(
 
 pub(crate) fn entry_key(entry: &SessionEntry) -> String {
     if entry.is_header {
-        format!("hdr:{}", entry.label)
-    } else {
-        format!("row:{}", entry.item.uuid)
+        return format!("hdr:{}", entry.label);
     }
+    let identity = if !entry.item.uuid.is_empty() {
+        &entry.item.uuid
+    } else if !entry.item.id.is_empty() {
+        &entry.item.id
+    } else {
+        &entry.item.file
+    };
+    format!("row:{identity}")
 }
 
 pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide: f32) -> Vec<f32> {
