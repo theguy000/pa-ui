@@ -35,7 +35,8 @@ the TUI:
   snapshot also releases it once the Session has actually been reported idle.
   `turn_start`, `agent_start`, `compaction_start`, and `auto_retry_start` open
   the strip for a Turn the engine starts without this window's composer, as the
-  TUI's loader does.
+  TUI's loader does. Switching to another Session also drops the settlement, so
+  a Turn that started while the reader was away is not hidden on their return.
 - `Msg::Activity` only changes the label of a strip that is already up. It never
   starts the strip by itself.
 - Each successful `list` snapshot reconciles the cached roster: rows covered by
@@ -52,6 +53,10 @@ the TUI:
 - A new prompt or user message lets the next roster snapshot open the strip.
 - A `turn_start`, `agent_start`, `compaction_start`, or `auto_retry_start`
   after a settlement opens the strip for that Turn.
+- A normal composer send releases the settlement when its `agent_start`
+  arrives, not only the queue-edit fallback.
+- Switching Sessions clears the settlement; returning to a Session where a new
+  Turn started shows that Turn's running state.
 - A stale cached roster row is cleared by the next full `list` snapshot.
 - An unmatched roster row is not dropped by reconciliation.
 - The TUI's own status behavior is unchanged.

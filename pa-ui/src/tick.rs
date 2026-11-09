@@ -125,6 +125,21 @@ fn open_status(
     }
 }
 
+/// Replace the strip's word for a phase that outranks the running loader, as
+/// compaction does in the TUI.
+fn force_status(
+    ui: &AppWindow,
+    l: &mut Local,
+    busy_since: &std::cell::Cell<SystemTime>,
+    label: &str,
+) {
+    l.settled_session = None;
+    l.busy_label = label.to_string();
+    busy_since.set(SystemTime::now());
+    ui.set_busy_label(l.busy_label.clone().into());
+    ui.set_busy(true);
+}
+
 fn count_i32(count: usize) -> i32 {
     i32::try_from(count).unwrap_or(i32::MAX)
 }
@@ -310,6 +325,9 @@ impl Tick {
         }
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
+            // The reader is looking at a different Session: no settlement from
+            // the one they left can decide what this one's strip may show.
+            l.settled_session = None;
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
             sheet.replace(Vec::new());
@@ -659,7 +677,7 @@ impl Tick {
                         open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("compaction_start") {
-                        open_status(&ui, &mut l, busy_since, "Compacting");
+                        force_status(&ui, &mut l, busy_since, "Compacting");
                     }
                     if kind == Some("auto_retry_start") {
                         open_status(&ui, &mut l, busy_since, "Waiting");
@@ -1372,11 +1390,11 @@ mod status_strip_tests {
         assert_strip(&h, false, "");
     }
 
-    fn roster_state(running: bool) -> Msg {
+    fn roster_state_for(session: &str, running: bool) -> Msg {
         Msg::Sessions(Ok(vec![SessionRow {
-            id: "s".to_string(),
-            session_id: "s".to_string(),
-            name: "s".to_string(),
+            id: session.to_string(),
+            session_id: session.to_string(),
+            name: session.to_string(),
             activity: if running { "working" } else { "idle" }.to_string(),
             lifecycle: "live".to_string(),
             is_streaming: running,
@@ -1384,6 +1402,10 @@ mod status_strip_tests {
             is_running_tools: running,
             ..SessionRow::default()
         }]))
+    }
+
+    fn roster_state(running: bool) -> Msg {
+        roster_state_for("s", running)
     }
 
     /// A roster snapshot that still says the Session is running can cross the
@@ -1423,6 +1445,46 @@ mod status_strip_tests {
 
     /// The settlement is released by the next Turn, not forever: once a new
     /// prompt starts, the roster's running state is the current Turn again.
+    fn switching_sessions_clears_the_settlement() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.ui.set_selected_id("b".into());
+        h.run();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+    }
+
+    fn a_composer_send_releases_the_settlement_on_agent_start() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.ui.invoke_send_requested("next".into());
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_start("agent_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+        assert!(
+            h.tick.settled_session.take().is_none(),
+            "agent_start released the previous Turn's settlement"
+        );
+    }
+
     fn a_new_turn_start_after_settlement_opens_the_strip() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
@@ -1448,6 +1510,12 @@ mod status_strip_tests {
         h.run();
         assert_strip(&h, false, "");
 
+        h.send_at(h.tick.attach_generation.get(), turn_start("compaction_start"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+
+        // Compaction outranks a running loader, as it does in the TUI.
+        h.ui.set_busy_label("Writing".into());
         h.send_at(h.tick.attach_generation.get(), turn_start("compaction_start"));
         h.run();
         assert_strip(&h, true, "Compacting");
@@ -1781,6 +1849,8 @@ mod status_strip_tests {
         a_new_prompt_lets_the_roster_open_the_strip_again();
         a_new_turn_start_after_settlement_opens_the_strip();
         a_compaction_start_after_settlement_opens_the_strip();
+        switching_sessions_clears_the_settlement();
+        a_composer_send_releases_the_settlement_on_agent_start();
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();
