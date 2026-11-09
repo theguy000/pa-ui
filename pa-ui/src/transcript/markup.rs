@@ -337,20 +337,23 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             body.push(next);
         }
         if closed && !body.trim().is_empty() {
-            // The engine nests spans: a `**` inside an already-open bold is an
-            // overlap and the whole row falls back to plain text. So the weight
-            // goes OUTSIDE the colour tag, and is skipped when the line is
-            // already bold (a heading, or prose wrapped in `**`).
+            // A fresh span carries its weight inside the colour tag: at the
+            // start of a line Slint reads `**<font>` as literal markers, while
+            // `<font>**...**` parses. A span already inside bold only needs a
+            // zero-width separator so the opening markers parse there.
             let bold_already = out.matches("**").count() % 2 == 1;
-            if !bold_already {
-                out.push_str("**");
+            if bold_already && (out == "**" || out.ends_with("\n**")) {
+                out.push('\u{200b}');
             }
             open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-            escape_code_span(body.trim(), &mut out);
-            out.push_str("</font>");
             if !bold_already {
                 out.push_str("**");
             }
+            escape_code_span(body.trim(), &mut out);
+            if !bold_already {
+                out.push_str("**");
+            }
+            out.push_str("</font>");
         } else {
             out.push_str(&ticks);
             out.push_str(&body);

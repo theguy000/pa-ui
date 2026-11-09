@@ -434,7 +434,7 @@ mod theme_tests {
         );
         assert_eq!(
             markdown_markup("a `b` c", &shipped),
-            "a **<font color=\"#c9a86a\">b</font>** c"
+            "a <font color=\"#c9a86a\">**b**</font> c"
         );
         assert_eq!(
             highlight_python("return 'x'", &shipped),
@@ -575,6 +575,18 @@ mod markup_tests {
         assert!(rendered.contains("Strong"), "got {rendered}");
         assert!(rendered.contains("Color"), "got {rendered}");
         assert!(!drawn.contains("&gt;"), "got {drawn}");
+    }
+
+    #[test]
+    fn bold_inline_code_at_line_start_keeps_its_weight() {
+        let drawn = markdown_markup("**`x`**", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a bold code line parses")
+        );
+        assert!(rendered.contains("Strong"), "got {rendered}");
+        assert!(rendered.contains("Color"), "got {rendered}");
+        assert!(!rendered.contains("**x**"), "got {rendered}");
     }
 
     #[test]
