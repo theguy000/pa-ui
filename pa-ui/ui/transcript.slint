@@ -224,6 +224,12 @@ export component QueueRowUp inherits Rectangle {
 }
 
 export component TranscriptRow inherits VerticalLayout {
+    function open-link(link: string) {
+        if link.starts-with("https://") || link.starts-with("http://") {
+            Platform.open-url(link);
+        }
+    }
+
     spacing: 0px;
     property <bool> err-hover: false;
 
@@ -256,6 +262,7 @@ export component TranscriptRow inherits VerticalLayout {
                     default-color: Theme.transcript-message-ink;
                     default-font-size: Type.body;
                     link-color: Theme.transcript-link-ink;
+                    link-clicked(link) => { root.open-link(link); }
                 }
             }
         }
@@ -271,6 +278,7 @@ export component TranscriptRow inherits VerticalLayout {
             default-color: Theme.transcript-prose-ink;
             default-font-size: Type.body;
             link-color: Theme.transcript-link-ink;
+            link-clicked(link) => { root.open-link(link); }
         }
     }
 
@@ -596,6 +604,7 @@ export component TranscriptRow inherits VerticalLayout {
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
                     default-font-size: 13px;
+                    link-clicked(link) => { root.open-link(link); }
                 }
             }
         }
