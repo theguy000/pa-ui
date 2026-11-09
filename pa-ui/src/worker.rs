@@ -74,6 +74,8 @@ pub(crate) enum Msg {
     Sessions(Result<Vec<SessionRow>, String>),
     /// the supervisor re-keyed the attached session: follow the new active id
     SessionBinding { previous: String, active: String },
+    /// the direct worker link died; reattach through the supervisor
+    DirectLinkLost { session: String },
     Transcript { session: String, rows: Vec<crate::transcript::Row>, skipped: usize, messages: Vec<serde_json::Value> },
     Tail {
         session: String,
@@ -1139,7 +1141,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     .unwrap_or_default();
                 if direct_loss_for_attached(attached.as_deref(), lost) {
                     active.drop_direct();
-                    out.send(Msg::Reconnected);
+                    out.send(Msg::DirectLinkLost {
+                        session: lost.to_string(),
+                    });
                 }
                 continue;
             }
