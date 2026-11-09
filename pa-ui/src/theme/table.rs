@@ -361,10 +361,8 @@ pub(crate) enum Role {
     /// bold, and read a step above the prose around it because there is no size
     /// step inside one text run to say it is a heading.
     TranscriptHeadingInk,
-    /// A word the reader's message wrapped in backticks, inside a line of prose.
-    /// The renderer's own box around it hugs the glyphs with no padding and no
-    /// styling hook, so the span is drawn as a colour instead: the same working
-    /// accent the status strip uses for the busy word.
+    /// Inline code: the status strip's working accent. The renderer has no
+    /// styling hook for its box, so the span is drawn as a colour.
     TranscriptInlineCodeInk,
     /// The caret that says a row opens, in the header of a thinking row and of a
     /// cell. One role although two kinds of row draw it: it says the same thing
@@ -1575,9 +1573,8 @@ impl Resolved {
         for &(role, value) in &patch.roles {
             roles[role as usize] = value;
         }
-        // Inline code shares the status strip's working accent. A file that
-        // changes that role moves both; a file that names inline code itself
-        // keeps its own value.
+        // Inline code follows the status strip's working ink unless the file
+        // names it; an explicit inline-code role wins.
         if !patch
             .roles
             .iter()

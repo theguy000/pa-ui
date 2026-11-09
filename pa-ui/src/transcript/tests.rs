@@ -458,8 +458,6 @@ mod markup_tests {
 
     #[test]
     fn markdown_markers_inside_inline_code_are_escaped() {
-        // A code span containing `**` used to close the wrapper's emphasis and
-        // make Slint reject the whole row as interleaved styles.
         assert!(parses("the `**` marker"));
         assert!(parses("- `**` spans crossing line breaks are balanced."));
         assert!(parses("the `*a* _b_ [c] ~d~` span"));

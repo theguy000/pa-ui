@@ -1108,8 +1108,6 @@ fn a_theme_that_names_the_status_strip_roles_moves_only_those() {
     )
     .expect("a file that repaints the strip");
 
-    // The file names every colour the strip has; inline code follows the
-    // strip's working ink, and nothing else moves.
     let (moved, claimed) = moved_and_claimed(&theme, |name| {
         name.starts_with("status-strip-") || name == "transcript-inline-code-ink"
     });

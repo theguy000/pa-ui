@@ -47,9 +47,7 @@ pub fn styled(markup: &str) -> StyledText {
     } else {
         markup
     };
-    // The markup is ours: prose is escaped, inline code is escaped, and every
-    // block shape has a test. A parse failure is a bug in this encoder, not a
-    // reason to show the reader raw tags. Fail loudly with the input attached.
+    // Encoder output must parse; a failure is our bug, not a reason to show raw tags.
     StyledText::from_markdown(markup).unwrap_or_else(|error| {
         panic!("transcript markup must parse: {error}\n--- input ---\n{markup}")
     })
@@ -112,8 +110,6 @@ pub fn decode_entities(text: &str) -> String {
 }
 
 
-/// Escape one Markdown metacharacter. Returns false when the character is
-/// ordinary and the caller should write it unchanged.
 fn escape_markdown_char(ch: char, out: &mut String) -> bool {
     match ch {
         '\\' | '`' | '*' | '_' | '[' | ']' | '~' => {
@@ -140,10 +136,8 @@ pub(crate) fn escape(text: &str, out: &mut String) {
     }
 }
 
-/// Markdown metacharacters inside an inline code span are literal text, not
-/// emphasis or links. Escape them before the span is wrapped in theme markup.
-/// `escape` cannot be reused here: it also re-encodes HTML entities that the
-/// prose pass already escaped, which would display `&lt;` literally.
+/// Inline code is literal. `escape` cannot be reused: it re-encodes the HTML
+/// entities the prose pass already escaped.
 fn escape_code_span(text: &str, out: &mut String) {
     for ch in text.chars() {
         if !escape_markdown_char(ch, out) {
