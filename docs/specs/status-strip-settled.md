@@ -42,8 +42,10 @@ the TUI:
 - Each successful `list` snapshot reconciles the cached roster: rows covered by
   the snapshot are removed from the cache so the fresh snapshot wins. Roster
   rows that are not in the snapshot (live-only rows) are kept.
-- A terminal Turn asks the worker for a fresh list, so a stale cached row is
-  corrected immediately instead of waiting for the next 30-second fallback.
+- The run's `agent_end` asks the worker for a fresh list, so a stale cached row
+  is corrected instead of waiting for the next 30-second fallback. `turn_end`
+  alone does not: a tool-heavy run has one per assistant cycle, and a full
+  `list` scans the whole session directory.
 
 ## Requirements
 
@@ -55,6 +57,9 @@ the TUI:
   after a settlement opens the strip for that Turn.
 - A normal composer send releases the settlement when its `agent_start`
   arrives, not only the queue-edit fallback.
+- An `agent_end` asks for one fresh list; a `turn_end` does not. Duplicate
+  refresh requests within one second coalesce.
+- An idle roster snapshot releases the settlement.
 - Switching Sessions clears the settlement; returning to a Session where a new
   Turn started shows that Turn's running state.
 - A stale cached roster row is cleared by the next full `list` snapshot.
@@ -72,6 +77,14 @@ the TUI:
 - No TUI loader redesign: the new handlers follow the TUI's existing start
   points.
 
+## Residual risk
+
+A session switch discards the settlement because events for a hidden Session are
+not delivered to the window. The attach path forces a fresh list; until that
+list lands, a cached running roster row can open the strip briefly. Roster
+pushes carry no sequence, so the client cannot totally order them against a
+list response; the fresh snapshot narrows the window but does not close it.
+
 ## Acceptance
 
 - Regression tests for the three status paths.
@@ -79,4 +92,5 @@ the TUI:
 - `cargo test -p pa-ui --bin pa-ui`: all tests pass.
 - `cargo build --profile fast -p pa-ui --bin pa-ui`: passes.
 - Mutation: removing the settlement guard reopens the strip in the regression
-  test; removing reconciliation leaves the stale row in place.
+  test; removing reconciliation leaves the stale row in place; removing the
+  `agent_end` refresh leaves the refresh test without a job.

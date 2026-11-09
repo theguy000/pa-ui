@@ -391,7 +391,12 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         while let Ok(job) = jobs.try_recv() {
             match job {
                 Job::RefreshSessions => {
-                    last_list = SystemTime::now() - Duration::from_secs(60);
+                    // A list scans the whole session directory. Coalesce a
+                    // duplicate request that arrives while the last snapshot is
+                    // still fresh.
+                    if last_list.elapsed().unwrap_or_default() >= Duration::from_secs(1) {
+                        last_list = SystemTime::now() - Duration::from_secs(60);
+                    }
                 }
                 Job::Rename { session, name } => {
                     match active.send(

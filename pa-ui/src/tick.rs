@@ -121,6 +121,7 @@ fn open_status(
         l.busy_label = label.to_string();
         busy_since.set(SystemTime::now());
         ui.set_busy_label(l.busy_label.clone().into());
+        ui.set_busy_elapsed("0s".into());
         ui.set_busy(true);
     }
 }
@@ -137,6 +138,7 @@ fn force_status(
     l.busy_label = label.to_string();
     busy_since.set(SystemTime::now());
     ui.set_busy_label(l.busy_label.clone().into());
+    ui.set_busy_elapsed("0s".into());
     ui.set_busy(true);
 }
 
@@ -726,10 +728,13 @@ impl Tick {
                         l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
-                        // A roster push can lag or be dropped. Ask for the full
-                        // snapshot now so a cached running row cannot outlive
-                        // the terminal frame.
-                        let _ = jobs.send(Job::RefreshSessions);
+                        // `turn_end` closes one assistant cycle; a run with many
+                        // tools has many of them. The full `list` scans every
+                        // Session, so it runs once at the run's own end, not at
+                        // every cycle. `agent_end` is the queue-drained frame.
+                        if kind == Some("agent_end") {
+                            let _ = jobs.send(Job::RefreshSessions);
+                        }
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -1294,6 +1299,14 @@ mod status_strip_tests {
         }
     }
 
+    fn take_jobs(h: &Harness) -> Vec<Job> {
+        let mut jobs = Vec::new();
+        while let Ok(job) = h.jobs.try_recv() {
+            jobs.push(job);
+        }
+        jobs
+    }
+
     fn assert_strip(h: &Harness, busy: bool, label: &str) {
         assert_eq!(h.ui.get_busy(), busy);
         assert_eq!(h.ui.get_busy_label().as_str(), label);
@@ -1485,7 +1498,27 @@ mod status_strip_tests {
         );
     }
 
-    fn a_new_turn_start_after_settlement_opens_the_strip() {
+    fn an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert!(!take_jobs(&h)
+            .iter()
+            .any(|job| matches!(job, Job::RefreshSessions)));
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("agent_end"));
+        h.run();
+        assert!(take_jobs(&h)
+            .iter()
+            .any(|job| matches!(job, Job::RefreshSessions)));
+    }
+
+    fn an_idle_roster_releases_the_settlement() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
         h.run();
@@ -1495,9 +1528,43 @@ mod status_strip_tests {
         h.run();
         assert_strip(&h, false, "");
 
+        h.send(roster_state(false));
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+    }
+
+    fn an_auto_retry_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("auto_retry_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+    }
+
+    fn a_new_turn_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+        h.ui.set_busy_elapsed("99s".into());
+
         h.send_at(h.tick.attach_generation.get(), turn_start("turn_start"));
         h.run();
         assert_strip(&h, true, "Waiting");
+        assert_eq!(h.ui.get_busy_elapsed().as_str(), "0s");
     }
 
     fn a_compaction_start_after_settlement_opens_the_strip() {
@@ -1849,6 +1916,9 @@ mod status_strip_tests {
         a_new_prompt_lets_the_roster_open_the_strip_again();
         a_new_turn_start_after_settlement_opens_the_strip();
         a_compaction_start_after_settlement_opens_the_strip();
+        an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not();
+        an_idle_roster_releases_the_settlement();
+        an_auto_retry_start_after_settlement_opens_the_strip();
         switching_sessions_clears_the_settlement();
         a_composer_send_releases_the_settlement_on_agent_start();
         a_parked_command_does_not_claim_the_running_turn();
