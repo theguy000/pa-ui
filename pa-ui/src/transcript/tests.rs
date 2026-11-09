@@ -457,7 +457,7 @@ mod markup_tests {
     }
 
     #[test]
-    fn markdown_markers_inside_inline_code_stay_literal() {
+    fn markdown_markers_inside_inline_code_are_escaped() {
         // A code span containing `**` used to close the wrapper's emphasis and
         // make Slint reject the whole row as interleaved styles.
         assert!(parses("the `**` marker"));
@@ -465,8 +465,40 @@ mod markup_tests {
         assert!(parses("the `*a* _b_ [c] ~d~` span"));
         assert!(parses(r"the `a\b` span"));
         assert!(parses("the ``a`b`` span"));
+        assert!(parses("``first line\n- second line``"));
+
+        for (source, escaped) in [
+            ("`**`", r"\*\*"),
+            ("`*a*`", r"\*a\*"),
+            ("`_b_`", r"\_b\_"),
+            ("`[c]`", r"\[c\]"),
+            ("`~d~`", r"\~d\~"),
+            ("`a\\b`", r"a\\b"),
+            ("``a`b``", r"a\`b"),
+        ] {
+            let drawn = markdown_markup(source, &shipped());
+            assert!(drawn.contains(escaped), "{source} escaped to {drawn}");
+        }
+
         let drawn = markdown_markup("the `**` marker", &shipped());
-        assert!(drawn.contains(r"\*\*"), "got {drawn}");
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("the escaped row parses")
+        );
+        assert!(
+            rendered.contains(r#"text: "the ** marker""#),
+            "the code body must render literally, got {rendered}"
+        );
+
+        let drawn = markdown_markup(r##"the `<font color="#8f9088">` span"##, &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a tag in a code span parses")
+        );
+        assert!(
+            rendered.contains(r##"text: "the <font color=\"#8f9088\"> span""##),
+            "the probe text must stay literal, got {rendered}"
+        );
     }
 
     #[test]

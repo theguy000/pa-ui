@@ -115,19 +115,30 @@ pub fn decode_entities(text: &str) -> String {
 }
 
 
+/// Escape one Markdown metacharacter. Returns false when the character is
+/// ordinary and the caller should write it unchanged.
+fn escape_markdown_char(ch: char, out: &mut String) -> bool {
+    match ch {
+        '\\' | '`' | '*' | '_' | '[' | ']' | '~' => {
+            out.push('\\');
+            out.push(ch);
+            true
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn escape(text: &str, out: &mut String) {
     for ch in text.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
-            '`' => out.push_str("\\`"),
-            '*' => out.push_str("\\*"),
-            '_' => out.push_str("\\_"),
-            '[' => out.push_str("\\["),
-            ']' => out.push_str("\\]"),
-            '\\' => out.push_str("\\\\"),
-            other => out.push(other),
+            other => {
+                if !escape_markdown_char(other, out) {
+                    out.push(other);
+                }
+            }
         }
     }
 }
@@ -138,12 +149,8 @@ pub(crate) fn escape(text: &str, out: &mut String) {
 /// prose pass already escaped, which would display `&lt;` literally.
 fn escape_code_span(text: &str, out: &mut String) {
     for ch in text.chars() {
-        match ch {
-            '\\' | '`' | '*' | '_' | '[' | ']' | '~' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            other => out.push(other),
+        if !escape_markdown_char(ch, out) {
+            out.push(ch);
         }
     }
 }
@@ -319,15 +326,14 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             // goes OUTSIDE the colour tag, and is skipped when the line is
             // already bold (a heading, or prose wrapped in `**`).
             let bold_already = out.matches("**").count() % 2 == 1;
-            if bold_already {
-                open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                escape_code_span(body.trim(), &mut out);
-                out.push_str("</font>");
-            } else {
+            if !bold_already {
                 out.push_str("**");
-                open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                escape_code_span(body.trim(), &mut out);
-                out.push_str("</font>**");
+            }
+            open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
+            escape_code_span(body.trim(), &mut out);
+            out.push_str("</font>");
+            if !bold_already {
+                out.push_str("**");
             }
         } else {
             out.push_str(&ticks);
