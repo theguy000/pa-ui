@@ -246,6 +246,7 @@ export component AppWindow inherits Window {
     in-out property <bool> themes-open: true;
     in-out property <[ThemeItem]> theme-items;
     callback theme-picked(string);
+    callback selection-picked(string);
     in-out property <string> selected-id;
     // The sidebar's groups: the rows of each, in the order they are drawn, and
     // which of the three the reader has folded. The window fills all three from
@@ -1023,7 +1024,10 @@ export component AppWindow inherits Window {
                                     root.model-menu = false;
                                     root.settings-menu = false;
                                     root.menu-id = "";
-                                    root.selected-id = id;
+                                    if root.selected-id != id {
+                                        root.selected-id = id;
+                                        root.selection-picked(id);
+                                    }
                                     // a picked row drops the card: leaving
                                     // hover as the only way to clear it
                                     // made it look stuck

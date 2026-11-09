@@ -203,6 +203,12 @@ fn main() -> Result<(), slint::PlatformError> {
         retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
     });
 
+    // A sidebar pick changes the selection synchronously, but the transcript
+    // belongs to the previous Session until the next poll tick. Run the tick
+    // from the pick so the old sheet does not wait for the timer.
+    let pick_tick = tick.clone();
+    ui.on_selection_picked(move |_| pick_tick.run());
+
     let poll = Timer::default();
     let poll_tick = tick.clone();
     poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
