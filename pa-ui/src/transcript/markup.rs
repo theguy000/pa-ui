@@ -174,8 +174,6 @@ pub(crate) fn escape_html(text: &str) -> String {
 }
 
 
-/// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
-/// headings become bold lines, rules become blank lines, quotes lose their `>`.
 /// How many `**` markers a line carries, ignoring escapes and code spans.
 ///
 /// Each marker toggles bold, so an odd count means the line leaves bold open.
@@ -270,7 +268,7 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
         } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
             // horizontal rule: nothing to draw
         } else if let Some(rest) = quote_body(line) {
-            open_font(theme, Role::TranscriptQuoteBorder, &mut out);
+            open_font(theme, Role::TranscriptQuoteEdge, &mut out);
             out.push('│');
             out.push_str("</font> ");
             open_font(theme, Role::TranscriptQuoteInk, &mut out);
@@ -286,6 +284,8 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
 }
 
 
+/// Slint's `StyledText` has no italic property, so the TUI's quote emphasis is
+/// carried by per-line markdown markers after the line has been styled.
 pub fn quote_markup(text: &str, theme: &Resolved) -> String {
     markdown_markup(text, theme)
         .split('\n')
@@ -534,6 +534,24 @@ pub(crate) fn flush_prose(prose: &mut Vec<String>, out: &mut Vec<Block>) {
 }
 
 
+fn starts_other_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#')
+        || trimmed.starts_with("```")
+        || trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || trimmed.starts_with("+ ")
+    {
+        return true;
+    }
+    if trimmed.len() >= 3 && trimmed.chars().all(|ch| matches!(ch, '-' | '*' | '_' | ' ')) {
+        return true;
+    }
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && trimmed[digits..].starts_with(". ")
+}
+
+
 /// Carve a message into prose, fenced blocks and tables.
 pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
     let lines: Vec<&str> = text.split('\n').collect();
@@ -562,16 +580,32 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
         if let Some(first) = quote_body(line) {
             flush_prose(&mut prose, &mut out);
             let mut body = vec![first.to_string()];
+            let mut lazy = !first.trim().is_empty();
             index += 1;
             while index < lines.len() {
                 let next = lines[index];
-                if next.trim().is_empty() || next.trim_start().starts_with("```") {
+                if next.trim().is_empty() {
                     break;
                 }
-                body.push(quote_body(next).unwrap_or(next).to_string());
+                if let Some(rest) = quote_body(next) {
+                    body.push(rest.to_string());
+                    lazy = true;
+                    index += 1;
+                    continue;
+                }
+                if !lazy
+                    || starts_other_block(next)
+                    || (next.contains('|') && lines.get(index + 1).is_some_and(|row| is_delimiter_row(row)))
+                {
+                    break;
+                }
+                body.push(next.to_string());
                 index += 1;
             }
-            if body.iter().any(|line| !line.trim().is_empty()) {
+            while body.first().is_some_and(|line| line.trim().is_empty()) {
+                body.remove(0);
+            }
+            if !body.is_empty() {
                 out.push(Block::Quote(body.join("\n")));
             }
             continue;

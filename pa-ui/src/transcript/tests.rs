@@ -130,6 +130,21 @@ mod strong_tests {
     }
 
     #[test]
+    fn a_quote_stops_at_a_heading() {
+        let blocks = split_blocks("> quoted\n# heading");
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0], Block::Quote(_)));
+        assert!(matches!(blocks[1], Block::Prose(_)));
+    }
+
+    #[test]
+    fn an_empty_quote_does_not_swallow_the_next_paragraph() {
+        let blocks = split_blocks(">\nafter");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], Block::Prose(_)));
+    }
+
+    #[test]
     fn tables_pad_columns_and_honour_right_alignment() {
         let table = render_table(&["| model | cost |", "|:--|--:|", "| a | $1.50 |", "| longer | $2 |"])
             .expect("a valid table");
@@ -368,26 +383,6 @@ mod header_parity_tests {
         assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
     }
 
-    #[test]
-    fn a_quote_is_its_own_row_without_the_marker() {
-        let rows = build(
-            &[serde_json::json!({
-                "role": "assistant",
-                "content": [{"type": "text", "text": "before\n> one\n> two\nlazy\n\nafter"}]
-            })],
-            20,
-        )
-        .0;
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].kind, KIND_AGENT);
-        assert_eq!(rows[1].kind, KIND_QUOTE);
-        assert!(rows[1].body.contains("one"));
-        assert!(rows[1].body.contains("two"));
-        assert!(rows[1].body.contains("lazy"));
-        assert!(!rows[1].body.contains("&gt;"));
-        assert!(!rows[1].body.contains('›'));
-        assert_eq!(rows[2].kind, KIND_AGENT);
-    }
 }
 
 
@@ -550,9 +545,23 @@ mod markup_tests {
     #[test]
     fn a_quote_markup_draws_a_bar_not_a_source_marker() {
         let drawn = markdown_markup("> quoted", &shipped());
-        assert!(drawn.contains('│'), "got {drawn}");
+        assert_eq!(
+            drawn,
+            "<font color=\"#484944\">│</font> <font color=\"#909189\">quoted</font>"
+        );
         assert!(!drawn.contains('›'), "got {drawn}");
-        assert!(!drawn.contains("&gt;"), "got {drawn}");
+        let escaped = markdown_markup("> a < b & c", &shipped());
+        assert!(escaped.contains("&lt; b &amp; c"), "got {escaped}");
+    }
+
+    #[test]
+    fn quote_markup_keeps_a_literal_asterisk() {
+        let drawn = quote_markup("a * b", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a literal asterisk quote parses")
+        );
+        assert!(rendered.contains(r#"text: "a * b""#), "got {rendered}");
     }
 
     #[test]
@@ -892,5 +901,27 @@ mod summary_tests {
         assert!(rows[0].has_body);
         assert!(rows[0].expanded);
         assert!(plain(&rows[0].body).contains("Recover the branch context."));
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn a_quote_is_its_own_row_without_the_marker() {
+        let rows = build(
+            &[serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "before\n> one\n> two\nlazy\n\nafter"}]
+            })],
+            20,
+        )
+        .0;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, KIND_AGENT);
+        assert_eq!(rows[1].kind, KIND_QUOTE);
+        assert_eq!(rows[1].body, "*one*\n*two*\n*lazy*");
+        assert_eq!(rows[2].kind, KIND_AGENT);
     }
 }

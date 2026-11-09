@@ -278,11 +278,11 @@ export component TranscriptRow inherits VerticalLayout {
         height: quote-text.preferred-height + 12px;
         quote-bar := Rectangle {
             x: 24px;
-            y: 8px;
+            y: 6px;
             width: 2px;
-            height: parent.height - 16px;
+            height: parent.height - 12px;
             border-radius: 1px;
-            background: Theme.transcript-quote-border;
+            background: Theme.transcript-quote-edge;
         }
         quote-text := StyledText {
             x: 36px;

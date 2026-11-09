@@ -343,7 +343,8 @@ pub(crate) enum Role {
     TranscriptProseInk,
     /// A blockquote's words: prose stepped back, because the bar already marks it.
     TranscriptQuoteInk,
-    TranscriptQuoteBorder,
+    /// The bar that marks a quoted passage; quiet, so the words stay first.
+    TranscriptQuoteEdge,
     /// The field around the message the reader sent, which sets their own turn
     /// apart from the agent's.
     TranscriptMessageFill,
@@ -855,7 +856,7 @@ impl Role {
         Role::TranscriptSurface,
         Role::TranscriptProseInk,
         Role::TranscriptQuoteInk,
-        Role::TranscriptQuoteBorder,
+        Role::TranscriptQuoteEdge,
         Role::TranscriptMessageFill,
         Role::TranscriptMessageInk,
         Role::TranscriptLinkInk,
@@ -1055,7 +1056,7 @@ impl Role {
             Role::TranscriptSurface => "transcript-surface",
             Role::TranscriptProseInk => "transcript-prose-ink",
             Role::TranscriptQuoteInk => "transcript-quote-ink",
-            Role::TranscriptQuoteBorder => "transcript-quote-border",
+            Role::TranscriptQuoteEdge => "transcript-quote-edge",
             Role::TranscriptMessageFill => "transcript-message-fill",
             Role::TranscriptMessageInk => "transcript-message-ink",
             Role::TranscriptLinkInk => "transcript-link-ink",
@@ -1277,7 +1278,7 @@ impl Role {
             Role::TranscriptSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0094),
             Role::TranscriptProseInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
             Role::TranscriptQuoteInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.8),
-            Role::TranscriptQuoteBorder => {
+            Role::TranscriptQuoteEdge => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.35)
             }
             Role::TranscriptMessageFill => Derivation::Fixed(Rgba::hex("#2e2916")),

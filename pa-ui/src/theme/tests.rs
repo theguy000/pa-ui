@@ -296,7 +296,7 @@ fn the_shipped_theme_draws_todays_transcript() {
     // Prose, and the ink a row steps back to.
     assert_eq!(theme.get(Role::TranscriptProseInk), Rgba::hex("#d3d1cb"));
     assert_eq!(theme.get(Role::TranscriptQuoteInk), Rgba::hex("#909189"));
-    assert_eq!(theme.get(Role::TranscriptQuoteBorder), Rgba::hex("#484944"));
+    assert_eq!(theme.get(Role::TranscriptQuoteEdge), Rgba::hex("#484944"));
     assert_eq!(theme.get(Role::TranscriptLinkInk), Rgba::hex("#a18e41"));
     assert_eq!(theme.get(Role::TranscriptNoticeInk), Rgba::hex("#4b4c47"));
 
@@ -631,7 +631,7 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-surface": "#1a1226",
                "transcript-prose-ink": "#eee6ff",
                "transcript-quote-ink": "#d8ccee",
-               "transcript-quote-border": "#7a6699",
+               "transcript-quote-edge": "#7a6699",
                "transcript-message-fill": "#2b1f3d",
                "transcript-message-ink": "#ffffff",
                "transcript-link-ink": "#c9a7ff",
@@ -1130,14 +1130,14 @@ fn a_theme_that_names_the_quote_roles_moves_only_those() {
         r##"{ "name": "mine", "version": 1,
              "roles": {
                "transcript-quote-ink": "#e0d8c0",
-               "transcript-quote-border": "#8a7a58" } }"##,
+               "transcript-quote-edge": "#8a7a58" } }"##,
     )
     .expect("a file that repaints quotes");
 
     let (moved, claimed) = moved_and_claimed(&theme, |name| name.starts_with("transcript-quote-"));
     assert_eq!(moved, claimed);
     assert_eq!(theme.get(Role::TranscriptQuoteInk), Rgba::hex("#e0d8c0"));
-    assert_eq!(theme.get(Role::TranscriptQuoteBorder), Rgba::hex("#8a7a58"));
+    assert_eq!(theme.get(Role::TranscriptQuoteEdge), Rgba::hex("#8a7a58"));
 }
 
 /// The ticket's second promise, in the unit that can keep it: the strip's tags —
