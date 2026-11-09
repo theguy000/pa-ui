@@ -27,3 +27,7 @@ The window updates from daemon events and user actions, not a periodic data poll
 - Attach requests stats and queue once.
 - Queue replies are scoped to the selected session.
 - `cargo test -p pa-ui` passes.
+
+## Known risk
+
+- If the daemon drops a terminal turn event and no later event, roster update, or sequence gap arrives, the last tail reconciliation waits for the next message. The old tail timer covered that case; this runtime relies on event delivery. It is a residual gap, not a second polling layer.
