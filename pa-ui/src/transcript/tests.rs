@@ -408,7 +408,7 @@ mod theme_tests {
         );
         assert_eq!(
             markdown_markup("a `b` c", &shipped),
-            "a **<font color=\"#8f9088\">b</font>** c"
+            "a **<font color=\"#c9a86a\">b</font>** c"
         );
         assert_eq!(
             highlight_python("return 'x'", &shipped),
@@ -457,6 +457,49 @@ mod markup_tests {
     }
 
     #[test]
+    fn markdown_markers_inside_inline_code_are_escaped() {
+        assert!(parses("the `**` marker"));
+        assert!(parses("- `**` spans crossing line breaks are balanced."));
+        assert!(parses("the `*a* _b_ [c] ~d~` span"));
+        assert!(parses(r"the `a\b` span"));
+        assert!(parses("the ``a`b`` span"));
+        assert!(parses("``first line\n- second line``"));
+
+        for (source, escaped) in [
+            ("`**`", r"\*\*"),
+            ("`*a*`", r"\*a\*"),
+            ("`_b_`", r"\_b\_"),
+            ("`[c]`", r"\[c\]"),
+            ("`~d~`", r"\~d\~"),
+            ("`a\\b`", r"a\\b"),
+            ("``a`b``", r"a\`b"),
+        ] {
+            let drawn = markdown_markup(source, &shipped());
+            assert!(drawn.contains(escaped), "{source} escaped to {drawn}");
+        }
+
+        let drawn = markdown_markup("the `**` marker", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("the escaped row parses")
+        );
+        assert!(
+            rendered.contains(r#"text: "the ** marker""#),
+            "the code body must render literally, got {rendered}"
+        );
+
+        let drawn = markdown_markup(r##"the `<font color="#8f9088">` span"##, &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a tag in a code span parses")
+        );
+        assert!(
+            rendered.contains(r##"text: "the <font color=\"#8f9088\"> span""##),
+            "the probe text must stay literal, got {rendered}"
+        );
+    }
+
+    #[test]
     fn a_message_that_mentions_a_tag_draws_it() {
         // a handover line talking about `</font>` used to emit a real closing tag
         assert!(parses("the `</font>` overlap is fixed"));
@@ -477,6 +520,12 @@ mod markup_tests {
     fn plain_rows_still_parse() {
         assert!(StyledText::from_markdown(&plain_markup("just words\n    and indented"))
             .is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "transcript markup must parse")]
+    fn malformed_markup_is_not_hidden_by_a_plain_text_fallback() {
+        let _ = styled("**<font color=\"#8f9088\">**</font>**");
     }
 
     #[test]
