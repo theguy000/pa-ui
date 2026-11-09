@@ -207,6 +207,12 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let wake_tick = tick.clone();
     ui.on_wake(move || wake_tick.run());
+    let paging_tick = tick.clone();
+    ui.on_scroll_paging(move || {
+        if let Some(ui) = paging_tick.weak.upgrade() {
+            paging_tick.request_older(&ui);
+        }
+    });
     // Worker messages carry a wake token; one hop moves the batch onto the
     // Slint thread. Coalesce tokens queued while the UI was busy.
     let wake_ui = ui.as_weak();

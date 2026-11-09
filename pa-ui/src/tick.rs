@@ -183,7 +183,7 @@ impl Tick {
         }
     }
 
-    fn request_older(&self, ui: &AppWindow) {
+    pub(crate) fn request_older(&self, ui: &AppWindow) {
         let session = ui.get_selected_id().to_string();
         if session.is_empty() {
             return;

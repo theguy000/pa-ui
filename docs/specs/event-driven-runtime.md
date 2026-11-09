@@ -7,7 +7,7 @@ The window updates from daemon events and user actions, not a periodic data poll
 - The worker blocks on the next job or transport frame; it has no idle sleep.
 - A blocking frame reader feeds the worker; connection loss wakes the select.
 - Every `Msg` send also wakes the Slint event loop.
-- `Tick::run` runs from a wake, a sidebar pick, a transcript scroll (paging is scroll-driven), or startup; there is no 120 ms tick.
+- `Tick::run` runs from a wake, a sidebar pick, or startup; a transcript scroll asks for the older page directly without running a full tick. There is no 120 ms tick.
 
 ## Data
 - Attach reads the transcript, then asks for stats and the parked queue once.

@@ -569,7 +569,7 @@ impl Sheet {
         ui.on_viewport_scrolled(move |cy, vh| {
             sheet_scroll.on_scroll(cy, vh);
             if let Some(ui) = scroll_ui.upgrade() {
-                ui.invoke_wake();
+                ui.invoke_scroll_paging();
             }
         });
         let sheet_meas = self.clone();
