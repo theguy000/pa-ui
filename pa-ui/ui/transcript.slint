@@ -274,6 +274,27 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
+    if data.kind == 11 : Rectangle {
+        height: quote-text.preferred-height + 12px;
+        quote-bar := Rectangle {
+            x: 24px;
+            y: 8px;
+            width: 2px;
+            height: parent.height - 16px;
+            border-radius: 1px;
+            background: Theme.transcript-quote-border;
+        }
+        quote-text := StyledText {
+            x: 36px;
+            y: 6px;
+            width: parent.width - 60px;
+            text: data.body;
+            default-color: Theme.transcript-quote-ink;
+            default-font-size: Type.body;
+            link-color: Theme.transcript-link-ink;
+        }
+    }
+
     if data.kind == 2 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;

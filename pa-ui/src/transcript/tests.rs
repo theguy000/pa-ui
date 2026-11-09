@@ -120,6 +120,16 @@ mod strong_tests {
     }
 
     #[test]
+    fn quote_lines_and_lazy_continuations_make_one_quote_block() {
+        let blocks = split_blocks("before\n> one\n> two\nlazy\n\nafter");
+        assert_eq!(blocks.len(), 3);
+        match &blocks[1] {
+            Block::Quote(body) => assert_eq!(body, "one\ntwo\nlazy"),
+            other => panic!("expected quote, got {}", matches!(other, Block::Prose(_))),
+        }
+    }
+
+    #[test]
     fn tables_pad_columns_and_honour_right_alignment() {
         let table = render_table(&["| model | cost |", "|:--|--:|", "| a | $1.50 |", "| longer | $2 |"])
             .expect("a valid table");
@@ -357,6 +367,27 @@ mod header_parity_tests {
     fn a_bash_cell_magic_is_bash() {
         assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
     }
+
+    #[test]
+    fn a_quote_is_its_own_row_without_the_marker() {
+        let rows = build(
+            &[serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "before\n> one\n> two\nlazy\n\nafter"}]
+            })],
+            20,
+        )
+        .0;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, KIND_AGENT);
+        assert_eq!(rows[1].kind, KIND_QUOTE);
+        assert!(rows[1].body.contains("one"));
+        assert!(rows[1].body.contains("two"));
+        assert!(rows[1].body.contains("lazy"));
+        assert!(!rows[1].body.contains("&gt;"));
+        assert!(!rows[1].body.contains('›'));
+        assert_eq!(rows[2].kind, KIND_AGENT);
+    }
 }
 
 
@@ -420,7 +451,7 @@ mod theme_tests {
 
 #[cfg(test)]
 mod markup_tests {
-    use super::{markdown_markup, plain_markup, styled};
+    use super::{markdown_markup, plain_markup, quote_markup, styled};
     use crate::theme::Resolved;
     use slint::StyledText;
 
@@ -514,6 +545,27 @@ mod markup_tests {
     fn bold_running_over_a_line_break_is_balanced() {
         assert!(parses("**starts here\nand ends here**"));
         assert!(parses("**open\nstill open"));
+    }
+
+    #[test]
+    fn a_quote_markup_draws_a_bar_not_a_source_marker() {
+        let drawn = markdown_markup("> quoted", &shipped());
+        assert!(drawn.contains('│'), "got {drawn}");
+        assert!(!drawn.contains('›'), "got {drawn}");
+        assert!(!drawn.contains("&gt;"), "got {drawn}");
+    }
+
+    #[test]
+    fn quote_markup_keeps_inline_style_and_adds_emphasis() {
+        let drawn = quote_markup("one **two** and `three`", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a styled quote parses")
+        );
+        assert!(rendered.contains("Emphasis"), "got {rendered}");
+        assert!(rendered.contains("Strong"), "got {rendered}");
+        assert!(rendered.contains("Color"), "got {rendered}");
+        assert!(!drawn.contains("&gt;"), "got {drawn}");
     }
 
     #[test]
