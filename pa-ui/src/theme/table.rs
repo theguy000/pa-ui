@@ -341,6 +341,10 @@ pub(crate) enum Role {
     TranscriptSurface,
     /// The agent's words, read at body strength on the transcript's surface.
     TranscriptProseInk,
+    /// A blockquote's words: prose stepped back, because the bar already marks it.
+    TranscriptQuoteInk,
+    /// The bar that marks a quoted passage; quiet, so the words stay first.
+    TranscriptQuoteEdge,
     /// The field around the message the reader sent, which sets their own turn
     /// apart from the agent's.
     TranscriptMessageFill,
@@ -804,7 +808,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 193] = [
+    pub(crate) const ALL: [Role; 195] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -851,6 +855,8 @@ impl Role {
         Role::BrandMarkStemShadow,
         Role::TranscriptSurface,
         Role::TranscriptProseInk,
+        Role::TranscriptQuoteInk,
+        Role::TranscriptQuoteEdge,
         Role::TranscriptMessageFill,
         Role::TranscriptMessageInk,
         Role::TranscriptLinkInk,
@@ -1049,6 +1055,8 @@ impl Role {
             Role::BrandMarkStemShadow => "brand-mark-stem-shadow",
             Role::TranscriptSurface => "transcript-surface",
             Role::TranscriptProseInk => "transcript-prose-ink",
+            Role::TranscriptQuoteInk => "transcript-quote-ink",
+            Role::TranscriptQuoteEdge => "transcript-quote-edge",
             Role::TranscriptMessageFill => "transcript-message-fill",
             Role::TranscriptMessageInk => "transcript-message-ink",
             Role::TranscriptLinkInk => "transcript-link-ink",
@@ -1269,6 +1277,10 @@ impl Role {
             Role::BrandMarkStemShadow => Derivation::Mix(Palette::Brand, Palette::Background, 0.1429),
             Role::TranscriptSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.0094),
             Role::TranscriptProseInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
+            Role::TranscriptQuoteInk => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.8),
+            Role::TranscriptQuoteEdge => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.35)
+            }
             Role::TranscriptMessageFill => Derivation::Fixed(Rgba::hex("#2e2916")),
             Role::TranscriptMessageInk => Derivation::Palette(Palette::Ink),
             Role::TranscriptLinkInk => Derivation::Fixed(Rgba::hex("#a18e41")),

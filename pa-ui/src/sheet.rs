@@ -131,6 +131,21 @@ fn estimate_row_height(row: &Row) -> f32 {
                 .max(1);
             (lines as f32 * 22.5) + 12.0
         }
+        transcript::KIND_QUOTE => {
+            let lines = row
+                .body
+                .lines()
+                .map(|l| {
+                    if l.trim().is_empty() {
+                        1
+                    } else {
+                        (l.chars().count() / 68) + 1
+                    }
+                })
+                .sum::<usize>()
+                .max(1);
+            (lines as f32 * 22.5) + 12.0
+        }
         2 => {
             if row.expanded {
                 let lines = row.body.lines().count().clamp(1, 6);

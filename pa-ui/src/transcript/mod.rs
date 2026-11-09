@@ -60,6 +60,9 @@ pub const KIND_TABLE: i32 = 7;
 /// An image the user sent: drawn as a thumbnail, not as words.
 pub const KIND_IMAGE: i32 = 8;
 
+/// A Markdown blockquote: a bar and muted italic body, separate from prose rows.
+pub const KIND_QUOTE: i32 = 11;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub kind: i32,
@@ -433,6 +436,11 @@ fn build_message(
                             let mut row =
                                 Row::new(if role == "user" { KIND_USER } else { KIND_AGENT });
                             row.body = markdown_markup(&prose, theme);
+                            rows.push(row);
+                        }
+                        Block::Quote(quote) => {
+                            let mut row = Row::new(KIND_QUOTE);
+                            row.body = quote_markup(&quote, theme);
                             rows.push(row);
                         }
                         Block::Code { lang, body } => {

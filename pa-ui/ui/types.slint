@@ -12,7 +12,7 @@ export global Type {
 }
 
 export struct TRow {
-    kind: int,          // 0 user, 1 agent text, 2 thinking, 3 python cell, 5 custom message
+    kind: int,          // KIND_* constants in transcript/mod.rs
     title: string,
     meta: string,
     body: styled-text,

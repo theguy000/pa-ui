@@ -350,3 +350,12 @@ fn non_contiguous_blocks_with_the_same_key_do_not_straddle_or_underflow_on_merge
         "an unchanged poll with repeated non-contiguous keys must not redraw"
     );
 }
+
+#[test]
+fn a_quote_row_estimates_its_narrower_column() {
+    let body = "a".repeat(140);
+    let agent = row("m", transcript::KIND_AGENT, "", "", &body);
+    let quote = row("m", transcript::KIND_QUOTE, "", "", &body);
+    assert!(estimate_row_height(&quote) > estimate_row_height(&agent));
+    assert_eq!(estimate_row_height(&quote), (3.0 * 22.5) + 12.0);
+}

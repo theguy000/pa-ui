@@ -49,6 +49,8 @@ pub fn markdown_demo_rows() -> Vec<Row> {
         |:--|--:|--:|--:|\n\
         | deepseek-v4.1-flash | 462k | 39k | $0.00 |\n\
         | claude-4.5-sonnet | 12.4k | 2.1k | $0.19 |\n\n\
+        > quoted **bold** and `inline code`, long enough to wrap across the quote\n\
+        > second quoted line\n\n\
         A closing paragraph under the table, so the spacing on both edges shows.\n";
     let message = serde_json::json!({
         "role": "assistant",

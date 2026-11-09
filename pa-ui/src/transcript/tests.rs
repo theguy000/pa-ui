@@ -120,6 +120,31 @@ mod strong_tests {
     }
 
     #[test]
+    fn quote_lines_and_lazy_continuations_make_one_quote_block() {
+        let blocks = split_blocks("before\n> one\n> two\nlazy\n\nafter");
+        assert_eq!(blocks.len(), 3);
+        match &blocks[1] {
+            Block::Quote(body) => assert_eq!(body, "one\ntwo\nlazy"),
+            other => panic!("expected quote, got {}", matches!(other, Block::Prose(_))),
+        }
+    }
+
+    #[test]
+    fn a_quote_stops_at_a_heading() {
+        let blocks = split_blocks("> quoted\n# heading");
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0], Block::Quote(_)));
+        assert!(matches!(blocks[1], Block::Prose(_)));
+    }
+
+    #[test]
+    fn an_empty_quote_does_not_swallow_the_next_paragraph() {
+        let blocks = split_blocks(">\nafter");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], Block::Prose(_)));
+    }
+
+    #[test]
     fn tables_pad_columns_and_honour_right_alignment() {
         let table = render_table(&["| model | cost |", "|:--|--:|", "| a | $1.50 |", "| longer | $2 |"])
             .expect("a valid table");
@@ -357,6 +382,7 @@ mod header_parity_tests {
     fn a_bash_cell_magic_is_bash() {
         assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
     }
+
 }
 
 
@@ -420,7 +446,7 @@ mod theme_tests {
 
 #[cfg(test)]
 mod markup_tests {
-    use super::{markdown_markup, plain_markup, styled};
+    use super::{markdown_markup, plain_markup, quote_markup, styled};
     use crate::theme::Resolved;
     use slint::StyledText;
 
@@ -514,6 +540,41 @@ mod markup_tests {
     fn bold_running_over_a_line_break_is_balanced() {
         assert!(parses("**starts here\nand ends here**"));
         assert!(parses("**open\nstill open"));
+    }
+
+    #[test]
+    fn a_quote_markup_draws_a_bar_not_a_source_marker() {
+        let drawn = markdown_markup("> quoted", &shipped());
+        assert_eq!(
+            drawn,
+            "<font color=\"#484944\">│</font> <font color=\"#909189\">quoted</font>"
+        );
+        assert!(!drawn.contains('›'), "got {drawn}");
+        let escaped = markdown_markup("> a < b & c", &shipped());
+        assert!(escaped.contains("&lt; b &amp; c"), "got {escaped}");
+    }
+
+    #[test]
+    fn quote_markup_keeps_a_literal_asterisk() {
+        let drawn = quote_markup("a * b", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a literal asterisk quote parses")
+        );
+        assert!(rendered.contains(r#"text: "a * b""#), "got {rendered}");
+    }
+
+    #[test]
+    fn quote_markup_keeps_inline_style_and_adds_emphasis() {
+        let drawn = quote_markup("one **two** and `three`", &shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a styled quote parses")
+        );
+        assert!(rendered.contains("Emphasis"), "got {rendered}");
+        assert!(rendered.contains("Strong"), "got {rendered}");
+        assert!(rendered.contains("Color"), "got {rendered}");
+        assert!(!drawn.contains("&gt;"), "got {drawn}");
     }
 
     #[test]
@@ -840,5 +901,27 @@ mod summary_tests {
         assert!(rows[0].has_body);
         assert!(rows[0].expanded);
         assert!(plain(&rows[0].body).contains("Recover the branch context."));
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn a_quote_is_its_own_row_without_the_marker() {
+        let rows = build(
+            &[serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "before\n> one\n> two\nlazy\n\nafter"}]
+            })],
+            20,
+        )
+        .0;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, KIND_AGENT);
+        assert_eq!(rows[1].kind, KIND_QUOTE);
+        assert_eq!(rows[1].body, "*one*\n*two*\n*lazy*");
+        assert_eq!(rows[2].kind, KIND_AGENT);
     }
 }

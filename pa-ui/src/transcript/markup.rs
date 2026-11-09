@@ -174,8 +174,6 @@ pub(crate) fn escape_html(text: &str) -> String {
 }
 
 
-/// Assistant markdown stays markdown, minus the blocks Slint cannot parse:
-/// headings become bold lines, rules become blank lines, quotes lose their `>`.
 /// How many `**` markers a line carries, ignoring escapes and code spans.
 ///
 /// Each marker toggles bold, so an odd count means the line leaves bold open.
@@ -239,15 +237,22 @@ pub(crate) fn balance_strong(text: &str) -> String {
 }
 
 
+pub(crate) fn quote_body(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix('>')?;
+    Some(rest.strip_prefix(' ').unwrap_or(rest))
+}
+
+
 /// A message's markdown, in the renderer's own markup: a heading becomes a bold
-/// line in the heading's ink, a rule becomes a blank line, a quote loses its `>`,
-/// and a backticked word becomes the inline code's ink instead of the renderer's
-/// cramped box. Everything the renderer cannot parse is taken out on the way.
+/// line in the heading's ink, a rule becomes a blank line, a quote becomes a
+/// bar and quote ink, and a backticked word becomes the inline code's ink instead
+/// of the renderer's cramped box. Everything the renderer cannot parse is taken
+/// out on the way.
 pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
-    let decoded = escape_html(&decode_entities(text));
-    let text = decoded.as_str();
-    let mut out = String::with_capacity(text.len() + 16);
-    for (index, line) in text.split('\n').enumerate() {
+    let decoded = decode_entities(text);
+    let mut out = String::with_capacity(decoded.len() + 16);
+    for (index, line) in decoded.split('\n').enumerate() {
         if index > 0 {
             out.push('\n');
         }
@@ -255,24 +260,44 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
         if trimmed.starts_with('#') {
             // headings carry their own ink, the way the TUI colours mdHeading,
             // and bold, because there is no size step inside one text run
-            let body = trimmed.trim_start_matches('#').trim_start();
+            let body = escape_html(trimmed.trim_start_matches('#').trim_start());
             open_font(theme, Role::TranscriptHeadingInk, &mut out);
             out.push_str("**");
-            out.push_str(body);
+            out.push_str(&body);
             out.push_str("**</font>");
         } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
             // horizontal rule: nothing to draw
-        } else if let Some(rest) = trimmed.strip_prefix("> ") {
-            out.push('›');
-            out.push(' ');
-            out.push_str(rest);
+        } else if let Some(rest) = quote_body(line) {
+            open_font(theme, Role::TranscriptQuoteEdge, &mut out);
+            out.push('│');
+            out.push_str("</font> ");
+            open_font(theme, Role::TranscriptQuoteInk, &mut out);
+            out.push_str(&escape_html(rest));
+            out.push_str("</font>");
         } else {
-            out.push_str(line);
+            out.push_str(&escape_html(line));
         }
     }
     // the indentation guard has to be the last thing: an indented line is a code
     // block to CommonMark, and the renderer has no code blocks
     guard_block_markers(&balance_strong(&highlight_inline_code(&out, theme)))
+}
+
+
+/// Slint's `StyledText` has no italic property, so the TUI's quote emphasis is
+/// carried by per-line markdown markers after the line has been styled.
+pub fn quote_markup(text: &str, theme: &Resolved) -> String {
+    markdown_markup(text, theme)
+        .split('\n')
+        .map(|line| {
+            if line.trim().is_empty() {
+                line.to_string()
+            } else {
+                format!("*{line}*")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 
@@ -336,11 +361,10 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
 }
 
 
-/// One piece of a message: the prose between the blocks, a fenced block, or a
-/// table. Slint's markdown renderer handles emphasis, but it has no notion of a
-/// code surface or a table grid, so those are lifted out and drawn here.
+/// One piece of a message: prose, a quote, a fenced block, or a table.
 pub(crate) enum Block {
     Prose(String),
+    Quote(String),
     Code { lang: String, body: String },
     Table(String),
 }
@@ -510,6 +534,24 @@ pub(crate) fn flush_prose(prose: &mut Vec<String>, out: &mut Vec<Block>) {
 }
 
 
+fn starts_other_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#')
+        || trimmed.starts_with("```")
+        || trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || trimmed.starts_with("+ ")
+    {
+        return true;
+    }
+    if trimmed.len() >= 3 && trimmed.chars().all(|ch| matches!(ch, '-' | '*' | '_' | ' ')) {
+        return true;
+    }
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && trimmed[digits..].starts_with(". ")
+}
+
+
 /// Carve a message into prose, fenced blocks and tables.
 pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
     let lines: Vec<&str> = text.split('\n').collect();
@@ -533,6 +575,39 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
                 lang,
                 body: body.join("\n"),
             });
+            continue;
+        }
+        if let Some(first) = quote_body(line) {
+            flush_prose(&mut prose, &mut out);
+            let mut body = vec![first.to_string()];
+            let mut lazy = !first.trim().is_empty();
+            index += 1;
+            while index < lines.len() {
+                let next = lines[index];
+                if next.trim().is_empty() {
+                    break;
+                }
+                if let Some(rest) = quote_body(next) {
+                    body.push(rest.to_string());
+                    lazy = true;
+                    index += 1;
+                    continue;
+                }
+                if !lazy
+                    || starts_other_block(next)
+                    || (next.contains('|') && lines.get(index + 1).is_some_and(|row| is_delimiter_row(row)))
+                {
+                    break;
+                }
+                body.push(next.to_string());
+                index += 1;
+            }
+            while body.first().is_some_and(|line| line.trim().is_empty()) {
+                body.remove(0);
+            }
+            if !body.is_empty() {
+                out.push(Block::Quote(body.join("\n")));
+            }
             continue;
         }
         if trimmed.contains('|') && index + 1 < lines.len() && is_delimiter_row(lines[index + 1]) {

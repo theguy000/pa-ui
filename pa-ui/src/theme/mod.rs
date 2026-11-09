@@ -113,6 +113,8 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::BrandMarkStemShadow => global.set_brand_mark_stem_shadow(value),
         Role::TranscriptSurface => global.set_transcript_surface(value),
         Role::TranscriptProseInk => global.set_transcript_prose_ink(value),
+        Role::TranscriptQuoteInk => global.set_transcript_quote_ink(value),
+        Role::TranscriptQuoteEdge => global.set_transcript_quote_edge(value),
         Role::TranscriptMessageFill => global.set_transcript_message_fill(value),
         Role::TranscriptMessageInk => global.set_transcript_message_ink(value),
         Role::TranscriptLinkInk => global.set_transcript_link_ink(value),
