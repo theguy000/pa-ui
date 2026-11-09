@@ -622,17 +622,29 @@ impl Sidebar {
                 folded,
             )
         };
+        let (previous_active, previous_idle, previous_done) = self.groups.borrow().clone();
+        let active_changed = active != previous_active;
+        let idle_changed = idle != previous_idle;
+        let done_changed = done != previous_done;
         *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
-        ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
-        ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
-        ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+        if active_changed {
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+        }
+        if idle_changed {
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+        }
+        if done_changed {
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+        }
 
         let any_group_move = any_moved(&col.previous, &col.entries);
         if col.changed() {
             apply(ui, col, if any_group_move { -2 } else { -1 }, false);
         }
         let visible_first = items.first().cloned();
-        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+        if active_changed || idle_changed || done_changed {
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+        }
 
         if ui.get_selected_id().is_empty() {
             let preferred = std::env::var("PA_SELECT").ok();
