@@ -171,6 +171,83 @@ impl Msg {
     }
 }
 
+type RosterRows = Vec<(String, SessionRow)>;
+
+/// One roster entry as the sidebar's flat session row. The roster summary is
+/// the same shape `list` sends; its status carries the worker presence, which
+/// `SessionRow::from_value` reads from `workerState`.
+fn roster_session_row(entry: &serde_json::Value) -> Option<(String, SessionRow)> {
+    let agent_id = entry
+        .get("agentId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let mut summary = entry.get("summary")?.clone();
+    let status = entry
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if summary.get("workerState").and_then(serde_json::Value::as_str).is_none()
+        && matches!(status, "running" | "idle")
+    {
+        if let Some(object) = summary.as_object_mut() {
+            object.insert("workerState".to_string(), serde_json::json!("ready"));
+        }
+    }
+    let row = SessionRow::from_value(&summary);
+    (!row.id.is_empty() || !row.session_id.is_empty()).then_some((agent_id, row))
+}
+
+fn roster_rows(entries: &[serde_json::Value]) -> RosterRows {
+    entries.iter().filter_map(roster_session_row).collect()
+}
+
+/// Apply one `roster_update` push: a resync replaces the store, `changed`
+/// upserts by agent id, `removed` deletes by agent id.
+fn apply_roster_update(roster: &mut RosterRows, frame: &serde_json::Value) {
+    if frame
+        .get("resync")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        roster.clear();
+    }
+    if let Some(changed) = frame.get("changed").and_then(serde_json::Value::as_array) {
+        for entry in changed {
+            let Some((id, row)) = roster_session_row(entry) else {
+                continue;
+            };
+            if let Some(position) = roster.iter().position(|(known, _)| known == &id) {
+                roster[position] = (id, row);
+            } else {
+                roster.push((id, row));
+            }
+        }
+    }
+    if let Some(removed) = frame.get("removed").and_then(serde_json::Value::as_array) {
+        for id in removed.iter().filter_map(serde_json::Value::as_str) {
+            roster.retain(|(known, _)| known != id);
+        }
+    }
+}
+
+/// Merge the saved catalog with the live roster. Roster rows win for a shared
+/// session; saved-only rows keep their archived/done state.
+fn merged_sessions(saved: &[SessionRow], roster: &RosterRows) -> Vec<SessionRow> {
+    let mut rows = saved.to_vec();
+    for (_, live) in roster {
+        let found = rows.iter_mut().find(|row| {
+            (!live.session_id.is_empty() && row.session_id == live.session_id)
+                || (!live.id.is_empty() && row.id == live.id)
+        });
+        match found {
+            Some(row) => *row = live.clone(),
+            None => rows.push(live.clone()),
+        }
+    }
+    rows
+}
+
 /// A stable number for a page cursor, so the poll can tell "same page" quickly.
 pub(crate) fn page_cursor(last_entry: &str) -> u64 {
     last_entry
@@ -219,6 +296,12 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     // swallow a rejection and the message would vanish with no trace
     let mut pending_prompts: Vec<(String, String)> = Vec::new();
     let mut pending_renames: Vec<(String, String)> = Vec::new();
+    let mut roster: RosterRows = Vec::new();
+    let mut saved_rows: Vec<SessionRow> = Vec::new();
+    let mut pending_roster: Option<String> = None;
+    let mut roster_subscribed = false;
+    let mut roster_live = false;
+    let mut roster_failed = false;
     let mut resume: Option<(String, u64)> = None;
     // the outage line is already on the status strip for this stretch of failure
     let mut offline = false;
@@ -234,6 +317,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     attached = None;
                     resume = None;
                     offline = false;
+                    roster.clear();
+                    pending_roster = None;
+                    roster_subscribed = false;
+                    roster_live = false;
+                    roster_failed = false;
                     out.send(Msg::Reconnected);
                 }
                 Err(error) => {
@@ -266,6 +354,13 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             out.send(Msg::Error { session: None, message: "Daemon connection lost; reconnecting\u{2026}".into() });
             std::thread::sleep(Duration::from_millis(300));
             continue;
+        }
+
+        if !roster_subscribed && !roster_failed && pending_roster.is_none() {
+            match active.send("roster_subscribe", serde_json::json!({})) {
+                Ok(id) => pending_roster = Some(id),
+                Err(_) => roster_failed = true,
+            }
         }
 
         while let Ok(job) = jobs.try_recv() {
@@ -746,117 +841,146 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
         }
 
-        // drain live events for the attached session: this is what turns a
-        // coarse "running tool" into the TUI's Thinking / Writing / Writing code
-        if attached.is_some() {
-            while let Some(frame) = active.recv(Duration::from_millis(0)) {
-                let frame_type = frame
-                    .get("type")
+        // drain live frames even before a session is attached: the roster
+        // subscription is independent of attachment, and holding its response
+        // or pushes until an attach would leave the sidebar on the poll.
+        while let Some(frame) = active.recv(Duration::from_millis(0)) {
+            let frame_type = frame
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            if crate::env_cfg::cfg().debug {
+                let event_type = frame
+                    .get("event")
+                    .and_then(|event| event.get("type"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or("?");
-                if crate::env_cfg::cfg().debug {
-                    let event_type = frame
-                        .get("event")
-                        .and_then(|event| event.get("type"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("");
-                    eprintln!("[frame] {frame_type} {event_type}");
-                    if crate::env_cfg::cfg().dump.is_some() {
-                        // chars, not bytes: slicing a String at byte 700 splits
-                        // whatever multi-byte character sits there and panics the
-                        // reader thread, which is the thread every event and every
-                        // reply arrives on - the window goes deaf and silent
-                        let text: String = frame.to_string().chars().take(700).collect();
-                        eprintln!("[dump] {text}");
-                    }
+                    .unwrap_or("");
+                eprintln!("[frame] {frame_type} {event_type}");
+                if crate::env_cfg::cfg().dump.is_some() {
+                    // chars, not bytes: slicing a String at byte 700 splits
+                    // whatever multi-byte character sits there and panics the
+                    // reader thread, which is the thread every event and every
+                    // reply arrives on - the window goes deaf and silent
+                    let text: String = frame.to_string().chars().take(700).collect();
+                    eprintln!("[dump] {text}");
                 }
-                if frame_type == "session_closed" {
-                    let session = frame
-                        .get("activeSessionId")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    if session.is_empty() {
-                        continue;
-                    }
-                    let reason = frame
-                        .get("reason")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    out.send(Msg::SessionClosed { session, reason });
-                    continue;
-                }
-                if frame_type == "response" {
-                    let id = frame.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
-                    if let Some(position) = pending_prompts.iter().position(|(open, _)| open == id) {
-                        let (_, text) = pending_prompts.remove(position);
-                        if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
-                            let reason = frame
-                                .get("error")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("rejected by the daemon");
-                            out.send(Msg::PromptRejected { session: None, text });
-                            out.send(Msg::Error { session: None, message: reason.to_string() });
-                        }
-                    } else if let Some(position) =
-                        pending_renames.iter().position(|(open, _)| open == id)
-                    {
-                        let (_, session) = pending_renames.remove(position);
-                        if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
-                            let reason = frame
-                                .get("error")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("rename rejected by the daemon");
-                            out.send(Msg::Error {
-                                session: Some(session),
-                                message: reason.to_string(),
-                            });
-                        }
-                    }
-                    continue;
-                }
-                if frame_type != "session_event" {
-                    continue;
-                }
+            }
+            if frame_type == "session_closed" {
                 let session = frame
                     .get("activeSessionId")
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                if Some(session.to_string()) != attached {
+                    .unwrap_or_default()
+                    .to_string();
+                if session.is_empty() {
                     continue;
                 }
-                if let Some(meta) = frame.get("meta") {
-                    let generation = meta
-                        .get("generation")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default();
-                    let sequence = meta
-                        .get("sequence")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0);
-                    if !generation.is_empty() && sequence > 0 {
-                        resume = Some((generation.to_string(), sequence));
+                let reason = frame
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                out.send(Msg::SessionClosed { session, reason });
+                continue;
+            }
+            if frame_type == "response" {
+                let id = frame.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+                if pending_roster.as_deref() == Some(id) {
+                    pending_roster = None;
+                    let accepted =
+                        frame.get("success").and_then(serde_json::Value::as_bool) == Some(true);
+                    roster_subscribed = accepted;
+                    roster_failed = !accepted;
+                    if accepted {
+                        if let Some(entries) = frame
+                            .pointer("/data/roster")
+                            .and_then(serde_json::Value::as_array)
+                        {
+                            roster = roster_rows(entries);
+                            out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                        }
+                    }
+                    continue;
+                }
+                if let Some(position) = pending_prompts.iter().position(|(open, _)| open == id) {
+                    let (_, text) = pending_prompts.remove(position);
+                    if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                        let reason = frame
+                            .get("error")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("rejected by the daemon");
+                        out.send(Msg::PromptRejected { session: None, text });
+                        out.send(Msg::Error { session: None, message: reason.to_string() });
+                    }
+                } else if let Some(position) =
+                    pending_renames.iter().position(|(open, _)| open == id)
+                {
+                    let (_, session) = pending_renames.remove(position);
+                    if frame.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                        let reason = frame
+                            .get("error")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("rename rejected by the daemon");
+                        out.send(Msg::Error {
+                            session: Some(session),
+                            message: reason.to_string(),
+                        });
                     }
                 }
-                if let Some(event) = frame.get("event") {
-                    out.send(Msg::Event {
-                        session: session.to_string(),
-                        event: event.clone(),
-                    });
-                    if let Some(label) = pa_client::activity_label(event) {
-                        out.send(Msg::Activity { label: label.to_string() });
-                    }
+                continue;
+            }
+            if frame_type == "roster_update" {
+                roster_live = true;
+                apply_roster_update(&mut roster, &frame);
+                out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                continue;
+            }
+            if frame_type != "session_event" {
+                continue;
+            }
+            let session = frame
+                .get("activeSessionId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if Some(session.to_string()) != attached {
+                continue;
+            }
+            if let Some(meta) = frame.get("meta") {
+                let generation = meta
+                    .get("generation")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let sequence = meta
+                    .get("sequence")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                if !generation.is_empty() && sequence > 0 {
+                    resume = Some((generation.to_string(), sequence));
+                }
+            }
+            if let Some(event) = frame.get("event") {
+                out.send(Msg::Event {
+                    session: session.to_string(),
+                    event: event.clone(),
+                });
+                if let Some(label) = pa_client::activity_label(event) {
+                    out.send(Msg::Activity { label: label.to_string() });
                 }
             }
         }
 
-        if last_list.elapsed().unwrap_or_default() > Duration::from_millis(2000) {
+        let list_interval = if roster_live { 30_000 } else { 2_000 };
+        if last_list.elapsed().unwrap_or_default() > Duration::from_millis(list_interval) {
             let result = list_sessions(active);
-            if result.is_err() {
-                client = None;
+            match result {
+                Ok(rows) => {
+                    saved_rows = rows;
+                    out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                }
+                Err(error) => {
+                    client = None;
+                    out.send(Msg::Sessions(Err(error.to_string())));
+                }
             }
-            out.send(Msg::Sessions(result.map_err(|error| error.to_string())));
             last_list = SystemTime::now();
         }
         std::thread::sleep(Duration::from_millis(150));
@@ -865,7 +989,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 
 #[cfg(test)]
 mod tests {
-    use super::Msg;
+    use super::{apply_roster_update, merged_sessions, Msg};
+    use crate::SessionRow;
 
     // --- the session menu, at the seam between the row and the commands ------
 
@@ -1019,5 +1144,72 @@ mod tests {
         }
         .is_session_scoped());
         assert!(!Msg::Activity { label: String::new() }.is_session_scoped());
+    }
+
+    fn saved_row(name: &str) -> SessionRow {
+        SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1",
+            "sessionId": "s1",
+            "sessionFile": "/tmp/s1.jsonl",
+            "sessionName": name,
+            "lifecycle": "live",
+            "activity": "idle",
+        }))
+    }
+
+    fn roster_entry_on(agent: &str, session: &str, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "agentId": agent,
+            "status": "running",
+            "summary": {
+                "activeSessionId": agent,
+                "sessionId": session,
+                "sessionFile": format!("/tmp/{session}.jsonl"),
+                "sessionName": name,
+                "lifecycle": "live",
+                "activity": "idle",
+            },
+        })
+    }
+
+    fn roster_entry(name: &str) -> serde_json::Value {
+        roster_entry_on("a1", "s1", name)
+    }
+
+    #[test]
+    fn roster_push_updates_a_name_and_replaces_the_saved_row() {
+        let mut roster = Vec::new();
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"changed": [roster_entry("old")]}),
+        );
+        assert_eq!(merged_sessions(&[saved_row("old")], &roster)[0].name, "old");
+
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"changed": [roster_entry("new")]}),
+        );
+        let rows = merged_sessions(&[saved_row("old")], &roster);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "new");
+    }
+
+    #[test]
+    fn roster_push_removes_an_agent_and_resyncs_the_store() {
+        let mut roster = Vec::new();
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"changed": [roster_entry("one")]}),
+        );
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"resync": true, "changed": [roster_entry_on("a2", "s2", "two")]}),
+        );
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0].0, "a2");
+        assert_eq!(roster[0].1.name, "two");
+
+        apply_roster_update(&mut roster, &serde_json::json!({"removed": ["a2"]}));
+        assert!(roster.is_empty());
     }
 }
