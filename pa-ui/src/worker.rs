@@ -2,6 +2,8 @@
 
 use crate::*;
 
+use std::sync::Arc;
+
 pub(crate) enum Job {
     Rename { session: String, name: String },
     /// rename a row no worker holds, by its file: `rename` would start a worker
@@ -105,7 +107,11 @@ pub(crate) enum Msg {
     PromptRejected { session: Option<String>, text: String },
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
-    Queue { steering: Vec<String>, follow_up: Vec<String> },
+    Queue {
+        session: String,
+        steering: Vec<String>,
+        follow_up: Vec<String>,
+    },
     /// the parked row went away before its edit landed: the text goes out as a
     /// new prompt rather than being lost
     Prompt { session: String, message: String, images: Vec<serde_json::Value> },
@@ -145,12 +151,15 @@ pub(crate) enum Msg {
 /// answer to a question it has already given up on.
 pub(crate) struct Out {
     tx: Sender<(u64, Msg)>,
+    wake: Sender<()>,
     generation: u64,
 }
 
 impl Out {
     fn send(&self, message: Msg) {
-        let _ = self.tx.send((self.generation, message));
+        if self.tx.send((self.generation, message)).is_ok() {
+            let _ = self.wake.send(());
+        }
     }
 }
 
@@ -174,6 +183,12 @@ impl Msg {
                 | Msg::ExtraCommands(_)
                 | Msg::Queue { .. }
         )
+    }
+}
+
+fn close_client(client: &mut Option<Arc<Client>>) {
+    if let Some(active) = client.take() {
+        active.close();
     }
 }
 
@@ -375,7 +390,7 @@ fn apply_list_snapshot(
     reconcile_roster_with_saved(roster, saved);
 }
 
-/// A stable number for a page cursor, so the poll can tell "same page" quickly.
+/// A stable number for a page cursor, so a tail read can tell "same page" quickly.
 pub(crate) fn page_cursor(last_entry: &str) -> u64 {
     last_entry
         .bytes()
@@ -389,27 +404,41 @@ fn model_change_error(provider: &str, model: &str, error: &impl std::fmt::Displa
     format!("Could not change the model to {provider}/{model}: {error}")
 }
 
-/// A worker that panics used to vanish without a word: no events, no replies,
-/// no poll - a window that keeps painting a transcript nobody is updating. The
+/// A worker that panics used to vanish without a word: no events, no replies -
+/// a window that keeps painting a transcript nobody is updating. The
 /// work happens behind a catch so a panic in one frame is loud.
-pub(crate) fn worker(jobs: Receiver<Job>, out: Sender<(u64, Msg)>, client_id: String) {
+pub(crate) fn worker(
+    jobs: Receiver<Job>,
+    out: Sender<(u64, Msg)>,
+    wake: Sender<()>,
+    client_id: String,
+) {
     let reporter = out.clone();
+    let wake_reporter = wake.clone();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        worker_inner(jobs, out, client_id);
+        worker_inner(jobs, out, wake, client_id);
     }));
     if outcome.is_err() {
         eprintln!("[worker] panicked - the window is now static");
         let _ = reporter.send((0, Msg::Error { session: None, message: "engine stopped \u{2014} reopen the window".into() }));
+        let _ = wake_reporter.send(());
     }
 }
 
 
-pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_id: String) {
+pub(crate) fn worker_inner(
+    jobs: Receiver<Job>,
+    tx: Sender<(u64, Msg)>,
+    wake: Sender<()>,
+    client_id: String,
+) {
     let mut out = Out {
         tx,
+        wake,
         generation: 0,
     };
-    let mut client: Option<Client> = None;
+    let mut client: Option<Arc<Client>> = None;
+    let mut frame_rx: Option<crossbeam_channel::Receiver<serde_json::Value>> = None;
 
     // Reads go over a connection that never attaches: once a connection is
     // attached to a session the daemon serves its store view, which lags the
@@ -434,10 +463,21 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
     let mut offline = false;
     let window_rows: usize = std::env::var("PA_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(WINDOW_ROWS);
 
-    loop {
+    'worker: loop {
         if client.is_none() {
             match Client::connect() {
                 Ok(connected) => {
+                    let connected = Arc::new(connected);
+                    let reader = Arc::clone(&connected);
+                    let (frame_tx, frames) = crossbeam_channel::unbounded();
+                    std::thread::spawn(move || {
+                        while let Some(frame) = reader.recv_blocking() {
+                            if frame_tx.send(frame).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    frame_rx = Some(frames);
                     client = Some(connected);
                     // a new connection has no attachments: the UI re-attaches
                     // with the resume cursor so the daemon replays the gap
@@ -468,20 +508,21 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
         }
         let Some(active) = client.as_ref() else {
-            // No connection: keep the loop alive so a later client can attach.
-            std::thread::sleep(Duration::from_millis(150));
-            continue;
+            continue 'worker;
         };
         // the daemon may have restarted under us; without this the app keeps
         // reading a dead pipe and the transcript freezes until it is restarted
         if !active.alive() {
-            client = None;
+            close_client(&mut client);
+            frame_rx = None;
             attached = None;
             offline = false;
             out.send(Msg::Error { session: None, message: "Daemon connection lost; reconnecting\u{2026}".into() });
-            std::thread::sleep(Duration::from_millis(300));
             continue;
         }
+        let frames = frame_rx
+            .clone()
+            .expect("connected client has a frame reader");
 
         if !roster_subscribed && !roster_failed && pending_roster.is_none() {
             match active.send("roster_subscribe", serde_json::json!({})) {
@@ -490,7 +531,30 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
         }
 
-        while let Ok(job) = jobs.try_recv() {
+        // Block until the next real event. A closed frame reader is the
+        // connection-loss signal; there is no idle sleep to notice it.
+        let mut next_job = None;
+        let mut next_frame = None;
+        if jobs.is_empty() && frames.is_empty() {
+            crossbeam_channel::select! {
+                recv(jobs) -> job => match job {
+                    Ok(job) => next_job = Some(job),
+                    Err(_) => return,
+                },
+                recv(frames) -> frame => match frame {
+                    Ok(frame) => next_frame = Some(frame),
+                    Err(_) => {
+                        close_client(&mut client);
+                        frame_rx = None;
+                        continue 'worker;
+                    }
+                },
+            }
+        }
+
+        loop {
+            let job = next_job.take().or_else(|| jobs.try_recv().ok());
+            let Some(job) = job else { break; };
             match job {
                 Job::Rename { session, name } => {
                     match active.send(
@@ -517,7 +581,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 }
                 Job::MarkDone { session } => {
                     // the TUI's ctrl+x: the worker archives the session on its
-                    // way out, and the row moves to done on the next poll
+                    // way out, and the next roster push moves the row to done
                     match pa_client::mark_done(active, &session) {
                         Ok(_) => refresh_saved_catalog(
                             active,
@@ -635,7 +699,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         eprintln!("[queue] replace {lane}[{slot}] -> {outcome:?}");
                     }
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue {
+                            session: session.clone(),
+                            steering,
+                            follow_up,
+                        });
                     }
                     match outcome {
                         Ok(status) if status == "applied" => {}
@@ -747,7 +815,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                 }
                 Job::Queue { session } => {
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue {
+                            session: session.clone(),
+                            steering,
+                            follow_up,
+                        });
                     }
                 }
                 Job::QueueAct {
@@ -764,7 +836,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             eprintln!("[queue] clear -> {outcome:?}");
                         }
                         if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                            out.send(Msg::Queue { steering, follow_up });
+                            out.send(Msg::Queue {
+                                session: session.clone(),
+                                steering,
+                                follow_up,
+                            });
                         }
                         continue;
                     }
@@ -792,7 +868,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                             }
                             // the lanes as the daemon now has them
                             if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                                out.send(Msg::Queue { steering, follow_up });
+                                out.send(Msg::Queue {
+                                    session: session.clone(),
+                                    steering,
+                                    follow_up,
+                                });
                             }
                         }
                         Ok(_) => {
@@ -887,7 +967,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // source for those lanes: the window may guess that a turn
                     // is running, but it may not guess that a message is waiting.
                     if let Ok((steering, follow_up)) = get_queue(active, &session) {
-                        out.send(Msg::Queue { steering, follow_up });
+                        out.send(Msg::Queue {
+                            session: session.clone(),
+                            steering,
+                            follow_up,
+                        });
                     }
                     match outcome {
                         Ok(()) => {
@@ -954,13 +1038,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     // out of step with (measured: store at 18 while it returned
                     // 17 for 30s), while a freshly opened connection always
                     // answers with current messages. So a forced sync opens a new
-                    // connection and drops it; ordinary polls reuse one.
-                    // Every read opens its own connection: a connection that has
-                    // been used once keeps answering with the snapshot it saw at
-                    // connect time (measured 102 -> 102 across nine seconds
-                    // while fresh connections advanced 96 -> 108). The cost is a
-                    // local pipe open per poll; the alternative is a window that
-                    // stops one turn short.
+                    // connection and drops it; an ordinary tail uses the attached
+                    // connection.
                     // one tail page, not the whole branch: the typed cursor the
                     // terminal UI uses, so a long session costs the same as a
                     // short one
@@ -990,9 +1069,21 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
         }
 
         // drain live frames even before a session is attached: the roster
-        // subscription is independent of attachment, and holding its response
-        // or pushes until an attach would leave the sidebar on the poll.
-        while let Some(frame) = active.recv(Duration::from_millis(0)) {
+        // subscription is independent of attachment.
+        loop {
+            let frame = if let Some(frame) = next_frame.take() {
+                frame
+            } else {
+                match frames.try_recv() {
+                    Ok(frame) => frame,
+                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        close_client(&mut client);
+                        frame_rx = None;
+                        continue 'worker;
+                    }
+                }
+            };
             let frame_type = frame
                 .get("type")
                 .and_then(serde_json::Value::as_str)
@@ -1244,7 +1335,6 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             }
         }
 
-        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
@@ -1477,7 +1567,7 @@ mod tests {
         );
 
         // The full list says the Session is idle. It must win over the cached
-        // running row, or every poll leaves the strip up for good.
+        // running row, or every roster pass leaves the strip up for good.
         let mut saved = vec![saved_row("old")];
         apply_list_snapshot(&mut roster, &mut saved, vec![saved_row("fresh")]);
         let rows = merged_sessions(&saved, &roster);

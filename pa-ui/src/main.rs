@@ -43,7 +43,7 @@ pub(crate) type SlashCommands = Rc<RefCell<Vec<(String, String, String)>>>;
 pub(crate) type Editing = Rc<RefCell<Option<(String, usize, String)>>>;
 /// Pictures this window sent, keyed by the text that went with them.
 pub(crate) type SentThumbs = Rc<RefCell<Vec<(String, slint::Image)>>>;
-/// The painter the callbacks install and the poll tick calls through.
+/// The painter the callbacks install and the runtime repaints through.
 pub(crate) type Repaint = Rc<dyn Fn(&AppWindow)>;
 
 use pa_client::{
@@ -54,7 +54,7 @@ use pa_client::{
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use std::time::{Duration, SystemTime};
 use transcript::Row;
 
@@ -130,8 +130,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let (job_tx, job_rx) = channel::<Job>();
     let (msg_tx, msg_rx) = channel::<(u64, Msg)>();
+    let (wake_tx, wake_rx) = channel::<()>();
     let worker_client_id = client_id.clone();
-    std::thread::spawn(move || worker(job_rx, msg_tx, worker_client_id));
+    std::thread::spawn(move || worker(job_rx, msg_tx, wake_tx, worker_client_id));
 
     // Four deep modules own the window's state and callbacks:
     let (sheet, transcript) = sheet::Sheet::new();
@@ -177,7 +178,6 @@ fn main() -> Result<(), slint::PlatformError> {
         jobs: job_tx.clone(),
         msg_rx,
         attach_generation: std::cell::Cell::new(0),
-        last_tick: std::cell::Cell::new(SystemTime::now()),
         sheet: sheet.clone(),
         sidebar: sidebar.clone(),
         composer: composer.clone(),
@@ -194,31 +194,40 @@ fn main() -> Result<(), slint::PlatformError> {
         last_seq: std::cell::Cell::new(0),
         open_live: std::cell::Cell::new(None),
         stream_started: std::cell::Cell::new(SystemTime::now()),
-        _stream_at: std::cell::Cell::new(SystemTime::now()),
-        tail_at: std::cell::Cell::new(SystemTime::now()),
-        queue_at: std::cell::Cell::new(SystemTime::now()),
-        stats_at: std::cell::Cell::new(SystemTime::now()),
         scroll_ticks: std::cell::Cell::new(0),
         retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
         retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
     });
 
     // A sidebar pick changes the selection synchronously, but the transcript
-    // belongs to the previous Session until the next poll tick. Run the tick
-    // from the pick so the old sheet does not wait for the timer.
+    // belongs to the previous Session until the next tick. Run the tick from
+    // the pick so the old sheet does not wait for an unrelated event.
     let pick_tick = tick.clone();
     ui.on_selection_picked(move |_| pick_tick.run());
 
-    let poll = Timer::default();
-    let poll_tick = tick.clone();
-    poll.start(TimerMode::Repeated, Duration::from_millis(120), move || {
-        poll_tick.run();
+    let wake_tick = tick.clone();
+    ui.on_wake(move || wake_tick.run());
+    // Worker messages carry a wake token; one hop moves the batch onto the
+    // Slint thread. Coalesce tokens queued while the UI was busy.
+    let wake_ui = ui.as_weak();
+    std::thread::spawn(move || {
+        while wake_rx.recv().is_ok() {
+            while wake_rx.try_recv().is_ok() {}
+            let weak = wake_ui.clone();
+            if slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_wake();
+                }
+            })
+            .is_err()
+            {
+                break;
+            }
+        }
     });
     if std::env::var("PA_SLASH").is_ok() {
         let _ = job_tx.send(Job::NewChat);
     }
-
-    std::mem::forget(poll);
 
     ui.set_canvas_mode(crate::env_cfg::cfg().canvas);
     let icon_timer = std::rc::Rc::new(slint::Timer::default());
@@ -226,12 +235,13 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let timer = icon_timer.clone();
         let ticks = icon_ticks.clone();
+        let icon_ui = ui.as_weak();
         icon_timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(50),
             move || {
                 ticks.set(ticks.get() + 1);
-                if (window_icon::apply() & titlebar::init()) || ticks.get() > 40 {
+                if (window_icon::apply() & titlebar::init(icon_ui.clone())) || ticks.get() > 40 {
                     timer.stop();
                 }
             },
@@ -247,24 +257,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     ui.on_titlebar_close(titlebar::close);
-
-    let bar_timer = std::rc::Rc::new(slint::Timer::default());
-    {
-        let ui_weak = ui.as_weak();
-        let timer = bar_timer.clone();
-        bar_timer.start(
-            slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(60),
-            move || {
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_titlebar_maximized(ui.window().is_maximized());
-                    ui.set_titlebar_max_hover(titlebar::cursor_over_maximize());
-                } else {
-                    timer.stop();
-                }
-            },
-        );
-    }
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();
@@ -315,5 +307,6 @@ fn main() -> Result<(), slint::PlatformError> {
         );
     }
 
+    tick.run();
     ui.run()
 }

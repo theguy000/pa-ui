@@ -115,6 +115,12 @@ impl Client {
         !self.dead.load(Ordering::Relaxed)
     }
 
+    /// Close the transport. A blocked frame reader wakes when the pump closes.
+    pub fn close(&self) {
+        self.dead.store(true, Ordering::Relaxed);
+        self.inner.close();
+    }
+
     /// Fire a command and return a local id; the daemon's verdict arrives later
     /// as a `response` frame carrying that id.
     ///
@@ -183,6 +189,21 @@ impl Client {
             Ok(frame) => Some(frame),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => {
+                self.dead.store(true, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Next frame, backlog first. Blocks until a frame arrives or the pump closes.
+    pub fn recv_blocking(&self) -> Option<Frame> {
+        if let Some(frame) = self.backlog.lock().expect("backlog").pop_front() {
+            return Some(frame);
+        }
+        let rx = self.frames.lock().expect("frames");
+        match rx.recv() {
+            Ok(frame) => Some(frame),
+            Err(_) => {
                 self.dead.store(true, Ordering::Relaxed);
                 None
             }

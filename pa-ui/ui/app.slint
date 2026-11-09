@@ -247,6 +247,8 @@ export component AppWindow inherits Window {
     in-out property <[ThemeItem]> theme-items;
     callback theme-picked(string);
     callback selection-picked(string);
+    callback wake();
+    callback attachment-ready();
     in-out property <string> selected-id;
     // The sidebar's groups: the rows of each, in the order they are drawn, and
     // which of the three the reader has folded. The window fills all three from

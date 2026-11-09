@@ -565,8 +565,12 @@ impl Sheet {
             vs.ui = Some(ui.as_weak());
         }
         let sheet_scroll = self.clone();
+        let scroll_ui = ui.as_weak();
         ui.on_viewport_scrolled(move |cy, vh| {
             sheet_scroll.on_scroll(cy, vh);
+            if let Some(ui) = scroll_ui.upgrade() {
+                ui.invoke_wake();
+            }
         });
         let sheet_meas = self.clone();
         ui.on_row_measured(move |idx, h| {

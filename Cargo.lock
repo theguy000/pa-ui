@@ -3388,6 +3388,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "cosmic-text",
+ "crossbeam-channel",
  "fancy-regex",
  "image",
  "pa-client",

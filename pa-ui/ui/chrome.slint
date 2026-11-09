@@ -73,8 +73,8 @@ export component TitleBar inherits Rectangle {
     }
 
     // minimise and close are ours; maximise belongs to Windows for Snap Layouts,
-    // which is why its hover state is sampled from the pointer by the Rust side
-    // rather than reported by this button's own hit area.
+    // which is why its hover state comes from the pointer's Windows hit test in
+    // the Rust side rather than this button's own hit area.
     min-button := CaptionButton {
         x: parent.width - 138px;
         described: "Minimise the window";
