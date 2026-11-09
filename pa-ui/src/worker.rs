@@ -999,7 +999,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     .is_some_and(|(pending, _)| pending == id)
                 {
                     let (_, streamed) = pending_saved.take().expect("pending saved catalog");
-                    saved_rows = saved_rows_from_response(&frame).unwrap_or(streamed);
+                    let success =
+                        frame.get("success").and_then(serde_json::Value::as_bool) == Some(true);
+                    if success {
+                        saved_rows = saved_rows_from_response(&frame).unwrap_or(streamed);
+                    }
                     out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
                     continue;
                 }
@@ -1463,6 +1467,9 @@ mod tests {
         })];
 
         assert_eq!(activity_subagents(&entries, "root", &roster, &[]), Some(1));
+    }
+
+    #[test]
     fn streamed_saved_item_updates_its_existing_row() {
         let mut rows = vec![SessionRow::from_value(&serde_json::json!({
             "activeSessionId": "s1", "sessionId": "uuid-1", "sessionName": "old"
