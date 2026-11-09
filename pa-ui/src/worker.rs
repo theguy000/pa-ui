@@ -331,6 +331,10 @@ fn start_saved_catalog(active: &Client, session: Option<&str>) -> Option<String>
         .ok()
 }
 
+fn needs_saved_catalog(saved: &[SessionRow]) -> bool {
+    saved.is_empty()
+}
+
 fn refresh_saved_catalog(
     active: &Client,
     session: Option<&str>,
@@ -442,6 +446,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                     offline = false;
                     roster.clear();
                     roster_entries.clear();
+                    saved_rows.clear();
                     pending_saved = None;
                     pending_roster = None;
                     roster_subscribed = false;
@@ -563,7 +568,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                                 .map(|page| page.messages)
                                 .unwrap_or(fallback);
                             let (rows, skipped) = crate::transcript::build(&messages, window_rows);
-                            refresh_saved_catalog(active, Some(&session), &mut pending_saved);
+                            // A switch reuses the cached catalog; only the first
+                            // attach scans.
+                            if needs_saved_catalog(&saved_rows) {
+                                refresh_saved_catalog(active, Some(&session), &mut pending_saved);
+                            }
                             out.send(Msg::Transcript { session, rows, skipped, messages });
                         }
                         Err(error) => {
@@ -1243,8 +1252,8 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 mod tests {
     use super::{
         activity_subagents, apply_list_snapshot, apply_roster_entries, apply_roster_update,
-        direct_loss_for_attached, merged_sessions, reconcile_roster_with_saved,
-        saved_rows_from_response, upsert_saved, Msg,
+        direct_loss_for_attached, merged_sessions, needs_saved_catalog,
+        reconcile_roster_with_saved, saved_rows_from_response, upsert_saved, Msg,
     };
     use crate::SessionRow;
 
@@ -1566,6 +1575,12 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "new");
+    }
+
+    #[test]
+    fn a_cached_saved_catalog_is_not_rescanned_on_attach() {
+        assert!(!needs_saved_catalog(&[saved_row("known")]));
+        assert!(needs_saved_catalog(&[]));
     }
 
     #[test]

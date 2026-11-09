@@ -131,9 +131,25 @@ pub(crate) fn is_top_level(row: &SessionRow) -> bool {
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
     // Spawned subagents live under their parent Session; the sidebar lists
     // top-level Sessions only. Family cost still reads the unfiltered roster.
-    let mut items: Vec<SessionItem> = rows.iter().filter(|row| is_top_level(row)).map(to_item).collect();
-    items.sort_by_key(|item| tag_word_rank(&item.status));
-    items
+    let mut top: Vec<&SessionRow> = rows.iter().filter(|row| is_top_level(row)).collect();
+    top.sort_by(|left, right| {
+        tag_of(left)
+            .rank()
+            .cmp(&tag_of(right).rank())
+            .then_with(|| recency(right).cmp(&recency(left)))
+            .then_with(|| display_name(left).cmp(&display_name(right)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    top.into_iter().map(to_item).collect()
+}
+
+fn recency(row: &SessionRow) -> i64 {
+    let stamp = if row.last_activity.is_empty() {
+        &row.modified
+    } else {
+        &row.last_activity
+    };
+    stamp_seconds(stamp).unwrap_or(0)
 }
 
 pub(crate) fn session_groups(
@@ -207,10 +223,16 @@ pub(crate) fn session_entries(
 
 pub(crate) fn entry_key(entry: &SessionEntry) -> String {
     if entry.is_header {
-        format!("hdr:{}", entry.label)
-    } else {
-        format!("row:{}", entry.item.uuid)
+        return format!("hdr:{}", entry.label);
     }
+    let identity = if !entry.item.uuid.is_empty() {
+        &entry.item.uuid
+    } else if !entry.item.id.is_empty() {
+        &entry.item.id
+    } else {
+        &entry.item.file
+    };
+    format!("row:{identity}")
 }
 
 pub(crate) fn from_y(previous: &[SessionEntry], entries: &[SessionEntry], slide: f32) -> Vec<f32> {

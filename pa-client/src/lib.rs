@@ -433,15 +433,33 @@ impl SessionRow {
         // carries the same path as `path`, and it is the one a done row needs
         let saved_as = text("sessionFile");
         let session_file = if saved_as.is_empty() { text("path") } else { saved_as };
-        let named = text("sessionName");
-        let name = if named.is_empty() {
-            text("firstMessage").chars().take(60).collect::<String>()
+        // `list_saved_sessions` rows carry `id` and `path`, not the live
+        // roster's `activeSessionId`/`sessionId`. Use the saved id for both so
+        // done rows have a stable identity instead of collapsing to an empty
+        // key in the sidebar.
+        let saved_id = text("id");
+        let active_id = text("activeSessionId");
+        let id = if active_id.is_empty() { saved_id.clone() } else { active_id };
+        let live_session_id = text("sessionId");
+        let session_id = if live_session_id.is_empty() {
+            saved_id
         } else {
+            live_session_id
+        };
+        let named = text("sessionName");
+        let name = if !named.is_empty() {
             named
+        } else {
+            let explicit = text("name");
+            if explicit.is_empty() {
+                text("firstMessage").chars().take(60).collect::<String>()
+            } else {
+                explicit
+            }
         };
         Self {
-            id: text("activeSessionId"),
-            session_id: text("sessionId"),
+            id,
+            session_id,
             name,
             cwd: text("cwd"),
             activity: text("activity"),
@@ -2288,5 +2306,37 @@ mod activity_tests {
         let frame = event_frame(wire::daemon_client::DaemonClientEvent::ModelCatalogChanged)
             .expect("model catalog change is a client frame");
         assert_eq!(frame["type"], "model_catalog_changed");
+    }
+}
+
+#[cfg(test)]
+mod saved_row_tests {
+    use super::*;
+
+    #[test]
+    fn saved_catalog_rows_keep_their_own_identity() {
+        let saved = SessionRow::from_value(&json!({
+            "id": "saved-1",
+            "path": "/tmp/saved-1.jsonl",
+            "name": "named row",
+            "firstMessage": "first message",
+            "modified": "2026-11-09T12:00:00Z",
+            "messageCount": 2
+        }));
+        assert_eq!(saved.id, "saved-1");
+        assert_eq!(saved.session_id, "saved-1");
+        assert_eq!(saved.name, "named row");
+        assert_eq!(saved.session_file, "/tmp/saved-1.jsonl");
+    }
+
+    #[test]
+    fn live_rows_still_prefer_the_live_identity() {
+        let live = SessionRow::from_value(&json!({
+            "activeSessionId": "live-1",
+            "sessionId": "uuid-1",
+            "sessionName": "live row"
+        }));
+        assert_eq!(live.id, "live-1");
+        assert_eq!(live.session_id, "uuid-1");
     }
 }

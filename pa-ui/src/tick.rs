@@ -188,6 +188,38 @@ impl Tick {
         ui.set_busy(false);
     }
 
+    /// The strip belongs to the selected Session. Put it into that Session's
+    /// state before the next event arrives, so a Turn from the previous
+    /// selection cannot keep its label or timer up here.
+    fn sync_status_to_selection(
+        &self,
+        ui: &AppWindow,
+        l: &mut Local,
+        session: &str,
+        busy_since: &std::cell::Cell<SystemTime>,
+    ) {
+        let state = self
+            .sidebar
+            .cache
+            .borrow()
+            .iter()
+            .find(|row| row.id == session)
+            .map_or_else(|| "idle".to_string(), |row| row.live_state().to_string());
+        l.live_state = state.clone();
+        l.live_since = SystemTime::now();
+        l.settled_session = None;
+        self.command_word.clear();
+        if matches!(state.as_str(), "idle" | "archived") {
+            self.clear_status(ui, l);
+            return;
+        }
+        l.busy_label = state.clone();
+        busy_since.set(SystemTime::now());
+        ui.set_busy_label(state.into());
+        ui.set_busy_elapsed("0s".into());
+        ui.set_busy(true);
+    }
+
     /// Record one error against its Session. A current Session gets the row
     /// immediately; every Session keeps it so a later attach can put it back.
     fn record_error(&self, ui: &AppWindow, session: Option<&str>, message: &str) {
@@ -335,6 +367,10 @@ impl Tick {
             sheet.replace(Vec::new());
             sheet::force_scroll_to_end(&ui);
             reset_activity(&ui);
+            l.open_live = None;
+            l.last_seq = 0;
+            composer.in_flight.set(false);
+            self.sync_status_to_selection(&ui, &mut l, &selected, busy_since);
             let generation = self.attach_generation.get() + 1;
             self.attach_generation.set(generation);
             let _ = jobs.send(Job::Attach {
@@ -1453,6 +1489,32 @@ mod status_strip_tests {
         assert_strip(&h, false, "");
     }
 
+    fn switching_sessions_moves_the_strip_to_the_new_selection() {
+        let h = Harness::new();
+        {
+            let mut cache = h.tick.sidebar.cache.borrow_mut();
+            cache.push(SessionRow {
+                id: "busy".to_string(),
+                session_id: "uuid-busy".to_string(),
+                is_session_active: true,
+                ..SessionRow::default()
+            });
+            cache.push(SessionRow {
+                id: "calm".to_string(),
+                session_id: "uuid-calm".to_string(),
+                ..SessionRow::default()
+            });
+        }
+
+        h.ui.set_selected_id("busy".into());
+        h.run();
+        assert_strip(&h, true, "Waiting");
+
+        h.ui.set_selected_id("calm".into());
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
     /// The settlement is released by the next Turn, not forever: once a new
     /// prompt starts, the roster's running state is the current Turn again.
     fn switching_sessions_clears_the_settlement() {
@@ -1896,6 +1958,7 @@ mod status_strip_tests {
         an_idle_roster_releases_the_settlement();
         an_auto_retry_start_after_settlement_opens_the_strip();
         switching_sessions_clears_the_settlement();
+        switching_sessions_moves_the_strip_to_the_new_selection();
         a_composer_send_releases_the_settlement_on_agent_start();
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
