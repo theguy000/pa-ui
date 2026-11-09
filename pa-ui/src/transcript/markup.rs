@@ -132,6 +132,22 @@ pub(crate) fn escape(text: &str, out: &mut String) {
     }
 }
 
+/// Markdown metacharacters inside an inline code span are literal text, not
+/// emphasis or links. Escape them before the span is wrapped in theme markup.
+/// `escape` cannot be reused here: it also re-encodes HTML entities that the
+/// prose pass already escaped, which would display `&lt;` literally.
+fn escape_code_span(text: &str, out: &mut String) {
+    for ch in text.chars() {
+        match ch {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '~' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            other => out.push(other),
+        }
+    }
+}
+
 
 /// Plain text rendered verbatim (thinking, output, notices).
 pub fn plain_markup(text: &str) -> String {
@@ -305,12 +321,12 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             let bold_already = out.matches("**").count() % 2 == 1;
             if bold_already {
                 open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                out.push_str(body.trim());
+                escape_code_span(body.trim(), &mut out);
                 out.push_str("</font>");
             } else {
                 out.push_str("**");
                 open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                out.push_str(body.trim());
+                escape_code_span(body.trim(), &mut out);
                 out.push_str("</font>**");
             }
         } else {

@@ -457,6 +457,19 @@ mod markup_tests {
     }
 
     #[test]
+    fn markdown_markers_inside_inline_code_stay_literal() {
+        // A code span containing `**` used to close the wrapper's emphasis and
+        // make Slint reject the whole row as interleaved styles.
+        assert!(parses("the `**` marker"));
+        assert!(parses("- `**` spans crossing line breaks are balanced."));
+        assert!(parses("the `*a* _b_ [c] ~d~` span"));
+        assert!(parses(r"the `a\b` span"));
+        assert!(parses("the ``a`b`` span"));
+        let drawn = markdown_markup("the `**` marker", &shipped());
+        assert!(drawn.contains(r"\*\*"), "got {drawn}");
+    }
+
+    #[test]
     fn a_message_that_mentions_a_tag_draws_it() {
         // a handover line talking about `</font>` used to emit a real closing tag
         assert!(parses("the `</font>` overlap is fixed"));
