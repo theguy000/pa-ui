@@ -17,7 +17,7 @@ The window updates from daemon events and user actions, not a periodic data poll
 - Roster, activity, model catalog, saved catalog, and bindings stay push-driven.
 
 ## UI-only timers
-- The spinner/elapsed timer is animation, not data.
+- The spinner/elapsed timer is animation, not data; it starts on busy and stops when the turn settles.
 - Attachment reads wake the UI directly.
 - The title bar publishes maximise/hover state from `WM_SIZE` / `WM_NCHITTEST` / `WM_MOUSELEAVE` / `WM_DPICHANGED`.
 - Reconnect backoff and one-shot settle timers remain.

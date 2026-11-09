@@ -471,6 +471,8 @@ export component AppWindow inherits Window {
 
 
     in property <bool> busy: false;
+    callback busy-changed(bool);
+    changed busy => { root.busy-changed(self.busy); }
     in property <string> busy-label: "";
     in property <string> busy-elapsed: "";
     in property <string> spinner-frame: "\u{280b}";

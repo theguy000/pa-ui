@@ -78,6 +78,37 @@ fn seed_rows(seed: &str) -> Vec<SessionRow> {
         .collect()
 }
 
+fn start_spinner(
+    timer: Rc<Timer>,
+    weak: slint::Weak<AppWindow>,
+    index: Rc<std::cell::Cell<usize>>,
+    since: Rc<std::cell::Cell<SystemTime>>,
+    secs: Rc<std::cell::Cell<u64>>,
+    running: Rc<std::cell::Cell<bool>>,
+) {
+    let tick_timer = Rc::downgrade(&timer);
+    timer.start(TimerMode::Repeated, Duration::from_millis(80), move || {
+        let Some(timer) = tick_timer.upgrade() else { return };
+        let Some(ui) = weak.upgrade() else {
+            timer.stop();
+            running.set(false);
+            return;
+        };
+        if !ui.get_busy() {
+            timer.stop();
+            running.set(false);
+            return;
+        }
+        index.set(index.get().wrapping_add(1));
+        ui.set_spinner_frame(SPINNER_FRAMES[index.get() % SPINNER_FRAMES.len()].into());
+        let elapsed = since.get().elapsed().unwrap_or_default().as_secs();
+        if elapsed != secs.get() {
+            secs.set(elapsed);
+            ui.set_busy_elapsed(format!("{elapsed}s").into());
+        }
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     if let Some((code, report)) = theme::check_cli(std::env::args().skip(1)) {
         print!("{report}");
@@ -154,24 +185,39 @@ fn main() -> Result<(), slint::PlatformError> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(WINDOW_ROWS);
 
+    let spin = Rc::new(Timer::default());
     let spin_weak = ui.as_weak();
-    let spin_index = std::cell::Cell::new(0usize);
+    let spin_index = Rc::new(std::cell::Cell::new(0usize));
     let spin_since = busy_since.clone();
-    let spin_secs = std::cell::Cell::new(u64::MAX);
-    let spin = Timer::default();
-    spin.start(TimerMode::Repeated, Duration::from_millis(80), move || {
-        let Some(ui) = spin_weak.upgrade() else { return };
-        if !ui.get_busy() {
-            return;
-        }
-        spin_index.set(spin_index.get().wrapping_add(1));
-        ui.set_spinner_frame(SPINNER_FRAMES[spin_index.get() % SPINNER_FRAMES.len()].into());
-        let secs = spin_since.get().elapsed().unwrap_or_default().as_secs();
-        if secs != spin_secs.get() {
-            spin_secs.set(secs);
-            ui.set_busy_elapsed(format!("{secs}s").into());
-        }
-    });
+    let spin_secs = Rc::new(std::cell::Cell::new(u64::MAX));
+    let spin_running = Rc::new(std::cell::Cell::new(false));
+    {
+        let timer = spin.clone();
+        let weak = spin_weak.clone();
+        let index = spin_index.clone();
+        let since = spin_since.clone();
+        let secs = spin_secs.clone();
+        let running = spin_running.clone();
+        ui.on_busy_changed(move |busy| {
+            if busy {
+                if !running.get() {
+                    running.set(true);
+                    secs.set(u64::MAX);
+                    start_spinner(
+                        timer.clone(),
+                        weak.clone(),
+                        index.clone(),
+                        since.clone(),
+                        secs.clone(),
+                        running.clone(),
+                    );
+                }
+            } else {
+                timer.stop();
+                running.set(false);
+            }
+        });
+    }
 
     let tick = Rc::new(Tick {
         weak: ui.as_weak(),
