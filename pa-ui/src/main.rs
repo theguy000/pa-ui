@@ -190,6 +190,7 @@ fn main() -> Result<(), slint::PlatformError> {
         live_state: std::cell::Cell::new(String::new()),
         live_since: std::cell::Cell::new(SystemTime::now()),
         busy_label: std::cell::Cell::new(String::new()),
+        settled_session: std::cell::Cell::new(None),
         last_seq: std::cell::Cell::new(0),
         open_live: std::cell::Cell::new(None),
         stream_started: std::cell::Cell::new(SystemTime::now()),

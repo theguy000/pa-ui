@@ -23,6 +23,9 @@ pub(crate) struct Tick {
     pub live_state: std::cell::Cell<String>,
     pub live_since: std::cell::Cell<SystemTime>,
     pub busy_label: std::cell::Cell<String>,
+    /// The Session whose last Turn ended and whose strip must not be reopened
+    /// by a late roster snapshot. Cleared by the next Turn.
+    pub settled_session: std::cell::Cell<Option<String>>,
     pub last_seq: std::cell::Cell<u64>,
     pub open_live: std::cell::Cell<Option<live::Live>>,
     pub stream_started: std::cell::Cell<SystemTime>,
@@ -45,6 +48,7 @@ pub(crate) struct Local {
     live_state: String,
     live_since: SystemTime,
     busy_label: String,
+    settled_session: Option<String>,
     last_seq: u64,
     open_live: Option<live::Live>,
     stream_started: SystemTime,
@@ -64,6 +68,7 @@ impl Local {
             live_state: tick.live_state.take(),
             live_since: tick.live_since.get(),
             busy_label: tick.busy_label.take(),
+            settled_session: tick.settled_session.take(),
             last_seq: tick.last_seq.get(),
             open_live: tick.open_live.take(),
             stream_started: tick.stream_started.get(),
@@ -82,6 +87,7 @@ impl Local {
         tick.live_state.set(self.live_state);
         tick.live_since.set(self.live_since);
         tick.busy_label.set(self.busy_label);
+        tick.settled_session.set(self.settled_session);
         tick.last_seq.set(self.last_seq);
         tick.open_live.set(self.open_live);
         tick.stream_started.set(self.stream_started);
@@ -98,6 +104,42 @@ fn reset_activity(ui: &AppWindow) {
     ui.set_activity_subagents(0);
     ui.set_activity_heartbeats(0);
     ui.set_activity_shells(0);
+}
+
+/// Start the strip for a Turn the engine has just announced. The TUI starts a
+/// loader on `agent_start`/`turn_start`; the window must not stay settled just
+/// because the Turn was started by the TUI or by automatic compaction rather
+/// than by this window's composer.
+fn open_status(
+    ui: &AppWindow,
+    l: &mut Local,
+    busy_since: &std::cell::Cell<SystemTime>,
+    label: &str,
+) {
+    l.settled_session = None;
+    if !ui.get_busy() {
+        l.busy_label = label.to_string();
+        busy_since.set(SystemTime::now());
+        ui.set_busy_label(l.busy_label.clone().into());
+        ui.set_busy_elapsed("0s".into());
+        ui.set_busy(true);
+    }
+}
+
+/// Replace the strip's word for a phase that outranks the running loader, as
+/// compaction does in the TUI.
+fn force_status(
+    ui: &AppWindow,
+    l: &mut Local,
+    busy_since: &std::cell::Cell<SystemTime>,
+    label: &str,
+) {
+    l.settled_session = None;
+    l.busy_label = label.to_string();
+    busy_since.set(SystemTime::now());
+    ui.set_busy_label(l.busy_label.clone().into());
+    ui.set_busy_elapsed("0s".into());
+    ui.set_busy(true);
 }
 
 fn count_i32(count: usize) -> i32 {
@@ -285,6 +327,9 @@ impl Tick {
         }
         if !selected.is_empty() && l.loaded.as_deref() != Some(selected.as_str()) {
             l.loaded = Some(selected.clone());
+            // The reader is looking at a different Session: no settlement from
+            // the one they left can decide what this one's strip may show.
+            l.settled_session = None;
             sidebar.track_selection(&selected);
             sheet.reset_paging(&ui);
             sheet.replace(Vec::new());
@@ -346,8 +391,11 @@ impl Tick {
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         models.sync_session_row(&ui, row);
                     }
-                    if !rows.iter().any(|row| row.id == selected) && ui.get_busy() {
-                        self.clear_status(&ui, &mut l);
+                    if !rows.iter().any(|row| row.id == selected) {
+                        l.settled_session = None;
+                        if ui.get_busy() {
+                            self.clear_status(&ui, &mut l);
+                        }
                     }
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         let state = row.live_state();
@@ -357,6 +405,12 @@ impl Tick {
                             l.live_since = SystemTime::now();
                         }
                         let busy_now = state != "idle" && state != "archived";
+                        // The engine's terminal frame has already ended this
+                        // Session's Turn. A roster snapshot that still says it
+                        // is running is older than that frame (a dropped idle
+                        // push, or a list that crossed the end); it must not put
+                        // the strip back up. Only a new Turn may do that.
+                        let settled = l.settled_session.as_deref() == Some(selected.as_str());
                         // A roster answer can cross a prompt that has just been
                         // accepted but not yet picked up. While that send is in
                         // flight, an idle row is stale; keep the strip and its
@@ -367,6 +421,10 @@ impl Tick {
                         if !busy_now && !sending {
                             let was_busy = ui.get_busy();
                             self.clear_status(&ui, &mut l);
+                            // The roster has reported the Session idle: the
+                            // settlement has served its purpose, and the next
+                            // running row is a new Turn.
+                            l.settled_session = None;
                             if was_busy {
                                 if let Some(session) = l.loaded.clone() {
                                     let _ = jobs.send(Job::Tail {
@@ -376,7 +434,7 @@ impl Tick {
                                 }
                             }
                         }
-                        if busy_now {
+                        if busy_now && !settled {
                             // A slash command's word outranks the stream's
                             // generic Thinking/Writing labels; compaction
                             // outranks both while the daemon reports it.
@@ -411,13 +469,19 @@ impl Tick {
                 }
                 Msg::Sessions(Err(_)) => {}
                 Msg::Activity { label } => {
+                    // The TUI only changes the loader's word while a loader is
+                    // already running. An activity frame is not a Turn start:
+                    // a late frame from the Turn that has just ended must not
+                    // wake an idle strip.
+                    if !ui.get_busy() {
+                        continue;
+                    }
                     let desired = self.command_word.displayed(&l.live_state, &label);
                     if desired != l.busy_label {
                         l.busy_label = desired;
                         busy_since.set(SystemTime::now());
                         ui.set_busy_label(l.busy_label.clone().into());
                     }
-                    ui.set_busy(true);
                 }
                 Msg::Transcript {
                     session,
@@ -606,7 +670,19 @@ impl Tick {
                             .and_then(serde_json::Value::as_str)
                             == Some("user")
                     {
+                        // A user message is a new Turn: the previous Turn's
+                        // settlement no longer holds the strip down.
+                        l.settled_session = None;
                         sheet::force_scroll_to_end(&ui);
+                    }
+                    if matches!(kind, Some("turn_start" | "agent_start")) {
+                        open_status(&ui, &mut l, busy_since, "Waiting");
+                    }
+                    if kind == Some("compaction_start") {
+                        force_status(&ui, &mut l, busy_since, "Compacting");
+                    }
+                    if kind == Some("auto_retry_start") {
+                        open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("session_action_update") {
                         let lane = |name: &str| -> Vec<String> {
@@ -649,8 +725,16 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
+                        l.settled_session = Some(session.clone());
                         self.clear_status(&ui, &mut l);
                         l._stream_at = SystemTime::now() - Duration::from_secs(60);
+                        // `turn_end` closes one assistant cycle; a run with many
+                        // tools has many of them. The full `list` scans every
+                        // Session, so it runs once at the run's own end, not at
+                        // every cycle. `agent_end` is the queue-drained frame.
+                        if kind == Some("agent_end") {
+                            let _ = jobs.send(Job::RefreshSessions);
+                        }
                         let _ = jobs.send(Job::Tail {
                             session: session.clone(),
                             fresh: true,
@@ -842,6 +926,7 @@ impl Tick {
                     message,
                     images,
                 } => {
+                    l.settled_session = None;
                     composer.in_flight.set(true);
                     let _ = jobs.send(Job::Prompt {
                         session,
@@ -851,6 +936,7 @@ impl Tick {
                 }
                 Msg::NewChat(id) => {
                     composer.reset_for_new_chat(&ui, &id);
+                    l.settled_session = None;
                     self.clear_status(&ui, &mut l);
                 }
                 Msg::QueueEdit { text } => {
@@ -933,6 +1019,7 @@ impl Tick {
                 Msg::Reconnected => {
                     l.loaded = None;
                     l.open_live = None;
+                    l.settled_session = None;
                     self.clear_status(&ui, &mut l);
                     composer.in_flight.set(false);
                     sheet.answer_ended();
@@ -944,6 +1031,7 @@ impl Tick {
                     if current.is_empty()
                         || session.as_deref().is_none_or(|target| target == current.as_str())
                     {
+                        l.settled_session = None;
                         self.clear_status(&ui, &mut l);
                         composer.on_prompt_rejected(&ui, sheet, &text);
                     } else if let Some(session) = session.filter(|session| !session.is_empty()) {
@@ -978,6 +1066,7 @@ impl Tick {
                         composer.in_flight.set(false);
                         sheet.answer_ended();
                         l.open_live = None;
+                        l.settled_session = None;
                         self.clear_status(&ui, &mut l);
                     }
                     let message = session_closed_message(&reason);
@@ -1149,6 +1238,7 @@ mod status_strip_tests {
                 live_state: std::cell::Cell::new(String::new()),
                 live_since: std::cell::Cell::new(SystemTime::now()),
                 busy_label: std::cell::Cell::new(String::new()),
+                settled_session: std::cell::Cell::new(None),
                 last_seq: std::cell::Cell::new(0),
                 open_live: std::cell::Cell::new(None),
                 stream_started: std::cell::Cell::new(SystemTime::now()),
@@ -1200,6 +1290,21 @@ mod status_strip_tests {
             session: "s".to_string(),
             event: serde_json::json!({"type": "turn_end"}),
         }
+    }
+
+    fn turn_start(kind: &str) -> Msg {
+        Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({"type": kind}),
+        }
+    }
+
+    fn take_jobs(h: &Harness) -> Vec<Job> {
+        let mut jobs = Vec::new();
+        while let Ok(job) = h.jobs.try_recv() {
+            jobs.push(job);
+        }
+        jobs
     }
 
     fn assert_strip(h: &Harness, busy: bool, label: &str) {
@@ -1296,6 +1401,217 @@ mod status_strip_tests {
         h.send(Msg::NewChat("new".to_string()));
         h.run();
         assert_strip(&h, false, "");
+    }
+
+    fn roster_state_for(session: &str, running: bool) -> Msg {
+        Msg::Sessions(Ok(vec![SessionRow {
+            id: session.to_string(),
+            session_id: session.to_string(),
+            name: session.to_string(),
+            activity: if running { "working" } else { "idle" }.to_string(),
+            lifecycle: "live".to_string(),
+            is_streaming: running,
+            is_session_active: running,
+            is_running_tools: running,
+            ..SessionRow::default()
+        }]))
+    }
+
+    fn roster_state(running: bool) -> Msg {
+        roster_state_for("s", running)
+    }
+
+    /// A roster snapshot that still says the Session is running can cross the
+    /// turn's own `turn_end`. It must not put the strip back up: the engine has
+    /// already said the Turn is over, and the stream's terminal frame is the
+    /// authority the TUI follows too.
+    fn a_stale_roster_snapshot_does_not_reopen_the_strip_after_turn_end() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    /// The TUI only changes the loader's word while a Turn is running. An
+    /// activity frame on its own is not a Turn start; a late frame from the
+    /// previous Turn must not wake an idle strip.
+    fn an_activity_frame_does_not_open_the_strip_by_itself() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(Msg::Activity {
+            label: "Writing code".to_string(),
+        });
+        h.run();
+        assert_strip(&h, false, "");
+    }
+
+    /// The settlement is released by the next Turn, not forever: once a new
+    /// prompt starts, the roster's running state is the current Turn again.
+    fn switching_sessions_clears_the_settlement() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.ui.set_selected_id("b".into());
+        h.run();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+    }
+
+    fn a_composer_send_releases_the_settlement_on_agent_start() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.ui.invoke_send_requested("next".into());
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_start("agent_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+        assert!(
+            h.tick.settled_session.take().is_none(),
+            "agent_start released the previous Turn's settlement"
+        );
+    }
+
+    fn an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert!(!take_jobs(&h)
+            .iter()
+            .any(|job| matches!(job, Job::RefreshSessions)));
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("agent_end"));
+        h.run();
+        assert!(take_jobs(&h)
+            .iter()
+            .any(|job| matches!(job, Job::RefreshSessions)));
+    }
+
+    fn an_idle_roster_releases_the_settlement() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send(roster_state(false));
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+    }
+
+    fn an_auto_retry_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("auto_retry_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+    }
+
+    fn a_new_turn_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+        h.ui.set_busy_elapsed("99s".into());
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("turn_start"));
+        h.run();
+        assert_strip(&h, true, "Waiting");
+        assert_eq!(h.ui.get_busy_elapsed().as_str(), "0s");
+    }
+
+    fn a_compaction_start_after_settlement_opens_the_strip() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(h.tick.attach_generation.get(), turn_start("compaction_start"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+
+        // Compaction outranks a running loader, as it does in the TUI.
+        h.ui.set_busy_label("Writing".into());
+        h.send_at(h.tick.attach_generation.get(), turn_start("compaction_start"));
+        h.run();
+        assert_strip(&h, true, "Compacting");
+    }
+
+    fn a_new_prompt_lets_the_roster_open_the_strip_again() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
+
+        h.send_at(h.tick.attach_generation.get(), turn_end());
+        h.run();
+        assert_strip(&h, false, "");
+
+        h.send_at(
+            h.tick.attach_generation.get(),
+            Msg::Prompt {
+                session: "s".to_string(),
+                message: "next".to_string(),
+                images: Vec::new(),
+            },
+        );
+        h.run();
+        h.send(roster_state(true));
+        h.run();
+        assert_strip(&h, true, "Executing");
     }
 
     fn an_error_for_another_session_does_not_land_in_this_sheet() {
@@ -1595,6 +1911,16 @@ mod status_strip_tests {
         a_rejected_prompt_takes_the_status_strip_down();
         a_reconnect_takes_the_status_strip_down();
         a_new_chat_takes_the_status_strip_down();
+        a_stale_roster_snapshot_does_not_reopen_the_strip_after_turn_end();
+        an_activity_frame_does_not_open_the_strip_by_itself();
+        a_new_prompt_lets_the_roster_open_the_strip_again();
+        a_new_turn_start_after_settlement_opens_the_strip();
+        a_compaction_start_after_settlement_opens_the_strip();
+        an_agent_end_forces_a_fresh_list_but_a_turn_end_does_not();
+        an_idle_roster_releases_the_settlement();
+        an_auto_retry_start_after_settlement_opens_the_strip();
+        switching_sessions_clears_the_settlement();
+        a_composer_send_releases_the_settlement_on_agent_start();
         a_parked_command_does_not_claim_the_running_turn();
         an_error_lands_in_the_sheet_without_touching_the_strip();
         a_failed_refine_names_the_command_in_the_sheet();

@@ -67,6 +67,9 @@ pub(crate) enum Job {
     SetLevel { session: String, provider: String, model: String, level: String, switch: bool },
     /// start a fresh chat beside the running one (the TUI's `/new`)
     NewChat,
+    /// ask for a full `list` now: a terminal Turn must not leave a stale
+    /// roster row holding the Status strip up until the fallback poll.
+    RefreshSessions,
 }
 
 
@@ -231,21 +234,39 @@ fn apply_roster_update(roster: &mut RosterRows, frame: &serde_json::Value) {
     }
 }
 
+fn same_session(left: &SessionRow, right: &SessionRow) -> bool {
+    (!right.session_id.is_empty() && left.session_id == right.session_id)
+        || (!right.id.is_empty() && left.id == right.id)
+}
+
 /// Merge the saved catalog with the live roster. Roster rows win for a shared
 /// session; saved-only rows keep their archived/done state.
 fn merged_sessions(saved: &[SessionRow], roster: &RosterRows) -> Vec<SessionRow> {
     let mut rows = saved.to_vec();
     for (_, live) in roster {
-        let found = rows.iter_mut().find(|row| {
-            (!live.session_id.is_empty() && row.session_id == live.session_id)
-                || (!live.id.is_empty() && row.id == live.id)
-        });
+        let found = rows.iter_mut().find(|row| same_session(row, live));
         match found {
             Some(row) => *row = live.clone(),
             None => rows.push(live.clone()),
         }
     }
     rows
+}
+
+/// A full `list` is a fresher snapshot than a cached roster row. Drop the
+/// cached rows the snapshot covers so the fresh state wins; keep live-only
+/// rows (a Session the catalog has not reported yet) for the next merge.
+fn reconcile_roster_with_saved(roster: &mut RosterRows, saved: &[SessionRow]) {
+    roster.retain(|(_, live)| !saved.iter().any(|row| same_session(row, live)));
+}
+
+fn apply_list_snapshot(
+    roster: &mut RosterRows,
+    saved: &mut Vec<SessionRow>,
+    rows: Vec<SessionRow>,
+) {
+    *saved = rows;
+    reconcile_roster_with_saved(roster, saved);
 }
 
 /// A stable number for a page cursor, so the poll can tell "same page" quickly.
@@ -365,6 +386,14 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 
         while let Ok(job) = jobs.try_recv() {
             match job {
+                Job::RefreshSessions => {
+                    // A list scans the whole session directory. Coalesce a
+                    // duplicate request that arrives while the last snapshot is
+                    // still fresh.
+                    if last_list.elapsed().unwrap_or_default() >= Duration::from_secs(1) {
+                        last_list = SystemTime::now() - Duration::from_secs(60);
+                    }
+                }
                 Job::Rename { session, name } => {
                     match active.send(
                         "rename",
@@ -897,6 +926,11 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
                         {
                             roster = roster_rows(entries);
                             out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
+                            // The subscription snapshot can be older than the
+                            // last list, and an idle flip may already have been
+                            // content-diffed away. Take a full list now so the
+                            // two sources agree before the first poll window.
+                            last_list = SystemTime::now() - Duration::from_secs(60);
                         }
                     }
                     continue;
@@ -973,7 +1007,7 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
             let result = list_sessions(active);
             match result {
                 Ok(rows) => {
-                    saved_rows = rows;
+                    apply_list_snapshot(&mut roster, &mut saved_rows, rows);
                     out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
                 }
                 Err(error) => {
@@ -989,7 +1023,9 @@ pub(crate) fn worker_inner(jobs: Receiver<Job>, tx: Sender<(u64, Msg)>, client_i
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_roster_update, merged_sessions, Msg};
+    use super::{
+        apply_list_snapshot, apply_roster_update, merged_sessions, reconcile_roster_with_saved, Msg,
+    };
     use crate::SessionRow;
 
     // --- the session menu, at the seam between the row and the commands ------
@@ -1192,6 +1228,47 @@ mod tests {
         let rows = merged_sessions(&[saved_row("old")], &roster);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "new");
+    }
+
+    #[test]
+    fn a_fresh_list_clears_a_stale_running_roster_row() {
+        let mut stale = roster_entry_on("a1", "s1", "stale");
+        stale["summary"]["activity"] = serde_json::json!("working");
+        stale["summary"]["isStreaming"] = serde_json::json!(true);
+        stale["summary"]["isSessionActive"] = serde_json::json!(true);
+        stale["summary"]["isRunningTools"] = serde_json::json!(true);
+        let mut roster = Vec::new();
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"changed": [stale]}),
+        );
+        assert_eq!(
+            merged_sessions(&[saved_row("fresh")], &roster)[0].live_state(),
+            "Executing"
+        );
+
+        // The full list says the Session is idle. It must win over the cached
+        // running row, or every poll leaves the strip up for good.
+        let mut saved = vec![saved_row("old")];
+        apply_list_snapshot(&mut roster, &mut saved, vec![saved_row("fresh")]);
+        let rows = merged_sessions(&saved, &roster);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "fresh");
+        assert_eq!(rows[0].live_state(), "idle");
+    }
+
+    #[test]
+    fn reconciliation_keeps_a_live_row_the_catalog_has_not_reported() {
+        let mut roster = Vec::new();
+        apply_roster_update(
+            &mut roster,
+            &serde_json::json!({"changed": [roster_entry_on("a2", "s2", "live-only")]}),
+        );
+        let saved = vec![saved_row("saved")];
+        reconcile_roster_with_saved(&mut roster, &saved);
+        let rows = merged_sessions(&saved, &roster);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.name == "live-only"));
     }
 
     #[test]
