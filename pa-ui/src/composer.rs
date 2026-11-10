@@ -140,8 +140,25 @@ impl Composer {
         *self.extra_commands.borrow_mut() = rows;
     }
 
-    pub fn reset_for_new_chat(&self, ui: &AppWindow, id: &str) {
+    pub fn open_unsaved_chat(&self, ui: &AppWindow) {
         self.in_flight.set(false);
+        self.pending_user.borrow_mut().take();
+        ui.set_composer_text("".into());
+        ui.set_composer_has_text(false);
+        ui.set_composer_command("".into());
+        ui.set_queued_count(0);
+        ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
+        ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
+        ui.set_busy(false);
+        ui.set_draft_chat(true);
+        ui.set_selected_id("".into());
+        let has_model = !ui.get_model_id().is_empty() && !ui.get_model_provider().is_empty();
+        ui.set_draft_model_picked(has_model);
+        ui.set_draft_level(if has_model {
+            ui.get_current_level().to_string().into()
+        } else {
+            "".into()
+        });
         if let Ok(opening) = std::env::var("PA_SLASH") {
             ui.set_composer_text(opening.as_str().into());
             ui.set_composer_has_text(!opening.is_empty());
@@ -154,15 +171,47 @@ impl Composer {
                 }
             }
         }
-        ui.set_composer_text("".into());
-        ui.set_composer_has_text(false);
+    }
+
+    pub fn bind_new_chat(&self, ui: &AppWindow, id: &str) {
+        ui.set_draft_chat(false);
+        ui.set_draft_model_picked(false);
+        ui.set_draft_level("".into());
+        ui.set_draft_cwd("".into());
+        ui.set_selected_id(id.into());
         ui.set_queued_count(0);
         ui.set_queued_steering(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
         ui.set_queued_followup(ModelRc::from(Rc::new(VecModel::<QueueItem>::from(Vec::new()))));
-        ui.set_busy(false);
-        ui.set_selected_id(id.into());
         if crate::env_cfg::cfg().debug {
             eprintln!("[new] selected {id}");
+        }
+    }
+
+    pub fn on_start_chat_rejected(
+        &self,
+        ui: &AppWindow,
+        text: &str,
+        images: &[serde_json::Value],
+    ) {
+        self.in_flight.set(false);
+        self.pending_user.borrow_mut().take();
+        let composer_was_empty = ui.get_composer_text().is_empty();
+        if composer_was_empty {
+            ui.set_composer_text(text.into());
+            ui.set_composer_has_text(!ui.get_composer_text().is_empty());
+        }
+        if composer_was_empty
+            && self.attachments.borrow().is_empty()
+            && self.attachment_model.row_count() == 0
+        {
+            let mut held = self.attachments.borrow_mut();
+            for block in images {
+                let Some(attachment) = images::Attachment::from_block(block) else {
+                    continue;
+                };
+                self.attachment_model.push(images::from_wire(&attachment.base64));
+                held.push(attachment);
+            }
         }
     }
 
@@ -226,9 +275,7 @@ impl Composer {
                     }
                 }
                 let session = ui.get_selected_id().to_string();
-                if session.is_empty() {
-                    return;
-                }
+                let draft = ui.get_draft_chat();
                 match slash_dispatch(&message) {
                     SlashAction::Send => {}
                     SlashAction::Model => {
@@ -245,10 +292,7 @@ impl Composer {
                         return;
                     }
                     SlashAction::NewChat => {
-                        ui.set_composer_text("".into());
-                        ui.set_composer_has_text(false);
-                        ui.set_composer_command("".into());
-                        let _ = jobs.send(Job::NewChat);
+                        ui.invoke_new_chat();
                         return;
                     }
                     SlashAction::Quit => {
@@ -256,7 +300,7 @@ impl Composer {
                         return;
                     }
                     SlashAction::Rename(name) => {
-                        if name.is_empty() {
+                        if name.is_empty() || session.is_empty() {
                             return;
                         }
                         ui.set_composer_text("".into());
@@ -268,6 +312,12 @@ impl Composer {
                     SlashAction::NotWired(_) => {
                         return;
                     }
+                }
+                if session.is_empty() && !draft {
+                    return;
+                }
+                if draft && (ui.get_busy() || in_flight_for_send.get()) {
+                    return;
                 }
                 ui.set_composer_text("".into());
                 ui.set_composer_has_text(false);
@@ -293,6 +343,42 @@ impl Composer {
                 };
                 while attachment_model.row_count() > 0 {
                     attachment_model.remove(attachment_model.row_count() - 1);
+                }
+                if draft {
+                    let generation = draft_generation(&ui);
+                    let model = if ui.get_draft_model_picked() {
+                        let provider = ui.get_model_provider().to_string();
+                        let model = ui.get_model_id().to_string();
+                        (!provider.is_empty() && !model.is_empty()).then_some((provider, model))
+                    } else {
+                        None
+                    };
+                    let level = model.as_ref().and_then(|_| {
+                        let level = ui.get_draft_level().to_string();
+                        (!level.is_empty()).then_some(level)
+                    });
+                    let cwd = {
+                        let cwd = ui.get_draft_cwd().to_string();
+                        (!cwd.is_empty()).then_some(cwd)
+                    };
+                    *pending_user.borrow_mut() = Some(message.clone());
+                    command_word.clear();
+                    if let Some(label) = command_word.hold(&message) {
+                        ui.set_busy_label(label.into());
+                    } else {
+                        ui.set_busy_label("Waiting".into());
+                    }
+                    ui.set_busy(true);
+                    in_flight_for_send.set(true);
+                    let _ = jobs.send(Job::StartChat {
+                        generation,
+                        message,
+                        images: blocks,
+                        model,
+                        level,
+                        cwd,
+                    });
+                    return;
                 }
                 if let Some((lane, slot, expected)) = editing_to_send.borrow_mut().take() {
                     let _ = jobs.send(Job::QueueEdit {

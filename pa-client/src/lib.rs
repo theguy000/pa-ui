@@ -1694,7 +1694,17 @@ pub fn list_sessions(client: &Client) -> std::io::Result<Vec<SessionRow>> {
 /// # Errors
 /// Fails on transport errors or a refusal from the daemon.
 pub fn create_session(client: &Client) -> std::io::Result<String> {
-    let response = client.request("create", json!({}), Duration::from_secs(60))?;
+    create_session_with(client, json!({}))
+}
+
+/// `create` with the config the new Session should start from: model, thinking
+/// level, cwd, or the other create resources the daemon folds before its first
+/// build.
+///
+/// # Errors
+/// Fails on transport errors or a refusal from the daemon.
+pub fn create_session_with(client: &Client, payload: Value) -> std::io::Result<String> {
+    let response = client.request("create", payload, Duration::from_secs(60))?;
     if response.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(std::io::Error::other(format!(
             "create failed: {}",

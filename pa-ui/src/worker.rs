@@ -67,8 +67,15 @@ pub(crate) enum Job {
     /// a level picked off a model's ladder: switching models first when the row
     /// was not the running one
     SetLevel { session: String, provider: String, model: String, level: String, switch: bool },
-    /// start a fresh chat beside the running one (the TUI's `/new`)
-    NewChat,
+    /// create the first Session for an unsaved chat, attach it, and send its first prompt
+    StartChat {
+        generation: u64,
+        message: String,
+        images: Vec<serde_json::Value>,
+        model: Option<(String, String)>,
+        level: Option<String>,
+        cwd: Option<String>,
+    },
 }
 
 
@@ -122,8 +129,16 @@ pub(crate) enum Msg {
     /// the daemon's catalog changed; the menu's cache is stale
     ModelCatalogChanged,
     QueueEdit { text: String },
-    /// a `create` came back: the id of the brand new session
-    NewChat(String),
+    /// the first Session of an unsaved chat was created and selected
+    ChatStarted { id: String, generation: u64 },
+    /// the first Session could not be created, attached, or prompted
+    StartChatFailed {
+        generation: u64,
+        session: Option<String>,
+        text: String,
+        images: Vec<serde_json::Value>,
+        error: String,
+    },
     Stats { session: String, stats: pa_client::SessionStats },
     /// one activity refresh; a failed part is `None` so the window keeps its
     /// last good number
@@ -179,9 +194,9 @@ impl Msg {
                 | Msg::Stats { .. }
                 | Msg::ActivityCounts { .. }
                 | Msg::State { .. }
-                | Msg::ModelCatalog(_)
                 | Msg::ExtraCommands(_)
                 | Msg::Queue { .. }
+                | Msg::Prompt { .. }
         )
     }
 }
@@ -665,20 +680,87 @@ pub(crate) fn worker_inner(
                         });
                     }
                 }
-                Job::NewChat => match create_session(active) {
-                    Ok(id) => {
-                        if crate::env_cfg::cfg().debug {
-                            eprintln!("[new] created {id}");
+                Job::StartChat {
+                    generation,
+                    message,
+                    images,
+                    model,
+                    level,
+                    cwd,
+                } => {
+                    out.generation = generation;
+                    let mut config = serde_json::Map::new();
+                    if let Some((provider, model)) = &model {
+                        config.insert("provider".into(), serde_json::Value::String(provider.clone()));
+                        config.insert("model".into(), serde_json::Value::String(model.clone()));
+                    }
+                    if let Some(level) = &level {
+                        config.insert("thinking".into(), serde_json::Value::String(level.clone()));
+                    }
+                    if let Some(cwd) = &cwd {
+                        config.insert("cwd".into(), serde_json::Value::String(cwd.clone()));
+                    }
+                    let mut create = serde_json::json!({});
+                    if !config.is_empty() {
+                        create["config"] = serde_json::Value::Object(config);
+                    }
+                    let id = match create_session_with(active, create) {
+                        Ok(id) => id,
+                        Err(error) => {
+                            out.send(Msg::StartChatFailed {
+                                generation,
+                                session: None,
+                                text: message,
+                                images,
+                                error: format!("Could not start a new Session: {error}"),
+                            });
+                            continue;
                         }
-                        out.send(Msg::NewChat(id));
+                    };
+                    resume = None;
+                    if crate::env_cfg::cfg().debug {
+                        eprintln!("[new] created {id}");
                     }
-                    Err(error) => {
-                        out.send(Msg::Error {
-                            session: None,
-                            message: format!("Could not start a new Session: {error}"),
+                    out.send(Msg::ChatStarted { id: id.clone(), generation });
+                    let fallback = match attach_as(active, &id, Some(&client_id), None) {
+                        Ok(fallback) => fallback,
+                        Err(error) => {
+                            out.send(Msg::StartChatFailed {
+                                generation,
+                                session: Some(id),
+                                text: message,
+                                images,
+                                error: format!(
+                                    "The new Session was created but could not be opened: {error}"
+                                ),
+                            });
+                            continue;
+                        }
+                    };
+                    attached = Some(id.clone());
+                    let _ = active.upgrade_direct(&id);
+                    let messages = pa_client::get_page(active, &id, None, WINDOW_ROWS)
+                        .map(|page| page.messages)
+                        .unwrap_or(fallback);
+                    let (rows, skipped) = crate::transcript::build(&messages, window_rows);
+                    out.send(Msg::Transcript {
+                        session: id.clone(),
+                        rows,
+                        skipped,
+                        messages,
+                    });
+                    if let Err(reason) = send_prompt_checked(active, &id, &message, &images) {
+                        out.send(Msg::StartChatFailed {
+                            generation,
+                            session: Some(id),
+                            text: message,
+                            images,
+                            error: reason,
                         });
+                    } else {
+                        out.send(Msg::PromptResult { session: Some(id), error: None });
                     }
-                },
+                }
                 Job::QueueEdit {
                     session,
                     lane,
@@ -1461,7 +1543,6 @@ mod tests {
         .is_session_scoped());
         assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null }.is_session_scoped());
         assert!(Msg::ExtraCommands(Vec::new()).is_session_scoped());
-        assert!(Msg::ModelCatalog(Vec::new()).is_session_scoped());
         assert!(Msg::Stats {
             session: String::new(),
             stats: pa_client::SessionStats::default(),
@@ -1475,9 +1556,9 @@ mod tests {
 
     #[test]
     fn the_fence_never_swallows_what_belongs_to_the_composer() {
-        // these are about the words on screen, not about a chat's contents: a
-        // reader who switches chats still needs the refusal of their own
-        // prompt, the reconnection notice, and the fresh chat's id
+        // these are about the words on screen or the global menus, not about a
+        // chat's contents: a reader who switches chats still needs the refusal
+        // of their own prompt, the reconnection notice, and the fresh chat's id
         assert!(!Msg::Reconnected.is_session_scoped());
         assert!(!Msg::PromptResult {
             session: None,
@@ -1489,8 +1570,17 @@ mod tests {
             text: String::new()
         }
         .is_session_scoped());
-        assert!(!Msg::NewChat(String::new()).is_session_scoped());
+        assert!(!Msg::ChatStarted { id: String::new(), generation: 0 }.is_session_scoped());
+        assert!(!Msg::StartChatFailed {
+            generation: 0,
+            session: None,
+            text: String::new(),
+            images: Vec::new(),
+            error: String::new()
+        }
+        .is_session_scoped());
         assert!(!Msg::QueueEdit { text: String::new() }.is_session_scoped());
+        assert!(!Msg::ModelCatalog(Vec::new()).is_session_scoped());
         assert!(!Msg::Sessions(Ok(Vec::new())).is_session_scoped());
         assert!(!Msg::Error { session: None, message: String::new() }.is_session_scoped());
         assert!(!Msg::SessionClosed {

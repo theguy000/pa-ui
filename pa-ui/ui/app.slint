@@ -251,6 +251,11 @@ export component AppWindow inherits Window {
     callback scroll-paging();
     callback attachment-ready();
     in-out property <string> selected-id;
+    in-out property <bool> draft-chat;
+    in-out property <int> draft-generation: 0;
+    in-out property <bool> draft-model-picked;
+    in-out property <string> draft-level;
+    in-out property <string> draft-cwd;
     // The sidebar's groups: the rows of each, in the order they are drawn, and
     // which of the three the reader has folded. The window fills all three from
     // the one session list (src/sessions.rs `session_items`), so a row's group

@@ -128,9 +128,19 @@ pub(crate) fn is_top_level(row: &SessionRow) -> bool {
     row.depth == 0 && row.parent.is_empty() && row.parent_active.is_empty()
 }
 
+fn anonymous_empty(row: &SessionRow) -> bool {
+    let name = row.name.trim();
+    row.messages == 0
+        && (name.is_empty() || name == "(no messages)")
+        && !row.is_resident()
+        && is_top_level(row)
+}
+
+fn sidebar_row_visible(row: &SessionRow, selected: &str) -> bool {
+    !anonymous_empty(row) || row.id == selected
+}
+
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
-    // Spawned subagents live under their parent Session; the sidebar lists
-    // top-level Sessions only. Family cost still reads the unfiltered roster.
     let mut top: Vec<&SessionRow> = rows.iter().filter(|row| is_top_level(row)).collect();
     top.sort_by(|left, right| {
         tag_of(left)
@@ -599,6 +609,10 @@ impl Sidebar {
         }
     }
 
+    pub fn forget_selection(&self) {
+        *self.selected_uuid.borrow_mut() = None;
+    }
+
     pub fn family_cost(&self, session: &str, own_cost: f64) -> (f64, bool) {
         if let Ok(rows) = self.cache.try_borrow() {
             compute_family_cost(&rows, session, own_cost)
@@ -624,9 +638,19 @@ impl Sidebar {
         *self.cache.borrow_mut() = rows;
     }
 
-    /// Apply a freshly polled session roster to the window and resolve any UUID rebinding.
     /// Returns `Some(rebound_id)` if the active selection was re-keyed by the daemon.
     pub fn apply_roster(&self, ui: &AppWindow, rows: Vec<SessionRow>) -> Option<String> {
+        let selected = ui.get_selected_id().to_string();
+        let selected_uuid = self.selected_uuid.borrow().clone();
+        let rows: Vec<SessionRow> = rows
+            .into_iter()
+            .filter(|row| {
+                sidebar_row_visible(row, &selected)
+                    || selected_uuid
+                        .as_deref()
+                        .is_some_and(|uuid| row.session_id == uuid)
+            })
+            .collect();
         *self.cache.borrow_mut() = rows.clone();
         let items: Vec<SessionItem> = session_items(&rows);
         let (active, idle, done) = session_groups(&items);
@@ -668,7 +692,7 @@ impl Sidebar {
             ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
         }
 
-        if ui.get_selected_id().is_empty() {
+        if ui.get_selected_id().is_empty() && !ui.get_draft_chat() {
             let preferred = std::env::var("PA_SELECT").ok();
             let chosen = preferred
                 .as_deref()
@@ -698,25 +722,11 @@ impl Sidebar {
         let selected = ui.get_selected_id().to_string();
         if let Some(uuid) = uuid_of(&rows, &selected) {
             *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
-        } else if !selected.is_empty() && self.selected_uuid.borrow().is_none() {
-            if let Some(first) = visible_first.as_ref() {
-                ui.set_selected_id(first.id.clone());
-                *self.selected_uuid.borrow_mut() = Some(first.uuid.to_string());
-            }
         }
         rebound_out
     }
 
     fn bind_ui(&self, ui: &AppWindow, job_tx: &Sender<Job>) {
-        // 1. New chat
-        {
-            let jobs = job_tx.clone();
-            ui.on_new_chat(move || {
-                let _ = jobs.send(Job::NewChat);
-            });
-        }
-
-        // 2. Rename
         {
             let jobs = job_tx.clone();
             let window = ui.as_weak();
@@ -744,7 +754,6 @@ impl Sidebar {
             });
         }
 
-        // 3. Per-session menu
         {
             let jobs = job_tx.clone();
             let window = ui.as_weak();
@@ -846,7 +855,6 @@ impl Sidebar {
             });
         }
 
-        // 4. Group folds
         {
             let window = ui.as_weak();
             let groups = self.groups.clone();
@@ -882,7 +890,6 @@ impl Sidebar {
             });
         }
 
-        // 5. Theme picker
         {
             let initial = crate::env_cfg::cfg()
                 .theme
@@ -907,7 +914,6 @@ impl Sidebar {
             });
         }
 
-        // 6. Search popup callbacks
         {
             let sessions = self.cache.clone();
             let weak = ui.as_weak();
@@ -956,7 +962,6 @@ impl Sidebar {
             search::keys::opens_search(text.as_str(), control, search_open)
         });
 
-        // 7. Share card
         {
             let weak = ui.as_weak();
             ui.on_share_copy_requested(move || {

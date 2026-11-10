@@ -128,10 +128,17 @@ fn count_i32(count: usize) -> i32 {
     i32::try_from(count).unwrap_or(i32::MAX)
 }
 
+pub(crate) fn draft_generation(ui: &AppWindow) -> u64 {
+    u64::try_from(ui.get_draft_generation()).unwrap_or(0)
+}
+
 /// A reply belongs on screen only while the window is still showing its
 /// session. An empty selection is the startup state, before the roster picks
 /// one; tests and the first attach still need that reply.
 fn session_is_current(ui: &AppWindow, session: &str) -> bool {
+    if ui.get_draft_chat() {
+        return false;
+    }
     let selected = ui.get_selected_id();
     selected.is_empty() || selected.as_str() == session
 }
@@ -181,6 +188,44 @@ impl Tick {
                 session_id: selected_session_id.clone(),
             });
         }
+    }
+
+    pub(crate) fn open_new_chat(&self) {
+        let Some(ui) = self.weak.upgrade() else { return };
+        let mut l = Local::load(self);
+        reset_activity(&ui);
+        let selected = ui.get_selected_id().to_string();
+        if !selected.is_empty() {
+            let cwd = self
+                .sidebar
+                .cache
+                .borrow()
+                .iter()
+                .find(|row| row.id == selected)
+                .map(|row| row.cwd.clone());
+            if let Some(cwd) = cwd {
+                ui.set_draft_cwd(cwd.into());
+            }
+        }
+        self.sidebar.forget_selection();
+        self.sheet.replace(Vec::new());
+        self.sheet.reset_paging(&ui);
+        self.sheet.clear_tail_sig();
+        self.sheet.set_tail_anchor(&[]);
+        let generation = self.attach_generation.get().wrapping_add(1);
+        self.attach_generation.set(generation);
+        ui.set_draft_generation(i32::try_from(generation).unwrap_or(i32::MAX));
+        l.drawn_user = None;
+        l.loaded = None;
+        l.settled_session = None;
+        l.last_seq = 0;
+        l.open_live = None;
+        l.live_state.clear();
+        l.live_since = SystemTime::now();
+        self.composer.open_unsaved_chat(&ui);
+        self.clear_status(&ui, &mut l);
+        sheet::force_scroll_to_end(&ui);
+        l.store(self);
     }
 
     pub(crate) fn request_older(&self, ui: &AppWindow) {
@@ -252,7 +297,9 @@ impl Tick {
     /// immediately; every Session keeps it so a later attach can put it back.
     fn record_error(&self, ui: &AppWindow, session: Option<&str>, message: &str) {
         let current = ui.get_selected_id();
-        if current.is_empty() || session.is_none_or(|target| target == current.as_str()) {
+        let on_screen = !(ui.get_draft_chat() && session.is_some())
+            && (current.is_empty() || session.is_none_or(|target| target == current.as_str()));
+        if on_screen {
             self.sheet.show_error(message);
         }
         if let Some(session) = session.filter(|session| !session.is_empty()) {
@@ -361,7 +408,7 @@ impl Tick {
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         models.sync_session_row(&ui, row);
                     }
-                    if !rows.iter().any(|row| row.id == selected) {
+                    if !ui.get_draft_chat() && !rows.iter().any(|row| row.id == selected) {
                         l.settled_session = None;
                         if ui.get_busy() {
                             self.clear_status(&ui, &mut l);
@@ -455,7 +502,7 @@ impl Tick {
                     // already running. An activity frame is not a Turn start:
                     // a late frame from the Turn that has just ended must not
                     // wake an idle strip.
-                    if !ui.get_busy() {
+                    if !ui.get_busy() || ui.get_draft_chat() {
                         continue;
                     }
                     let desired = self.command_word.displayed(&l.live_state, &label);
@@ -919,12 +966,52 @@ impl Tick {
                         images,
                     });
                 }
-                Msg::NewChat(id) => {
-                    composer.reset_for_new_chat(&ui, &id);
+                Msg::ChatStarted { id, generation } => {
+                    if !ui.get_draft_chat() || generation != draft_generation(&ui) {
+                        continue;
+                    }
+                    self.attach_generation.set(generation);
+                    l.drawn_user = None;
+                    l.loaded = Some(id.clone());
+                    l.settled_session = None;
+                    l.last_seq = 0;
+                    l.open_live = None;
+                    l.live_state.clear();
+                    l.live_since = SystemTime::now();
+                    composer.bind_new_chat(&ui, &id);
+                    self.sheet.replace(Vec::new());
+                    self.sheet.reset_paging(&ui);
+                    self.sheet.clear_tail_sig();
+                    self.sidebar.track_selection(&id);
+                }
+                Msg::StartChatFailed {
+                    generation,
+                    session,
+                    text,
+                    images,
+                    error,
+                } => {
+                    if generation != draft_generation(&ui) {
+                        continue;
+                    }
+                    let on_screen = match session.as_deref() {
+                        Some(session) => {
+                            !ui.get_draft_chat() && ui.get_selected_id().as_str() == session
+                        }
+                        None => ui.get_draft_chat(),
+                    };
+                    if !on_screen {
+                        continue;
+                    }
+                    composer.on_start_chat_rejected(&ui, &text, &images);
                     l.settled_session = None;
                     self.clear_status(&ui, &mut l);
+                    self.record_error(&ui, session.as_deref(), &error);
                 }
                 Msg::QueueEdit { text } => {
+                    if ui.get_draft_chat() {
+                        continue;
+                    }
                     ui.set_composer_text(text.into());
                     ui.set_composer_has_text(!ui.get_composer_text().is_empty());
                 }
@@ -1006,6 +1093,9 @@ impl Tick {
                     }
                 }
                 Msg::State { state, .. } => {
+                    if ui.get_draft_chat() {
+                        continue;
+                    }
                     models.sync_session_state(&ui, &state);
                 }
                 Msg::Reconnected => {
@@ -1019,6 +1109,9 @@ impl Tick {
                     l.last_seq = 0;
                 }
                 Msg::PromptRejected { session, text } => {
+                    if ui.get_draft_chat() {
+                        continue;
+                    }
                     let current = ui.get_selected_id();
                     if current.is_empty()
                         || session.as_deref().is_none_or(|target| target == current.as_str())
@@ -1033,6 +1126,9 @@ impl Tick {
                     }
                 }
                 Msg::PromptResult { session, error } => {
+                    if ui.get_draft_chat() {
+                        continue;
+                    }
                     let current = ui.get_selected_id();
                     let on_screen = current.is_empty()
                         || session.as_deref().is_none_or(|target| target == current.as_str());
@@ -1053,6 +1149,11 @@ impl Tick {
                     self.record_error(&ui, session.as_deref(), &message);
                 }
                 Msg::SessionClosed { session, reason } => {
+                    if ui.get_draft_chat() {
+                        let message = session_closed_message(&reason);
+                        self.record_error(&ui, Some(&session), &message);
+                        continue;
+                    }
                     let current = ui.get_selected_id();
                     if current.is_empty() || session == current.as_str() {
                         composer.in_flight.set(false);
@@ -1316,6 +1417,25 @@ mod status_strip_tests {
         h.run();
     }
 
+    fn saved_session_row(id: &str, name: &str, worker_state: &str, cwd: &str) -> SessionRow {
+        SessionRow {
+            id: id.to_string(),
+            session_id: id.to_string(),
+            name: name.to_string(),
+            cwd: cwd.to_string(),
+            lifecycle: "draft".to_string(),
+            worker_state: worker_state.to_string(),
+            ..SessionRow::default()
+        }
+    }
+
+    fn drawn_session_ids(h: &Harness) -> Vec<String> {
+        h.ui.get_sessions()
+            .iter()
+            .map(|row| row.id.to_string())
+            .collect()
+    }
+
     fn error_rows(h: &Harness) -> Vec<String> {
         h.tick
             .sheet
@@ -1387,7 +1507,7 @@ mod status_strip_tests {
         h.run();
         assert_strip(&h, true, "Compacting");
 
-        h.send(Msg::NewChat("new".to_string()));
+        h.tick.open_new_chat();
         h.run();
         assert_strip(&h, false, "");
     }
@@ -1943,6 +2063,20 @@ mod status_strip_tests {
         a_custom_message_renders_live_and_reconciles_on_tail();
         a_second_custom_message_keeps_arrival_order();
         a_repeated_custom_body_gets_its_own_row();
+        a_new_chat_is_local_until_the_first_send();
+        a_model_picked_in_the_draft_does_not_reach_the_daemon();
+        the_first_send_carries_the_draft_model_and_level();
+        a_create_failure_keeps_the_unsaved_chat_and_its_prompt();
+        a_prompt_failure_after_create_keeps_the_session_and_retry_state();
+        the_sidebar_hides_only_inactive_anonymous_empty_saved_rows();
+        a_stale_roster_cannot_steal_a_newly_bound_chat();
+        a_stale_start_failure_does_not_touch_a_newer_unsaved_chat();
+        a_retry_after_a_prompt_failure_sends_only_the_prompt();
+        a_create_failure_restores_the_prompt_attachments();
+        a_partial_model_choice_is_not_a_draft_model();
+        a_rejection_keeps_new_composer_input_and_does_not_restore_old_images();
+        opening_a_new_chat_inherits_the_selected_cwd();
+        a_stale_start_result_does_not_replace_the_current_unsaved_chat();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -2825,5 +2959,292 @@ mod status_strip_tests {
         assert!(binding_selection("mine", "old", "new").is_none());
         assert!(binding_selection("old", "old", "").is_none());
         assert!(binding_selection("old", "old", "old").is_none());
+    }
+
+    fn a_new_chat_is_local_until_the_first_send() {
+        let h = Harness::new();
+        *h.tick.sidebar.selected_uuid.borrow_mut() = Some("old".to_string());
+        h.tick.open_new_chat();
+        h.run();
+
+        assert!(h.tick.sidebar.selected_uuid.borrow().is_none());
+
+        assert!(h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_selected_id().as_str(), "");
+        assert!(h.tick.sheet.rows().is_empty());
+        assert!(take_jobs(&h).is_empty(), "New Chat must not reach the daemon");
+
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+        let jobs = take_jobs(&h);
+        assert!(matches!(
+            jobs.as_slice(),
+            [Job::StartChat { message, .. }] if message == "hello"
+        ));
+
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+        h.send(Msg::ChatStarted { id: "new".to_string(), generation });
+        h.run();
+
+        assert!(!h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_selected_id().as_str(), "new");
+    }
+
+    fn a_model_picked_in_the_draft_does_not_reach_the_daemon() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.invoke_model_picked("model".into(), "provider".into());
+
+        assert!(take_jobs(&h).is_empty());
+        assert!(h.ui.get_draft_model_picked());
+        assert_eq!(h.ui.get_model_id().as_str(), "model");
+        assert_eq!(h.ui.get_model_provider().as_str(), "provider");
+    }
+
+    fn the_first_send_carries_the_draft_model_and_level() {
+        let h = Harness::new();
+        h.ui.set_model_id("model".into());
+        h.ui.set_model_provider("provider".into());
+        h.ui.set_current_level("high".into());
+        h.tick.open_new_chat();
+        h.ui.set_draft_cwd("C:/work".into());
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+
+        let jobs = take_jobs(&h);
+
+        assert!(matches!(
+            jobs.as_slice(),
+            [Job::StartChat {
+                model: Some((provider, model)),
+                level: Some(level),
+                cwd: Some(cwd),
+                ..
+            }] if provider.as_str() == "provider"
+                && model.as_str() == "model"
+                && level.as_str() == "high"
+                && cwd.as_str() == "C:/work"
+        ));
+    }
+
+    fn a_create_failure_keeps_the_unsaved_chat_and_its_prompt() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+
+        h.send(Msg::StartChatFailed {
+            generation,
+            session: None,
+            text: "hello".to_string(),
+            images: Vec::new(),
+            error: "Could not start a new Session: no daemon".to_string(),
+        });
+        h.run();
+
+        assert!(h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_selected_id().as_str(), "");
+        assert_eq!(h.ui.get_composer_text().as_str(), "hello");
+        assert!(h.ui.get_composer_has_text());
+        assert!(error_rows(&h).iter().any(|row| row.contains("no daemon")));
+    }
+
+    fn a_prompt_failure_after_create_keeps_the_session_and_retry_state() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+        h.send(Msg::ChatStarted { id: "new".to_string(), generation });
+        h.run();
+
+        h.send(Msg::StartChatFailed {
+            generation,
+            session: Some("new".to_string()),
+            text: "hello".to_string(),
+            images: Vec::new(),
+            error: "the prompt was refused".to_string(),
+        });
+        h.run();
+
+        assert!(!h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_selected_id().as_str(), "new");
+        assert_eq!(h.ui.get_composer_text().as_str(), "hello");
+        assert!(error_rows(&h)
+            .iter()
+            .any(|row| row.contains("the prompt was refused")));
+    }
+
+    fn the_sidebar_hides_only_inactive_anonymous_empty_saved_rows() {
+        let h = Harness::new();
+        let rows = vec![
+            saved_session_row("empty", "", "", ""),
+            saved_session_row("plan", "fresh plan", "", ""),
+            saved_session_row("live", "live", "ready", ""),
+        ];
+        h.send(Msg::Sessions(Ok(rows.clone())));
+        h.run();
+
+        let ids = drawn_session_ids(&h);
+        assert!(!ids.contains(&"empty".to_string()));
+        assert!(ids.contains(&"plan".to_string()));
+        assert!(ids.contains(&"live".to_string()));
+
+        h.ui.set_selected_id("empty".into());
+        h.send(Msg::Sessions(Ok(rows)));
+        h.run();
+
+        assert!(drawn_session_ids(&h).contains(&"empty".to_string()));
+    }
+
+    fn a_stale_roster_cannot_steal_a_newly_bound_chat() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+        h.send(Msg::ChatStarted { id: "new".to_string(), generation });
+        h.run();
+
+        h.send(roster_state_for("old", false));
+        h.run();
+
+        assert_eq!(h.ui.get_selected_id().as_str(), "new");
+        assert!(!h.ui.get_draft_chat());
+    }
+
+    fn a_stale_start_failure_does_not_touch_a_newer_unsaved_chat() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        let stale = draft_generation(&h.ui);
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("new text".into());
+
+        h.send(Msg::StartChatFailed {
+            generation: stale,
+            session: None,
+            text: "old text".to_string(),
+            images: Vec::new(),
+            error: "old failure".to_string(),
+        });
+        h.run();
+
+        assert!(h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_composer_text().as_str(), "new text");
+        assert!(error_rows(&h).is_empty());
+    }
+
+    fn a_retry_after_a_prompt_failure_sends_only_the_prompt() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+        h.send(Msg::ChatStarted { id: "new".to_string(), generation });
+        h.run();
+        h.send(Msg::StartChatFailed {
+            generation,
+            session: Some("new".to_string()),
+            text: "hello".to_string(),
+            images: Vec::new(),
+            error: "the prompt was refused".to_string(),
+        });
+        h.run();
+        take_jobs(&h);
+
+        h.ui.set_composer_text("hello".into());
+        h.ui.invoke_send_requested("hello".into());
+        let jobs = take_jobs(&h);
+
+        assert!(!jobs.iter().any(|job| matches!(job, Job::StartChat { .. })));
+        assert!(jobs.iter().any(|job| matches!(
+            job,
+            Job::Prompt { session, message, .. } if session == "new" && message == "hello"
+        )));
+    }
+
+    fn a_create_failure_restores_the_prompt_attachments() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("look".into());
+        h.ui.invoke_send_requested("look".into());
+        let generation = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+
+        h.send(Msg::StartChatFailed {
+            generation,
+            session: None,
+            text: "look".to_string(),
+            images: vec![serde_json::json!({
+                "type": "image", "data": "", "mimeType": "image/png"
+            })],
+            error: "Could not start a new Session: no daemon".to_string(),
+        });
+        h.run();
+
+        assert_eq!(h.ui.get_composer_text().as_str(), "look");
+        assert_eq!(h.ui.get_attachment_images().row_count(), 1);
+    }
+
+    fn a_partial_model_choice_is_not_a_draft_model() {
+        let h = Harness::new();
+        h.ui.set_model_id("model".into());
+        h.ui.set_model_provider("".into());
+        h.tick.open_new_chat();
+        assert!(!h.ui.get_draft_model_picked());
+
+        h.ui.set_model_id("".into());
+        h.ui.set_model_provider("provider".into());
+        h.tick.open_new_chat();
+        assert!(!h.ui.get_draft_model_picked());
+    }
+
+    fn a_rejection_keeps_new_composer_input_and_does_not_restore_old_images() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        h.ui.set_composer_text("old".into());
+        h.ui.invoke_send_requested("old".into());
+        let generation = draft_generation(&h.ui);
+        h.ui.set_composer_text("new text".into());
+
+        h.send(Msg::StartChatFailed {
+            generation,
+            session: None,
+            text: "old".to_string(),
+            images: vec![serde_json::json!({
+                "type": "image", "data": "", "mimeType": "image/png"
+            })],
+            error: "failed".to_string(),
+        });
+        h.run();
+
+        assert_eq!(h.ui.get_composer_text().as_str(), "new text");
+        assert_eq!(h.ui.get_attachment_images().row_count(), 0);
+    }
+
+    fn opening_a_new_chat_inherits_the_selected_cwd() {
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(vec![
+            saved_session_row("one", "one", "", "C:/one"),
+            saved_session_row("two", "two", "", "C:/two"),
+        ])));
+        h.run();
+        h.ui.set_selected_id("two".into());
+        h.run();
+
+        h.tick.open_new_chat();
+
+        assert_eq!(h.ui.get_draft_cwd().as_str(), "C:/two");
+    }
+
+    fn a_stale_start_result_does_not_replace_the_current_unsaved_chat() {
+        let h = Harness::new();
+        h.tick.open_new_chat();
+        let stale = u64::try_from(h.ui.get_draft_generation()).unwrap_or(0);
+        h.tick.open_new_chat();
+
+        h.send(Msg::ChatStarted { id: "old".to_string(), generation: stale });
+        h.run();
+
+        assert!(h.ui.get_draft_chat());
+        assert_eq!(h.ui.get_selected_id().as_str(), "");
     }
 }
