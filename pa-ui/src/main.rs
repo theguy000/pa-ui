@@ -47,7 +47,7 @@ pub(crate) type SentThumbs = Rc<RefCell<Vec<(String, slint::Image)>>>;
 pub(crate) type Repaint = Rc<dyn Fn(&AppWindow)>;
 
 use pa_client::{
-    attach_as, clamp_level, clear_queue, create_session, get_commands, get_queue, list_sessions,
+    attach_as, clamp_level, clear_queue, create_session_with, get_commands, get_queue, list_sessions,
     model_catalog, mutate_queue, send_prompt_checked, session_state, session_stats, set_model,
     set_thinking_level, steer_prompt, stop, thinking_level_label, Client, SessionRow,
 };
@@ -248,8 +248,17 @@ fn main() -> Result<(), slint::PlatformError> {
     // A sidebar pick changes the selection synchronously, but the transcript
     // belongs to the previous Session until the next tick. Run the tick from
     // the pick so the old sheet does not wait for an unrelated event.
+    let pick_ui = ui.as_weak();
     let pick_tick = tick.clone();
-    ui.on_selection_picked(move |_| pick_tick.run());
+    ui.on_selection_picked(move |_| {
+        if let Some(ui) = pick_ui.upgrade() {
+            ui.set_draft_chat(false);
+        }
+        pick_tick.run();
+    });
+
+    let new_tick = tick.clone();
+    ui.on_new_chat(move || new_tick.open_new_chat());
 
     let wake_tick = tick.clone();
     ui.on_wake(move || wake_tick.run());
@@ -278,7 +287,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     if std::env::var("PA_SLASH").is_ok() {
-        let _ = job_tx.send(Job::NewChat);
+        tick.open_new_chat();
     }
 
     ui.set_canvas_mode(crate::env_cfg::cfg().canvas);

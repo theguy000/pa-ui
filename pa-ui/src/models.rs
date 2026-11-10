@@ -8,6 +8,7 @@ pub(crate) struct ModelMenu {
     pub catalog: Rc<RefCell<Vec<pa_client::ModelEntry>>>,
     pub collapsed: Rc<RefCell<HashSet<String>>>,
     pub loaded: Rc< std::cell::Cell<bool>>,
+    pub last_session: Rc<RefCell<String>>,
     hovered: Rc<RefCell<Option<(String, String)>>>,
     hover_current: Rc<RefCell<Option<(String, String)>>>,
     hover_close: Rc<Timer>,
@@ -19,6 +20,7 @@ impl ModelMenu {
             catalog: Rc::new(RefCell::new(Vec::new())),
             collapsed: Rc::new(RefCell::new(HashSet::new())),
             loaded: Rc::new(std::cell::Cell::new(false)),
+            last_session: Rc::new(RefCell::new(String::new())),
             hovered: Rc::new(RefCell::new(None)),
             hover_current: Rc::new(RefCell::new(None)),
             hover_close: Rc::new(Timer::default()),
@@ -80,6 +82,9 @@ impl ModelMenu {
     }
 
     pub fn sync_session_row(&self, ui: &AppWindow, row: &SessionRow) {
+        if !row.id.is_empty() {
+            *self.last_session.borrow_mut() = row.id.clone();
+        }
         if !row.model.is_empty() {
             let label = if row.model_name.is_empty() {
                 row.model.clone()
@@ -104,12 +109,15 @@ impl ModelMenu {
             ui.on_model_picked(move |model, provider| {
                 let Some(ui) = weak.upgrade() else { return };
                 let session = ui.get_selected_id().to_string();
-                if session.is_empty() {
+                let draft = ui.get_draft_chat();
+                if session.is_empty() && !draft {
                     return;
                 }
                 if provider.trim().is_empty() {
                     return;
                 }
+                let changed =
+                    ui.get_model_id() != model || ui.get_model_provider() != provider;
                 if let Some(entry) = catalog
                     .borrow()
                     .iter()
@@ -120,6 +128,15 @@ impl ModelMenu {
                 ui.set_model_id(model.clone());
                 ui.set_model_provider(provider.clone());
                 refresh_model_groups(&ui, &catalog.borrow(), &collapsed.borrow());
+                if draft {
+                    ui.set_draft_model_picked(true);
+                    if changed {
+                        ui.set_draft_level("".into());
+                        ui.set_current_effort("".into());
+                        ui.set_current_level("".into());
+                    }
+                    return;
+                }
                 let _ = jobs.send(Job::SetModel {
                     session: session.clone(),
                     provider: provider.to_string(),
@@ -217,7 +234,8 @@ impl ModelMenu {
             ui.on_effort_picked(move |index| {
                 let Some(ui) = weak.upgrade() else { return };
                 let session = ui.get_selected_id().to_string();
-                if session.is_empty() {
+                let draft = ui.get_draft_chat();
+                if session.is_empty() && !draft {
                     return;
                 }
                 let Some((provider, model)) = hovered.borrow().clone() else { return };
@@ -234,6 +252,22 @@ impl ModelMenu {
                 let switch = !(ui.get_model_id() == model && ui.get_model_provider() == provider);
                 ui.set_effort_open(false);
                 *hover_current.borrow_mut() = None;
+                if draft {
+                    if let Some(entry) = catalog
+                        .borrow()
+                        .iter()
+                        .find(|entry| entry.provider == provider && entry.id == model)
+                    {
+                        ui.set_model_label(model_label(&entry.name, &entry.id).into());
+                    }
+                    ui.set_model_id(model.into());
+                    ui.set_model_provider(provider.into());
+                    ui.set_draft_model_picked(true);
+                    ui.set_draft_level(level.clone().into());
+                    ui.set_current_effort(thinking_level_label(&level).into());
+                    ui.set_current_level(level.into());
+                    return;
+                }
                 let _ = jobs.send(Job::SetLevel {
                     session,
                     provider,
@@ -249,10 +283,14 @@ impl ModelMenu {
             let weak = ui.as_weak();
             let jobs = job_tx.clone();
             let catalog_loaded = self.loaded.clone();
+            let last_session = self.last_session.clone();
             ui.on_model_menu_opened(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 let session = ui.get_selected_id().to_string();
-                if session.is_empty() {
+                if !session.is_empty() {
+                    *last_session.borrow_mut() = session.clone();
+                }
+                if session.is_empty() && !ui.get_draft_chat() {
                     return;
                 }
                 if crate::env_cfg::cfg().debug {
@@ -264,12 +302,17 @@ impl ModelMenu {
                         ui.get_model_menu_height()
                     );
                 }
-                if !catalog_loaded.get() {
-                    let _ = jobs.send(Job::ModelCatalog {
-                        session: session.clone(),
-                    });
+                let route = if session.is_empty() {
+                    last_session.borrow().clone()
+                } else {
+                    session.clone()
+                };
+                if !catalog_loaded.get() && !route.is_empty() {
+                    let _ = jobs.send(Job::ModelCatalog { session: route });
                 }
-                let _ = jobs.send(Job::SessionState { session });
+                if !session.is_empty() {
+                    let _ = jobs.send(Job::SessionState { session });
+                }
             });
         }
 
@@ -466,6 +509,7 @@ mod tests {
             catalog: Rc::new(RefCell::new(Vec::new())),
             collapsed: Rc::new(RefCell::new(HashSet::new())),
             loaded: Rc::new(std::cell::Cell::new(true)),
+            last_session: Rc::new(RefCell::new(String::new())),
             hovered: Rc::new(RefCell::new(None)),
             hover_current: Rc::new(RefCell::new(None)),
             hover_close: Rc::new(Timer::default()),

@@ -26,6 +26,17 @@ impl Attachment {
             "mimeType": self.mime,
         })
     }
+
+    #[must_use]
+    pub fn from_block(block: &serde_json::Value) -> Option<Self> {
+        if block.get("type").and_then(serde_json::Value::as_str) != Some("image") {
+            return None;
+        }
+        Some(Self {
+            mime: block.get("mimeType")?.as_str()?.to_string(),
+            base64: block.get("data")?.as_str()?.to_string(),
+        })
+    }
 }
 
 /// Sniff a supported image type from the bytes themselves — the extension and the
