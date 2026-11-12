@@ -3357,6 +3357,10 @@ mod status_strip_tests {
         h.ui.invoke_settings_search_edited("queue".into());
         assert_eq!(h.ui.get_settings_page().as_str(), "general");
 
+        h.ui.set_settings_page("appearance".into());
+        h.ui.invoke_settings_search_edited("order".into());
+        assert_eq!(h.ui.get_settings_page().as_str(), "general");
+
         h.ui.set_settings_page("general".into());
         h.ui.invoke_settings_search_edited("font".into());
         assert!(h.ui.get_settings_show_typography());

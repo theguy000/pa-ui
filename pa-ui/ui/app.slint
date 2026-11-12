@@ -252,7 +252,6 @@ export component AppWindow inherits Window {
     in-out property <[ThemeItem]> theme-items;
     in-out property <string> setting-thread-notifications: "Off";
     in-out property <bool> setting-in-app-notifications: true;
-    in-out property <bool> setting-show-session-previews: true;
     in-out property <string> setting-session-order: "Last used";
     in-out property <bool> setting-confirm-quit: false;
     in-out property <bool> setting-confirm-delete-session: true;
@@ -2155,7 +2154,6 @@ export component AppWindow inherits Window {
             theme-items: root.theme-items;
             thread-notifications: root.setting-thread-notifications;
             in-app-notifications: root.setting-in-app-notifications;
-            show-session-previews: root.setting-show-session-previews;
             session-order: root.setting-session-order;
             confirm-quit: root.setting-confirm-quit;
             confirm-delete-session: root.setting-confirm-delete-session;

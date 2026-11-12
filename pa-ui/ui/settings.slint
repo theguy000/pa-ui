@@ -539,7 +539,6 @@ export component SettingsPopup inherits Panel {
 
     in property <string> thread-notifications: "Off";
     in property <bool> in-app-notifications: true;
-    in property <bool> show-session-previews: true;
     in property <string> session-order: "Last used";
     in property <bool> confirm-quit: false;
     in property <bool> confirm-delete-session: true;
@@ -678,21 +677,8 @@ export component SettingsPopup inherits Panel {
                     heading: "Sidebar";
 
                     SettingsRow {
-                        title: "Show Session previews";
-                        description: "Include the latest prompt or status line beneath each Session name.";
-                        SettingsToggle {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            checked: root.show-session-previews;
-                            described: "Show Session previews";
-                            clicked => { root.setting-toggled("show-session-previews"); }
-                        }
-                    }
-
-                    SettingsRow {
                         title: "Session order";
                         description: "Order of Sessions inside each sidebar group and search popup.";
-                        divided: true;
                         SettingsChoice {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
@@ -872,23 +858,6 @@ export component SettingsPopup inherits Panel {
                             clicked => { root.setting-toggled("reduce-motion"); }
                         }
                     }
-                }
-
-                if root.show-sidebar : SettingsSection {
-                    heading: "Sidebar";
-
-                    SettingsRow {
-                        title: "Show Session previews";
-                        description: "Include the latest prompt or status line beneath each Session name.";
-                        SettingsToggle {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            checked: root.show-session-previews;
-                            described: "Show Session previews";
-                            clicked => { root.setting-toggled("show-session-previews"); }
-                        }
-                    }
-
                 }
             }
         }

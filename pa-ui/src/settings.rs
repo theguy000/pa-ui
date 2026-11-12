@@ -11,7 +11,6 @@ pub(crate) struct Settings {
     pub theme: String,
     pub thread_notifications: String,
     pub in_app_notifications: bool,
-    pub show_session_previews: bool,
     pub session_order: String,
     pub confirm_quit: bool,
     pub confirm_delete_session: bool,
@@ -31,7 +30,6 @@ impl Default for Settings {
             theme: "default".to_string(),
             thread_notifications: "Off".to_string(),
             in_app_notifications: true,
-            show_session_previews: true,
             session_order: "Last used".to_string(),
             confirm_quit: false,
             confirm_delete_session: true,
@@ -91,7 +89,7 @@ impl SectionFilter {
         let matches = |words: &str| words.contains(&q);
         Self {
             notifications: matches("notifications thread alerts in-app toast focus"),
-            sidebar: matches("sidebar show session previews order last used manual"),
+            sidebar: matches("sidebar session order last used manual"),
             confirmations: matches("confirmations confirm quit quitting delete deleting session"),
             behavior: matches("behavior queue with ctrl+enter alt+enter reopen last session"),
             theme: matches("theme appearance default mono obsidian ember paper colour color"),
@@ -109,9 +107,9 @@ impl SectionFilter {
         ui.set_settings_show_typography(self.typography);
         ui.set_settings_show_density(self.density);
         if !query_matches_page(ui.get_settings_page().as_str(), self) {
-            if self.theme || self.typography || self.density || self.sidebar {
+            if self.theme || self.typography || self.density {
                 ui.set_settings_page("appearance".into());
-            } else if self.notifications || self.confirmations || self.behavior {
+            } else if self.notifications || self.sidebar || self.confirmations || self.behavior {
                 ui.set_settings_page("general".into());
             }
         }
@@ -120,7 +118,7 @@ impl SectionFilter {
 
 fn query_matches_page(page: &str, filter: SectionFilter) -> bool {
     if page == "appearance" {
-        filter.theme || filter.typography || filter.density || filter.sidebar
+        filter.theme || filter.typography || filter.density
     } else {
         filter.notifications || filter.sidebar || filter.confirmations || filter.behavior
     }
@@ -133,7 +131,6 @@ impl Settings {
             "theme": self.theme,
             "thread-notifications": self.thread_notifications,
             "in-app-notifications": self.in_app_notifications,
-            "show-session-previews": self.show_session_previews,
             "session-order": self.session_order,
             "confirm-quit": self.confirm_quit,
             "confirm-delete-session": self.confirm_delete_session,
@@ -177,7 +174,6 @@ impl Settings {
     pub(crate) fn toggle(&mut self, key: &str) -> bool {
         match key {
             "in-app-notifications" => self.in_app_notifications = !self.in_app_notifications,
-            "show-session-previews" => self.show_session_previews = !self.show_session_previews,
             "confirm-quit" => self.confirm_quit = !self.confirm_quit,
             "confirm-delete-session" => self.confirm_delete_session = !self.confirm_delete_session,
             "reopen-last-session" => self.reopen_last_session = !self.reopen_last_session,
@@ -216,7 +212,6 @@ impl Settings {
     pub(crate) fn apply_to_ui(&self, ui: &AppWindow) {
         ui.set_setting_thread_notifications(self.thread_notifications.clone().into());
         ui.set_setting_in_app_notifications(self.in_app_notifications);
-        ui.set_setting_show_session_previews(self.show_session_previews);
         ui.set_setting_session_order(self.session_order.clone().into());
         ui.set_setting_confirm_quit(self.confirm_quit);
         ui.set_setting_confirm_delete_session(self.confirm_delete_session);
@@ -242,9 +237,6 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
     }
     if let Some(v) = map.get("in-app-notifications").and_then(Value::as_bool) {
         out.in_app_notifications = v;
-    }
-    if let Some(v) = map.get("show-session-previews").and_then(Value::as_bool) {
-        out.show_session_previews = v;
     }
     if let Some(v) = map.get("session-order").and_then(Value::as_str) {
         out.session_order = valid_option(SESSION_ORDER_OPTIONS, v, "Last used");
@@ -371,7 +363,6 @@ mod tests {
             theme: "mono".to_string(),
             thread_notifications: "Always".to_string(),
             in_app_notifications: false,
-            show_session_previews: false,
             session_order: "Name".to_string(),
             confirm_quit: true,
             confirm_delete_session: false,
@@ -445,7 +436,7 @@ mod tests {
     #[test]
     fn removed_options_are_not_read_from_an_old_settings_file() {
         let loaded = Settings::from_json(
-            r#"{"dim-inactive-sessions": true, "restore-drafts": false}"#,
+            r#"{"dim-inactive-sessions": true, "restore-drafts": false, "show-session-previews": false}"#,
         );
         assert_eq!(loaded, Settings::default());
     }
@@ -476,5 +467,11 @@ mod tests {
         let notify = SectionFilter::for_query("toast");
         assert!(notify.notifications);
         assert!(!notify.theme && !notify.density);
+
+        let order = SectionFilter::for_query("order");
+        assert!(order.sidebar);
+
+        let preview = SectionFilter::for_query("preview");
+        assert!(!preview.sidebar && !preview.notifications && !preview.theme);
     }
 }
