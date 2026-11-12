@@ -516,3 +516,50 @@ export component IconChevronDown inherits Path {
     stroke-width: 1.6px;
     fill: transparent;
 }
+
+// settings
+
+export component IconSettingsGeneral inherits Path {
+    in property <color> tint: Theme.search-row-ink;
+    width: 15px;
+    height: 15px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 4 6 L 10 6 M 14 6 L 20 6 M 12 4 A 2 2 0 0 1 12 8 A 2 2 0 0 1 12 4 Z "
+        + "M 4 12 L 14 12 M 18 12 L 20 12 M 16 10 A 2 2 0 0 1 16 14 A 2 2 0 0 1 16 10 Z "
+        + "M 4 18 L 6 18 M 10 18 L 20 18 M 8 16 A 2 2 0 0 1 8 20 A 2 2 0 0 1 8 16 Z";
+}
+
+export component IconSettingsAppearance inherits Path {
+    in property <color> tint: Theme.search-row-ink;
+    width: 15px;
+    height: 15px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 12 3 A 9 9 0 0 1 21 12 A 9 9 0 0 1 12 21 A 9 9 0 0 1 3 12 A 9 9 0 0 1 12 3 Z "
+        + "M 12 3 L 12 21 M 12 6.5 L 17.5 12 M 12 11.5 L 19 18.5 M 12 16.5 L 15.5 20";
+}
+
+export component IconRestore inherits Path {
+    in property <color> tint: Theme.search-row-ink;
+    width: 13px;
+    height: 13px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.6px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M 3 7 L 3 13 L 9 13 M 4.5 13 A 8 8 0 1 1 6.3 17.7";
+}

@@ -11,6 +11,7 @@ mod preview;
 mod probes;
 mod search;
 mod sessions;
+mod settings;
 mod share;
 mod sheet;
 mod slash;

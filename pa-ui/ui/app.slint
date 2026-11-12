@@ -6,7 +6,8 @@ import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { ActivityChip, Chip, ContextCard, ContextRing } from "composer.slint";
-import { EffortLadder, ModelMenu, SessionMenu, SettingsMenu, SlashMenu, ThemeSidebar } from "menus.slint";
+import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
+import { SettingsPopup } from "settings.slint";
 import { SearchPopup } from "search.slint";
 import { SharePopup } from "share.slint";
 import { TitleBar } from "chrome.slint";
@@ -243,9 +244,46 @@ export component AppWindow inherits Window {
     in-out property <bool> right-open: false;
     in-out property <bool> model-menu: false;
     in-out property <bool> settings-menu: false;
+    in-out property <string> settings-page: "general";
+    in-out property <string> settings-query: "";
+    in-out property <int> settings-focus-tick: 0;
+    in-out property <string> settings-open-choice: "";
     in-out property <bool> themes-open: true;
     in-out property <[ThemeItem]> theme-items;
+    in-out property <string> setting-thread-notifications: "Off";
+    in-out property <bool> setting-in-app-notifications: true;
+    in-out property <string> setting-session-order: "Last used";
+    in-out property <bool> setting-confirm-quit: false;
+    in-out property <bool> setting-confirm-delete-session: true;
+    in-out property <string> setting-queue-key: "Ctrl+Enter";
+    in-out property <bool> setting-reopen-last-session: true;
+    in-out property <string> setting-interface-size: "Default";
+    in-out property <string> setting-code-font: "Cascadia Code";
+    in-out property <string> setting-row-spacing: "Comfortable";
+    in-out property <bool> setting-show-timestamps: false;
+    in-out property <bool> setting-reduce-motion: false;
+    in-out property <bool> settings-show-notifications: true;
+    in-out property <bool> settings-show-sidebar: true;
+    in-out property <bool> settings-show-confirmations: true;
+    in-out property <bool> settings-show-behavior: true;
+    in-out property <bool> settings-show-theme: true;
+    in-out property <bool> settings-show-typography: true;
+    in-out property <bool> settings-show-density: true;
     callback theme-picked(string);
+    callback setting-toggled(string);
+    callback setting-chosen(string, string);
+    callback settings-search-edited(string);
+    callback settings-toggle-requested();
+    callback settings-closed();
+
+    public function toggle-settings-choice(key: string) {
+        root.settings-open-choice = root.settings-open-choice == key ? "" : key;
+    }
+
+    public function dismiss-settings-choice() {
+        root.settings-open-choice = "";
+    }
+
     callback selection-picked(string);
     callback wake();
     callback scroll-paging();
@@ -1522,17 +1560,17 @@ export component AppWindow inherits Window {
                                     root.composer-command-cleared();
                                     return EventResult.accept;
                                 }
-                                // Enter sends, Alt+Enter steers into the
-                                // running turn, Shift+Enter is a newline,
-                                // Esc aborts: the TUI's bindings
+                                // Enter sends, or queues for the next turn while busy.
+                                // The chosen chord steers the running turn,
+                                // Shift+Enter is a newline, Esc aborts.
                                 if event.text == Key.Return {
                                     // A command word in front of the caret is half of
                                     // the message: the box is empty when a command was
                                     // taken from the menu, and that is still something
                                     // to send, not a dead key.
-    // Ctrl+Enter (or Alt+Enter) folds the message into the running turn instead
-    // of parking it behind.
-                                    if event.modifiers.control || event.modifiers.alt {
+                                    if (root.setting-queue-key == "Ctrl+Enter" && event.modifiers.control)
+                                        || (root.setting-queue-key == "Alt+Enter" && event.modifiers.alt)
+                                    {
                                         if root.composer-text != ""
                                             || root.composer-command != ""
                                             || root.attachment-images.length > 0
@@ -1542,7 +1580,10 @@ export component AppWindow inherits Window {
                                         }
                                         return EventResult.accept;
                                     }
-                                    if !event.modifiers.shift {
+                                    if !event.modifiers.shift
+                                        && !event.modifiers.control
+                                        && !event.modifiers.alt
+                                    {
                                         if root.composer-text != ""
                                             || root.composer-command != ""
                                             || root.attachment-images.length > 0
@@ -1818,19 +1859,7 @@ export component AppWindow inherits Window {
         accepted => { root.slash-accept(); }
     }
 
-    if root.settings-menu : SettingsMenu {
-        window-w: root.width;
-        themes-open <=> root.themes-open;
-        theme-row-hovered => { root.themes-open = true; }
-    }
 
-    if root.settings-menu && root.themes-open : ThemeSidebar {
-        items: root.theme-items;
-        window-w: root.width;
-        picked(id) => {
-            root.theme-picked(id);
-        }
-    }
 
     if root.model-menu : ModelMenu {
         groups: root.model-groups;
@@ -2101,6 +2130,57 @@ export component AppWindow inherits Window {
         }
     }
 
+    if root.settings-menu : Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { root.settings-closed(); }
+        }
+
+        settings-popup := SettingsPopup {
+            width: min(1040px, root.width - 48px);
+            height: min(780px, root.height - 48px);
+            x: max(24px, (root.width - self.width) / 2);
+            y: max(36px, (root.height - self.height) / 2);
+            page <=> root.settings-page;
+            query <=> root.settings-query;
+            open-choice <=> root.settings-open-choice;
+            focus-tick: root.settings-focus-tick;
+            theme-items: root.theme-items;
+            thread-notifications: root.setting-thread-notifications;
+            in-app-notifications: root.setting-in-app-notifications;
+            session-order: root.setting-session-order;
+            confirm-quit: root.setting-confirm-quit;
+            confirm-delete-session: root.setting-confirm-delete-session;
+            queue-key: root.setting-queue-key;
+            reopen-last-session: root.setting-reopen-last-session;
+            interface-size: root.setting-interface-size;
+            code-font: root.setting-code-font;
+            row-spacing: root.setting-row-spacing;
+            show-timestamps: root.setting-show-timestamps;
+            reduce-motion: root.setting-reduce-motion;
+            show-notifications: root.settings-show-notifications;
+            show-sidebar: root.settings-show-sidebar;
+            show-confirmations: root.settings-show-confirmations;
+            show-behavior: root.settings-show-behavior;
+            show-theme: root.settings-show-theme;
+            show-typography: root.settings-show-typography;
+            show-density: root.settings-show-density;
+            theme-picked(id) => { root.theme-picked(id); }
+            setting-toggled(key) => { root.setting-toggled(key); }
+            setting-chosen(key, val) => { root.setting-chosen(key, val); }
+            choice-toggled(key) => { root.toggle-settings-choice(key); }
+            choice-dismissed => { root.dismiss-settings-choice(); }
+            search-edited(text) => { root.settings-search-edited(text); }
+            closed => { root.settings-closed(); }
+        }
+    }
+
 
     // The hint the folded strip raises under its own control: it names the action
     // the pointer is over, so it answers no pointer of its own and takes no click
@@ -2135,14 +2215,7 @@ export component AppWindow inherits Window {
         right-open: root.right-open;
         toggle-right => { root.right-open = !root.right-open; }
         settings-open: root.settings-menu;
-        toggle-settings => {
-            root.model-menu = false;
-            root.queue-open = false;
-            root.settings-menu = !root.settings-menu;
-            if root.settings-menu {
-                root.themes-open = true;
-            }
-        }
+        toggle-settings => { root.settings-toggle-requested(); }
         maximized: root.titlebar-maximized;
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }

@@ -569,6 +569,7 @@ pub(crate) fn open_search(ui: &AppWindow, sessions: &[SessionRow]) {
     // The search popup and the share card are the two surfaces that open over
     // the whole window; only one of them is ever up.
     ui.set_share_open(false);
+    ui.set_settings_menu(false);
     let query = ui.get_search_query();
     ui.set_search_rows(match_rows(sessions, query.as_str()));
     ui.set_search_index(0);
@@ -583,6 +584,7 @@ pub(crate) struct Sidebar {
     pub cache: Rc<RefCell<Vec<SessionRow>>>,
     pub selected_uuid: RefCell<Option<String>>,
     groups: Rc<RefCell<(Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>)>>,
+    settings: Rc<crate::settings::SettingsStore>,
 }
 
 impl Sidebar {
@@ -591,6 +593,7 @@ impl Sidebar {
             cache: Rc::new(RefCell::new(Vec::new())),
             selected_uuid: RefCell::new(None),
             groups: Rc::new(RefCell::new((Vec::new(), Vec::new(), Vec::new()))),
+            settings: crate::settings::SettingsStore::new(crate::settings::default_settings_path()),
         });
         sidebar.bind_ui(ui, job_tx);
         sidebar
@@ -604,8 +607,24 @@ impl Sidebar {
     }
 
     pub fn track_selection(&self, selected: &str) {
-        if let Some(uuid) = uuid_of(&self.cache.borrow(), selected) {
-            *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        if let Some(uuid) = uuid_of(&self.cache.borrow(), selected).map(str::to_string) {
+            *self.selected_uuid.borrow_mut() = Some(uuid.clone());
+            if !uuid.is_empty() {
+                let changed = {
+                    let mut state = self.settings.state.borrow_mut();
+                    if state.last_session == uuid {
+                        false
+                    } else {
+                        state.last_session = uuid;
+                        true
+                    }
+                };
+                if changed {
+                    if let Err(error) = self.settings.persist() {
+                        eprintln!("[settings] {error}");
+                    }
+                }
+            }
         }
     }
 
@@ -694,9 +713,22 @@ impl Sidebar {
 
         if ui.get_selected_id().is_empty() && !ui.get_draft_chat() {
             let preferred = std::env::var("PA_SELECT").ok();
+            let reopen_last = {
+                let state = self.settings.state.borrow();
+                if state.reopen_last_session && !state.last_session.is_empty() {
+                    Some(state.last_session.clone())
+                } else {
+                    None
+                }
+            };
             let chosen = preferred
                 .as_deref()
                 .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
+                .or_else(|| {
+                    reopen_last
+                        .as_deref()
+                        .and_then(|uuid| rows.iter().find(|row| row.session_id == uuid))
+                })
                 .or_else(|| {
                     visible_first
                         .as_ref()
@@ -794,7 +826,10 @@ impl Sidebar {
                     None => return,
                 };
                 match menu_action(&key, done) {
-                    MenuAction::Delete if confirming.as_deref() != Some(id.as_str()) => {
+                    MenuAction::Delete
+                        if ui.get_setting_confirm_delete_session()
+                            && confirming.as_deref() != Some(id.as_str()) =>
+                    {
                         *confirming = Some(id);
                         let items = menu_items(true, true);
                         ui.set_menu_items(ModelRc::from(Rc::new(VecModel::from(items))));
@@ -832,6 +867,7 @@ impl Sidebar {
                         // reads as a click that did not land.
                         ui.set_search_field_typed(false);
                         ui.set_search_open(false);
+                        ui.set_settings_menu(false);
                         ui.set_share_pending(true);
                         ui.set_share_url("".into());
                         ui.set_share_error("".into());
@@ -891,27 +927,113 @@ impl Sidebar {
         }
 
         {
-            let initial = crate::env_cfg::cfg()
-                .theme
-                .as_deref()
-                .unwrap_or("default");
-            populate_themes(ui, initial);
-
-            let weak = ui.as_weak();
-            ui.on_theme_picked(move |id| {
-                let Some(ui) = weak.upgrade() else { return };
-                let id_str = id.as_str();
-                populate_themes(&ui, id_str);
-                let selection = if id_str == "default" {
-                    None
-                } else {
-                    Some(id_str)
-                };
-                let (resolved, refusal) = crate::theme::select(selection);
-                if refusal.is_none() {
-                    crate::theme::apply(&ui, &resolved);
+            let store = self.settings.clone();
+            {
+                let initial = store.state.borrow();
+                initial.apply_to_ui(ui);
+                populate_themes(ui, &initial.theme);
+                if crate::env_cfg::cfg().theme.is_none() && initial.theme != "default" {
+                    let (resolved, refusal) = crate::theme::select(Some(initial.theme.as_str()));
+                    if refusal.is_none() {
+                        crate::theme::apply(ui, &resolved);
+                    }
                 }
-            });
+            }
+
+            {
+                let weak = ui.as_weak();
+                let store = store.clone();
+                ui.on_theme_picked(move |id| {
+                    let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
+                    let id_str = id.as_str();
+                    populate_themes(&ui, id_str);
+                    {
+                        let mut state = store.state.borrow_mut();
+                        state.theme = id_str.to_string();
+                    }
+                    if let Err(error) = store.persist() {
+                        eprintln!("[settings] {error}");
+                    }
+                    let selection = if id_str == "default" {
+                        None
+                    } else {
+                        Some(id_str)
+                    };
+                    let (resolved, refusal) = crate::theme::select(selection);
+                    if refusal.is_none() {
+                        crate::theme::apply(&ui, &resolved);
+                    }
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                let store = store.clone();
+                ui.on_setting_toggled(move |key| {
+                    let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
+                    let changed = {
+                        let mut state = store.state.borrow_mut();
+                        let ok = state.toggle(key.as_str());
+                        if ok {
+                            state.apply_to_ui(&ui);
+                        }
+                        ok
+                    };
+                    if changed {
+                        if let Err(error) = store.persist() {
+                            eprintln!("[settings] {error}");
+                        }
+                    }
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                let store = store.clone();
+                ui.on_setting_chosen(move |key, val| {
+                    let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
+                    let changed = {
+                        let mut state = store.state.borrow_mut();
+                        let ok = state.choose(key.as_str(), val.as_str());
+                        if ok {
+                            state.apply_to_ui(&ui);
+                        }
+                        ok
+                    };
+                    if changed {
+                        if let Err(error) = store.persist() {
+                            eprintln!("[settings] {error}");
+                        }
+                    }
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                ui.on_settings_toggle_requested(move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    if ui.get_settings_menu() {
+                        crate::settings::close_settings(&ui);
+                    } else {
+                        crate::settings::open_settings(&ui);
+                    }
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                ui.on_settings_search_edited(move |query| {
+                    let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
+                    crate::settings::SectionFilter::for_query(query.as_str()).apply_to_ui(&ui);
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                ui.on_settings_closed(move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    crate::settings::close_settings(&ui);
+                });
+            }
         }
 
         {
@@ -996,6 +1118,7 @@ impl Sidebar {
             ui.on_share_dismissed(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_share_open(false);
+                ui.set_settings_menu(false);
                 ui.invoke_focus_composer();
             });
         }
