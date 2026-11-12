@@ -475,6 +475,7 @@ mod tests {
         let catalog = vec![
             entry("zeta", "z-1", false, true, &[]),
             entry("alpha", "a-1", true, true, &["low", "high"]),
+            entry("alpha", "a-2", true, true, &["low", "high"]),
         ];
         let mut collapsed = HashSet::new();
         collapsed.insert("zeta".to_string());
@@ -482,13 +483,13 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].provider.as_str(), "alpha");
         assert!(groups[0].open);
-        assert_eq!(groups[0].models.row_count(), 1);
+        assert_eq!(groups[0].models.row_count(), 2);
         assert_eq!(groups[0].top, 0.0);
         assert_eq!(groups[1].provider.as_str(), "zeta");
         assert!(!groups[1].open);
-        assert_eq!(groups[1].top, 50.0);
+        assert_eq!(groups[1].top, 74.0);
         assert_eq!(groups[1].models.row_count(), 0);
-        assert!(height > 12.0);
+        assert_eq!(height, 112.0);
     }
 
     #[test]
