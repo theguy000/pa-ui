@@ -34,6 +34,7 @@ component SettingsChoice inherits Button {
     in property <string> value;
     in property <[string]> options;
     in property <bool> expanded: false;
+    out property <bool> popup-open: popup.is-open;
     callback picked(string);
     callback dismissed();
     width: 168px;
@@ -50,6 +51,12 @@ component SettingsChoice inherits Button {
             popup.show();
         } else {
             popup.close();
+        }
+    }
+
+    changed popup-open => {
+        if !popup-open && root.expanded {
+            root.dismissed();
         }
     }
 
@@ -78,15 +85,10 @@ component SettingsChoice inherits Button {
         y: root.height + 6px;
         width: 210px;
         height: root.options.length * 30px + 8px;
-        close-policy: PopupClosePolicy.no-auto-close;
+        close-policy: PopupClosePolicy.close-on-click-outside;
         forward-focus: popup-focus;
 
         popup-focus := FocusScope {
-            changed has-focus => {
-                if !self.has-focus && root.expanded {
-                    root.dismissed();
-                }
-            }
             key-pressed(event) => {
                 if event.text == Key.Escape {
                     root.dismissed();
@@ -890,11 +892,5 @@ export component SettingsPopup inherits Panel {
                 }
             }
         }
-    }
-
-    if root.open-choice != "" : TouchArea {
-        width: 100%;
-        height: 100%;
-        clicked => { root.choice-dismissed(); }
     }
 }
