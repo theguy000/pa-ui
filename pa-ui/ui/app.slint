@@ -247,6 +247,7 @@ export component AppWindow inherits Window {
     in-out property <string> settings-page: "general";
     in-out property <string> settings-query: "";
     in-out property <int> settings-focus-tick: 0;
+    in-out property <string> settings-open-choice: "";
     in-out property <bool> themes-open: true;
     in-out property <[ThemeItem]> theme-items;
     in-out property <string> setting-thread-notifications: "Off";
@@ -275,6 +276,15 @@ export component AppWindow inherits Window {
     callback settings-search-edited(string);
     callback settings-toggle-requested();
     callback settings-closed();
+
+    public function toggle-settings-choice(key: string) {
+        root.settings-open-choice = root.settings-open-choice == key ? "" : key;
+    }
+
+    public function dismiss-settings-choice() {
+        root.settings-open-choice = "";
+    }
+
     callback selection-picked(string);
     callback wake();
     callback scroll-paging();
@@ -2140,6 +2150,7 @@ export component AppWindow inherits Window {
             y: max(36px, (root.height - self.height) / 2);
             page <=> root.settings-page;
             query <=> root.settings-query;
+            open-choice <=> root.settings-open-choice;
             focus-tick: root.settings-focus-tick;
             theme-items: root.theme-items;
             thread-notifications: root.setting-thread-notifications;
@@ -2165,6 +2176,8 @@ export component AppWindow inherits Window {
             theme-picked(id) => { root.theme-picked(id); }
             setting-toggled(key) => { root.setting-toggled(key); }
             setting-chosen(key, val) => { root.setting-chosen(key, val); }
+            choice-toggled(key) => { root.toggle-settings-choice(key); }
+            choice-dismissed => { root.dismiss-settings-choice(); }
             search-edited(text) => { root.settings-search-edited(text); }
             closed => { root.settings-closed(); }
         }

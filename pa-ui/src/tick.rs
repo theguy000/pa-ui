@@ -2085,6 +2085,7 @@ mod status_strip_tests {
         a_stale_start_result_does_not_replace_the_current_unsaved_chat();
         reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
+        settings_choices_expand_collapse_and_select();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3364,5 +3365,46 @@ mod status_strip_tests {
 
         h.ui.invoke_settings_closed();
         assert!(!h.ui.get_settings_menu());
+    }
+
+    fn settings_choices_expand_collapse_and_select() {
+        let h = Harness::new();
+        h.ui.invoke_settings_toggle_requested();
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+
+        for key in [
+            "thread-notifications",
+            "session-order",
+            "queue-key",
+            "code-font",
+        ] {
+            h.ui.invoke_toggle_settings_choice(key.into());
+            assert_eq!(h.ui.get_settings_open_choice().as_str(), key);
+            h.ui.invoke_toggle_settings_choice(key.into());
+            assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+        }
+
+        h.ui.invoke_toggle_settings_choice("thread-notifications".into());
+        h.ui.invoke_toggle_settings_choice("session-order".into());
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "session-order");
+
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(h.ui.get_setting_session_order().as_str(), "Name");
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+
+        h.ui.invoke_toggle_settings_choice("queue-key".into());
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "queue-key");
+        h.ui.invoke_dismiss_settings_choice();
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+        assert!(h.ui.get_settings_menu());
+
+        h.ui.invoke_toggle_settings_choice("code-font".into());
+        h.ui.invoke_settings_closed();
+        assert!(!h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+
+        h.ui.invoke_settings_toggle_requested();
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
     }
 }

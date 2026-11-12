@@ -32,13 +32,26 @@ component SettingsToggle inherits Button {
 
 component SettingsChoice inherits Button {
     in property <string> value;
+    in property <[string]> options;
+    in property <bool> expanded: false;
+    callback picked(string);
+    callback dismissed();
     width: 168px;
     height: 28px;
     border-radius: 7px;
     fill: Theme.composer-surface;
     fill-hover: Theme.panel-row-fill-hover;
     border-width: 1px;
-    border-color: root.hot ? Theme.composer-chip-edge-hover : Theme.panel-edge;
+    border-color: root.expanded || root.hot ? Theme.composer-chip-edge-hover : Theme.panel-edge;
+    lit: root.expanded;
+
+    changed expanded => {
+        if root.expanded {
+            popup.show();
+        } else {
+            popup.close();
+        }
+    }
 
     Text {
         x: 10px;
@@ -56,8 +69,78 @@ component SettingsChoice inherits Button {
     IconCaret {
         x: parent.width - 18px;
         y: (parent.height - self.height) / 2;
-        up: false;
-        tint: root.hot ? Theme.search-row-ink-hover : Theme.model-menu-caret-mark;
+        up: root.expanded;
+        tint: root.expanded || root.hot ? Theme.search-row-ink-hover : Theme.model-menu-caret-mark;
+    }
+
+    popup := PopupWindow {
+        x: root.width - 210px;
+        y: root.height + 6px;
+        width: 210px;
+        height: root.options.length * 30px + 8px;
+        close-policy: PopupClosePolicy.no-auto-close;
+        forward-focus: popup-focus;
+
+        popup-focus := FocusScope {
+            changed has-focus => {
+                if !self.has-focus && root.expanded {
+                    root.dismissed();
+                }
+            }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.dismissed();
+                    return EventResult.accept;
+                }
+                reject
+            }
+
+            Panel {
+                width: 100%;
+                height: 100%;
+                border-radius: 8px;
+                clip: true;
+
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 2px;
+
+                    for option in root.options : Rectangle {
+                        height: 28px;
+                        border-radius: 5px;
+                        background: option == root.value ? Theme.panel-row-fill-current
+                            : option-touch.has-hover ? Theme.panel-row-fill-hover : transparent;
+
+                        option-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.picked(option);
+                                root.dismissed();
+                            }
+                        }
+
+                        Text {
+                            x: 10px;
+                            y: 0;
+                            width: parent.width - 38px;
+                            height: 100%;
+                            text: option;
+                            color: option == root.value || option-touch.has-hover
+                                ? Theme.search-row-ink-hover : Theme.search-row-ink;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            wrap: no-wrap;
+                            overflow: elide;
+                        }
+
+                        if option == root.value : IconCheck {
+                            x: parent.width - 22px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -448,6 +531,7 @@ component SettingsRail inherits Rectangle {
 export component SettingsPopup inherits Panel {
     in-out property <string> page: "general";
     in-out property <string> query: "";
+    in-out property <string> open-choice: "";
     in property <int> focus-tick: 0;
     in property <[ThemeItem]> theme-items;
 
@@ -476,12 +560,18 @@ export component SettingsPopup inherits Panel {
     callback theme-picked(string);
     callback setting-toggled(string);
     callback setting-chosen(string, string);
+    callback choice-toggled(string);
+    callback choice-dismissed();
     callback search-edited(string);
     callback closed();
 
     border-radius: 20px;
     border-width: 0px;
     clip: true;
+
+    changed page => {
+        root.open-choice = "";
+    }
 
     changed focus-tick => {
         keys.focus();
@@ -491,6 +581,11 @@ export component SettingsPopup inherits Panel {
     TouchArea {
         width: 100%;
         height: 100%;
+        clicked => {
+            if root.open-choice != "" {
+                root.choice-dismissed();
+            }
+        }
     }
 
     keys := FocusScope {
@@ -501,7 +596,11 @@ export component SettingsPopup inherits Panel {
         init => { self.focus(); }
         key-pressed(event) => {
             if event.text == Key.Escape {
-                root.closed();
+                if root.open-choice != "" {
+                    root.choice-dismissed();
+                } else {
+                    root.closed();
+                }
                 return EventResult.accept;
             }
             reject
@@ -515,7 +614,13 @@ export component SettingsPopup inherits Panel {
         page <=> root.page;
         query <=> root.query;
         search-edited(text) => { root.search-edited(text); }
-        close-requested => { root.closed(); }
+        close-requested => {
+            if root.open-choice != "" {
+                root.choice-dismissed();
+            } else {
+                root.closed();
+            }
+        }
     }
 
     content-scroll := ScrollView {
@@ -549,8 +654,12 @@ export component SettingsPopup inherits Panel {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
                             value: root.thread-notifications;
+                            options: ["Off", "Only when unfocused", "Always"];
+                            expanded: root.open-choice == "thread-notifications";
                             described: "Thread notifications";
-                            clicked => { root.setting-chosen("thread-notifications", ""); }
+                            clicked => { root.choice-toggled("thread-notifications"); }
+                            picked(value) => { root.setting-chosen("thread-notifications", value); }
+                            dismissed => { root.choice-dismissed(); }
                         }
                     }
 
@@ -591,8 +700,12 @@ export component SettingsPopup inherits Panel {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
                             value: root.session-order;
+                            options: ["Last used", "Name", "Manual"];
+                            expanded: root.open-choice == "session-order";
                             described: "Session order";
-                            clicked => { root.setting-chosen("session-order", ""); }
+                            clicked => { root.choice-toggled("session-order"); }
+                            picked(value) => { root.setting-chosen("session-order", value); }
+                            dismissed => { root.choice-dismissed(); }
                         }
                     }
                 }
@@ -636,8 +749,12 @@ export component SettingsPopup inherits Panel {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
                             value: root.queue-key;
+                            options: ["Ctrl+Enter", "Alt+Enter"];
+                            expanded: root.open-choice == "queue-key";
                             described: "Queue with";
-                            clicked => { root.setting-chosen("queue-key", ""); }
+                            clicked => { root.choice-toggled("queue-key"); }
+                            picked(value) => { root.setting-chosen("queue-key", value); }
+                            dismissed => { root.choice-dismissed(); }
                         }
                     }
 
@@ -707,8 +824,12 @@ export component SettingsPopup inherits Panel {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
                             value: root.code-font;
+                            options: ["Cascadia Code", "Consolas", "JetBrains Mono"];
+                            expanded: root.open-choice == "code-font";
                             described: "Code font";
-                            clicked => { root.setting-chosen("code-font", ""); }
+                            clicked => { root.choice-toggled("code-font"); }
+                            picked(value) => { root.setting-chosen("code-font", value); }
+                            dismissed => { root.choice-dismissed(); }
                         }
                     }
                 }

@@ -945,6 +945,7 @@ impl Sidebar {
                 let store = store.clone();
                 ui.on_theme_picked(move |id| {
                     let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
                     let id_str = id.as_str();
                     populate_themes(&ui, id_str);
                     {
@@ -970,6 +971,7 @@ impl Sidebar {
                 let store = store.clone();
                 ui.on_setting_toggled(move |key| {
                     let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
                     let changed = {
                         let mut state = store.state.borrow_mut();
                         let ok = state.toggle(key.as_str());
@@ -990,6 +992,7 @@ impl Sidebar {
                 let store = store.clone();
                 ui.on_setting_chosen(move |key, val| {
                     let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
                     let changed = {
                         let mut state = store.state.borrow_mut();
                         let ok = state.choose(key.as_str(), val.as_str());
@@ -1020,6 +1023,7 @@ impl Sidebar {
                 let weak = ui.as_weak();
                 ui.on_settings_search_edited(move |query| {
                     let Some(ui) = weak.upgrade() else { return };
+                    ui.set_settings_open_choice("".into());
                     crate::settings::SectionFilter::for_query(query.as_str()).apply_to_ui(&ui);
                 });
             }

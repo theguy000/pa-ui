@@ -54,14 +54,6 @@ pub(crate) const INTERFACE_SIZE_OPTIONS: &[&str] = &["Compact", "Default", "Larg
 pub(crate) const CODE_FONT_OPTIONS: &[&str] = &["Cascadia Code", "Consolas", "JetBrains Mono"];
 pub(crate) const ROW_SPACING_OPTIONS: &[&str] = &["Comfortable", "Compact"];
 
-fn cycle_option(options: &[&str], current: &str) -> String {
-    let idx = options
-        .iter()
-        .position(|item| *item == current)
-        .map_or(0, |index| (index + 1) % options.len());
-    options[idx].to_string()
-}
-
 fn valid_option<'a>(options: &[&'a str], candidate: &str, fallback: &'a str) -> String {
     options
         .iter()
@@ -199,46 +191,22 @@ impl Settings {
     pub(crate) fn choose(&mut self, key: &str, value: &str) -> bool {
         match key {
             "thread-notifications" => {
-                self.thread_notifications = if value.is_empty() {
-                    cycle_option(THREAD_NOTIFICATION_OPTIONS, &self.thread_notifications)
-                } else {
-                    valid_option(THREAD_NOTIFICATION_OPTIONS, value, "Off")
-                };
+                self.thread_notifications = valid_option(THREAD_NOTIFICATION_OPTIONS, value, "Off");
             }
             "session-order" => {
-                self.session_order = if value.is_empty() {
-                    cycle_option(SESSION_ORDER_OPTIONS, &self.session_order)
-                } else {
-                    valid_option(SESSION_ORDER_OPTIONS, value, "Last used")
-                };
+                self.session_order = valid_option(SESSION_ORDER_OPTIONS, value, "Last used");
             }
             "queue-key" => {
-                self.queue_key = if value.is_empty() {
-                    cycle_option(QUEUE_KEY_OPTIONS, &self.queue_key)
-                } else {
-                    valid_option(QUEUE_KEY_OPTIONS, value, "Ctrl+Enter")
-                };
+                self.queue_key = valid_option(QUEUE_KEY_OPTIONS, value, "Ctrl+Enter");
             }
             "interface-size" => {
-                self.interface_size = if value.is_empty() {
-                    cycle_option(INTERFACE_SIZE_OPTIONS, &self.interface_size)
-                } else {
-                    valid_option(INTERFACE_SIZE_OPTIONS, value, "Default")
-                };
+                self.interface_size = valid_option(INTERFACE_SIZE_OPTIONS, value, "Default");
             }
             "code-font" => {
-                self.code_font = if value.is_empty() {
-                    cycle_option(CODE_FONT_OPTIONS, &self.code_font)
-                } else {
-                    valid_option(CODE_FONT_OPTIONS, value, "Cascadia Code")
-                };
+                self.code_font = valid_option(CODE_FONT_OPTIONS, value, "Cascadia Code");
             }
             "row-spacing" => {
-                self.row_spacing = if value.is_empty() {
-                    cycle_option(ROW_SPACING_OPTIONS, &self.row_spacing)
-                } else {
-                    valid_option(ROW_SPACING_OPTIONS, value, "Comfortable")
-                };
+                self.row_spacing = valid_option(ROW_SPACING_OPTIONS, value, "Comfortable");
             }
             _ => return false,
         }
@@ -381,12 +349,14 @@ pub(crate) fn open_settings(ui: &AppWindow) {
     ui.set_search_open(false);
     ui.set_share_open(false);
     ui.set_settings_query("".into());
+    ui.set_settings_open_choice("".into());
     SectionFilter::for_query("").apply_to_ui(ui);
     ui.set_settings_menu(true);
     ui.set_settings_focus_tick(ui.get_settings_focus_tick() + 1);
 }
 
 pub(crate) fn close_settings(ui: &AppWindow) {
+    ui.set_settings_open_choice("".into());
     ui.set_settings_menu(false);
     ui.invoke_focus_composer();
 }
@@ -481,15 +451,14 @@ mod tests {
     }
 
     #[test]
-    fn settings_choose_with_empty_value_cycles_options() {
+    fn settings_choose_uses_the_explicit_option() {
         let mut settings = Settings::default();
-        assert_eq!(settings.thread_notifications, "Off");
-        assert!(settings.choose("thread-notifications", ""));
-        assert_eq!(settings.thread_notifications, "Only when unfocused");
-        assert!(settings.choose("thread-notifications", ""));
+        assert!(settings.choose("thread-notifications", "Always"));
         assert_eq!(settings.thread_notifications, "Always");
-        assert!(settings.choose("thread-notifications", ""));
-        assert_eq!(settings.thread_notifications, "Off");
+        assert!(settings.choose("session-order", "Name"));
+        assert_eq!(settings.session_order, "Name");
+        assert!(settings.choose("code-font", "Consolas"));
+        assert_eq!(settings.code_font, "Consolas");
     }
 
     #[test]
