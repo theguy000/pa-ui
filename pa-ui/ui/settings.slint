@@ -581,11 +581,6 @@ export component SettingsPopup inherits Panel {
     TouchArea {
         width: 100%;
         height: 100%;
-        clicked => {
-            if root.open-choice != "" {
-                root.choice-dismissed();
-            }
-        }
     }
 
     keys := FocusScope {
@@ -895,5 +890,11 @@ export component SettingsPopup inherits Panel {
                 }
             }
         }
+    }
+
+    if root.open-choice != "" : TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.choice-dismissed(); }
     }
 }
