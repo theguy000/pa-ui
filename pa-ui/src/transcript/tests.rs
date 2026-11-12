@@ -635,12 +635,15 @@ mod markup_tests {
 
     #[test]
     fn multiline_code_spans_parse_without_crossing_font_tags() {
-        let drawn = markdown_markup(
+        for sample in [
             "```\none\n  two\n```\nheader `x` and `y`",
-            &shipped(),
-        );
-        StyledText::from_markdown(&drawn)
-            .expect("code spans after indented multiline code markup parse");
+            "```\none\n\n  two\n```",
+            "**bold\n`code\n  indented`**",
+        ] {
+            let drawn = markdown_markup(sample, &shipped());
+            StyledText::from_markdown(&drawn)
+                .expect("code spans after multiline code markup parse");
+        }
     }
 }
 
