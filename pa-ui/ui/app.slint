@@ -252,13 +252,11 @@ export component AppWindow inherits Window {
     in-out property <string> setting-thread-notifications: "Off";
     in-out property <bool> setting-in-app-notifications: true;
     in-out property <bool> setting-show-session-previews: true;
-    in-out property <bool> setting-dim-inactive-sessions: false;
     in-out property <string> setting-session-order: "Last used";
     in-out property <bool> setting-confirm-quit: false;
     in-out property <bool> setting-confirm-delete-session: true;
     in-out property <string> setting-queue-key: "Ctrl+Enter";
     in-out property <bool> setting-reopen-last-session: true;
-    in-out property <bool> setting-restore-drafts: true;
     in-out property <string> setting-interface-size: "Default";
     in-out property <string> setting-code-font: "Cascadia Code";
     in-out property <string> setting-row-spacing: "Comfortable";
@@ -2147,13 +2145,11 @@ export component AppWindow inherits Window {
             thread-notifications: root.setting-thread-notifications;
             in-app-notifications: root.setting-in-app-notifications;
             show-session-previews: root.setting-show-session-previews;
-            dim-inactive-sessions: root.setting-dim-inactive-sessions;
             session-order: root.setting-session-order;
             confirm-quit: root.setting-confirm-quit;
             confirm-delete-session: root.setting-confirm-delete-session;
             queue-key: root.setting-queue-key;
             reopen-last-session: root.setting-reopen-last-session;
-            restore-drafts: root.setting-restore-drafts;
             interface-size: root.setting-interface-size;
             code-font: root.setting-code-font;
             row-spacing: root.setting-row-spacing;

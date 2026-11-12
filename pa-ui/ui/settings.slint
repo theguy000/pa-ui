@@ -454,13 +454,11 @@ export component SettingsPopup inherits Panel {
     in property <string> thread-notifications: "Off";
     in property <bool> in-app-notifications: true;
     in property <bool> show-session-previews: true;
-    in property <bool> dim-inactive-sessions: false;
     in property <string> session-order: "Last used";
     in property <bool> confirm-quit: false;
     in property <bool> confirm-delete-session: true;
     in property <string> queue-key: "Ctrl+Enter";
     in property <bool> reopen-last-session: true;
-    in property <bool> restore-drafts: true;
     in property <string> interface-size: "Default";
     in property <string> code-font: "Cascadia Code";
     in property <string> row-spacing: "Comfortable";
@@ -586,19 +584,6 @@ export component SettingsPopup inherits Panel {
                     }
 
                     SettingsRow {
-                        title: "Dim inactive Sessions";
-                        description: "Step back the ink of Sessions in the Done group so active work stands out.";
-                        divided: true;
-                        SettingsToggle {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            checked: root.dim-inactive-sessions;
-                            described: "Dim inactive Sessions";
-                            clicked => { root.setting-toggled("dim-inactive-sessions"); }
-                        }
-                    }
-
-                    SettingsRow {
                         title: "Session order";
                         description: "Order of Sessions inside each sidebar group and search popup.";
                         divided: true;
@@ -669,18 +654,6 @@ export component SettingsPopup inherits Panel {
                         }
                     }
 
-                    SettingsRow {
-                        title: "Restore unfinished drafts";
-                        description: "Keep unsent composer text across Session switches and restarts.";
-                        divided: true;
-                        SettingsToggle {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            checked: root.restore-drafts;
-                            described: "Restore unfinished drafts";
-                            clicked => { root.setting-toggled("restore-drafts"); }
-                        }
-                    }
                 }
             }
 
@@ -798,18 +771,6 @@ export component SettingsPopup inherits Panel {
                         }
                     }
 
-                    SettingsRow {
-                        title: "Dim inactive Sessions";
-                        description: "Step back the ink of Sessions in the Done group so active work stands out.";
-                        divided: true;
-                        SettingsToggle {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            checked: root.dim-inactive-sessions;
-                            described: "Dim inactive Sessions";
-                            clicked => { root.setting-toggled("dim-inactive-sessions"); }
-                        }
-                    }
                 }
             }
         }

@@ -584,6 +584,7 @@ pub(crate) struct Sidebar {
     pub cache: Rc<RefCell<Vec<SessionRow>>>,
     pub selected_uuid: RefCell<Option<String>>,
     groups: Rc<RefCell<(Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>)>>,
+    settings: Rc<crate::settings::SettingsStore>,
 }
 
 impl Sidebar {
@@ -592,6 +593,7 @@ impl Sidebar {
             cache: Rc::new(RefCell::new(Vec::new())),
             selected_uuid: RefCell::new(None),
             groups: Rc::new(RefCell::new((Vec::new(), Vec::new(), Vec::new()))),
+            settings: crate::settings::SettingsStore::new(crate::settings::default_settings_path()),
         });
         sidebar.bind_ui(ui, job_tx);
         sidebar
@@ -605,8 +607,24 @@ impl Sidebar {
     }
 
     pub fn track_selection(&self, selected: &str) {
-        if let Some(uuid) = uuid_of(&self.cache.borrow(), selected) {
-            *self.selected_uuid.borrow_mut() = Some(uuid.to_string());
+        if let Some(uuid) = uuid_of(&self.cache.borrow(), selected).map(str::to_string) {
+            *self.selected_uuid.borrow_mut() = Some(uuid.clone());
+            if !uuid.is_empty() {
+                let changed = {
+                    let mut state = self.settings.state.borrow_mut();
+                    if state.last_session == uuid {
+                        false
+                    } else {
+                        state.last_session = uuid;
+                        true
+                    }
+                };
+                if changed {
+                    if let Err(error) = self.settings.persist() {
+                        eprintln!("[settings] {error}");
+                    }
+                }
+            }
         }
     }
 
@@ -695,9 +713,22 @@ impl Sidebar {
 
         if ui.get_selected_id().is_empty() && !ui.get_draft_chat() {
             let preferred = std::env::var("PA_SELECT").ok();
+            let reopen_last = {
+                let state = self.settings.state.borrow();
+                if state.reopen_last_session && !state.last_session.is_empty() {
+                    Some(state.last_session.clone())
+                } else {
+                    None
+                }
+            };
             let chosen = preferred
                 .as_deref()
                 .and_then(|wanted| rows.iter().find(|row| row.id == wanted))
+                .or_else(|| {
+                    reopen_last
+                        .as_deref()
+                        .and_then(|uuid| rows.iter().find(|row| row.session_id == uuid))
+                })
                 .or_else(|| {
                     visible_first
                         .as_ref()
@@ -896,7 +927,7 @@ impl Sidebar {
         }
 
         {
-            let store = crate::settings::SettingsStore::new(crate::settings::default_settings_path());
+            let store = self.settings.clone();
             {
                 let initial = store.state.borrow();
                 initial.apply_to_ui(ui);
@@ -920,7 +951,9 @@ impl Sidebar {
                         let mut state = store.state.borrow_mut();
                         state.theme = id_str.to_string();
                     }
-                    store.persist();
+                    if let Err(error) = store.persist() {
+                        eprintln!("[settings] {error}");
+                    }
                     let selection = if id_str == "default" {
                         None
                     } else {
@@ -946,7 +979,9 @@ impl Sidebar {
                         ok
                     };
                     if changed {
-                        store.persist();
+                        if let Err(error) = store.persist() {
+                            eprintln!("[settings] {error}");
+                        }
                     }
                 });
             }
@@ -964,7 +999,9 @@ impl Sidebar {
                         ok
                     };
                     if changed {
-                        store.persist();
+                        if let Err(error) = store.persist() {
+                            eprintln!("[settings] {error}");
+                        }
                     }
                 });
             }

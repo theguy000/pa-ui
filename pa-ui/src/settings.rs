@@ -12,13 +12,12 @@ pub(crate) struct Settings {
     pub thread_notifications: String,
     pub in_app_notifications: bool,
     pub show_session_previews: bool,
-    pub dim_inactive_sessions: bool,
     pub session_order: String,
     pub confirm_quit: bool,
     pub confirm_delete_session: bool,
     pub queue_key: String,
     pub reopen_last_session: bool,
-    pub restore_drafts: bool,
+    pub last_session: String,
     pub interface_size: String,
     pub code_font: String,
     pub row_spacing: String,
@@ -33,13 +32,12 @@ impl Default for Settings {
             thread_notifications: "Off".to_string(),
             in_app_notifications: true,
             show_session_previews: true,
-            dim_inactive_sessions: false,
             session_order: "Last used".to_string(),
             confirm_quit: false,
             confirm_delete_session: true,
             queue_key: "Ctrl+Enter".to_string(),
             reopen_last_session: true,
-            restore_drafts: true,
+            last_session: String::new(),
             interface_size: "Default".to_string(),
             code_font: "Cascadia Code".to_string(),
             row_spacing: "Comfortable".to_string(),
@@ -101,9 +99,9 @@ impl SectionFilter {
         let matches = |words: &str| words.contains(&q);
         Self {
             notifications: matches("notifications thread alerts in-app toast focus"),
-            sidebar: matches("sidebar show session previews dim inactive order last used manual"),
+            sidebar: matches("sidebar show session previews order last used manual"),
             confirmations: matches("confirmations confirm quit quitting delete deleting session"),
-            behavior: matches("behavior queue with ctrl+enter alt+enter reopen last session restore unfinished drafts"),
+            behavior: matches("behavior queue with ctrl+enter alt+enter reopen last session"),
             theme: matches("theme appearance default mono obsidian ember paper colour color"),
             typography: matches("typography interface size compact default large code font cascadia consolas jetbrains"),
             density: matches("density row spacing comfortable compact show timestamps reduce motion"),
@@ -144,13 +142,12 @@ impl Settings {
             "thread-notifications": self.thread_notifications,
             "in-app-notifications": self.in_app_notifications,
             "show-session-previews": self.show_session_previews,
-            "dim-inactive-sessions": self.dim_inactive_sessions,
             "session-order": self.session_order,
             "confirm-quit": self.confirm_quit,
             "confirm-delete-session": self.confirm_delete_session,
             "queue-key": self.queue_key,
             "reopen-last-session": self.reopen_last_session,
-            "restore-drafts": self.restore_drafts,
+            "last-session": self.last_session,
             "interface-size": self.interface_size,
             "code-font": self.code_font,
             "row-spacing": self.row_spacing,
@@ -189,11 +186,9 @@ impl Settings {
         match key {
             "in-app-notifications" => self.in_app_notifications = !self.in_app_notifications,
             "show-session-previews" => self.show_session_previews = !self.show_session_previews,
-            "dim-inactive-sessions" => self.dim_inactive_sessions = !self.dim_inactive_sessions,
             "confirm-quit" => self.confirm_quit = !self.confirm_quit,
             "confirm-delete-session" => self.confirm_delete_session = !self.confirm_delete_session,
             "reopen-last-session" => self.reopen_last_session = !self.reopen_last_session,
-            "restore-drafts" => self.restore_drafts = !self.restore_drafts,
             "show-timestamps" => self.show_timestamps = !self.show_timestamps,
             "reduce-motion" => self.reduce_motion = !self.reduce_motion,
             _ => return false,
@@ -254,13 +249,11 @@ impl Settings {
         ui.set_setting_thread_notifications(self.thread_notifications.clone().into());
         ui.set_setting_in_app_notifications(self.in_app_notifications);
         ui.set_setting_show_session_previews(self.show_session_previews);
-        ui.set_setting_dim_inactive_sessions(self.dim_inactive_sessions);
         ui.set_setting_session_order(self.session_order.clone().into());
         ui.set_setting_confirm_quit(self.confirm_quit);
         ui.set_setting_confirm_delete_session(self.confirm_delete_session);
         ui.set_setting_queue_key(self.queue_key.clone().into());
         ui.set_setting_reopen_last_session(self.reopen_last_session);
-        ui.set_setting_restore_drafts(self.restore_drafts);
         ui.set_setting_interface_size(self.interface_size.clone().into());
         ui.set_setting_code_font(self.code_font.clone().into());
         ui.set_setting_row_spacing(self.row_spacing.clone().into());
@@ -285,9 +278,6 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
     if let Some(v) = map.get("show-session-previews").and_then(Value::as_bool) {
         out.show_session_previews = v;
     }
-    if let Some(v) = map.get("dim-inactive-sessions").and_then(Value::as_bool) {
-        out.dim_inactive_sessions = v;
-    }
     if let Some(v) = map.get("session-order").and_then(Value::as_str) {
         out.session_order = valid_option(SESSION_ORDER_OPTIONS, v, "Last used");
     }
@@ -303,8 +293,8 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
     if let Some(v) = map.get("reopen-last-session").and_then(Value::as_bool) {
         out.reopen_last_session = v;
     }
-    if let Some(v) = map.get("restore-drafts").and_then(Value::as_bool) {
-        out.restore_drafts = v;
+    if let Some(v) = map.get("last-session").and_then(Value::as_str) {
+        out.last_session = v.to_string();
     }
     if let Some(v) = map.get("interface-size").and_then(Value::as_str) {
         out.interface_size = valid_option(INTERFACE_SIZE_OPTIONS, v, "Default");
@@ -375,9 +365,10 @@ impl SettingsStore {
         })
     }
 
-    pub(crate) fn persist(&self) {
-        if let Some(path) = self.path.as_deref() {
-            let _ = self.state.borrow().save_to(path);
+    pub(crate) fn persist(&self) -> Result<(), String> {
+        match self.path.as_deref() {
+            Some(path) => self.state.borrow().save_to(path),
+            None => Ok(()),
         }
     }
 }
@@ -411,13 +402,12 @@ mod tests {
             thread_notifications: "Always".to_string(),
             in_app_notifications: false,
             show_session_previews: false,
-            dim_inactive_sessions: true,
             session_order: "Name".to_string(),
             confirm_quit: true,
             confirm_delete_session: false,
             queue_key: "Ctrl+Enter".to_string(),
             reopen_last_session: false,
-            restore_drafts: false,
+            last_session: "01a1c539-d4a3-72e5-9022-a1138888f7a1".to_string(),
             interface_size: "Large".to_string(),
             code_font: "JetBrains Mono".to_string(),
             row_spacing: "Compact".to_string(),
@@ -459,6 +449,35 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(loaded.confirm_quit);
         assert_eq!(loaded.queue_key, "Alt+Enter");
+    }
+
+    #[test]
+    fn settings_persist_reports_a_write_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "pa-ui-settings-write-failure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test directory");
+        let blocker = root.join("not-a-directory");
+        std::fs::write(&blocker, b"x").expect("blocking file");
+        let store = SettingsStore::new(Some(blocker.join("settings.json")));
+        assert!(store.persist().is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn settings_persist_without_a_path_is_a_noop() {
+        let store = SettingsStore::new(None);
+        assert!(store.persist().is_ok());
+    }
+
+    #[test]
+    fn removed_options_are_not_read_from_an_old_settings_file() {
+        let loaded = Settings::from_json(
+            r#"{"dim-inactive-sessions": true, "restore-drafts": false}"#,
+        );
+        assert_eq!(loaded, Settings::default());
     }
 
     #[test]

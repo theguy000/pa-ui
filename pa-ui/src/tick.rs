@@ -2021,6 +2021,12 @@ mod status_strip_tests {
     // harness runs each test on a new thread. The scenarios share this thread.
     #[test]
     fn the_status_strip_holds_and_clears_command_words() {
+        let settings_path = std::env::temp_dir().join(format!(
+            "pa-ui-window-settings-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&settings_path);
+        std::env::set_var("PA_SETTINGS_FILE", &settings_path);
         a_command_word_survives_the_streams_thinking_activity();
         a_turn_end_takes_the_command_word_off_the_status_strip();
         a_rejected_prompt_takes_the_status_strip_down();
@@ -2077,7 +2083,10 @@ mod status_strip_tests {
         a_rejection_keeps_new_composer_input_and_does_not_restore_old_images();
         opening_a_new_chat_inherits_the_selected_cwd();
         a_stale_start_result_does_not_replace_the_current_unsaved_chat();
+        reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
+        let _ = std::fs::remove_file(&settings_path);
+        std::env::remove_var("PA_SETTINGS_FILE");
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -3249,15 +3258,54 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_selected_id().as_str(), "");
     }
 
+    fn reopen_last_session_uses_the_client_side_selection() {
+        let path = std::path::PathBuf::from(
+            std::env::var("PA_SETTINGS_FILE").expect("test settings file"),
+        );
+        let rows = || {
+            let mut a = saved_session_row("a", "a", "", "");
+            a.session_id = "uuid-a".to_string();
+            let mut b = saved_session_row("b", "b", "", "");
+            b.session_id = "uuid-b".to_string();
+            vec![a, b]
+        };
+
+        let mut stored = crate::settings::Settings::default();
+        stored.reopen_last_session = true;
+        stored.last_session = "uuid-b".to_string();
+        stored.save_to(&path).expect("stored selection");
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(rows())));
+        h.run();
+        assert_eq!(h.ui.get_selected_id().as_str(), "b");
+
+        h.tick.sidebar.track_selection("a");
+        let disk = crate::settings::Settings::load_from(&path);
+        assert_eq!(disk.last_session, "uuid-a");
+
+        stored.reopen_last_session = false;
+        stored.last_session = "uuid-b".to_string();
+        stored.save_to(&path).expect("stored selection");
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(rows())));
+        h.run();
+        assert_ne!(h.ui.get_selected_id().as_str(), "b");
+
+        stored.reopen_last_session = true;
+        stored.last_session = "uuid-missing".to_string();
+        stored.save_to(&path).expect("stored selection");
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(rows())));
+        h.run();
+        assert_ne!(h.ui.get_selected_id().as_str(), "b");
+    }
+
     fn settings_popup_mutual_exclusion_and_persistence() {
-        let path = std::env::temp_dir().join(format!(
-            "pa-ui-window-settings-{}.json",
-            std::process::id()
-        ));
-        std::env::set_var("PA_SETTINGS_FILE", &path);
+        let path = std::path::PathBuf::from(
+            std::env::var("PA_SETTINGS_FILE").expect("test settings file"),
+        );
         let h = Harness::new();
 
-        // 1. Opening Settings closes Search and Share
         h.ui.set_search_open(true);
         h.ui.set_share_open(true);
         h.ui.set_model_menu(true);
@@ -3269,19 +3317,16 @@ mod status_strip_tests {
         assert!(!h.ui.get_model_menu());
         assert!(!h.ui.get_queue_open());
 
-        // 2. Opening Search closes Settings
         h.ui.invoke_search_open_requested();
         assert!(h.ui.get_search_open());
         assert!(!h.ui.get_settings_menu());
 
-        // 3. Reopening Settings and switching pages keeps it open
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         h.ui.set_settings_page("appearance".into());
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_page().as_str(), "appearance");
 
-        // 4. Theme cards reflect theme-items and picking a theme updates current and persists
         h.ui.invoke_theme_picked("mono".into());
         let themes = h.ui.get_theme_items();
         let mono_current = (0..themes.row_count())
@@ -3291,7 +3336,6 @@ mod status_strip_tests {
             .unwrap_or(false);
         assert!(mono_current);
 
-        // 5. Toggles and choices update UI and persist to disk
         assert!(h.ui.get_setting_in_app_notifications());
         h.ui.invoke_setting_toggled("in-app-notifications".into());
         assert!(!h.ui.get_setting_in_app_notifications());
@@ -3304,18 +3348,21 @@ mod status_strip_tests {
         assert!(!disk.in_app_notifications);
         assert_eq!(disk.queue_key, "Alt+Enter");
 
-        // 6. Search filtering inside settings
+        h.ui.set_settings_page("general".into());
+        h.ui.invoke_settings_search_edited("theme".into());
+        assert_eq!(h.ui.get_settings_page().as_str(), "appearance");
+
+        h.ui.set_settings_page("appearance".into());
+        h.ui.invoke_settings_search_edited("queue".into());
+        assert_eq!(h.ui.get_settings_page().as_str(), "general");
+
         h.ui.set_settings_page("general".into());
         h.ui.invoke_settings_search_edited("font".into());
         assert!(h.ui.get_settings_show_typography());
         assert!(!h.ui.get_settings_show_notifications());
         assert_eq!(h.ui.get_settings_page().as_str(), "appearance");
 
-        // 7. Closing settings
         h.ui.invoke_settings_closed();
         assert!(!h.ui.get_settings_menu());
-
-        let _ = std::fs::remove_file(&path);
-        std::env::remove_var("PA_SETTINGS_FILE");
     }
 }
