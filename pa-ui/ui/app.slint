@@ -1886,10 +1886,6 @@ export component AppWindow inherits Window {
         anchor-w: composer-box.width;
         picked(level) => { root.effort-picked(level); }
         hovered => { root.effort-hovered(); }
-        dismissed => {
-            root.effort-open = false;
-            root.model-menu = false;
-        }
     }
 
     // Click-away backdrop for the session menu.
