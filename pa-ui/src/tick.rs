@@ -2077,6 +2077,7 @@ mod status_strip_tests {
         a_rejection_keeps_new_composer_input_and_does_not_restore_old_images();
         opening_a_new_chat_inherits_the_selected_cwd();
         a_stale_start_result_does_not_replace_the_current_unsaved_chat();
+        settings_popup_mutual_exclusion_and_persistence();
     }
 
     fn the_activity_readout_is_selected_session_owned() {
@@ -3246,5 +3247,75 @@ mod status_strip_tests {
 
         assert!(h.ui.get_draft_chat());
         assert_eq!(h.ui.get_selected_id().as_str(), "");
+    }
+
+    fn settings_popup_mutual_exclusion_and_persistence() {
+        let path = std::env::temp_dir().join(format!(
+            "pa-ui-window-settings-{}.json",
+            std::process::id()
+        ));
+        std::env::set_var("PA_SETTINGS_FILE", &path);
+        let h = Harness::new();
+
+        // 1. Opening Settings closes Search and Share
+        h.ui.set_search_open(true);
+        h.ui.set_share_open(true);
+        h.ui.set_model_menu(true);
+        h.ui.set_queue_open(true);
+        h.ui.invoke_settings_toggle_requested();
+        assert!(h.ui.get_settings_menu());
+        assert!(!h.ui.get_search_open());
+        assert!(!h.ui.get_share_open());
+        assert!(!h.ui.get_model_menu());
+        assert!(!h.ui.get_queue_open());
+
+        // 2. Opening Search closes Settings
+        h.ui.invoke_search_open_requested();
+        assert!(h.ui.get_search_open());
+        assert!(!h.ui.get_settings_menu());
+
+        // 3. Reopening Settings and switching pages keeps it open
+        h.ui.invoke_settings_toggle_requested();
+        assert!(h.ui.get_settings_menu());
+        h.ui.set_settings_page("appearance".into());
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_page().as_str(), "appearance");
+
+        // 4. Theme cards reflect theme-items and picking a theme updates current and persists
+        h.ui.invoke_theme_picked("mono".into());
+        let themes = h.ui.get_theme_items();
+        let mono_current = (0..themes.row_count())
+            .filter_map(|i| themes.row_data(i))
+            .find(|item| item.id.as_str() == "mono")
+            .map(|item| item.current)
+            .unwrap_or(false);
+        assert!(mono_current);
+
+        // 5. Toggles and choices update UI and persist to disk
+        assert!(h.ui.get_setting_in_app_notifications());
+        h.ui.invoke_setting_toggled("in-app-notifications".into());
+        assert!(!h.ui.get_setting_in_app_notifications());
+
+        h.ui.invoke_setting_chosen("queue-key".into(), "Alt+Enter".into());
+        assert_eq!(h.ui.get_setting_queue_key().as_str(), "Alt+Enter");
+
+        let disk = crate::settings::Settings::load_from(&path);
+        assert_eq!(disk.theme, "mono");
+        assert!(!disk.in_app_notifications);
+        assert_eq!(disk.queue_key, "Alt+Enter");
+
+        // 6. Search filtering inside settings
+        h.ui.set_settings_page("general".into());
+        h.ui.invoke_settings_search_edited("font".into());
+        assert!(h.ui.get_settings_show_typography());
+        assert!(!h.ui.get_settings_show_notifications());
+        assert_eq!(h.ui.get_settings_page().as_str(), "appearance");
+
+        // 7. Closing settings
+        h.ui.invoke_settings_closed();
+        assert!(!h.ui.get_settings_menu());
+
+        let _ = std::fs::remove_file(&path);
+        std::env::remove_var("PA_SETTINGS_FILE");
     }
 }

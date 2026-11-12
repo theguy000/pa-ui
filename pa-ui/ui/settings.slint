@@ -1,0 +1,817 @@
+import { ScrollView } from "std-widgets.slint";
+import { Button, Panel } from "primitives.slint";
+import {
+    IconCaret,
+    IconCheck,
+    IconCross,
+    IconSearch,
+    IconSettingsAppearance,
+    IconSettingsGeneral
+} from "icons.slint";
+import { ThemeItem } from "types.slint";
+import { Theme } from "theme.slint";
+
+component SettingsToggle inherits Button {
+    in property <bool> checked: false;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    fill: root.checked ? Theme.composer-send-fill : Theme.panel-edge;
+    fill-hover: root.checked ? Theme.composer-send-fill-hover : Theme.composer-chip-edge-hover;
+
+    Rectangle {
+        x: root.checked ? 18px : 2px;
+        y: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: root.checked ? Theme.composer-send-mark : Theme.search-row-ink-hover;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+}
+
+component SettingsChoice inherits Button {
+    in property <string> value;
+    width: 168px;
+    height: 28px;
+    border-radius: 7px;
+    fill: Theme.composer-surface;
+    fill-hover: Theme.panel-row-fill-hover;
+    border-width: 1px;
+    border-color: root.hot ? Theme.composer-chip-edge-hover : Theme.panel-edge;
+
+    Text {
+        x: 10px;
+        y: 0;
+        width: parent.width - 30px;
+        height: 100%;
+        text: root.value;
+        color: Theme.search-row-ink-hover;
+        font-size: 12px;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    IconCaret {
+        x: parent.width - 18px;
+        y: (parent.height - self.height) / 2;
+        up: false;
+        tint: root.hot ? Theme.search-row-ink-hover : Theme.model-menu-caret-mark;
+    }
+}
+
+component SettingsSegmented3 inherits Rectangle {
+    in property <string> opt-a;
+    in property <string> opt-b;
+    in property <string> opt-c;
+    in property <string> value;
+    callback picked(string);
+
+    width: 210px;
+    height: 28px;
+    border-radius: 7px;
+    background: Theme.composer-surface;
+    border-width: 1px;
+    border-color: Theme.panel-edge;
+
+    seg-a := Button {
+        x: 2px;
+        y: 2px;
+        width: 68px;
+        height: 24px;
+        border-radius: 5px;
+        lit: root.value == root.opt-a;
+        fill: transparent;
+        fill-hover: root.value == root.opt-a ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: root.opt-a;
+        clicked => { root.picked(root.opt-a); }
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.opt-a;
+            color: root.value == root.opt-a || seg-a.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 11.5px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    seg-b := Button {
+        x: 71px;
+        y: 2px;
+        width: 68px;
+        height: 24px;
+        border-radius: 5px;
+        lit: root.value == root.opt-b;
+        fill: transparent;
+        fill-hover: root.value == root.opt-b ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: root.opt-b;
+        clicked => { root.picked(root.opt-b); }
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.opt-b;
+            color: root.value == root.opt-b || seg-b.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 11.5px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    seg-c := Button {
+        x: 140px;
+        y: 2px;
+        width: 68px;
+        height: 24px;
+        border-radius: 5px;
+        lit: root.value == root.opt-c;
+        fill: transparent;
+        fill-hover: root.value == root.opt-c ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: root.opt-c;
+        clicked => { root.picked(root.opt-c); }
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.opt-c;
+            color: root.value == root.opt-c || seg-c.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 11.5px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component SettingsSegmented2 inherits Rectangle {
+    in property <string> opt-a;
+    in property <string> opt-b;
+    in property <string> value;
+    callback picked(string);
+
+    width: 184px;
+    height: 28px;
+    border-radius: 7px;
+    background: Theme.composer-surface;
+    border-width: 1px;
+    border-color: Theme.panel-edge;
+
+    seg-a := Button {
+        x: 2px;
+        y: 2px;
+        width: 89px;
+        height: 24px;
+        border-radius: 5px;
+        lit: root.value == root.opt-a;
+        fill: transparent;
+        fill-hover: root.value == root.opt-a ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: root.opt-a;
+        clicked => { root.picked(root.opt-a); }
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.opt-a;
+            color: root.value == root.opt-a || seg-a.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 11.5px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    seg-b := Button {
+        x: 93px;
+        y: 2px;
+        width: 89px;
+        height: 24px;
+        border-radius: 5px;
+        lit: root.value == root.opt-b;
+        fill: transparent;
+        fill-hover: root.value == root.opt-b ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: root.opt-b;
+        clicked => { root.picked(root.opt-b); }
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.opt-b;
+            color: root.value == root.opt-b || seg-b.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 11.5px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component SettingsThemeCard inherits Button {
+    in property <ThemeItem> item;
+    height: 54px;
+    border-radius: 10px;
+    lit: root.item.current;
+    fill: Theme.composer-surface;
+    fill-hover: root.item.current ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+    border-width: 1px;
+    border-color: root.item.current ? Theme.composer-send-fill
+        : (root.hot ? Theme.composer-chip-edge-hover : Theme.panel-edge);
+    described: root.item.label;
+
+    Text {
+        x: 12px;
+        y: 10px;
+        width: parent.width - 36px;
+        height: 18px;
+        text: root.item.label;
+        color: root.item.current || root.hot ? Theme.model-menu-row-ink-current : Theme.model-menu-row-ink;
+        font-size: 12.5px;
+        font-weight: root.item.current ? 600 : 500;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    Text {
+        x: 12px;
+        y: 28px;
+        width: parent.width - 24px;
+        height: 16px;
+        text: root.item.current ? "Active" : "Theme";
+        color: root.item.current ? Theme.model-menu-effort-ink : Theme.model-menu-detail-ink;
+        font-size: 10.5px;
+        vertical-alignment: center;
+    }
+
+    if root.item.current : IconCheck {
+        x: parent.width - 22px;
+        y: 13px;
+        tint: Theme.effort-ladder-check-mark;
+    }
+}
+
+component SettingsRow inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <bool> divided: false;
+    height: 64px;
+
+    if root.divided : Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 1px;
+        background: Theme.panel-edge;
+    }
+
+    Text {
+        x: 18px;
+        y: 13px;
+        width: parent.width - 250px;
+        height: 18px;
+        text: root.title;
+        color: Theme.model-menu-row-ink-current;
+        font-size: 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    Text {
+        x: 18px;
+        y: 33px;
+        width: parent.width - 250px;
+        height: 18px;
+        text: root.description;
+        color: Theme.search-row-ink;
+        font-size: 11.5px;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    @children
+}
+
+component SettingsSection inherits VerticalLayout {
+    in property <string> heading;
+    spacing: 10px;
+
+    Text {
+        text: root.heading;
+        color: Theme.model-menu-row-ink-current;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    Rectangle {
+        border-radius: 12px;
+        background: Theme.transcript-cell-fill;
+        border-width: 1px;
+        border-color: Theme.panel-edge;
+        clip: true;
+
+        VerticalLayout {
+            @children
+        }
+    }
+}
+
+component SettingsRail inherits Rectangle {
+    in-out property <string> page;
+    in-out property <string> query;
+    callback search-edited(string);
+    callback close-requested();
+    width: 220px;
+    background: Theme.sidebar-surface;
+
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        width: parent.width - 24px;
+        height: 32px;
+        border-radius: 8px;
+        background: Theme.composer-surface;
+        border-width: 1px;
+        border-color: Theme.panel-edge;
+
+        IconSearch {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            tint: Theme.search-row-ink;
+        }
+
+        if root.query == "" : Text {
+            x: 32px;
+            y: 0;
+            width: parent.width - 42px;
+            height: parent.height;
+            text: "Search";
+            color: Theme.search-row-ink;
+            font-size: 12.5px;
+            vertical-alignment: center;
+        }
+
+        rail-search := TextInput {
+            x: 32px;
+            y: 0;
+            width: parent.width - 42px;
+            height: parent.height;
+            text <=> root.query;
+            color: Theme.search-row-ink-hover;
+            font-size: 12.5px;
+            vertical-alignment: center;
+            single-line: true;
+            edited => { root.search-edited(self.text); }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.close-requested();
+                    return EventResult.accept;
+                }
+                reject
+            }
+        }
+    }
+
+    nav-general := Button {
+        x: 12px;
+        y: 54px;
+        width: parent.width - 24px;
+        height: 32px;
+        border-radius: 8px;
+        lit: root.page == "general";
+        fill: transparent;
+        fill-hover: root.page == "general" ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: "General";
+        clicked => { root.page = "general"; }
+
+        IconSettingsGeneral {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: root.page == "general" || nav-general.hot
+                ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+
+        Text {
+            x: 34px;
+            y: 0;
+            width: parent.width - 44px;
+            height: 100%;
+            text: "General";
+            color: root.page == "general" || nav-general.hot
+                ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 13px;
+            font-weight: root.page == "general" ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    nav-appearance := Button {
+        x: 12px;
+        y: 90px;
+        width: parent.width - 24px;
+        height: 32px;
+        border-radius: 8px;
+        lit: root.page == "appearance";
+        fill: transparent;
+        fill-hover: root.page == "appearance" ? Theme.panel-row-fill-current : Theme.panel-row-fill-hover;
+        described: "Appearance";
+        clicked => { root.page = "appearance"; }
+
+        IconSettingsAppearance {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            tint: root.page == "appearance" || nav-appearance.hot
+                ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+
+        Text {
+            x: 34px;
+            y: 0;
+            width: parent.width - 44px;
+            height: 100%;
+            text: "Appearance";
+            color: root.page == "appearance" || nav-appearance.hot
+                ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            font-size: 13px;
+            font-weight: root.page == "appearance" ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0;
+        width: 1px;
+        height: 100%;
+        background: Theme.panel-edge;
+    }
+}
+
+export component SettingsPopup inherits Panel {
+    in-out property <string> page: "general";
+    in-out property <string> query: "";
+    in property <int> focus-tick: 0;
+    in property <[ThemeItem]> theme-items;
+
+    in property <string> thread-notifications: "Off";
+    in property <bool> in-app-notifications: true;
+    in property <bool> show-session-previews: true;
+    in property <bool> dim-inactive-sessions: false;
+    in property <string> session-order: "Last used";
+    in property <bool> confirm-quit: false;
+    in property <bool> confirm-delete-session: true;
+    in property <string> queue-key: "Ctrl+Enter";
+    in property <bool> reopen-last-session: true;
+    in property <bool> restore-drafts: true;
+    in property <string> interface-size: "Default";
+    in property <string> code-font: "Cascadia Code";
+    in property <string> row-spacing: "Comfortable";
+    in property <bool> show-timestamps: false;
+    in property <bool> reduce-motion: false;
+
+    in property <bool> show-notifications: true;
+    in property <bool> show-sidebar: true;
+    in property <bool> show-confirmations: true;
+    in property <bool> show-behavior: true;
+    in property <bool> show-theme: true;
+    in property <bool> show-typography: true;
+    in property <bool> show-density: true;
+
+    callback theme-picked(string);
+    callback setting-toggled(string);
+    callback setting-chosen(string, string);
+    callback search-edited(string);
+    callback closed();
+
+    border-radius: 20px;
+    border-width: 0px;
+    clip: true;
+
+    changed focus-tick => {
+        keys.focus();
+    }
+
+    // Consume clicks inside the panel so they never reach the backdrop or app underneath.
+    TouchArea {
+        width: 100%;
+        height: 100%;
+    }
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0px;
+        height: 0px;
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.closed();
+                return EventResult.accept;
+            }
+            reject
+        }
+    }
+
+    SettingsRail {
+        x: 0;
+        y: 0;
+        height: parent.height;
+        page <=> root.page;
+        query <=> root.query;
+        search-edited(text) => { root.search-edited(text); }
+        close-requested => { root.closed(); }
+    }
+
+    content-scroll := ScrollView {
+        x: 220px;
+        y: 0;
+        width: parent.width - 220px;
+        height: parent.height;
+        vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: content-box.preferred-height;
+
+        content-box := VerticalLayout {
+            width: content-scroll.visible-width;
+            padding-left: 36px;
+            padding-right: 36px;
+            padding-top: 24px;
+            padding-bottom: 32px;
+            spacing: 22px;
+
+            if root.page == "general" : VerticalLayout {
+                spacing: 22px;
+
+                if root.show-notifications : SettingsSection {
+                    heading: "Notifications";
+
+                    SettingsRow {
+                        title: "Thread notifications";
+                        description: "System alerts when a Session finishes, fails, or needs attention.";
+                        SettingsChoice {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            value: root.thread-notifications;
+                            described: "Thread notifications";
+                            clicked => { root.setting-chosen("thread-notifications", ""); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "In-app notifications";
+                        description: "Show a notice when another Session finishes or fails while this window has focus.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.in-app-notifications;
+                            described: "In-app notifications";
+                            clicked => { root.setting-toggled("in-app-notifications"); }
+                        }
+                    }
+                }
+
+                if root.show-sidebar : SettingsSection {
+                    heading: "Sidebar";
+
+                    SettingsRow {
+                        title: "Show Session previews";
+                        description: "Include the latest prompt or status line beneath each Session name.";
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.show-session-previews;
+                            described: "Show Session previews";
+                            clicked => { root.setting-toggled("show-session-previews"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Dim inactive Sessions";
+                        description: "Step back the ink of Sessions in the Done group so active work stands out.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.dim-inactive-sessions;
+                            described: "Dim inactive Sessions";
+                            clicked => { root.setting-toggled("dim-inactive-sessions"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Session order";
+                        description: "Order of Sessions inside each sidebar group and search popup.";
+                        divided: true;
+                        SettingsChoice {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            value: root.session-order;
+                            described: "Session order";
+                            clicked => { root.setting-chosen("session-order", ""); }
+                        }
+                    }
+                }
+
+                if root.show-confirmations : SettingsSection {
+                    heading: "Confirmations";
+
+                    SettingsRow {
+                        title: "Confirm before quitting";
+                        description: "Ask before closing the window while a Session turn is still running.";
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.confirm-quit;
+                            described: "Confirm before quitting";
+                            clicked => { root.setting-toggled("confirm-quit"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Confirm before deleting a Session";
+                        description: "Require a second click before removing a saved Session file from disk.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.confirm-delete-session;
+                            described: "Confirm before deleting a Session";
+                            clicked => { root.setting-toggled("confirm-delete-session"); }
+                        }
+                    }
+                }
+
+                if root.show-behavior : SettingsSection {
+                    heading: "Behavior";
+
+                    SettingsRow {
+                        title: "Queue with";
+                        description: "Key chord that adds the current prompt to the running Session's queue.";
+                        SettingsChoice {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            value: root.queue-key;
+                            described: "Queue with";
+                            clicked => { root.setting-chosen("queue-key", ""); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Reopen the last Session";
+                        description: "Attach to the most recently active Session automatically when the window opens.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.reopen-last-session;
+                            described: "Reopen the last Session";
+                            clicked => { root.setting-toggled("reopen-last-session"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Restore unfinished drafts";
+                        description: "Keep unsent composer text across Session switches and restarts.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.restore-drafts;
+                            described: "Restore unfinished drafts";
+                            clicked => { root.setting-toggled("restore-drafts"); }
+                        }
+                    }
+                }
+            }
+
+            if root.page == "appearance" : VerticalLayout {
+                spacing: 22px;
+
+                if root.show-theme : SettingsSection {
+                    heading: "Theme";
+
+                    Rectangle {
+                        height: 82px;
+
+                        HorizontalLayout {
+                            x: 18px;
+                            y: 14px;
+                            width: parent.width - 36px;
+                            height: 54px;
+                            spacing: 10px;
+
+                            for item in root.theme-items : SettingsThemeCard {
+                                horizontal-stretch: 1;
+                                item: item;
+                                clicked => { root.theme-picked(item.id); }
+                            }
+                        }
+                    }
+                }
+
+                if root.show-typography : SettingsSection {
+                    heading: "Typography";
+
+                    SettingsRow {
+                        title: "Interface size";
+                        description: "Scale of labels, session rows, and transcript prose across the window.";
+                        SettingsSegmented3 {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            opt-a: "Compact";
+                            opt-b: "Default";
+                            opt-c: "Large";
+                            value: root.interface-size;
+                            picked(val) => { root.setting-chosen("interface-size", val); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Code font";
+                        description: "Monospace family used in bash cells, python cells, and fenced code blocks.";
+                        divided: true;
+                        SettingsChoice {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            value: root.code-font;
+                            described: "Code font";
+                            clicked => { root.setting-chosen("code-font", ""); }
+                        }
+                    }
+                }
+
+                if root.show-density : SettingsSection {
+                    heading: "Density";
+
+                    SettingsRow {
+                        title: "Row spacing";
+                        description: "Vertical padding between transcript turns and tool cells.";
+                        SettingsSegmented2 {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            opt-a: "Comfortable";
+                            opt-b: "Compact";
+                            value: root.row-spacing;
+                            picked(val) => { root.setting-chosen("row-spacing", val); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Show timestamps";
+                        description: "Display turn timestamps beside user and assistant messages.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.show-timestamps;
+                            described: "Show timestamps";
+                            clicked => { root.setting-toggled("show-timestamps"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Reduce motion";
+                        description: "Minimize smooth-scroll glides and sidebar group folding transitions.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.reduce-motion;
+                            described: "Reduce motion";
+                            clicked => { root.setting-toggled("reduce-motion"); }
+                        }
+                    }
+                }
+
+                if root.show-sidebar : SettingsSection {
+                    heading: "Sidebar";
+
+                    SettingsRow {
+                        title: "Show Session previews";
+                        description: "Include the latest prompt or status line beneath each Session name.";
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.show-session-previews;
+                            described: "Show Session previews";
+                            clicked => { root.setting-toggled("show-session-previews"); }
+                        }
+                    }
+
+                    SettingsRow {
+                        title: "Dim inactive Sessions";
+                        description: "Step back the ink of Sessions in the Done group so active work stands out.";
+                        divided: true;
+                        SettingsToggle {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            checked: root.dim-inactive-sessions;
+                            described: "Dim inactive Sessions";
+                            clicked => { root.setting-toggled("dim-inactive-sessions"); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
