@@ -95,6 +95,8 @@ export component PopupShell inherits Rectangle {
     in property <length> popup-width: 200px;
     in property <length> popup-height: 100px;
     in property <length> menu-radius: 8px;
+    in property <color> menu-shadow: Theme.panel-shadow;
+    in property <length> menu-shadow-blur: 12px;
     in property <bool> open: false;
     out property <bool> is-open: popup.is-open;
     callback dismissed();
@@ -143,6 +145,8 @@ export component PopupShell inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 border-radius: root.menu-radius;
+                shadow: root.menu-shadow;
+                drop-shadow-blur: root.menu-shadow-blur;
                 clip: true;
                 @children
             }
