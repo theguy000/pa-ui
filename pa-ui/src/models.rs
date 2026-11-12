@@ -190,6 +190,7 @@ impl ModelMenu {
                 let Some(ui) = weak.upgrade() else { return };
                 let pair = (provider.to_string(), id.to_string());
                 if current.borrow().as_ref() == Some(&pair) {
+                    ui.set_effort_y(row_y);
                     return;
                 }
                 let catalog = catalog.borrow();
@@ -387,14 +388,18 @@ pub(crate) fn build_model_groups(
     }
     let mut out: Vec<ModelGroup> = Vec::with_capacity(groups.len());
     let mut height = 12f32;
+    let mut top = 0f32;
     for ((_, provider), mut entries) in groups {
         entries.sort_by_key(|a| a.name.to_lowercase());
         let open = !collapsed.contains(&provider);
         let configured = entries.first().is_some_and(|entry| entry.configured);
         let count = entries.len() as i32;
-        height += 26.0;
+        let group_height = 26.0 + if open {
+            24.0 * entries.len() as f32
+        } else {
+            0.0
+        };
         let models: Vec<ModelItem> = if open {
-            height += 24.0 * entries.len() as f32;
             entries
                 .iter()
                 .map(|entry| {
@@ -417,8 +422,11 @@ pub(crate) fn build_model_groups(
             count,
             open,
             configured,
+            top,
             models: ModelRc::from(Rc::new(VecModel::from(models))),
         });
+        top += group_height;
+        height += group_height;
     }
     (out, height.min(340.0))
 }
@@ -475,8 +483,10 @@ mod tests {
         assert_eq!(groups[0].provider.as_str(), "alpha");
         assert!(groups[0].open);
         assert_eq!(groups[0].models.row_count(), 1);
+        assert_eq!(groups[0].top, 0.0);
         assert_eq!(groups[1].provider.as_str(), "zeta");
         assert!(!groups[1].open);
+        assert_eq!(groups[1].top, 50.0);
         assert_eq!(groups[1].models.row_count(), 0);
         assert!(height > 12.0);
     }

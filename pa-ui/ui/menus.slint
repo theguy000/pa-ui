@@ -112,12 +112,10 @@ export component ModelMenu inherits Rectangle {
     callback close-requested();
 
     property <length> menu-height: max(64px, min(340px, root.measured-height));
+    x: 0px;
+    y: 0px;
     width: 0px;
     height: 0px;
-
-    pure function window-y(row-y: length) -> length {
-        root.anchor-y - root.menu-height - 6px + row-y
-    }
 
     popup := PopupShell {
         popup-x: root.anchor-x + root.anchor-w - 300px - 12px;
@@ -233,13 +231,15 @@ export component ModelMenu inherits Rectangle {
                         moved => {
                             if self.has-hover {
                                 root.hovered(group.provider, model.id,
-                                    root.window-y(self.absolute-position.y));
+                                    popup.popup-y + popup.absolute-position.y + 6px + group.top + 26px + i * 24px
+                                        + menu-scroll.content-y);
                             }
                         }
                         pointer-event(event) => {
                             if event.kind == PointerEventKind.move {
                                 root.hovered(group.provider, model.id,
-                                    root.window-y(self.absolute-position.y));
+                                    popup.popup-y + popup.absolute-position.y + 6px + group.top + 26px + i * 24px
+                                        + menu-scroll.content-y);
                             }
                         }
                     }
@@ -310,8 +310,7 @@ export component EffortLadder inherits Panel {
     width: 132px;
     height: 10px + root.items.length * 26px;
     border-radius: 8px;
-    // The ladder is drawn on the model menu rather than on the window, so what is
-    // under it has already been lifted once and its shadow is the shallower one.
+    // The ladder sits above another menu, so its shadow is the shallower one.
     shadow: Theme.panel-shadow-nested;
     drop-shadow-blur: 10px;
 

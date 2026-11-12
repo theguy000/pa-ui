@@ -28,13 +28,12 @@ pub fn plain(text: &str) -> String {
 
 
 pub fn styled(markup: &str) -> StyledText {
-    // Only the narrow spaces are folded here. U+00A0 is the guard that stops a
-    // four-space indent being read as a code block (which the renderer refuses
-    // outright, printing the row as plain text); `plain` would undo it.
+    // The block guard uses a zero-width prefix, so folding narrow spaces here
+    // cannot turn an indented line back into a CommonMark code block.
     let folded;
     let markup = if markup
         .chars()
-        .any(|ch| matches!(ch, '\u{202f}' | '\u{2009}' | '\u{2007}'))
+        .any(|ch| matches!(ch, '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}'))
     {
         folded = markup
             .chars()
@@ -351,7 +350,29 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             if !bold_already {
                 out.push_str("**");
             }
-            escape_code_span(body.trim(), &mut out);
+            for (index, line) in body.trim().split('\n').enumerate() {
+                if index > 0 {
+                    if !bold_already {
+                        out.push_str("**");
+                    }
+                    out.push_str("</font>");
+                    out.push('\n');
+                    if bold_already {
+                        out.push('\u{200b}');
+                    }
+                    open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
+                    if !bold_already {
+                        out.push_str("**");
+                    }
+                }
+                if index > 0
+                    && !bold_already
+                    && (line.starts_with(' ') || line.starts_with('\t'))
+                {
+                    out.push('\u{200b}');
+                }
+                escape_code_span(line, &mut out);
+            }
             if !bold_already {
                 out.push_str("**");
             }
@@ -784,9 +805,8 @@ pub fn highlight_python(code: &str, theme: &Resolved) -> String {
 
 
 /// CommonMark reads a 4-space indent as a code block and a leading `#`/`-`/`>`
-/// as a heading/list/quote — both unsupported in Slint. Leading spaces become
-/// NBSP (same advance width, no block syntax) and marker lines get a zero-width
-/// space in front.
+/// as a heading/list/quote — both unsupported in Slint. A zero-width prefix
+/// disables that block syntax without putting NBSP characters into text layout.
 pub(crate) fn guard_block_markers(markup: &str) -> String {
     let mut out = String::with_capacity(markup.len() + 32);
     for (index, line) in markup.split('\n').enumerate() {
@@ -794,12 +814,13 @@ pub(crate) fn guard_block_markers(markup: &str) -> String {
             out.push('\n');
         }
         let indent = line.len() - line.trim_start_matches(' ').len();
-        for _ in 0..indent {
-            out.push('\u{00a0}');
+        if indent > 0 {
+            out.push('\u{200b}');
+            out.push_str(&line[..indent]);
         }
         let rest = &line[indent..];
         let first = rest.chars().next();
-        if matches!(first, Some('#' | '>' | '-' | '+' | '*' | '=' | '~' | '|' | '0'..='9')) {
+        if indent == 0 && matches!(first, Some('#' | '>' | '-' | '+' | '*' | '=' | '~' | '|' | '0'..='9')) {
             out.push('\u{200b}');
         }
         out.push_str(rest);

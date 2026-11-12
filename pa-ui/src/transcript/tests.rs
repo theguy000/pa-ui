@@ -625,6 +625,23 @@ mod markup_tests {
             let _ = styled(&markdown_markup(sample, &shipped()));
         }
     }
+
+    #[test]
+    fn indented_markup_does_not_put_nbsp_into_text_layout() {
+        let drawn = markdown_markup("    indented", &shipped());
+        let rendered = format!("{:?}", styled(&drawn));
+        assert!(!rendered.contains('\u{a0}'), "got {rendered}");
+    }
+
+    #[test]
+    fn multiline_code_spans_parse_without_crossing_font_tags() {
+        let drawn = markdown_markup(
+            "```\none\n  two\n```\nheader `x` and `y`",
+            &shipped(),
+        );
+        StyledText::from_markdown(&drawn)
+            .expect("code spans after indented multiline code markup parse");
+    }
 }
 
 #[cfg(test)]
