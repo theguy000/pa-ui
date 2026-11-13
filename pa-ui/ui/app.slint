@@ -290,6 +290,24 @@ export component AppWindow inherits Window {
     private property <string> drag-session-status: "";
     private property <int> drag-source-index: -1;
     private property <length> drag-pointer-y: 0px;
+
+    function clear-session-drag() {
+        root.drag-session-id = "";
+        root.drag-session-status = "";
+        root.drag-source-index = -1;
+    }
+
+    changed setting-session-order => {
+        if root.setting-session-order != "Manual" {
+            root.clear-session-drag();
+        }
+    }
+
+    changed sidebar-open => {
+        if !root.sidebar-open {
+            root.clear-session-drag();
+        }
+    }
     callback wake();
     callback scroll-paging();
     callback attachment-ready();
@@ -1157,9 +1175,7 @@ export component AppWindow inherits Window {
                                             py - sidebar-content.absolute-position.y + 88px,
                                         );
                                     }
-                                    root.drag-session-id = "";
-                                    root.drag-session-status = "";
-                                    root.drag-source-index = -1;
+                                    root.clear-session-drag();
                                 }
                             }
                         }

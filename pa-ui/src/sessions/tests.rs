@@ -823,4 +823,11 @@ fn manual_move_appends_new_sessions_and_keeps_other_groups() {
     let mut manual_mixed = vec!["".to_string(), "usub1".to_string(), "ua1".to_string()];
     assert!(reconcile_manual_order(&mixed, &mut manual_mixed));
     assert_eq!(manual_mixed, ["ua1"]);
+
+    let mut seeded = Vec::new();
+    assert!(!seed_manual_order(&[], SessionOrder::Name, &mut seeded));
+    assert!(seed_manual_order(&rows, SessionOrder::Name, &mut seeded));
+    assert_eq!(seeded, ["ua1", "ua2", "ua3", "ud1"]);
+    assert!(!seed_manual_order(&rows, SessionOrder::LastUsed, &mut seeded));
+    assert_eq!(seeded, ["ua1", "ua2", "ua3", "ud1"]);
 }

@@ -114,6 +114,7 @@ export component SessionRow inherits Rectangle {
     private property <bool> press-armed: false;
     private property <bool> dragging: false;
     private property <bool> suppress-click: false;
+    private property <string> drag-id: "";
     private property <length> press-y: 0px;
 
     function reset-drag() {
@@ -123,6 +124,7 @@ export component SessionRow inherits Rectangle {
         root.dragging = false;
         root.press-armed = false;
         root.suppress-click = false;
+        root.drag-id = "";
     }
 
     changed reorderable => {
@@ -137,10 +139,16 @@ export component SessionRow inherits Rectangle {
         }
     }
 
+    changed dragging-this => {
+        if !root.dragging-this && root.dragging {
+            root.reset-drag();
+        }
+    }
+
     height: 32px;
     border-radius: 6px;
     border-width: root.dragging-this ? 1px : 0px;
-    border-color: Theme.search-match-ink;
+    border-color: Theme.sidebar-name-ink-selected;
     background: selected ? Theme.sidebar-row-fill-selected
         : (ta.has-hover ? Theme.sidebar-row-fill-hover : Theme.sidebar-row-fill);
 
@@ -157,10 +165,14 @@ export component SessionRow inherits Rectangle {
             {
                 if root.dragging {
                     root.drag-ended(
-                        event.kind == PointerEventKind.up && root.reorderable && !root.editing,
+                        event.kind == PointerEventKind.up
+                            && root.reorderable
+                            && !root.editing
+                            && root.item.id == root.drag-id,
                         self.absolute-position.y + self.mouse-y,
                     );
                     root.dragging = false;
+                    root.drag-id = "";
                 }
                 if event.kind == PointerEventKind.cancel || !self.has-hover || !root.reorderable || root.editing {
                     root.suppress-click = false;
@@ -176,8 +188,13 @@ export component SessionRow inherits Rectangle {
                 root.press-armed = true;
                 root.dragging = false;
                 root.suppress-click = false;
+                root.drag-id = root.item.id;
                 root.press-y = self.absolute-position.y + self.mouse-y;
             } else if event.kind == PointerEventKind.move && root.press-armed {
+                if root.item.id != root.drag-id {
+                    root.reset-drag();
+                    return;
+                }
                 let cy = self.absolute-position.y + self.mouse-y;
                 if !root.dragging && abs(cy - root.press-y) > 5px {
                     root.dragging = true;
@@ -211,7 +228,7 @@ export component SessionRow inherits Rectangle {
         width: parent.width - 8px;
         height: 2px;
         border-radius: 1px;
-        background: Theme.search-match-ink;
+        background: Theme.sidebar-name-ink-selected;
     }
 
     if root.drop-after : Rectangle {
@@ -220,7 +237,7 @@ export component SessionRow inherits Rectangle {
         width: parent.width - 8px;
         height: 2px;
         border-radius: 1px;
-        background: Theme.search-match-ink;
+        background: Theme.sidebar-name-ink-selected;
     }
 
     changed hot => {

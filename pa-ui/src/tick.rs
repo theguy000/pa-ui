@@ -2294,6 +2294,21 @@ mod status_strip_tests {
         h2.ui.invoke_session_dropped("m-05".into(), m02_y);
         let after_cy = h2.ui.invoke_get_sidebar_cy();
         assert!((after_cy - before_cy).abs() < 1.0);
+
+        let h3 = Harness::new();
+        h3.tick.sidebar.apply_roster(&h3.ui, rows[..2].to_vec());
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1"]);
+        h3.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1"]);
+        let mut with_new = rows[..2].to_vec();
+        with_new.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "Aardvark",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-11T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_new);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "a3"]);
     }
 
     // One test, not six: Slint binds its platform to the test thread, and the
