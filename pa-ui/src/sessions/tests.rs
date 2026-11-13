@@ -727,9 +727,9 @@ fn manual_move_reorders_within_active_idle_and_done_groups() {
             "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
         })),
     ];
-    let manual = apply_manual_move(&rows, &[], "a2", "a1", true).expect("active move");
-    let manual = apply_manual_move(&rows, &manual, "i2", "i1", true).expect("idle move");
-    let manual = apply_manual_move(&rows, &manual, "d2", "d1", true).expect("done move");
+    let manual = apply_manual_move(&rows, &[], "a2", "a1").expect("active move");
+    let manual = apply_manual_move(&rows, &manual, "i2", "i1").expect("idle move");
+    let manual = apply_manual_move(&rows, &manual, "d2", "d1").expect("done move");
     let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &manual)
         .into_iter()
         .map(|item| item.id.to_string())
@@ -755,10 +755,10 @@ fn manual_move_refuses_cross_group_move() {
             "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
         })),
     ];
-    assert_eq!(apply_manual_move(&rows, &[], "a1", "i1", true), None);
-    assert_eq!(apply_manual_move(&rows, &[], "a1", "d1", true), None);
-    assert_eq!(apply_manual_move(&rows, &[], "i1", "d1", true), None);
-    assert_eq!(apply_manual_move(&rows, &[], "a1", "a1", true), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "i1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "d1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "i1", "d1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "a1"), None);
 }
 
 #[test]
@@ -789,17 +789,15 @@ fn manual_move_appends_new_sessions_and_keeps_other_groups() {
         "stale-done".to_string(),
         "ua1".to_string(),
     ];
-    let updated_no_prune =
-        apply_manual_move(&rows, &prior, "a3", "a1", false).expect("move uncatalogued");
-    assert!(updated_no_prune.contains(&"stale-done".to_string()));
-    assert!(updated_no_prune.contains(&"ud1".to_string()));
-
-    let updated = apply_manual_move(&rows, &prior, "a3", "a1", true).expect("move active");
-    assert!(!updated.contains(&"stale-done".to_string()));
+    let mut updated = apply_manual_move(&rows, &prior, "a3", "a1").expect("move uncatalogued");
+    assert!(updated.contains(&"stale-done".to_string()));
     assert!(updated.contains(&"ud1".to_string()));
     let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &updated)
         .into_iter()
         .map(|item| item.id.to_string())
         .collect();
     assert_eq!(ids, ["a3", "a1", "a2", "d1"]);
+    assert!(reconcile_manual_order(&rows, &mut updated));
+    assert!(!updated.contains(&"stale-done".to_string()));
+    assert!(updated.contains(&"ud1".to_string()));
 }

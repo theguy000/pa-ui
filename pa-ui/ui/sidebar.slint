@@ -116,6 +116,27 @@ export component SessionRow inherits Rectangle {
     private property <bool> suppress-click: false;
     private property <length> press-y: 0px;
 
+    function reset-drag() {
+        if root.dragging {
+            root.drag-ended(false, 0px);
+        }
+        root.dragging = false;
+        root.press-armed = false;
+        root.suppress-click = false;
+    }
+
+    changed reorderable => {
+        if !root.reorderable {
+            root.reset-drag();
+        }
+    }
+
+    changed editing => {
+        if root.editing {
+            root.reset-drag();
+        }
+    }
+
     height: 32px;
     border-radius: 6px;
     border-width: root.dragging-this ? 1px : 0px;
@@ -131,7 +152,24 @@ export component SessionRow inherits Rectangle {
         mouse-cursor: root.dragging ? MouseCursor.grabbing
             : (root.reorderable && !root.editing && self.mouse-x < 20px ? MouseCursor.grab : MouseCursor.pointer);
         pointer-event(event) => {
+            if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel)
+                && (root.dragging || root.press-armed)
+            {
+                if root.dragging {
+                    root.drag-ended(
+                        event.kind == PointerEventKind.up && root.reorderable && !root.editing,
+                        self.absolute-position.y + self.mouse-y,
+                    );
+                    root.dragging = false;
+                }
+                if event.kind == PointerEventKind.cancel || !self.has-hover || !root.reorderable || root.editing {
+                    root.suppress-click = false;
+                }
+                root.press-armed = false;
+                return;
+            }
             if !root.reorderable || root.editing {
+                root.suppress-click = false;
                 return;
             }
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
@@ -148,15 +186,6 @@ export component SessionRow inherits Rectangle {
                 } else if root.dragging {
                     root.drag-moved(cy);
                 }
-            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
-                if root.dragging {
-                    root.drag-ended(event.kind == PointerEventKind.up, self.absolute-position.y + self.mouse-y);
-                    root.dragging = false;
-                }
-                if event.kind == PointerEventKind.cancel {
-                    root.suppress-click = false;
-                }
-                root.press-armed = false;
             }
         }
         clicked => {

@@ -2100,7 +2100,7 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_selected_id().as_str(), "z");
         assert!(h.ui.get_done_folded());
 
-        let mut many: Vec<SessionRow> = (0..30)
+        let many: Vec<SessionRow> = (0..30)
             .map(|n| {
                 SessionRow::from_value(&serde_json::json!({
                     "activeSessionId": format!("s-{n:02}"),
@@ -2113,7 +2113,7 @@ mod status_strip_tests {
             })
             .collect();
         h.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
-        h.tick.sidebar.apply_roster(&h.ui, many.drain(..).collect());
+        h.tick.sidebar.apply_roster(&h.ui, many);
         h.ui.invoke_restore_sidebar_cy(-120.0);
         let before_cy = h.ui.invoke_get_sidebar_cy();
         assert!((before_cy + 120.0).abs() < 1.0, "expected -120 scroll, got {before_cy}");
@@ -2125,7 +2125,13 @@ mod status_strip_tests {
     fn manual_order_drag_reorder_persists_and_refuses_cross_group_moves() {
         let settings_path = std::path::PathBuf::from(std::env::var("PA_SETTINGS_FILE").expect("PA_SETTINGS_FILE"));
         let _ = std::fs::remove_file(&settings_path);
+        let mut seeded = crate::settings::Settings::default();
+        seeded.manual_session_order = vec!["u-offline-keep".into()];
+        std::fs::write(&settings_path, seeded.to_json()).expect("seed settings");
         let h = Harness::new();
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        let pre_connect = crate::settings::Settings::load_from(&settings_path);
+        assert_eq!(pre_connect.manual_session_order, ["u-offline-keep"]);
         let rows = vec![
             SessionRow::from_value(&serde_json::json!({
                 "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
@@ -2171,12 +2177,21 @@ mod status_strip_tests {
 
         h.tick.sidebar.apply_roster(&h.ui, rows.clone());
         h.ui.set_selected_id("a1".into());
-        h.ui.set_done_folded(true);
         h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
 
-        h.ui.invoke_session_moved("a2".into(), "a1".into());
-        h.ui.invoke_session_moved("i2".into(), "i1".into());
-        h.ui.invoke_session_moved("d2".into(), "d1".into());
+        let row_mid_y = |id: &str| -> f32 {
+            let entries = h.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == id)
+                .map(|entry| entry.at + 16.0)
+                .expect("row entry y")
+        };
+
+        h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
+        h.ui.set_done_folded(true);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+        h.ui.invoke_session_dropped("i2".into(), row_mid_y("i1"));
 
         assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
         assert_eq!(h.ui.get_selected_id().as_str(), "a1");
@@ -2186,8 +2201,8 @@ mod status_strip_tests {
         assert_eq!(search_ids_of(h.ui.get_search_rows()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
         h.ui.invoke_search_closed();
 
-        h.ui.invoke_session_moved("a2".into(), "i2".into());
-        h.ui.invoke_session_moved("i1".into(), "d1".into());
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("i2"));
+        h.ui.invoke_session_dropped("i1".into(), row_mid_y("d1"));
         assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
 
         let disk = crate::settings::Settings::load_from(&settings_path);
@@ -2215,6 +2230,7 @@ mod status_strip_tests {
         h.send(Msg::Sessions(Ok(rows_without_d1.clone())));
         h.run();
         let disk_pruned = crate::settings::Settings::load_from(&settings_path);
+        assert!(!disk_pruned.manual_session_order.contains(&"u-offline-keep".to_string()));
         assert!(!disk_pruned.manual_session_order.contains(&"ud1".to_string()));
         assert!(disk_pruned.manual_session_order.contains(&"ud2".to_string()));
 
@@ -2238,7 +2254,15 @@ mod status_strip_tests {
         h2.ui.invoke_restore_sidebar_cy(-120.0);
         let before_cy = h2.ui.invoke_get_sidebar_cy();
         assert!((before_cy + 120.0).abs() < 1.0);
-        h2.ui.invoke_session_moved("m-05".into(), "m-02".into());
+        let m02_y = {
+            let entries = h2.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == "m-02")
+                .map(|entry| entry.at + 16.0)
+                .expect("m-02 y")
+        };
+        h2.ui.invoke_session_dropped("m-05".into(), m02_y);
         let after_cy = h2.ui.invoke_get_sidebar_cy();
         assert!((after_cy - before_cy).abs() < 1.0);
     }

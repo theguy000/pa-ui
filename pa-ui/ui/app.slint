@@ -285,12 +285,11 @@ export component AppWindow inherits Window {
     }
 
     callback selection-picked(string);
-    callback session-moved(string, string);
-    in-out property <string> drag-session-id: "";
-    in-out property <string> drag-session-status: "";
-    in-out property <int> drag-source-index: -1;
-    in-out property <string> drag-target-id: "";
-    in-out property <length> drag-pointer-y: 0px;
+    callback session-dropped(string, length);
+    private property <string> drag-session-id: "";
+    private property <string> drag-session-status: "";
+    private property <int> drag-source-index: -1;
+    private property <length> drag-pointer-y: 0px;
     callback wake();
     callback scroll-paging();
     callback attachment-ready();
@@ -1062,15 +1061,10 @@ export component AppWindow inherits Window {
                             property <bool> drop-hit: root.drag-session-id != ""
                                 && !entry.is-header && !entry.folded
                                 && entry.item.status == root.drag-session-status
+                                && root.drag-pointer-y >= sidebar-list.absolute-position.y
+                                && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
                                 && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
                                 && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + 32px;
-                            changed drop-hit => {
-                                if slot.drop-hit {
-                                    root.drag-target-id = entry.item.id;
-                                } else if root.drag-target-id == entry.item.id {
-                                    root.drag-target-id = "";
-                                }
-                            }
                             visible: !entry.is-header && root.row-h(k) > 0.5px
                                 && root.row-opacity(k) > 0.01;
                             y: root.row-y(k) - 88px;
@@ -1147,7 +1141,6 @@ export component AppWindow inherits Window {
                                     root.drag-session-id = id;
                                     root.drag-session-status = status;
                                     root.drag-source-index = k;
-                                    root.drag-target-id = "";
                                     root.drag-pointer-y = py;
                                 }
                                 drag-moved(py) => {
@@ -1155,13 +1148,18 @@ export component AppWindow inherits Window {
                                 }
                                 drag-ended(commit, py) => {
                                     root.drag-pointer-y = py;
-                                    if commit && root.drag-target-id != "" && root.drag-target-id != root.drag-session-id {
-                                        root.session-moved(root.drag-session-id, root.drag-target-id);
+                                    if commit
+                                        && py >= sidebar-list.absolute-position.y
+                                        && py < sidebar-list.absolute-position.y + sidebar-list.height
+                                    {
+                                        root.session-dropped(
+                                            root.drag-session-id,
+                                            py - sidebar-content.absolute-position.y + 88px,
+                                        );
                                     }
                                     root.drag-session-id = "";
                                     root.drag-session-status = "";
                                     root.drag-source-index = -1;
-                                    root.drag-target-id = "";
                                 }
                             }
                         }
