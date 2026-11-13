@@ -508,6 +508,7 @@ export component AppWindow inherits Window {
     // gist exists. `share-copied` says whether the window managed to put the
     // link on the clipboard; the card's Copy control always offers a second try.
     in-out property <bool> share-open: false;
+    in-out property <int> share-focus-tick: 0;
     in-out property <bool> share-pending: false;
     in-out property <string> share-url: "";
     in-out property <string> share-error: "";
@@ -2132,6 +2133,7 @@ export component AppWindow inherits Window {
             error: root.share-error;
             action-error: root.share-action-error;
             copied: root.share-copied;
+            focus-tick: root.share-focus-tick;
             copy-requested => { root.share-copy-requested(); }
             open-requested => { root.share-open-link-requested(); }
             dismissed => { root.share-dismissed(); }
@@ -2215,7 +2217,8 @@ export component AppWindow inherits Window {
         }
     }
 
-    // drawn above content and the drag surface beneath it
+    // Below the modal: while the dialog is up its backdrop covers this bar, so
+    // no title bar control can be clicked behind the question.
     title-bar := TitleBar {
         y: 0;
         width: 100%;

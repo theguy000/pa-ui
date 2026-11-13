@@ -17,6 +17,7 @@ export component SharePopup inherits Panel {
     in property <string> error: "";
     in property <string> action-error: "";
     in property <bool> copied: false;
+    in property <int> focus-tick: 0;
 
     callback copy-requested();
     callback open-requested();
@@ -273,4 +274,6 @@ export component SharePopup inherits Panel {
             reject
         }
     }
+
+    changed focus-tick => { keys.focus(); }
 }

@@ -144,10 +144,20 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
-    pub(crate) fn settled_session_id(&self) -> Option<String> {
+    pub(crate) fn settled_active_session_id(&self) -> Option<String> {
         let settled = self.settled_session.take();
         self.settled_session.set(settled.clone());
         settled
+    }
+
+    /// Whether any top-level Session still has a turn in flight, the settled
+    /// selection included: a close has to warn about work it would leave behind.
+    pub(crate) fn has_running_top_level_turn(&self, ui: &AppWindow) -> bool {
+        if ui.get_busy() {
+            return true;
+        }
+        let settled = self.settled_active_session_id();
+        self.sidebar.has_running_top_level(settled.as_deref())
     }
 
     fn follow_selection(
@@ -3473,10 +3483,16 @@ mod status_strip_tests {
         h.tick.sidebar.seed(&h.ui, vec![stale_only]);
         h.tick.settled_session.set(Some("idle-1".to_string()));
         h.ui.set_busy(false);
-        assert!(!h.tick.sidebar.has_running_top_level(h.tick.settled_session_id().as_deref()));
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
         h.ui.invoke_quit_requested();
         assert!(!h.ui.get_quit_confirm_open());
         h.tick.settled_session.set(None);
+
+        h.ui.set_busy(true);
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone()]);
+        assert!(h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
 
         h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
         h.ui.set_setting_confirm_quit(false);
@@ -3600,6 +3616,7 @@ mod status_strip_tests {
         h.ui.set_search_open(false);
 
         h.ui.set_settings_menu(true);
+        let settings_tick = h.ui.get_settings_focus_tick();
         assert_eq!(
             h.ui.window()
                 .dispatch_event_with_result(WindowEvent::CloseRequested)
@@ -3608,11 +3625,12 @@ mod status_strip_tests {
         );
         press_key(&h, Key::Escape);
         assert!(!h.ui.get_quit_confirm_open());
-        type_char(&h, "x");
-        assert_eq!(h.ui.get_composer_text().as_str(), "");
-        h.ui.set_settings_menu(false);
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_focus_tick(), settings_tick + 1);
+        crate::settings::close_settings(&h.ui);
 
         h.ui.set_share_open(true);
+        let share_tick = h.ui.get_share_focus_tick();
         assert_eq!(
             h.ui.window()
                 .dispatch_event_with_result(WindowEvent::CloseRequested)
@@ -3621,8 +3639,8 @@ mod status_strip_tests {
         );
         press_key(&h, Key::Escape);
         assert!(!h.ui.get_quit_confirm_open());
-        type_char(&h, "y");
-        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        assert!(h.ui.get_share_open());
+        assert_eq!(h.ui.get_share_focus_tick(), share_tick + 1);
         h.ui.set_share_open(false);
         h.ui.invoke_focus_composer();
         assert_eq!(

@@ -96,6 +96,9 @@ const ON_ROW_CONTROL_HOVER: &[Role] = &[Role::PanelSurface, Role::QueueRowContro
 // The strip, and the pill the queue is opened from: one field laid on another.
 const ON_STRIP: &[Role] = &[Role::StatusStripSurface];
 const ON_STRIP_PILL: &[Role] = &[Role::StatusStripSurface, Role::StatusStripQueueFillHover];
+// The quit dialog: its own panel, and the field its ending action paints.
+const ON_QUIT_DANGER: &[Role] = &[Role::PanelSurface, Role::QuitConfirmDangerFill];
+const ON_QUIT_DANGER_HOVER: &[Role] = &[Role::PanelSurface, Role::QuitConfirmDangerFillHover];
 
 /// One colour as the reader sees it: a role, and the fields it is drawn on.
 struct Mark {
@@ -658,6 +661,39 @@ const PAIRS: &[Pair] = &[
         ink: Mark { role: Role::QueueRowDeleteMark, on: ON_ROW_CONTROL_HOVER },
         what: "the bin on a waiting row, under the pointer",
         floor: MARK,
+    },
+    // The quit dialog names the reason it is up and how the app ends: both are
+    // read, so both clear the body floor on the panel. Its ending action carries
+    // its words on a field of its own, in both states the pointer can leave it.
+    Pair {
+        ink: Mark { role: Role::QuitConfirmInk, on: ON_PANEL },
+        what: "the quit dialog's title",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QuitConfirmBodyInk, on: ON_PANEL },
+        what: "the quit dialog's sentence",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QuitConfirmWarningMark, on: ON_PANEL },
+        what: "the warning mark in the quit dialog",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QuitConfirmFocusRing, on: ON_PANEL },
+        what: "the ring around the quit dialog's chosen action",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::QuitConfirmDangerInk, on: ON_QUIT_DANGER },
+        what: "the words on the action that ends the app",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::QuitConfirmDangerInk, on: ON_QUIT_DANGER_HOVER },
+        what: "the words on the action that ends the app, under the pointer",
+        floor: BODY,
     },
     // The strip. The word that says the turn is working and the count the queue
     // pill carries are the two things a reader glances at, so both are held to

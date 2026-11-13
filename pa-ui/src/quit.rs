@@ -21,9 +21,10 @@ fn evaluate_close(ui: &AppWindow, tick: &Tick, confirmed: &Cell<bool>) -> CloseD
     if confirmed.get() {
         return CloseDecision::Quit;
     }
-    let settled = tick.settled_session_id();
-    let running = ui.get_busy() || tick.sidebar.has_running_top_level(settled.as_deref());
-    close_decision(running, ui.get_setting_confirm_quit())
+    close_decision(
+        tick.has_running_top_level_turn(ui),
+        ui.get_setting_confirm_quit(),
+    )
 }
 
 fn open_confirmation(ui: &AppWindow) {
@@ -84,7 +85,11 @@ pub(crate) fn bind(ui: &AppWindow, tick: &Rc<Tick>) {
             ui.set_quit_confirm_open(false);
             if ui.get_search_open() {
                 ui.set_search_focus_tick(ui.get_search_focus_tick() + 1);
-            } else if !ui.get_settings_menu() && !ui.get_share_open() {
+            } else if ui.get_settings_menu() {
+                ui.set_settings_focus_tick(ui.get_settings_focus_tick() + 1);
+            } else if ui.get_share_open() {
+                ui.set_share_focus_tick(ui.get_share_focus_tick() + 1);
+            } else {
                 ui.invoke_focus_composer();
             }
         });

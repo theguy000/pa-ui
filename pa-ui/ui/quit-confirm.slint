@@ -10,7 +10,7 @@ component QuitAction inherits Button {
     height: 32px;
     border-radius: 8px;
     border-width: root.focused ? 1px : 0px;
-    border-color: Theme.sidebar-new-session-ink;
+    border-color: Theme.quit-confirm-focus-ring;
     described: root.label;
 
     Text {
@@ -38,14 +38,17 @@ export component QuitConfirmPopup inherits Panel {
     border-radius: 20px;
     border-width: 0px;
 
-    changed focus-tick => {
+    function reset-focus() {
         root.focus-quit = false;
         keys.focus();
     }
 
+    changed focus-tick => { root.reset-focus(); }
+
     IconWarning {
         x: 20px;
         y: 20px;
+        tint: Theme.quit-confirm-warning-mark;
     }
 
     Text {
@@ -54,7 +57,7 @@ export component QuitConfirmPopup inherits Panel {
         width: parent.width - 66px;
         height: 28px;
         text: "A Session is still running";
-        color: Theme.search-row-ink-hover;
+        color: Theme.quit-confirm-ink;
         font-size: 16px;
         font-weight: 600;
         vertical-alignment: center;
@@ -76,7 +79,7 @@ export component QuitConfirmPopup inherits Panel {
         width: parent.width - 44px;
         height: 44px;
         text: "A Session still has a running turn. Quitting closes the window without stopping it.";
-        color: Theme.search-row-ink;
+        color: Theme.quit-confirm-body-ink;
         font-size: 12px;
         wrap: word-wrap;
         overflow: elide;
@@ -88,7 +91,7 @@ export component QuitConfirmPopup inherits Panel {
         width: 84px;
         kind: ButtonKind.primary;
         label: "Cancel";
-        label-color: Theme.sidebar-new-session-ink;
+        label-color: Theme.quit-confirm-ink;
         focused: keys.has-focus && !root.focus-quit;
         clicked => { root.cancelled(); }
     }
@@ -97,9 +100,10 @@ export component QuitConfirmPopup inherits Panel {
         x: parent.width - 22px - 72px;
         y: parent.height - 54px;
         width: 72px;
-        kind: ButtonKind.danger;
         label: "Quit";
-        label-color: Theme.composer-stop-mark;
+        fill: Theme.quit-confirm-danger-fill;
+        fill-hover: Theme.quit-confirm-danger-fill-hover;
+        label-color: Theme.quit-confirm-danger-ink;
         focused: keys.has-focus && root.focus-quit;
         clicked => { root.confirmed(); }
     }
@@ -109,10 +113,7 @@ export component QuitConfirmPopup inherits Panel {
         y: 0;
         width: 0px;
         height: 0px;
-        init => {
-            root.focus-quit = false;
-            self.focus();
-        }
+        init => { root.reset-focus(); }
         key-pressed(event) => {
             if event.text == Key.Escape {
                 root.cancelled();

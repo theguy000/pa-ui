@@ -805,10 +805,24 @@ pub(crate) enum Role {
     ButtonDangerFill,
     /// That field with the pointer on it.
     ButtonDangerFillHover,
+    /// The words on the quit dialog's own surface, and on its primary action.
+    QuitConfirmInk,
+    /// The sentence under the quit dialog's title.
+    QuitConfirmBodyInk,
+    /// The warning mark beside that title.
+    QuitConfirmWarningMark,
+    /// The ring around the quit dialog's chosen action.
+    QuitConfirmFocusRing,
+    /// The field the action that ends the app paints.
+    QuitConfirmDangerFill,
+    /// That field with the pointer on it.
+    QuitConfirmDangerFillHover,
+    /// The words on that field.
+    QuitConfirmDangerInk,
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 195] = [
+    pub(crate) const ALL: [Role; 202] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -1004,6 +1018,13 @@ impl Role {
         Role::ButtonPrimaryFillHover,
         Role::ButtonDangerFill,
         Role::ButtonDangerFillHover,
+        Role::QuitConfirmInk,
+        Role::QuitConfirmBodyInk,
+        Role::QuitConfirmWarningMark,
+        Role::QuitConfirmFocusRing,
+        Role::QuitConfirmDangerFill,
+        Role::QuitConfirmDangerFillHover,
+        Role::QuitConfirmDangerInk,
     ];
 
     /// The name a theme file and the theme global both use.
@@ -1204,6 +1225,13 @@ impl Role {
             Role::ButtonPrimaryFillHover => "button-primary-fill-hover",
             Role::ButtonDangerFill => "button-danger-fill",
             Role::ButtonDangerFillHover => "button-danger-fill-hover",
+            Role::QuitConfirmInk => "quit-confirm-ink",
+            Role::QuitConfirmBodyInk => "quit-confirm-body-ink",
+            Role::QuitConfirmWarningMark => "quit-confirm-warning-mark",
+            Role::QuitConfirmFocusRing => "quit-confirm-focus-ring",
+            Role::QuitConfirmDangerFill => "quit-confirm-danger-fill",
+            Role::QuitConfirmDangerFillHover => "quit-confirm-danger-fill-hover",
+            Role::QuitConfirmDangerInk => "quit-confirm-danger-ink",
         }
     }
 
@@ -1442,6 +1470,13 @@ impl Role {
             }
             Role::ButtonDangerFill => Derivation::Fixed(Rgba::hex("#a2543f")),
             Role::ButtonDangerFillHover => Derivation::Fixed(Rgba::hex("#b8614c")),
+            Role::QuitConfirmInk => Derivation::Palette(Palette::Ink),
+            Role::QuitConfirmBodyInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.8302),
+            Role::QuitConfirmWarningMark => Derivation::Mix(Palette::Danger, Palette::Ink, 0.5),
+            Role::QuitConfirmFocusRing => Derivation::Palette(Palette::Ink),
+            Role::QuitConfirmDangerFill => Derivation::Fixed(Rgba::hex("#8f3b2c")),
+            Role::QuitConfirmDangerFillHover => Derivation::Fixed(Rgba::hex("#a64635")),
+            Role::QuitConfirmDangerInk => Derivation::Fixed(Rgba::hex("#f7ebe7")),
             Role::PanelSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
             Role::PanelEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.1368),
             Role::PanelShadow => Derivation::Fixed(Rgba::hex("#00000080")),
