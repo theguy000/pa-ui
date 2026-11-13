@@ -45,9 +45,7 @@ impl Live {
     }
 
     pub fn set_timestamp(&mut self, timestamp: String) {
-        if self.timestamp.is_empty() && !timestamp.is_empty() {
-            self.timestamp = timestamp;
-        }
+        self.timestamp = timestamp;
     }
 
     pub fn push_text(&mut self, delta: &str) {
@@ -140,17 +138,10 @@ impl Live {
                 }
             }
         }
-        let mut stamped = false;
         for row in &mut out {
             row.message.clone_from(&self.message);
-            if !stamped
-                && !self.timestamp.is_empty()
-                && matches!(row.kind, transcript::KIND_USER | transcript::KIND_AGENT)
-            {
-                row.timestamp.clone_from(&self.timestamp);
-                stamped = true;
-            }
         }
+        transcript::stamp_rows(&mut out, &self.timestamp);
         out
     }
 }

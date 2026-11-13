@@ -258,8 +258,6 @@ pub(crate) fn apply(ui: &AppWindow, settings: &Settings) {
     typ.set_item(t.size.item_size);
 
     let g = ui.global::<Appearance>();
-    g.set_body_size(t.size.body_size);
-    g.set_item_size(t.size.item_size);
     g.set_label_size(t.size.label_size);
     g.set_meta_size(t.size.meta_size);
     g.set_session_header_size(t.size.session_header_size);
@@ -277,6 +275,7 @@ pub(crate) fn apply(ui: &AppWindow, settings: &Settings) {
     g.set_expanded_pad_y(t.spacing.expanded_pad_y);
     g.set_expanded_gap(t.spacing.expanded_gap);
     g.set_show_timestamps(t.show_timestamps);
+    g.set_reduce_motion(settings.reduce_motion);
     g.set_hover_duration(t.motion.hover_ms);
     g.set_menu_duration(t.motion.menu_ms);
     g.set_fold_duration(t.motion.fold_ms);
@@ -297,19 +296,51 @@ mod tests {
         assert_eq!(InterfaceSize::parse(""), InterfaceSize::Default);
         assert_eq!(InterfaceSize::parse("Huge"), InterfaceSize::Default);
 
-        let compact = size_tokens(InterfaceSize::Compact);
-        let default = size_tokens(InterfaceSize::Default);
-        let large = size_tokens(InterfaceSize::Large);
-        assert!(compact.body_size < default.body_size && default.body_size < large.body_size);
-        assert!(compact.item_size < default.item_size && default.item_size < large.item_size);
-        assert!(compact.label_size < default.label_size && default.label_size < large.label_size);
-        assert!(
-            compact.session_row_height < default.session_row_height
-                && default.session_row_height < large.session_row_height
+        assert_eq!(
+            size_tokens(InterfaceSize::Compact),
+            SizeTokens {
+                body_size: 13.5,
+                item_size: 12.0,
+                label_size: 10.0,
+                meta_size: 9.0,
+                session_header_size: 11.5,
+                session_count_size: 10.5,
+                session_row_height: 28.0,
+                code_size: 10.5,
+                cell_code_size: 11.0,
+                cell_output_size: 10.0,
+            }
         );
-        assert_eq!(default.body_size, 15.0);
-        assert_eq!(default.item_size, 13.0);
-        assert_eq!(default.session_row_height, 32.0);
+        assert_eq!(
+            size_tokens(InterfaceSize::Default),
+            SizeTokens {
+                body_size: 15.0,
+                item_size: 13.0,
+                label_size: 11.0,
+                meta_size: 10.0,
+                session_header_size: 12.5,
+                session_count_size: 11.5,
+                session_row_height: 32.0,
+                code_size: 11.5,
+                cell_code_size: 12.0,
+                cell_output_size: 11.0,
+            }
+        );
+        assert_eq!(
+            size_tokens(InterfaceSize::Large),
+            SizeTokens {
+                body_size: 17.0,
+                item_size: 15.0,
+                label_size: 12.5,
+                meta_size: 11.0,
+                session_header_size: 14.0,
+                session_count_size: 13.0,
+                session_row_height: 36.0,
+                code_size: 13.0,
+                cell_code_size: 13.5,
+                cell_output_size: 12.5,
+            }
+        );
     }
 
     #[test]
@@ -322,27 +353,53 @@ mod tests {
 
     #[test]
     fn row_spacing_maps_comfortable_and_compact() {
-        let comfortable = spacing_tokens(RowSpacing::parse("Comfortable"));
-        let compact = spacing_tokens(RowSpacing::parse("Compact"));
-        let fallback = spacing_tokens(RowSpacing::parse("Weird"));
-        assert_eq!(fallback, comfortable);
-        assert!(compact.row_pad_y < comfortable.row_pad_y);
-        assert!(compact.cell_pad_y < comfortable.cell_pad_y);
-        assert!(compact.code_pad_y < comfortable.code_pad_y);
-        assert!(compact.expanded_pad_y < comfortable.expanded_pad_y);
+        let comfortable = SpacingTokens {
+            row_pad_y: 6.0,
+            cell_pad_y: 4.0,
+            code_pad_y: 5.0,
+            cell_gap: 6.0,
+            expanded_pad_x: 12.0,
+            expanded_pad_y: 10.0,
+            expanded_gap: 8.0,
+        };
+        let compact = SpacingTokens {
+            row_pad_y: 3.0,
+            cell_pad_y: 2.0,
+            code_pad_y: 2.0,
+            cell_gap: 4.0,
+            expanded_pad_x: 9.0,
+            expanded_pad_y: 6.0,
+            expanded_gap: 5.0,
+        };
+        assert_eq!(spacing_tokens(RowSpacing::parse("Comfortable")), comfortable);
+        assert_eq!(spacing_tokens(RowSpacing::parse("Compact")), compact);
+        assert_eq!(spacing_tokens(RowSpacing::parse("Weird")), comfortable);
     }
 
     #[test]
     fn reduce_motion_zeroes_nonessential_durations_and_disables_glide() {
-        let normal = motion_tokens(false);
-        let reduced = motion_tokens(true);
-        assert!(normal.hover_ms > 0 && normal.fold_ms > 0 && normal.smooth_scroll);
-        assert_eq!(reduced.hover_ms, 0);
-        assert_eq!(reduced.menu_ms, 0);
-        assert_eq!(reduced.fold_ms, 0);
-        assert_eq!(reduced.fold_caret_ms, 0);
-        assert_eq!(reduced.band_ms, 0);
-        assert!(!reduced.smooth_scroll);
+        assert_eq!(
+            motion_tokens(false),
+            MotionTokens {
+                hover_ms: 120,
+                menu_ms: 90,
+                fold_ms: 220,
+                fold_caret_ms: 160,
+                band_ms: 170,
+                smooth_scroll: true,
+            }
+        );
+        assert_eq!(
+            motion_tokens(true),
+            MotionTokens {
+                hover_ms: 0,
+                menu_ms: 0,
+                fold_ms: 0,
+                fold_caret_ms: 0,
+                band_ms: 0,
+                smooth_scroll: false,
+            }
+        );
     }
 
     #[test]
@@ -356,11 +413,14 @@ mod tests {
             ..Settings::default()
         };
         let t = tokens(&settings);
-        assert_eq!(t.size, size_tokens(InterfaceSize::Large));
+        assert_eq!(t.size.body_size, 17.0);
+        assert_eq!(t.size.session_row_height, 36.0);
         assert_eq!(t.code_font, "JetBrains Mono");
-        assert_eq!(t.spacing, spacing_tokens(RowSpacing::Compact));
+        assert_eq!(t.spacing.row_pad_y, 3.0);
+        assert_eq!(t.spacing.expanded_pad_x, 9.0);
         assert!(t.show_timestamps);
-        assert_eq!(t.motion, motion_tokens(true));
+        assert_eq!(t.motion.hover_ms, 0);
+        assert!(!t.motion.smooth_scroll);
     }
 
     #[test]

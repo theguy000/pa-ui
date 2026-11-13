@@ -192,14 +192,14 @@ export component AppWindow inherits Window {
     // turn that queued it has ended.
     in-out property <length> busy-h: root.busy || root.queued-count > 0 ? 26px : 0px;
     animate busy-h {
-        duration: Appearance.band-duration > 0ms ? (root.busy ? 190ms : 110ms) : 0ms;
+        duration: !Appearance.reduce-motion ? (root.busy ? 190ms : 110ms) : 0ms;
         easing: root.busy ? ease-out : ease-in;
     }
     // the contents come in a beat after the gap opens, and go before it shuts
     in-out property <float> busy-fade: root.busy || root.queued-count > 0 ? 1.0 : 0.0;
     animate busy-fade {
-        duration: Appearance.band-duration > 0ms ? (root.busy ? 150ms : 90ms) : 0ms;
-        delay: Appearance.band-duration > 0ms ? (root.busy ? 60ms : 0ms) : 0ms;
+        duration: !Appearance.reduce-motion ? (root.busy ? 150ms : 90ms) : 0ms;
+        delay: !Appearance.reduce-motion ? (root.busy ? 60ms : 0ms) : 0ms;
         easing: ease-out;
     }
     out property <length> composer-total: root.box-height + 46px + root.busy-h;
@@ -561,7 +561,7 @@ export component AppWindow inherits Window {
     in-out property <bool> composer-has-text: false;
     out property <bool> stop-mode: root.busy && !root.composer-has-text;
     in-out property <float> stop-mix: root.stop-mode ? 1.0 : 0.0;
-    animate stop-mix { duration: Appearance.band-duration > 0ms ? 240ms : 0ms; easing: ease-in-out; }
+    animate stop-mix { duration: !Appearance.reduce-motion ? 240ms : 0ms; easing: ease-in-out; }
     // the composer taking the caret is "somewhere else" too
 
     // A latch, not a measurement: while it is true a new row pulls the view
@@ -1025,7 +1025,7 @@ export component AppWindow inherits Window {
                                 color: new-session.hot
                                     ? Theme.sidebar-new-session-ink-hover
                                     : Theme.sidebar-new-session-ink;
-                                font-size: Appearance.item-size - 1px;
+                                font-size: Type.item - 1px;
                             }
                         }
                     }
@@ -1764,7 +1764,7 @@ export component AppWindow inherits Window {
                 fill: root.stop-mode ? Theme.button-danger-fill : Theme.composer-send-fill;
                 fill-hover: root.stop-mode
                     ? Theme.button-danger-fill-hover : Theme.composer-send-fill-hover;
-                fade: 240ms;
+                fade: !Appearance.reduce-motion ? 240ms : 0ms;
                 fade-curve: ease-in-out;
                 described: root.stop-mode ? "Stop the turn" : "Send";
                 clicked => {

@@ -445,8 +445,7 @@ pub(crate) fn entries_height_at(entries: &[SessionEntry], row_height: f32) -> f3
 }
 
 fn row_height_for(ui: &AppWindow) -> f32 {
-    let h = ui.global::<crate::Appearance>().get_session_row_height();
-    if h > 0.0 { h } else { ROW_HEIGHT as f32 }
+    ui.global::<crate::Appearance>().get_session_row_height()
 }
 
 pub(crate) const HEADER_HEIGHT: i32 = 32;

@@ -3488,5 +3488,32 @@ mod status_strip_tests {
         ).0;
         assert!(!built[0].timestamp.is_empty());
         assert_eq!(built[1].timestamp, "");
+
+        let non_prose = transcript::build(
+            &[
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:00:00Z",
+                    "content": [{"type": "text", "text": "```rust
+fn main() {}
+```"}]
+                }),
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:01:00Z",
+                    "content": [{"type": "image", "data": "AA=="}]
+                }),
+                serde_json::json!({
+                    "role": "assistant",
+                    "timestamp": "2026-11-10T12:02:00Z",
+                    "content": [{"type": "text", "text": "> quoted"}]
+                }),
+            ],
+            10,
+        ).0;
+        assert_eq!(non_prose.len(), 3);
+        assert!(!non_prose[0].timestamp.is_empty());
+        assert!(!non_prose[1].timestamp.is_empty());
+        assert!(!non_prose[2].timestamp.is_empty());
     }
 }

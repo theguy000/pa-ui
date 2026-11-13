@@ -206,7 +206,7 @@ export component SessionRow inherits Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
                 tint: menu.on ? Theme.sidebar-name-ink-selected : transparent;
-                animate tint { duration: Appearance.menu-duration; }
+                animate tint { duration: Appearance.reduce-motion ? 0ms : 100ms; }
             }
         }
     }

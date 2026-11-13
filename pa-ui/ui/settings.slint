@@ -8,7 +8,7 @@ import {
     IconSettingsAppearance,
     IconSettingsGeneral
 } from "icons.slint";
-import { ThemeItem } from "types.slint";
+import { Appearance, ThemeItem, Type } from "types.slint";
 import { Theme } from "theme.slint";
 
 component SettingsToggle inherits Button {
@@ -26,7 +26,7 @@ component SettingsToggle inherits Button {
         height: 16px;
         border-radius: 8px;
         background: root.checked ? Theme.composer-send-mark : Theme.search-row-ink-hover;
-        animate x { duration: 120ms; easing: ease-out; }
+        animate x { duration: Appearance.hover-duration; easing: ease-out; }
     }
 }
 
@@ -52,7 +52,7 @@ component SettingsChoice inherits Button {
         height: 100%;
         text: root.value;
         color: Theme.search-row-ink-hover;
-        font-size: 12px;
+        font-size: Type.item - 1px;
         vertical-alignment: center;
         wrap: no-wrap;
         overflow: elide;
@@ -102,7 +102,7 @@ component SettingsChoice inherits Button {
                     text: option;
                     color: option == root.value || option-touch.has-hover
                         ? Theme.search-row-ink-hover : Theme.search-row-ink;
-                    font-size: 12px;
+                    font-size: Type.item - 1px;
                     vertical-alignment: center;
                     wrap: no-wrap;
                     overflow: elide;
@@ -321,7 +321,7 @@ component SettingsRow inherits Rectangle {
         height: 18px;
         text: root.title;
         color: Theme.model-menu-row-ink-current;
-        font-size: 13px;
+        font-size: Type.item;
         font-weight: 600;
         vertical-alignment: center;
         wrap: no-wrap;
@@ -335,7 +335,7 @@ component SettingsRow inherits Rectangle {
         height: 18px;
         text: root.description;
         color: Theme.search-row-ink;
-        font-size: 11.5px;
+        font-size: Appearance.session-count-size;
         vertical-alignment: center;
         wrap: no-wrap;
         overflow: elide;
@@ -351,7 +351,7 @@ component SettingsSection inherits VerticalLayout {
     Text {
         text: root.heading;
         color: Theme.model-menu-row-ink-current;
-        font-size: 14px;
+        font-size: Type.item + 1px;
         font-weight: 600;
     }
 

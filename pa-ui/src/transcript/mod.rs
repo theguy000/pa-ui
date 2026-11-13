@@ -498,16 +498,27 @@ fn build_message(
             _ => {}
         }
     }
-    let stamp = crate::appearance::format_timestamp(message.get("timestamp"));
-    let mut stamped = false;
     for row in &mut rows {
         row.message = owner.to_string();
-        if !stamped && !stamp.is_empty() && matches!(row.kind, KIND_USER | KIND_AGENT) {
-            row.timestamp.clone_from(&stamp);
-            stamped = true;
-        }
+    }
+    if matches!(role, "user" | "assistant") {
+        let stamp = crate::appearance::format_timestamp(message.get("timestamp"));
+        stamp_rows(&mut rows, &stamp);
     }
     rows
+}
+
+pub(crate) fn stamp_rows(rows: &mut [Row], stamp: &str) {
+    if stamp.is_empty() {
+        return;
+    }
+    if let Some(target) = rows
+        .iter_mut()
+        .find(|row| matches!(row.kind, KIND_USER | KIND_AGENT))
+        .or_else(|| rows.first_mut())
+    {
+        target.timestamp = stamp.to_string();
+    }
 }
 
 /// Build the transcript rows for the newest `limit` messages.

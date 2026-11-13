@@ -295,25 +295,37 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    if data.kind == 11 : Rectangle {
-        height: quote-text.preferred-height + Appearance.row-pad-y * 2;
-        quote-bar := Rectangle {
-            x: 24px;
-            y: Appearance.row-pad-y;
-            width: 2px;
-            height: parent.height - Appearance.row-pad-y * 2;
-            border-radius: 1px;
-            background: Theme.transcript-quote-edge;
+    if data.kind == 11 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
         }
-        quote-text := StyledText {
-            x: 36px;
-            y: Appearance.row-pad-y;
-            width: parent.width - 60px;
-            text: data.body;
-            default-color: Theme.transcript-quote-ink;
-            default-font-size: Type.body;
-            link-color: Theme.transcript-link-ink;
-            link-clicked(link) => { root.open-link(link); }
+        Rectangle {
+            height: quote-text.preferred-height;
+            quote-bar := Rectangle {
+                x: 0px;
+                y: 0px;
+                width: 2px;
+                height: parent.height;
+                border-radius: 1px;
+                background: Theme.transcript-quote-edge;
+            }
+            quote-text := StyledText {
+                x: 12px;
+                y: 0px;
+                width: parent.width - 12px;
+                text: data.body;
+                default-color: Theme.transcript-quote-ink;
+                default-font-size: Type.body;
+                link-color: Theme.transcript-link-ink;
+                link-clicked(link) => { root.open-link(link); }
+            }
         }
     }
 
@@ -346,6 +358,12 @@ export component TranscriptRow inherits VerticalLayout {
                     font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
+                if Appearance.show-timestamps && data.timestamp != "" : Text {
+                    text: data.timestamp;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: Appearance.meta-size;
+                    vertical-alignment: center;
+                }
 
                 Rectangle {
                     width: 10px;
@@ -365,7 +383,10 @@ export component TranscriptRow inherits VerticalLayout {
             border-color: Theme.transcript-thinking-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
-            height: min(think-text.preferred-height + 24px, 6 * think-probe.preferred-height + 24px);
+            height: min(
+                think-text.preferred-height + (Appearance.expanded-pad-y + 2px) * 2,
+                6 * think-probe.preferred-height + (Appearance.expanded-pad-y + 2px) * 2
+            );
             think-probe := Text {
                 x: -200px;
                 y: 0px;
@@ -380,8 +401,8 @@ export component TranscriptRow inherits VerticalLayout {
                 VerticalLayout {
                     padding-left: Appearance.expanded-pad-x;
                     padding-right: Appearance.expanded-pad-x;
-                    padding-top: Appearance.expanded-pad-y;
-                    padding-bottom: Appearance.expanded-pad-y;
+                    padding-top: Appearance.expanded-pad-y + 2px;
+                    padding-bottom: Appearance.expanded-pad-y + 2px;
                     think-text := StyledText {
                         text: data.body;
                         default-color: Theme.transcript-thinking-ink;
@@ -463,6 +484,12 @@ export component TranscriptRow inherits VerticalLayout {
                     font-size: Appearance.meta-size;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
+                }
+                if Appearance.show-timestamps && data.timestamp != "" : Text {
+                    text: data.timestamp;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: Appearance.meta-size;
+                    vertical-alignment: center;
                 }
 
                 if data.failed : Rectangle {
@@ -617,7 +644,7 @@ export component TranscriptRow inherits VerticalLayout {
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
-                    default-font-size: Appearance.item-size;
+                    default-font-size: Type.item;
                     link-clicked(link) => { root.open-link(link); }
                 }
             }
@@ -665,7 +692,7 @@ export component TranscriptRow inherits VerticalLayout {
         padding-top: Appearance.code-pad-y;
         padding-bottom: Appearance.code-pad-y;
         Rectangle {
-            height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta == "" ? 0px : 15px);
+            height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
             background: Theme.transcript-code-fill;
             border-radius: 8px;
 
@@ -674,12 +701,19 @@ export component TranscriptRow inherits VerticalLayout {
                 y: 9px;
                 text: data.meta;
                 color: Theme.transcript-code-label-ink;
-                font-size: 9px;
+                font-size: Appearance.meta-size - 1px;
                 visible: data.meta != "";
+            }
+            if Appearance.show-timestamps && data.timestamp != "" : Text {
+                x: parent.width - 12px - self.preferred-width;
+                y: 9px;
+                text: data.timestamp;
+                color: Theme.transcript-cell-meta-ink;
+                font-size: Appearance.meta-size;
             }
             code-text := StyledText {
                 x: 12px;
-                y: Appearance.expanded-pad-y + 2px + (data.meta == "" ? 0px : 15px);
+                y: Appearance.expanded-pad-y + 2px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
                 width: parent.width - 24px;
                 text: data.code;
                 default-color: Theme.transcript-code-ink;
@@ -695,6 +729,12 @@ export component TranscriptRow inherits VerticalLayout {
         padding-right: 24px;
         padding-top: Appearance.code-pad-y;
         padding-bottom: Appearance.code-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+        }
         table-text := StyledText {
             text: data.body;
             default-color: Theme.transcript-table-ink;
@@ -706,10 +746,17 @@ export component TranscriptRow inherits VerticalLayout {
     // as the bubble so the sent turn reads as one thing
     if data.kind == 8 : HorizontalLayout {
         alignment: end;
+        spacing: 8px;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.cell-pad-y;
         padding-bottom: Appearance.cell-pad-y;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+            vertical-alignment: center;
+        }
         Rectangle {
             width: 220px;
             height: 150px;

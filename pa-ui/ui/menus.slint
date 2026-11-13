@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { Appearance, EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
+import { Appearance, EffortItem, ModelGroup, SessionMenuItem, SlashItem, Type } from "types.slint";
 import { IconCaret, IconCheck, IconMenuCopy, IconMenuDone, IconMenuPencil,
     IconMenuShare, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
@@ -60,20 +60,20 @@ export component SlashMenu inherits Panel {
                     spacing: 8px;
                     Text {
                         text: "/" + item.name;
-                        font-size: 13px;
+                        font-size: Type.item;
                         color: index == root.index || slash-touch.has-hover
                             ? Theme.slash-menu-row-ink-hover : Theme.slash-menu-row-ink;
                         vertical-alignment: center;
                     }
                     if (index == root.index || slash-touch.has-hover) && item.hint != "" : Text {
                         text: item.hint;
-                        font-size: 11px;
+                        font-size: Appearance.label-size;
                         color: Theme.slash-menu-hint-ink;
                         vertical-alignment: center;
                     }
                     Text {
                         text: item.description;
-                        font-size: 11px;
+                        font-size: Appearance.label-size;
                         color: Theme.slash-menu-description-ink;
                         overflow: elide;
                         vertical-alignment: center;
@@ -358,7 +358,7 @@ export component EffortLadder inherits Panel {
             text: item.label;
             color: item.current ? Theme.effort-ladder-row-ink-current
                 : Theme.effort-ladder-row-ink;
-            font-size: 11px;
+            font-size: Appearance.label-size;
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
@@ -473,7 +473,7 @@ export component SessionMenu inherits Panel {
             height: 100%;
             text: item.label;
             color: parent.row-ink;
-            font-size: 12.5px;
+            font-size: Appearance.session-header-size;
             vertical-alignment: item.note == "" ? center : top;
             wrap: no-wrap;
             overflow: elide;
@@ -486,7 +486,7 @@ export component SessionMenu inherits Panel {
             height: parent.height - 14px;
             text: item.note;
             color: parent.row-ink;
-            font-size: 10.5px;
+            font-size: Appearance.session-count-size - 1px;
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
