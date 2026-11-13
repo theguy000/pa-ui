@@ -3453,10 +3453,11 @@ mod status_strip_tests {
             global.get_panel_surface(),
             theme.get(crate::theme::Role::PanelSurface).to_slint()
         );
+        let shipped_ink = global.get_quit_confirm_ink();
         crate::theme::apply(&h.ui, &crate::theme::light());
         assert_ne!(
             h.ui.global::<crate::Theme>().get_quit_confirm_ink(),
-            global.get_quit_confirm_ink()
+            shipped_ink
         );
     }
 
