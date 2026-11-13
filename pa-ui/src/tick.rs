@@ -3377,7 +3377,7 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
 
         for key in [
-            "thread-notifications",
+            "session-notifications",
             "session-order",
             "queue-key",
             "code-font",
@@ -3388,7 +3388,7 @@ mod status_strip_tests {
             assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
         }
 
-        h.ui.invoke_toggle_settings_choice("thread-notifications".into());
+        h.ui.invoke_toggle_settings_choice("session-notifications".into());
         h.ui.invoke_toggle_settings_choice("session-order".into());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "session-order");
 

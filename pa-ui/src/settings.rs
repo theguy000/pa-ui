@@ -9,7 +9,7 @@ const VERSION: i64 = 1;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Settings {
     pub theme: String,
-    pub thread_notifications: String,
+    pub session_notifications: String,
     pub in_app_notifications: bool,
     pub session_order: String,
     pub confirm_quit: bool,
@@ -28,7 +28,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: "default".to_string(),
-            thread_notifications: "Off".to_string(),
+            session_notifications: "Off".to_string(),
             in_app_notifications: true,
             session_order: "Last used".to_string(),
             confirm_quit: false,
@@ -45,7 +45,7 @@ impl Default for Settings {
     }
 }
 
-pub(crate) const THREAD_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
+pub(crate) const SESSION_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
 pub(crate) const SESSION_ORDER_OPTIONS: &[&str] = &["Last used", "Name", "Manual"];
 pub(crate) const QUEUE_KEY_OPTIONS: &[&str] = &["Ctrl+Enter", "Alt+Enter"];
 pub(crate) const INTERFACE_SIZE_OPTIONS: &[&str] = &["Compact", "Default", "Large"];
@@ -88,7 +88,7 @@ impl SectionFilter {
         }
         let matches = |words: &str| words.contains(&q);
         Self {
-            notifications: matches("notifications thread alerts in-app toast focus"),
+            notifications: matches("notifications session thread alerts in-app toast focus"),
             sidebar: matches("sidebar session order last used manual"),
             confirmations: matches("confirmations confirm quit quitting delete deleting session"),
             behavior: matches("behavior queue with ctrl+enter alt+enter reopen last session"),
@@ -129,7 +129,7 @@ impl Settings {
         let value = json!({
             "version": VERSION,
             "theme": self.theme,
-            "thread-notifications": self.thread_notifications,
+            "session-notifications": self.session_notifications,
             "in-app-notifications": self.in_app_notifications,
             "session-order": self.session_order,
             "confirm-quit": self.confirm_quit,
@@ -186,8 +186,8 @@ impl Settings {
 
     pub(crate) fn choose(&mut self, key: &str, value: &str) -> bool {
         match key {
-            "thread-notifications" => {
-                self.thread_notifications = valid_option(THREAD_NOTIFICATION_OPTIONS, value, "Off");
+            "session-notifications" => {
+                self.session_notifications = valid_option(SESSION_NOTIFICATION_OPTIONS, value, "Off");
             }
             "session-order" => {
                 self.session_order = valid_option(SESSION_ORDER_OPTIONS, value, "Last used");
@@ -210,7 +210,7 @@ impl Settings {
     }
 
     pub(crate) fn apply_to_ui(&self, ui: &AppWindow) {
-        ui.set_setting_thread_notifications(self.thread_notifications.clone().into());
+        ui.set_setting_session_notifications(self.session_notifications.clone().into());
         ui.set_setting_in_app_notifications(self.in_app_notifications);
         ui.set_setting_session_order(self.session_order.clone().into());
         ui.set_setting_confirm_quit(self.confirm_quit);
@@ -232,8 +232,12 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
             out.theme = trimmed.to_string();
         }
     }
-    if let Some(v) = map.get("thread-notifications").and_then(Value::as_str) {
-        out.thread_notifications = valid_option(THREAD_NOTIFICATION_OPTIONS, v, "Off");
+    if let Some(v) = map
+        .get("session-notifications")
+        .or_else(|| map.get("thread-notifications"))
+        .and_then(Value::as_str)
+    {
+        out.session_notifications = valid_option(SESSION_NOTIFICATION_OPTIONS, v, "Off");
     }
     if let Some(v) = map.get("in-app-notifications").and_then(Value::as_bool) {
         out.in_app_notifications = v;
@@ -361,7 +365,7 @@ mod tests {
     fn settings_round_trip_preserves_every_field() {
         let custom = Settings {
             theme: "mono".to_string(),
-            thread_notifications: "Always".to_string(),
+            session_notifications: "Always".to_string(),
             in_app_notifications: false,
             session_order: "Name".to_string(),
             confirm_quit: true,
@@ -381,10 +385,18 @@ mod tests {
     }
 
     #[test]
+    fn an_old_thread_notification_choice_still_loads() {
+        let loaded = Settings::from_json(r#"{"thread-notifications": "Always"}"#);
+        assert_eq!(loaded.session_notifications, "Always");
+        assert!(loaded.to_json().contains(r#""session-notifications": "Always""#));
+        assert!(!loaded.to_json().contains("thread-notifications"));
+    }
+
+    #[test]
     fn settings_invalid_json_or_unknown_choice_falls_back_to_defaults() {
         assert_eq!(Settings::from_json("not json"), Settings::default());
         let with_bogus = r#"{
-            "thread-notifications": "Bogus",
+            "session-notifications": "Bogus",
             "session-order": "Random",
             "queue-key": "Space",
             "interface-size": "Huge",
@@ -444,8 +456,8 @@ mod tests {
     #[test]
     fn settings_choose_uses_the_explicit_option() {
         let mut settings = Settings::default();
-        assert!(settings.choose("thread-notifications", "Always"));
-        assert_eq!(settings.thread_notifications, "Always");
+        assert!(settings.choose("session-notifications", "Always"));
+        assert_eq!(settings.session_notifications, "Always");
         assert!(settings.choose("session-order", "Name"));
         assert_eq!(settings.session_order, "Name");
         assert!(settings.choose("code-font", "Consolas"));

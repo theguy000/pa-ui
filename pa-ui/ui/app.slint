@@ -250,7 +250,7 @@ export component AppWindow inherits Window {
     in-out property <string> settings-open-choice: "";
     in-out property <bool> themes-open: true;
     in-out property <[ThemeItem]> theme-items;
-    in-out property <string> setting-thread-notifications: "Off";
+    in-out property <string> setting-session-notifications: "Off";
     in-out property <bool> setting-in-app-notifications: true;
     in-out property <string> setting-session-order: "Last used";
     in-out property <bool> setting-confirm-quit: false;
@@ -2155,7 +2155,7 @@ export component AppWindow inherits Window {
             open-choice <=> root.settings-open-choice;
             focus-tick: root.settings-focus-tick;
             theme-items: root.theme-items;
-            thread-notifications: root.setting-thread-notifications;
+            session-notifications: root.setting-session-notifications;
             in-app-notifications: root.setting-in-app-notifications;
             session-order: root.setting-session-order;
             confirm-quit: root.setting-confirm-quit;
