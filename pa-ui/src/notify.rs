@@ -106,7 +106,7 @@ fn same_row(left: &SessionRow, right: &SessionRow) -> bool {
 pub(crate) fn finished_top_level_rows(
     before: &[SessionRow],
     after: &[SessionRow],
-    skip_id: Option<&str>,
+    skip_ids: &[String],
 ) -> Vec<(String, String, TurnOutcome)> {
     let mut finished = Vec::new();
     for prev in before {
@@ -119,7 +119,7 @@ pub(crate) fn finished_top_level_rows(
         if tag_of(now) == RowTag::Active {
             continue;
         }
-        if skip_id.is_some_and(|skip| skip == prev.id || skip == now.id) {
+        if skip_ids.iter().any(|skip| skip == &prev.id || skip == &now.id) {
             continue;
         }
         let label = display_name(now);
@@ -335,18 +335,19 @@ mod tests {
             finished_top_level_rows(
                 &[active_top.clone(), active_sub, stayed_idle],
                 &[idle_top.clone(), idle_sub, archived_from_idle],
-                None,
+                &[],
             ),
             vec![("a1".to_string(), "Alpha".to_string(), TurnOutcome::Finished)]
         );
-        assert!(finished_top_level_rows(&[active_top.clone()], &[idle_top.clone()], Some("a1")).is_empty());
+        let skip_a1 = vec!["a1".to_string()];
+        assert!(finished_top_level_rows(std::slice::from_ref(&active_top), &[idle_top], &skip_a1).is_empty());
 
         let failed_top = row(json!({
             "activeSessionId": "a1", "sessionId": "u1", "firstMessage": "Alpha",
             "workerState": "failed", "activity": "idle"
         }));
         assert_eq!(
-            finished_top_level_rows(&[active_top.clone()], &[failed_top], None),
+            finished_top_level_rows(std::slice::from_ref(&active_top), &[failed_top], &[]),
             vec![("a1".to_string(), "Alpha".to_string(), TurnOutcome::Failed)]
         );
 
@@ -355,10 +356,14 @@ mod tests {
             "workerState": "ready", "activity": "idle"
         }));
         assert_eq!(
-            finished_top_level_rows(&[active_top.clone()], &[rekeyed_idle.clone()], None),
+            finished_top_level_rows(
+                std::slice::from_ref(&active_top),
+                std::slice::from_ref(&rekeyed_idle),
+                &[],
+            ),
             vec![("a2".to_string(), "Alpha".to_string(), TurnOutcome::Finished)]
         );
-        assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], Some("a1")).is_empty());
+        assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], &skip_a1).is_empty());
 
         let blank_prev = row(json!({
             "activeSessionId": "b1", "sessionId": "", "firstMessage": "Blank",
@@ -368,7 +373,7 @@ mod tests {
             "activeSessionId": "b2", "sessionId": "", "firstMessage": "Blank",
             "workerState": "ready", "activity": "idle"
         }));
-        assert!(finished_top_level_rows(&[blank_prev], &[blank_other], None).is_empty());
+        assert!(finished_top_level_rows(&[blank_prev], &[blank_other], &[]).is_empty());
     }
 
     #[test]

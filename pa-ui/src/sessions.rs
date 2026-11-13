@@ -1054,21 +1054,26 @@ impl Sidebar {
                 ui.set_search_rows(found);
             });
         }
+        fn select_from_overlay(ui: &AppWindow, id: SharedString) {
+            ui.set_model_menu(false);
+            ui.set_queue_open(false);
+            ui.set_settings_menu(false);
+            ui.set_share_open(false);
+            let changed = ui.get_selected_id() != id;
+            ui.set_selected_id(id.clone());
+            if changed {
+                ui.invoke_selection_picked(id);
+            }
+            ui.set_hover_title(SharedString::new());
+            ui.set_search_field_typed(false);
+            ui.set_search_open(false);
+            ui.invoke_focus_composer();
+        }
         {
             let weak = ui.as_weak();
             ui.on_search_picked(move |id| {
                 let Some(ui) = weak.upgrade() else { return };
-                ui.set_model_menu(false);
-                ui.set_queue_open(false);
-                let changed = ui.get_selected_id() != id;
-                ui.set_selected_id(id.clone());
-                if changed {
-                    ui.invoke_selection_picked(id);
-                }
-                ui.set_hover_title(SharedString::new());
-                ui.set_search_field_typed(false);
-                ui.set_search_open(false);
-                ui.invoke_focus_composer();
+                select_from_overlay(&ui, id);
             });
         }
         {
@@ -1079,18 +1084,7 @@ impl Sidebar {
                 if id.is_empty() {
                     return;
                 }
-                ui.set_model_menu(false);
-                ui.set_queue_open(false);
-                ui.set_settings_menu(false);
-                ui.set_search_open(false);
-                ui.set_share_open(false);
-                let changed = ui.get_selected_id() != id;
-                ui.set_selected_id(id.clone());
-                if changed {
-                    ui.invoke_selection_picked(id);
-                }
-                ui.set_hover_title(SharedString::new());
-                ui.invoke_focus_composer();
+                select_from_overlay(&ui, id);
             });
         }
         {

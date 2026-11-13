@@ -40,7 +40,7 @@ pub(crate) struct Tick {
     pub roster_seeded: std::cell::Cell<bool>,
     pub turn_failed: std::cell::Cell<bool>,
     pub turn_aborted: std::cell::Cell<bool>,
-    pub announced_session: std::cell::Cell<Option<String>>,
+    pub announced_sessions: std::cell::RefCell<std::collections::HashSet<String>>,
     pub toast: std::cell::RefCell<Rc<dyn crate::notify::ToastNotifier>>,
 }
 
@@ -410,15 +410,16 @@ impl Tick {
                 Msg::Sessions(Ok(rows)) => {
                     let before = sidebar.cache.borrow().clone();
                     let was_seeded = self.roster_seeded.replace(true);
-                    let announced = self.announced_session.take();
-                    let skip_finished = announced.as_deref().filter(|id| {
-                        !rows
+                    let mut skip_finished = Vec::new();
+                    self.announced_sessions.borrow_mut().retain(|id| {
+                        let still_running = rows
                             .iter()
-                            .any(|row| row.id == *id && row.roster_status() == "Running")
+                            .any(|row| row.id == *id && row.roster_status() == "Running");
+                        if !still_running {
+                            skip_finished.push(id.clone());
+                        }
+                        still_running
                     });
-                    if announced.is_some() && skip_finished.is_none() {
-                        self.announced_session.set(announced.clone());
-                    }
                     if let Some(rebound) = sidebar.apply_roster(&ui, rows.clone()) {
                         l.loaded = Some(rebound);
                     }
@@ -427,7 +428,7 @@ impl Tick {
                         for (id, name, outcome) in crate::notify::finished_top_level_rows(
                             &before,
                             &rows,
-                            skip_finished,
+                            &skip_finished,
                         ) {
                             crate::notify::dispatch(&ui, toast.as_ref(), &id, &name, outcome);
                         }
@@ -741,10 +742,7 @@ impl Tick {
                     if matches!(kind, Some("turn_start" | "agent_start")) {
                         self.turn_failed.set(false);
                         self.turn_aborted.set(false);
-                        let announced = self.announced_session.take();
-                        if announced.as_deref() != Some(session.as_str()) {
-                            self.announced_session.set(announced);
-                        }
+                        self.announced_sessions.borrow_mut().remove(&session);
                         open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("compaction_start") {
@@ -804,8 +802,9 @@ impl Tick {
                                 .iter()
                                 .find(|row| row.id == session)
                                 .is_none_or(crate::sessions::is_top_level);
-                            let already = self.announced_session.take();
-                            if top_level && already.as_deref() != Some(session.as_str()) {
+                            if top_level
+                                && self.announced_sessions.borrow_mut().insert(session.clone())
+                            {
                                 let name = crate::notify::session_label(&rows, &session);
                                 let outcome = if failed {
                                     crate::notify::TurnOutcome::Failed
@@ -814,9 +813,6 @@ impl Tick {
                                 };
                                 let toast = self.toast.borrow().clone();
                                 crate::notify::dispatch(&ui, toast.as_ref(), &session, &name, outcome);
-                            }
-                            if top_level {
-                                self.announced_session.set(Some(session.clone()));
                             }
                         }
                     }
@@ -1166,7 +1162,7 @@ impl Tick {
                     self.roster_seeded.set(false);
                     self.turn_failed.set(false);
                     self.turn_aborted.set(false);
-                    self.announced_session.set(None);
+                    self.announced_sessions.borrow_mut().clear();
                     l.loaded = None;
                     l.open_live = None;
                     l.settled_session = None;
@@ -1234,8 +1230,11 @@ impl Tick {
                         .iter()
                         .find(|row| row.id == session)
                         .is_none_or(crate::sessions::is_top_level);
-                    let already = self.announced_session.take();
-                    if top_level && already.as_deref() != Some(session.as_str()) {
+                    let failure_close = !matches!(reason.as_str(), "shutdown" | "replaced");
+                    if top_level
+                        && self.announced_sessions.borrow_mut().insert(session.clone())
+                        && failure_close
+                    {
                         let name = crate::notify::session_label(&rows, &session);
                         let toast = self.toast.borrow().clone();
                         crate::notify::dispatch(
@@ -1245,11 +1244,6 @@ impl Tick {
                             &name,
                             crate::notify::TurnOutcome::Failed,
                         );
-                    }
-                    if top_level {
-                        self.announced_session.set(Some(session));
-                    } else if let Some(prev) = already {
-                        self.announced_session.set(Some(prev));
                     }
                 }
                 Msg::Shared(Ok(shared)) => {
@@ -1434,7 +1428,7 @@ mod status_strip_tests {
                 roster_seeded: std::cell::Cell::new(false),
                 turn_failed: std::cell::Cell::new(false),
                 turn_aborted: std::cell::Cell::new(false),
-                announced_session: std::cell::Cell::new(None),
+                announced_sessions: std::cell::RefCell::new(std::collections::HashSet::new()),
                 toast: std::cell::RefCell::new(Rc::new(crate::notify::WindowsToastNotifier)),
             });
             Self {
@@ -3819,6 +3813,52 @@ mod status_strip_tests {
         assert_eq!(sent.borrow().len(), 1);
         assert_eq!(sent.borrow()[0], ("s2".into(), "Session finished".into(), "Background one".into(), false));
         sent.borrow_mut().clear();
+
+        // Concurrent agent_end(s2) + SessionClosed(s1) + catching-up roster does not duplicate s2,
+        // and daemon shutdown / replaced SessionClosed does not mislabel a Session as failed.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.send_at(gen_clean, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 2);
+        sent.borrow_mut().clear();
+
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_clean, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "shutdown".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
 
         h.ui.invoke_setting_chosen("session-notifications".into(), "Off".into());
         h.send_at(gen_clean, Msg::Event {

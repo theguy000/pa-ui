@@ -328,11 +328,14 @@ mod imp {
         }
     }
 
+    const SM_CXSMICON: i32 = 49;
+    const SM_CYSMICON: i32 = 50;
+
     fn small_app_icon() -> isize {
         unsafe {
             let instance = GetModuleHandleW(std::ptr::null());
-            let w = GetSystemMetrics(49);
-            let h = GetSystemMetrics(50);
+            let w = GetSystemMetrics(SM_CXSMICON);
+            let h = GetSystemMetrics(SM_CYSMICON);
             LoadImageW(instance, std::ptr::without_provenance::<u16>(1), IMAGE_ICON, w, h, LR_DEFAULTSIZE)
         }
     }

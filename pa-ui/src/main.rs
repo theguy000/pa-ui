@@ -249,7 +249,7 @@ fn main() -> Result<(), slint::PlatformError> {
         roster_seeded: std::cell::Cell::new(false),
         turn_failed: std::cell::Cell::new(false),
         turn_aborted: std::cell::Cell::new(false),
-        announced_session: std::cell::Cell::new(None),
+        announced_sessions: std::cell::RefCell::new(std::collections::HashSet::new()),
         toast: std::cell::RefCell::new(Rc::new(WindowsToastNotifier)),
     });
 
