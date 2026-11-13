@@ -21,6 +21,9 @@ fn evaluate_close(ui: &AppWindow, tick: &Tick, confirmed: &Cell<bool>) -> CloseD
     if confirmed.get() {
         return CloseDecision::Quit;
     }
+    if ui.get_quit_confirm_open() {
+        return CloseDecision::Confirm;
+    }
     close_decision(
         tick.has_running_top_level_turn(ui),
         ui.get_setting_confirm_quit(),

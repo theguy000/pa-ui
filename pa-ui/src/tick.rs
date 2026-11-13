@@ -3615,6 +3615,24 @@ mod status_strip_tests {
         assert_eq!(second, WindowEventDispatchResult::Rejected);
         assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
 
+        // Even if the last running turn settles while the prompt is visible,
+        // another close request keeps the prompt open until Cancel or Quit.
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "idle"
+        }))])));
+        h.run();
+        let after_idle = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close while prompt open after idle");
+        assert_eq!(after_idle, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "working"
+        }))])));
+        h.run();
+
         press_key(&h, Key::Escape);
         assert!(!h.ui.get_quit_confirm_open());
         type_char(&h, "a");
