@@ -3,7 +3,7 @@ import { EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint"
 import { IconCaret, IconCheck, IconMenuCopy, IconMenuDone, IconMenuPencil,
     IconMenuShare, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Panel } from "primitives.slint";
+import { Panel, PopupShell } from "primitives.slint";
 
 // The command list above the composer. `index` is the highlighted row; arrowing
 // past the fold pulls the list after it.
@@ -99,7 +99,7 @@ export component SlashMenu inherits Panel {
 
 // The provider/model catalog. A group with `open: false` carries no models, so a
 // long catalog costs one header each.
-export component ModelMenu inherits Panel {
+export component ModelMenu inherits Rectangle {
     in property <[ModelGroup]> groups;
     in property <length> measured-height;
     in property <length> anchor-x;
@@ -111,17 +111,26 @@ export component ModelMenu inherits Panel {
     callback provider-toggled(string);
     callback close-requested();
 
-    x: root.anchor-x + root.anchor-w - self.width - 12px;
-    y: root.anchor-y - self.height - 6px;
-    width: 300px;
-    height: max(64px, min(340px, root.measured-height));
-    border-radius: 10px;
+    property <length> menu-height: max(64px, min(340px, root.measured-height));
+    x: 0px;
+    y: 0px;
+    width: 0px;
+    height: 0px;
+
+    popup := PopupShell {
+        popup-x: root.anchor-x + root.anchor-w - 300px - 12px;
+        popup-y: root.anchor-y - root.menu-height - 6px;
+        popup-width: 300px;
+        popup-height: root.menu-height;
+        menu-radius: 10px;
+        open: true;
+        dismissed => { root.close-requested(); }
 
     menu-scroll := ScrollView {
         x: 6px;
         y: 6px;
-        width: parent.width - 12px;
-        height: parent.height - 12px;
+        width: popup.popup-width - 12px;
+        height: popup.popup-height - 12px;
         vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
         horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
         content-width: self.visible-width;
@@ -222,13 +231,15 @@ export component ModelMenu inherits Panel {
                         moved => {
                             if self.has-hover {
                                 root.hovered(group.provider, model.id,
-                                    self.absolute-position.y);
+                                    popup.popup-y + popup.absolute-position.y + 6px + group.top + 26px + i * 24px
+                                        + menu-scroll.content-y);
                             }
                         }
                         pointer-event(event) => {
                             if event.kind == PointerEventKind.move {
                                 root.hovered(group.provider, model.id,
-                                    self.absolute-position.y);
+                                    popup.popup-y + popup.absolute-position.y + 6px + group.top + 26px + i * 24px
+                                        + menu-scroll.content-y);
                             }
                         }
                     }
@@ -272,6 +283,7 @@ export component ModelMenu inherits Panel {
             }
         }
     }
+    }
 }
 
 // The thinking ladder, hung to the left of the model menu: the menu sits on the
@@ -298,8 +310,7 @@ export component EffortLadder inherits Panel {
     width: 132px;
     height: 10px + root.items.length * 26px;
     border-radius: 8px;
-    // The ladder is drawn on the model menu rather than on the window, so what is
-    // under it has already been lifted once and its shadow is the shallower one.
+    // The ladder sits above another menu, so its shadow is the shallower one.
     shadow: Theme.panel-shadow-nested;
     drop-shadow-blur: 10px;
 

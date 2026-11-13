@@ -1871,7 +1871,10 @@ export component AppWindow inherits Window {
         hovered(provider, model, y) => { root.model-hovered(provider, model, y); }
         pointer-moved => { root.pointer-moved(); }
         provider-toggled(provider) => { root.provider-toggled(provider); }
-        close-requested => { root.model-menu = false; }
+        close-requested => {
+            root.model-menu = false;
+            root.effort-open = false;
+        }
     }
 
     if root.model-menu && root.effort-open : EffortLadder {

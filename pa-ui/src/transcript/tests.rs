@@ -625,6 +625,45 @@ mod markup_tests {
             let _ = styled(&markdown_markup(sample, &shipped()));
         }
     }
+
+    #[test]
+    fn indented_markup_does_not_put_nbsp_into_text_layout() {
+        let drawn = markdown_markup("    indented", &shipped());
+        let rendered = format!("{:?}", styled(&drawn));
+        assert!(!rendered.contains('\u{a0}'), "got {rendered}");
+        assert!(drawn.starts_with("\u{200b}    indented"), "got {drawn:?}");
+        let marked = markdown_markup("    - indented", &shipped());
+        assert!(marked.starts_with("\u{200b}    - indented"), "got {marked:?}");
+        assert_eq!(marked.matches('\u{200b}').count(), 1, "got {marked:?}");
+        let unindented = markdown_markup("- item", &shipped());
+        assert!(unindented.starts_with("\u{200b}- item"), "got {unindented:?}");
+    }
+
+    #[test]
+    fn multiline_code_spans_parse_without_crossing_font_tags() {
+        for sample in [
+            "```\none\n  two\n```\nheader `x` and `y`",
+            "```\none\n\n  two\n```",
+            "**bold\n`code\n  indented`**",
+        ] {
+            let drawn = markdown_markup(sample, &shipped());
+            StyledText::from_markdown(&drawn)
+                .expect("code spans after multiline code markup parse");
+            for line in drawn.lines() {
+                assert_eq!(
+                    line.matches("<font").count(),
+                    line.matches("</font>").count(),
+                    "font tags must not cross a line: {line}"
+                );
+            }
+        }
+        let indented = markdown_markup("```\none\n  two\n```", &shipped());
+        assert!(indented.contains("**\u{200b}  two"), "got {indented:?}");
+        let bold = crate::transcript::highlight_inline_code("**```\none\n  two\n```", &shipped());
+        let second = bold.lines().nth(1).expect("second code line");
+        assert!(second.starts_with("\u{200b}<font"), "got {second:?}");
+        assert!(second.contains(">  two"), "got {second:?}");
+    }
 }
 
 #[cfg(test)]
