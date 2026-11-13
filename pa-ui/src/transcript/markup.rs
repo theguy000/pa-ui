@@ -412,8 +412,8 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             // start of a line Slint reads `**<font>` as literal markers, while
             // `<font>**...**` parses. A span already inside bold only needs a
             // zero-width separator so the opening markers parse there.
-            let bold_already = out.matches("**").count() % 2 == 1;
-            if bold_already && (out == "**" || out.ends_with("\n**")) {
+            let bold_already = strong_markers(&out) % 2 == 1;
+            if bold_already && out.ends_with("**") {
                 out.push('\u{200b}');
             }
             open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
