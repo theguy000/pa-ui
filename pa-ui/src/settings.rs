@@ -11,7 +11,8 @@ pub(crate) struct Settings {
     pub theme: String,
     pub session_notifications: String,
     pub in_app_notifications: bool,
-    pub session_order: String,
+    pub session_order: SessionOrder,
+    pub manual_session_order: Vec<String>,
     pub confirm_quit: bool,
     pub confirm_delete_session: bool,
     pub queue_key: String,
@@ -30,7 +31,8 @@ impl Default for Settings {
             theme: "default".to_string(),
             session_notifications: "Off".to_string(),
             in_app_notifications: true,
-            session_order: "Last used".to_string(),
+            session_order: SessionOrder::LastUsed,
+            manual_session_order: Vec::new(),
             confirm_quit: false,
             confirm_delete_session: true,
             queue_key: "Ctrl+Enter".to_string(),
@@ -47,6 +49,9 @@ impl Default for Settings {
 
 pub(crate) const SESSION_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
 pub(crate) const SESSION_ORDER_OPTIONS: &[&str] = &["Last used", "Name", "Manual"];
+use crate::sessions::SessionOrder;
+
+pub(crate) const THREAD_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
 pub(crate) const QUEUE_KEY_OPTIONS: &[&str] = &["Ctrl+Enter", "Alt+Enter"];
 pub(crate) const INTERFACE_SIZE_OPTIONS: &[&str] = &["Compact", "Default", "Large"];
 pub(crate) const CODE_FONT_OPTIONS: &[&str] = &["Cascadia Code", "Consolas", "JetBrains Mono"];
@@ -131,7 +136,8 @@ impl Settings {
             "theme": self.theme,
             "session-notifications": self.session_notifications,
             "in-app-notifications": self.in_app_notifications,
-            "session-order": self.session_order,
+            "session-order": self.session_order.label(),
+            "manual-session-order": self.manual_session_order,
             "confirm-quit": self.confirm_quit,
             "confirm-delete-session": self.confirm_delete_session,
             "queue-key": self.queue_key,
@@ -190,7 +196,7 @@ impl Settings {
                 self.session_notifications = valid_option(SESSION_NOTIFICATION_OPTIONS, value, "Off");
             }
             "session-order" => {
-                self.session_order = valid_option(SESSION_ORDER_OPTIONS, value, "Last used");
+                self.session_order = SessionOrder::from_setting(value);
             }
             "queue-key" => {
                 self.queue_key = valid_option(QUEUE_KEY_OPTIONS, value, "Ctrl+Enter");
@@ -212,7 +218,7 @@ impl Settings {
     pub(crate) fn apply_to_ui(&self, ui: &AppWindow) {
         ui.set_setting_session_notifications(self.session_notifications.clone().into());
         ui.set_setting_in_app_notifications(self.in_app_notifications);
-        ui.set_setting_session_order(self.session_order.clone().into());
+        ui.set_setting_session_order(self.session_order.label().into());
         ui.set_setting_confirm_quit(self.confirm_quit);
         ui.set_setting_confirm_delete_session(self.confirm_delete_session);
         ui.set_setting_queue_key(self.queue_key.clone().into());
@@ -243,7 +249,16 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
         out.in_app_notifications = v;
     }
     if let Some(v) = map.get("session-order").and_then(Value::as_str) {
-        out.session_order = valid_option(SESSION_ORDER_OPTIONS, v, "Last used");
+        out.session_order = SessionOrder::from_setting(v);
+    }
+    if let Some(items) = map.get("manual-session-order").and_then(Value::as_array) {
+        let mut seen = std::collections::HashSet::new();
+        out.manual_session_order = items
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|id| !id.is_empty() && seen.insert((*id).to_string()))
+            .map(str::to_string)
+            .collect();
     }
     if let Some(v) = map.get("confirm-quit").and_then(Value::as_bool) {
         out.confirm_quit = v;
@@ -367,7 +382,11 @@ mod tests {
             theme: "mono".to_string(),
             session_notifications: "Always".to_string(),
             in_app_notifications: false,
-            session_order: "Name".to_string(),
+            session_order: SessionOrder::Name,
+            manual_session_order: vec![
+                "01a1c539-d4a3-72e5-9022-a1138888f7a1".to_string(),
+                "01a1c539-d4a3-72e5-9022-a1138888f7a2".to_string(),
+            ],
             confirm_quit: true,
             confirm_delete_session: false,
             queue_key: "Ctrl+Enter".to_string(),
@@ -390,6 +409,11 @@ mod tests {
         assert_eq!(loaded.session_notifications, "Always");
         assert!(loaded.to_json().contains(r#""session-notifications": "Always""#));
         assert!(!loaded.to_json().contains("thread-notifications"));
+    fn manual_session_order_ignores_empty_non_string_and_duplicate_ids() {
+        let loaded = Settings::from_json(
+            r#"{"manual-session-order": ["u1", "", 42, "u2", "u1", "u3"]}"#,
+        );
+        assert_eq!(loaded.manual_session_order, vec!["u1", "u2", "u3"]);
     }
 
     #[test]
@@ -459,7 +483,7 @@ mod tests {
         assert!(settings.choose("session-notifications", "Always"));
         assert_eq!(settings.session_notifications, "Always");
         assert!(settings.choose("session-order", "Name"));
-        assert_eq!(settings.session_order, "Name");
+        assert_eq!(settings.session_order, SessionOrder::Name);
         assert!(settings.choose("code-font", "Consolas"));
         assert_eq!(settings.code_font, "Consolas");
     }

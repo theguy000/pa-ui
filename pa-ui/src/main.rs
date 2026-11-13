@@ -8,6 +8,7 @@ mod live;
 mod models;
 mod notify;
 mod preview;
+mod quit;
 #[cfg(test)]
 mod probes;
 mod search;
@@ -325,7 +326,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    ui.on_titlebar_close(titlebar::close);
+    quit::bind(&ui, &tick);
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();
@@ -336,7 +337,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if !query.is_empty() {
                 ui.set_search_query(query.as_str().into());
             }
-            sessions::open_search(&ui, &sidebar.cache.borrow());
+            sidebar.open_search(&ui);
         }
         if let Ok(url) = std::env::var("PA_SHARE") {
             ui.set_share_url(url.as_str().into());

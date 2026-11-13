@@ -1,0 +1,128 @@
+import { Button, Panel } from "primitives.slint";
+import { Theme } from "theme.slint";
+
+component QuitAction inherits Button {
+    in property <string> label;
+    in property <color> label-color;
+
+    height: 34px;
+    border-radius: 8px;
+    border-width: 0px;
+    described: root.label;
+
+    Text {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: root.label-color;
+        font-size: 12.5px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component QuitConfirmPopup inherits Panel {
+    in property <int> focus-tick: 0;
+    private property <bool> focus-quit: false;
+    private property <bool> keyboard-focus: false;
+
+    callback cancelled();
+    callback confirmed();
+
+    width: 364px;
+    height: 158px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.panel-edge;
+
+    function reset-focus() {
+        root.focus-quit = false;
+        root.keyboard-focus = false;
+        keys.focus();
+    }
+
+    changed focus-tick => { root.reset-focus(); }
+
+    Text {
+        x: 22px;
+        y: 20px;
+        width: parent.width - 44px;
+        height: 22px;
+        text: "A Session is still running";
+        color: Theme.quit-confirm-ink;
+        font-size: 15px;
+        font-weight: 600;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    Text {
+        x: 22px;
+        y: 48px;
+        width: parent.width - 44px;
+        height: 40px;
+        text: "Closing the window leaves the turn running in the background.";
+        color: Theme.quit-confirm-body-ink;
+        font-size: 12.5px;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    QuitAction {
+        x: 22px;
+        y: parent.height - 20px - self.height;
+        width: (parent.width - 44px - 8px) / 2;
+        fill: root.keyboard-focus && keys.has-focus && !root.focus-quit
+            ? Theme.quit-confirm-cancel-fill-hover
+            : Theme.quit-confirm-cancel-fill;
+        fill-hover: Theme.quit-confirm-cancel-fill-hover;
+        label: "Cancel";
+        label-color: Theme.quit-confirm-ink;
+        clicked => { root.cancelled(); }
+    }
+
+    QuitAction {
+        x: parent.width - 22px - self.width;
+        y: parent.height - 20px - self.height;
+        width: (parent.width - 44px - 8px) / 2;
+        fill: root.keyboard-focus && keys.has-focus && root.focus-quit
+            ? Theme.quit-confirm-danger-fill-hover
+            : Theme.quit-confirm-danger-fill;
+        fill-hover: Theme.quit-confirm-danger-fill-hover;
+        label: "Quit";
+        label-color: Theme.quit-confirm-danger-ink;
+        clicked => { root.confirmed(); }
+    }
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0px;
+        height: 0px;
+        init => { root.reset-focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancelled();
+                return EventResult.accept;
+            }
+            if event.text == Key.Tab {
+                root.keyboard-focus = true;
+                root.focus-quit = !root.focus-quit;
+                return EventResult.accept;
+            }
+            if event.text == Key.Return {
+                if root.focus-quit {
+                    root.confirmed();
+                } else {
+                    root.cancelled();
+                }
+                return EventResult.accept;
+            }
+            reject
+        }
+    }
+}

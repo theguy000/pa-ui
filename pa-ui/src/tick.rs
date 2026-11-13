@@ -149,6 +149,22 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
+    pub(crate) fn settled_active_session_id(&self) -> Option<String> {
+        let settled = self.settled_session.take();
+        self.settled_session.set(settled.clone());
+        settled
+    }
+
+    /// Whether any top-level Session still has a turn in flight, the settled
+    /// selection included: a close has to warn about work it would leave behind.
+    pub(crate) fn has_running_top_level_turn(&self, ui: &AppWindow) -> bool {
+        if ui.get_busy() {
+            return true;
+        }
+        let settled = self.settled_active_session_id();
+        self.sidebar.has_running_top_level(settled.as_deref())
+    }
+
     fn follow_selection(
         &self,
         ui: &AppWindow,
@@ -1158,11 +1174,15 @@ impl Tick {
                     }
                     models.sync_session_state(&ui, &state);
                 }
+                Msg::CatalogReady => {
+                    sidebar.set_catalog_ready(true);
+                }
                 Msg::Reconnected => {
                     self.roster_seeded.set(false);
                     self.turn_failed.set(false);
                     self.turn_aborted.set(false);
                     self.announced_sessions.borrow_mut().clear();
+                    sidebar.set_catalog_ready(false);
                     l.loaded = None;
                     l.open_live = None;
                     l.settled_session = None;
@@ -1431,6 +1451,7 @@ mod status_strip_tests {
                 announced_sessions: std::cell::RefCell::new(std::collections::HashSet::new()),
                 toast: std::cell::RefCell::new(Rc::new(crate::notify::WindowsToastNotifier)),
             });
+            crate::quit::bind(&ui, &tick);
             Self {
                 ui,
                 tick,
@@ -2107,6 +2128,361 @@ mod status_strip_tests {
         }
     }
 
+    fn session_order_choice_reorders_the_cached_roster() {
+        let h = Harness::new();
+        let rows = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "zeta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d", "sessionId": "u-d", "firstMessage": "Done",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-10T12:00:00Z"
+            })),
+        ];
+        h.tick.sidebar.apply_roster(&h.ui, rows);
+        h.ui.set_selected_id("z".into());
+        h.ui.set_done_folded(true);
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+
+        let sessions = h.ui.get_sessions();
+        let ids: Vec<String> = (0..sessions.row_count())
+            .filter_map(|index| sessions.row_data(index))
+            .map(|item| item.id.to_string())
+            .collect();
+        assert_eq!(ids, ["a", "z", "d"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "z");
+        assert!(h.ui.get_done_folded());
+
+        h.ui.invoke_search_open_requested();
+        let search_rows = h.ui.get_search_rows();
+        let search_ids: Vec<String> = (0..search_rows.row_count())
+            .filter_map(|index| search_rows.row_data(index))
+            .map(|row| row.id.to_string())
+            .collect();
+        assert_eq!(search_ids, ["a", "z", "d"]);
+
+        h.ui.invoke_search_typed("".into());
+        let typed_rows = h.ui.get_search_rows();
+        let typed_ids: Vec<String> = (0..typed_rows.row_count())
+            .filter_map(|index| typed_rows.row_data(index))
+            .map(|row| row.id.to_string())
+            .collect();
+        assert_eq!(typed_ids, ["a", "z", "d"]);
+
+        let rows2 = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "zeta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-11T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "m", "sessionId": "u-m", "firstMessage": "Middle",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d", "sessionId": "u-d", "firstMessage": "Done",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-10T12:00:00Z"
+            })),
+        ];
+        h.tick.sidebar.apply_roster(&h.ui, rows2);
+        let sessions2 = h.ui.get_sessions();
+        let ids2: Vec<String> = (0..sessions2.row_count())
+            .filter_map(|index| sessions2.row_data(index))
+            .map(|item| item.id.to_string())
+            .collect();
+        assert_eq!(ids2, ["a", "m", "z", "d"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "z");
+        assert!(h.ui.get_done_folded());
+
+        let many: Vec<SessionRow> = (0..30)
+            .map(|n| {
+                SessionRow::from_value(&serde_json::json!({
+                    "activeSessionId": format!("s-{n:02}"),
+                    "sessionId": format!("u-{n:02}"),
+                    "firstMessage": format!("Item {:02}", 29 - n),
+                    "workerState": "ready",
+                    "activity": "working",
+                    "lastActivityAt": format!("2026-11-01T00:{:02}:00Z", n)
+                }))
+            })
+            .collect();
+        h.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
+        h.tick.sidebar.apply_roster(&h.ui, many);
+        h.ui.invoke_restore_sidebar_cy(-120.0);
+        let before_cy = h.ui.invoke_get_sidebar_cy();
+        assert!((before_cy + 120.0).abs() < 1.0, "expected -120 scroll, got {before_cy}");
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        let after_cy = h.ui.invoke_get_sidebar_cy();
+        assert!((after_cy - before_cy).abs() < 1.0, "scroll moved from {before_cy} to {after_cy}");
+    }
+
+    fn manual_order_drag_reorder_persists_and_refuses_cross_group_moves() {
+        let settings_path = std::path::PathBuf::from(std::env::var("PA_SETTINGS_FILE").expect("PA_SETTINGS_FILE"));
+        let _ = std::fs::remove_file(&settings_path);
+        let seeded = crate::settings::Settings {
+            manual_session_order: vec!["u-offline-keep".into()],
+            ..Default::default()
+        };
+        std::fs::write(&settings_path, seeded.to_json()).expect("seed settings");
+        let h = Harness::new();
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        let pre_connect = crate::settings::Settings::load_from(&settings_path);
+        assert_eq!(pre_connect.manual_session_order, ["u-offline-keep"]);
+        let rows = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "Idle 1",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i2", "sessionId": "ui2", "firstMessage": "Idle 2",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "Done 1",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d2", "sessionId": "ud2", "firstMessage": "Done 2",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+        ];
+        let ids_of = |model: slint::ModelRc<SessionItem>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|item| item.id.to_string())
+                .collect()
+        };
+        let search_ids_of = |model: slint::ModelRc<SearchRow>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|row| row.id.to_string())
+                .collect()
+        };
+
+        h.tick.sidebar.apply_roster(&h.ui, rows.clone());
+        h.ui.set_selected_id("a1".into());
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+
+        let row_mid_y = |id: &str| -> f32 {
+            let entries = h.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == id)
+                .map(|entry| entry.at + 16.0)
+                .expect("row entry y")
+        };
+
+        h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
+        h.ui.set_done_folded(true);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+        h.ui.invoke_session_dropped("i2".into(), row_mid_y("i1"));
+
+        let a2_bottom_edge = row_mid_y("a2") + 16.0;
+        h.ui.invoke_session_dropped("a2".into(), a2_bottom_edge);
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a1", "a2", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "a1");
+        assert!(h.ui.get_done_folded());
+
+        h.ui.invoke_search_open_requested();
+        assert_eq!(search_ids_of(h.ui.get_search_rows()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_search_closed();
+
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("i2"));
+        h.ui.invoke_session_dropped("i1".into(), row_mid_y("d1"));
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        let disk = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk.manual_session_order.contains(&"ua2".to_string()));
+        assert!(disk.manual_session_order.contains(&"ud2".to_string()));
+
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        h.send(Msg::Reconnected);
+        h.run();
+        h.send(Msg::Sessions(Ok(rows[..4].to_vec())));
+        h.run();
+        let disk_partial = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk_partial.manual_session_order.contains(&"ud2".to_string()));
+
+        h.send(Msg::CatalogReady);
+        let rows_without_d1: Vec<SessionRow> = rows
+            .iter()
+            .filter(|row| row.id != "d1")
+            .cloned()
+            .collect();
+        h.send(Msg::Sessions(Ok(rows_without_d1.clone())));
+        h.run();
+        let disk_pruned = crate::settings::Settings::load_from(&settings_path);
+        assert!(!disk_pruned.manual_session_order.contains(&"u-offline-keep".to_string()));
+        assert!(!disk_pruned.manual_session_order.contains(&"ud1".to_string()));
+        assert!(disk_pruned.manual_session_order.contains(&"ud2".to_string()));
+
+        let h2 = Harness::new();
+        h2.tick.sidebar.seed(&h2.ui, rows[..2].to_vec());
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1"]);
+        assert_eq!(h2.ui.get_session_entries().row_count(), 5);
+
+        h2.ui.set_selected_id("a1".into());
+        h2.tick.sidebar.apply_roster(&h2.ui, rows_without_d1);
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2"]);
+        h2.ui.set_selected_id("stale-rebind".into());
+        h2.tick.sidebar.apply_roster(
+            &h2.ui,
+            vec![
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-match",
+                    "sessionId": "ua1",
+                    "lifecycle": "archived"
+                })),
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-other",
+                    "sessionId": "u-other",
+                    "lifecycle": "archived"
+                })),
+            ],
+        );
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["hid-match"]);
+
+        let many: Vec<SessionRow> = (0..30)
+            .map(|n| {
+                SessionRow::from_value(&serde_json::json!({
+                    "activeSessionId": format!("m-{n:02}"),
+                    "sessionId": format!("mu-{n:02}"),
+                    "firstMessage": format!("Row {n:02}"),
+                    "workerState": "ready",
+                    "activity": "working",
+                    "lastActivityAt": format!("2026-11-01T00:{:02}:00Z", 29 - n)
+                }))
+            })
+            .collect();
+        h2.tick.sidebar.apply_roster(&h2.ui, many);
+        h2.ui.invoke_restore_sidebar_cy(-120.0);
+        let before_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((before_cy + 120.0).abs() < 1.0);
+        let m02_y = {
+            let entries = h2.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == "m-02")
+                .map(|entry| entry.at + 16.0)
+                .expect("m-02 y")
+        };
+        h2.ui.invoke_session_dropped("m-05".into(), m02_y);
+        let after_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((after_cy - before_cy).abs() < 1.0);
+
+        let _ = std::fs::remove_file(&settings_path);
+        let h3 = Harness::new();
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(ids_of(h3.ui.get_idle_items()), ["i1", "i2"]);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2"]);
+
+        let mut with_d3 = rows.clone();
+        with_d3.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "d3", "sessionId": "ud3", "firstMessage": "Done 3",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-07T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_d3);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2", "d3"]);
+        assert_eq!(h3.ui.get_fold_index(), -1);
+
+        let mut moved_group = rows.clone();
+        moved_group[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.apply_roster(&h3.ui, moved_group);
+        assert_eq!(h3.ui.get_fold_index(), -2);
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(h3.ui.get_fold_index(), -2);
+
+        h3.send(Msg::CatalogReady);
+        h3.send(Msg::Sessions(Ok(rows.clone())));
+        h3.run();
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(h3.ui.get_fold_index(), -1);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h3.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        h3.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        let mut with_new = rows[..2].to_vec();
+        with_new.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "Aardvark",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-11T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_new);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "a3"]);
+
+        let mut seed_moved = rows[..2].to_vec();
+        seed_moved[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.seed(&h3.ui, seed_moved);
+        assert_eq!(h3.ui.get_fold_index(), 0);
+
+        let _ = std::fs::remove_file(&settings_path);
+        std::fs::write(
+            &settings_path,
+            crate::settings::Settings {
+                session_order: crate::sessions::SessionOrder::Manual,
+                ..Default::default()
+            }
+            .to_json(),
+        )
+        .expect("manual settings");
+        let h4 = Harness::new();
+        h4.tick.sidebar.apply_roster(&h4.ui, rows[..2].to_vec());
+        h4.ui.invoke_setting_chosen("queue-key".into(), "Alt+Enter".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+        h4.send(Msg::CatalogReady);
+        h4.send(Msg::Sessions(Ok(rows[..2].to_vec())));
+        h4.run();
+        assert_eq!(
+            crate::settings::Settings::load_from(&settings_path).manual_session_order,
+            ["ua1", "ua2"]
+        );
+    }
+
     // One test, not six: Slint binds its platform to the test thread, and the
     // harness runs each test on a new thread. The scenarios share this thread.
     #[test]
@@ -2177,6 +2553,11 @@ mod status_strip_tests {
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
         notifications_in_app_and_system_toast_adapter_follow_policy();
+        session_order_choice_reorders_the_cached_roster();
+        manual_order_drag_reorder_persists_and_refuses_cross_group_moves();
+        quit_confirmation_guards_busy_titlebar_close();
+        window_close_request_and_escape_share_quit_decision();
+        every_role_reaches_the_theme_global();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3936,5 +4317,302 @@ mod status_strip_tests {
         h.run();
         assert!(!h.ui.get_notice_open());
         assert_eq!(sent.borrow().len(), 1);
+    }
+
+    fn every_role_reaches_the_theme_global() {
+        let h = Harness::new();
+        let theme = crate::theme::Resolved::shipped();
+        crate::theme::apply(&h.ui, &theme);
+        let global = h.ui.global::<crate::Theme>();
+        assert_eq!(
+            global.get_quit_confirm_danger_ink(),
+            slint::Color::from_rgb_u8(0xf3, 0xde, 0xd8)
+        );
+        assert_eq!(
+            global.get_quit_confirm_ink(),
+            theme.get(crate::theme::Role::QuitConfirmInk).to_slint()
+        );
+        assert_eq!(
+            global.get_search_row_ink_hover(),
+            theme.get(crate::theme::Role::SearchRowInkHover).to_slint()
+        );
+        assert_eq!(
+            global.get_panel_surface(),
+            theme.get(crate::theme::Role::PanelSurface).to_slint()
+        );
+        let shipped_ink = global.get_quit_confirm_ink();
+        crate::theme::apply(&h.ui, &crate::theme::light());
+        assert_ne!(
+            h.ui.global::<crate::Theme>().get_quit_confirm_ink(),
+            shipped_ink
+        );
+    }
+
+    fn quit_confirmation_guards_busy_titlebar_close() {
+        let h = Harness::new();
+        let idle = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Idle chat",
+            "workerState": "idle",
+            "activity": "idle",
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:00:00Z"
+        }));
+        let active_sub = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "sub-1",
+            "sessionId": "s-sub",
+            "parentSessionId": "s-idle",
+            "name": "Worker",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 1,
+            "modified": "2026-11-12T00:01:00Z"
+        }));
+        let active_other = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-2",
+            "sessionId": "s-act",
+            "name": "Other active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone(), active_sub.clone()]);
+        h.ui.set_selected_id("idle-1".into());
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let stale_only = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Settled",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+        h.tick.sidebar.seed(&h.ui, vec![stale_only]);
+        h.tick.settled_session.set(Some("idle-1".to_string()));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+        h.tick.settled_session.set(None);
+
+        h.ui.set_busy(true);
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone()]);
+        assert!(h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
+        h.ui.set_setting_confirm_quit(false);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+        assert_eq!(tick_before, 1);
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        h.ui.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), 2);
+
+        h.ui.invoke_quit_confirmed();
+        assert!(!h.ui.get_quit_confirm_open());
+    }
+
+    fn window_close_request_and_escape_share_quit_decision() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent, WindowEventDispatchResult};
+
+        let type_char = |h: &Harness, ch: &str| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: ch.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: ch.into() });
+        };
+
+        let press_key = |h: &Harness, key: Key| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: key.into() });
+        };
+
+        let h = Harness::new();
+        let active_row = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-1",
+            "sessionId": "s-act",
+            "name": "Active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![active_row]);
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(1200.0, 800.0),
+        });
+        h.ui.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+
+        let blocked = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close requested");
+        assert_eq!(blocked, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+
+        let gear_pos = slint::LogicalPosition::new(1200.0 - 189.0, 16.0);
+        h.ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        h.ui.window().dispatch_event(WindowEvent::PointerReleased {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        assert!(!h.ui.get_settings_menu());
+
+        let second = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("second close requested");
+        assert_eq!(second, WindowEventDispatchResult::Rejected);
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        // Even if the last running turn settles while the prompt is visible,
+        // another close request keeps the prompt open until Cancel or Quit.
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "idle"
+        }))])));
+        h.run();
+        let after_idle = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close while prompt open after idle");
+        assert_eq!(after_idle, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "working"
+        }))])));
+        h.run();
+
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "a");
+        assert_eq!(h.ui.get_composer_text().as_str(), "a");
+
+        h.ui.set_composer_text("/quit".into());
+        h.ui.set_composer_has_text(true);
+        h.ui.invoke_send_requested("/quit".into());
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "b");
+        assert_eq!(h.ui.get_composer_text().as_str(), "b");
+        h.ui.set_composer_text("".into());
+
+        h.ui.set_search_open(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("overlay close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        let search_tick_before = h.ui.get_search_focus_tick();
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_search_open());
+        assert_eq!(h.ui.get_search_focus_tick(), search_tick_before + 1);
+        h.ui.set_search_open(false);
+
+        h.ui.set_settings_menu(true);
+        let settings_tick = h.ui.get_settings_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("settings close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_focus_tick(), settings_tick + 1);
+        crate::settings::close_settings(&h.ui);
+
+        h.ui.set_share_open(true);
+        let share_tick = h.ui.get_share_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("share close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_share_open());
+        assert_eq!(h.ui.get_share_focus_tick(), share_tick + 1);
+        h.ui.set_share_open(false);
+        h.ui.invoke_focus_composer();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "c");
+        assert_eq!(h.ui.get_composer_text().as_str(), "c");
+
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen2 close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Tab);
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let allowed = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("confirmed close requested");
+        assert_eq!(allowed, WindowEventDispatchResult::Accepted);
+
+        let h_idle = Harness::new();
+        h_idle.ui.set_setting_confirm_quit(true);
+        let idle_allowed = h_idle
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("idle close requested");
+        assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
     }
 }
