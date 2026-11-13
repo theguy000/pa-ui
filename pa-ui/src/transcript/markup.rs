@@ -173,10 +173,6 @@ pub(crate) fn escape_html(text: &str) -> String {
 }
 
 
-/// A `**span**` that runs over a line break is not something the Slint text
-/// parser accepts, so it printed the asterisks instead of the weight. Each line
-/// is rebalanced here: a span still open at the end of a line is closed there
-/// and reopened at the start of the next one.
 fn is_cm_punct(ch: char) -> bool {
     ch.is_ascii_punctuation()
 }
@@ -239,6 +235,10 @@ fn unclosed_strong_depth_before(slice: &str, eol_after: char) -> usize {
     depth
 }
 
+/// A `**span**` that runs over a line break is not something the Slint text
+/// parser accepts, so it printed the asterisks instead of the weight. Each line
+/// is rebalanced here: a span still open at the end of a line is closed there
+/// and reopened at the start of the next one.
 pub(crate) fn balance_strong(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
     let mut open_depth = 0usize;
@@ -253,6 +253,10 @@ pub(crate) fn balance_strong(text: &str) -> String {
         }
         let (head, rest) = line.split_at(open_at);
         let (mid, tail) = rest.split_at(close_at - open_at);
+        let is_heading_line = open_at > 0 && close_at < line.len() && !head.contains("</font>");
+        if is_heading_line {
+            open_depth = 0;
+        }
         out.push_str(head);
         if mid.trim().is_empty() {
             out.push_str(mid);
@@ -273,6 +277,9 @@ pub(crate) fn balance_strong(text: &str) -> String {
         open_depth = unclosed_strong_depth(&out[mid_start..]);
         if open_depth > 0 {
             close_strong_before_trailing_ws(mid_start, open_depth, &mut out);
+        }
+        if is_heading_line {
+            open_depth = 0;
         }
         out.push_str(tail);
     }
@@ -401,6 +408,10 @@ fn close_strong_before_trailing_ws_before(
 
 fn push_prose_chunk(chunk: &str, line_start: usize, open_depth: &mut usize, out: &mut String) {
     if chunk.is_empty() {
+        return;
+    }
+    if chunk.trim_matches('\u{200b}').trim().is_empty() {
+        out.push_str(chunk);
         return;
     }
     let need_opener = *open_depth > 0
@@ -603,7 +614,7 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
                 if index > 0 {
                     out.push('\n');
                 }
-                if line.is_empty() {
+                if line.trim().is_empty() {
                     continue;
                 }
                 if index > 0 && bold_already {

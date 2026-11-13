@@ -740,6 +740,27 @@ mod markup_tests {
         assert!(!quoted.contains("*\u{200b}*"), "quote blank line wrapped in italics: {quoted:?}");
         StyledText::from_markdown(&quoted).expect("quoted blank line parses");
     }
+
+    #[test]
+    fn bold_across_adjacent_inline_code_and_headings_stays_balanced() {
+        let theme = shipped();
+        for sample in [
+            "**bold `code1` `code2`**",
+            "**`code1` `code2`**",
+            "**bold `code1` `code2` end**",
+            "**`a\n\nb`**",
+            "**`a\n   \nb`**",
+            "# **bold\nnext",
+        ] {
+            let drawn = markdown_markup(sample, &theme);
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("failed on {sample:?}: {e}\n---\n{drawn}"));
+        }
+        let multi = markdown_markup("**`code1` `code2` end**", &theme);
+        assert!(multi.contains("**code2**") && multi.contains("**end**"), "got {multi:?}");
+        let heading = markdown_markup("# **bold\nnext", &theme);
+        assert!(!heading.ends_with("**next**"), "heading leaked bold: {heading:?}");
+    }
 }
 
 #[cfg(test)]
