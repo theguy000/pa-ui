@@ -47,11 +47,10 @@ impl Default for Settings {
     }
 }
 
-pub(crate) const SESSION_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
-pub(crate) const SESSION_ORDER_OPTIONS: &[&str] = &["Last used", "Name", "Manual"];
 use crate::sessions::SessionOrder;
 
-pub(crate) const THREAD_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
+pub(crate) const SESSION_NOTIFICATION_OPTIONS: &[&str] = &["Off", "Only when unfocused", "Always"];
+pub(crate) const SESSION_ORDER_OPTIONS: &[&str] = &["Last used", "Name", "Manual"];
 pub(crate) const QUEUE_KEY_OPTIONS: &[&str] = &["Ctrl+Enter", "Alt+Enter"];
 pub(crate) const INTERFACE_SIZE_OPTIONS: &[&str] = &["Compact", "Default", "Large"];
 pub(crate) const CODE_FONT_OPTIONS: &[&str] = &["Cascadia Code", "Consolas", "JetBrains Mono"];
@@ -409,6 +408,9 @@ mod tests {
         assert_eq!(loaded.session_notifications, "Always");
         assert!(loaded.to_json().contains(r#""session-notifications": "Always""#));
         assert!(!loaded.to_json().contains("thread-notifications"));
+    }
+
+    #[test]
     fn manual_session_order_ignores_empty_non_string_and_duplicate_ids() {
         let loaded = Settings::from_json(
             r#"{"manual-session-order": ["u1", "", 42, "u2", "u1", "u3"]}"#,
