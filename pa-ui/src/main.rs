@@ -319,7 +319,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    quit::bind(&ui, &tick.sidebar);
+    quit::bind(&ui, &tick);
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();

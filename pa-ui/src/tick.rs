@@ -144,6 +144,12 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
+    pub(crate) fn settled_session_id(&self) -> Option<String> {
+        let settled = self.settled_session.take();
+        self.settled_session.set(settled.clone());
+        settled
+    }
+
     fn follow_selection(
         &self,
         ui: &AppWindow,
@@ -1315,7 +1321,6 @@ mod status_strip_tests {
             let command_word = CommandWord::new();
             let composer = composer::Composer::new(&ui, &job_tx, &models, command_word.clone());
             let sidebar = sessions::Sidebar::new(&ui, &job_tx);
-            crate::quit::bind(&ui, &sidebar);
             let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
             let tick = Rc::new(Tick {
                 weak: ui.as_weak(),
@@ -1342,6 +1347,7 @@ mod status_strip_tests {
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
             });
+            crate::quit::bind(&ui, &tick);
             Self {
                 ui,
                 tick,
@@ -3451,30 +3457,47 @@ mod status_strip_tests {
         h.tick.sidebar.seed(&h.ui, vec![idle.clone(), active_sub.clone()]);
         h.ui.set_selected_id("idle-1".into());
         h.ui.set_setting_confirm_quit(true);
-        h.ui.invoke_titlebar_close();
+        h.ui.invoke_quit_requested();
         assert!(!h.ui.get_quit_confirm_open());
+
+        let stale_only = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Settled",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+        h.tick.sidebar.seed(&h.ui, vec![stale_only]);
+        h.tick.settled_session.set(Some("idle-1".to_string()));
+        h.ui.set_busy(false);
+        assert!(!h.tick.sidebar.has_running_top_level(h.tick.settled_session_id().as_deref()));
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+        h.tick.settled_session.set(None);
 
         h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
         h.ui.set_setting_confirm_quit(false);
-        h.ui.invoke_titlebar_close();
+        h.ui.invoke_quit_requested();
         assert!(!h.ui.get_quit_confirm_open());
 
         h.ui.set_setting_confirm_quit(true);
-        h.ui.invoke_titlebar_close();
+        h.ui.invoke_quit_requested();
         assert!(h.ui.get_quit_confirm_open());
         let tick_before = h.ui.get_quit_confirm_focus_tick();
         assert_eq!(tick_before, 1);
 
-        h.ui.invoke_titlebar_close();
+        h.ui.invoke_quit_requested();
         assert!(h.ui.get_quit_confirm_open());
         assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
 
         h.ui.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         h.ui.invoke_quit_cancelled();
         assert!(!h.ui.get_quit_confirm_open());
-        assert!(h.ui.get_composer_focused());
 
-        h.ui.invoke_titlebar_close();
+        h.ui.invoke_quit_requested();
         assert!(h.ui.get_quit_confirm_open());
         assert_eq!(h.ui.get_quit_confirm_focus_tick(), 2);
 
@@ -3483,7 +3506,21 @@ mod status_strip_tests {
     }
 
     fn window_close_request_and_escape_share_quit_decision() {
-        use slint::platform::{Key, WindowEvent, WindowEventDispatchResult};
+        use slint::platform::{Key, PointerEventButton, WindowEvent, WindowEventDispatchResult};
+
+        let type_char = |h: &Harness, ch: &str| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: ch.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: ch.into() });
+        };
+
+        let press_key = |h: &Harness, key: Key| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: key.into() });
+        };
 
         let h = Harness::new();
         let active_row = SessionRow::from_value(&serde_json::json!({
@@ -3513,6 +3550,18 @@ mod status_strip_tests {
         assert!(h.ui.get_quit_confirm_open());
         let tick_before = h.ui.get_quit_confirm_focus_tick();
 
+        // Clicking settings gear in the title bar while the modal is open must be blocked by the modal backdrop.
+        let gear_pos = slint::LogicalPosition::new(1200.0 - 189.0, 16.0);
+        h.ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        h.ui.window().dispatch_event(WindowEvent::PointerReleased {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        assert!(!h.ui.get_settings_menu());
+
         let second = h
             .ui
             .window()
@@ -3521,12 +3570,10 @@ mod status_strip_tests {
         assert_eq!(second, WindowEventDispatchResult::Rejected);
         assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
 
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyPressed { text: Key::Escape.into() });
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyReleased { text: Key::Escape.into() });
+        press_key(&h, Key::Escape);
         assert!(!h.ui.get_quit_confirm_open());
-        assert!(h.ui.get_composer_focused());
+        type_char(&h, "a");
+        assert_eq!(h.ui.get_composer_text().as_str(), "a");
 
         h.ui.set_composer_text("/quit".into());
         h.ui.set_composer_has_text(true);
@@ -3535,39 +3582,45 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_composer_text().as_str(), "");
         h.ui.invoke_quit_cancelled();
         assert!(!h.ui.get_quit_confirm_open());
-        assert!(h.ui.get_composer_focused());
+        type_char(&h, "b");
+        assert_eq!(h.ui.get_composer_text().as_str(), "b");
+        h.ui.set_composer_text("".into());
 
-        let reopened = h
-            .ui
-            .window()
-            .dispatch_event_with_result(WindowEvent::CloseRequested)
-            .expect("reopen close requested");
-        assert_eq!(reopened, WindowEventDispatchResult::Rejected);
-        assert!(h.ui.get_quit_confirm_open());
-
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
+        // Preserves open overlay focus rather than pulling focus behind it.
+        h.ui.set_search_open(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("overlay close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        let search_tick_before = h.ui.get_search_focus_tick();
+        press_key(&h, Key::Escape);
         assert!(!h.ui.get_quit_confirm_open());
-        assert!(h.ui.get_composer_focused());
+        assert!(h.ui.get_search_open());
+        assert_eq!(h.ui.get_search_focus_tick(), search_tick_before + 1);
+        h.ui.set_search_open(false);
+        h.ui.invoke_focus_composer();
 
-        let reopened2 = h
-            .ui
-            .window()
-            .dispatch_event_with_result(WindowEvent::CloseRequested)
-            .expect("reopen2 close requested");
-        assert_eq!(reopened2, WindowEventDispatchResult::Rejected);
-        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "c");
+        assert_eq!(h.ui.get_composer_text().as_str(), "c");
 
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyPressed { text: Key::Tab.into() });
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyReleased { text: Key::Tab.into() });
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
-        h.ui.window()
-            .dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen2 close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Tab);
+        press_key(&h, Key::Return);
         assert!(!h.ui.get_quit_confirm_open());
 
         let allowed = h
@@ -3578,6 +3631,7 @@ mod status_strip_tests {
         assert_eq!(allowed, WindowEventDispatchResult::Accepted);
 
         let h_idle = Harness::new();
+        h_idle.ui.set_setting_confirm_quit(true);
         let idle_allowed = h_idle
             .ui
             .window()

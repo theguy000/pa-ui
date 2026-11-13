@@ -89,6 +89,12 @@ pub(crate) struct Composer {
     repaint_canvas: Repaint,
 }
 
+fn clear_composer(ui: &AppWindow) {
+    ui.set_composer_text("".into());
+    ui.set_composer_has_text(false);
+    ui.set_composer_command("".into());
+}
+
 impl Composer {
     pub fn new(
         ui: &AppWindow,
@@ -279,16 +285,12 @@ impl Composer {
                 match slash_dispatch(&message) {
                     SlashAction::Send => {}
                     SlashAction::Model => {
-                        ui.set_composer_text("".into());
-                        ui.set_composer_has_text(false);
-                        ui.set_composer_command("".into());
+                        clear_composer(&ui);
                         ui.set_model_menu(true);
                         return;
                     }
                     SlashAction::EffortHint => {
-                        ui.set_composer_text("".into());
-                        ui.set_composer_has_text(false);
-                        ui.set_composer_command("".into());
+                        clear_composer(&ui);
                         return;
                     }
                     SlashAction::NewChat => {
@@ -296,10 +298,8 @@ impl Composer {
                         return;
                     }
                     SlashAction::Quit => {
-                        ui.set_composer_text("".into());
-                        ui.set_composer_has_text(false);
-                        ui.set_composer_command("".into());
-                        ui.invoke_titlebar_close();
+                        clear_composer(&ui);
+                        ui.invoke_quit_requested();
                         return;
                     }
                     SlashAction::Rename(name) => {

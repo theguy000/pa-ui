@@ -51,16 +51,27 @@ pub fn init(ui: slint::Weak<crate::AppWindow>) -> bool {
     }
 }
 
+pub fn has_window() -> bool {
+    #[cfg(windows)]
+    {
+        imp::has_window()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Close the way the native close button would, so anything listening for a
 /// close request still sees one.
-pub fn close() -> bool {
+pub fn close() -> Result<(), String> {
     #[cfg(windows)]
     {
         imp::close()
     }
     #[cfg(not(windows))]
     {
-        false
+        Err("native window close is only wired on Windows".to_string())
     }
 }
 
@@ -248,9 +259,19 @@ mod imp {
         }
     }
 
-    pub(super) fn close() -> bool {
+    pub(super) fn has_window() -> bool {
+        HWND.load(Ordering::SeqCst) != 0
+    }
+
+    pub(super) fn close() -> Result<(), String> {
         let hwnd = HWND.load(Ordering::SeqCst);
-        hwnd != 0 && unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) != 0 }
+        if hwnd == 0 {
+            return Err("window handle is not initialized".to_string());
+        }
+        if unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) == 0 } {
+            return Err(format!("PostMessageW(WM_CLOSE) failed: {}", std::io::Error::last_os_error()));
+        }
+        Ok(())
     }
 
     fn scale(hwnd: isize) -> f64 {

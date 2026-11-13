@@ -30,7 +30,7 @@ export component AppWindow inherits Window {
 
     // the custom title bar, driven from src/titlebar.rs
     callback titlebar-minimize();
-    callback titlebar-close();
+    callback quit-requested();
     in-out property <bool> quit-confirm-open: false;
     in-out property <int> quit-confirm-focus-tick: 0;
     callback quit-confirmed();
@@ -128,7 +128,6 @@ export component AppWindow inherits Window {
     in-out property <length> composer-caret-x: 0px;
     in-out property <length> composer-caret-y: 0px;
     in-out property <length> composer-caret-height: 18px;
-    out property <bool> composer-focused: draft-window.has-focus;
     out property <int> composer-caret: draft-window.caret-offset;
     out property <int> composer-anchor: draft-window.anchor-offset;
     out property <length> composer-width: draft-window.width;
@@ -2216,6 +2215,21 @@ export component AppWindow inherits Window {
         }
     }
 
+    // drawn above content and the drag surface beneath it
+    title-bar := TitleBar {
+        y: 0;
+        width: 100%;
+        caption: root.title;
+        right-open: root.right-open;
+        toggle-right => { root.right-open = !root.right-open; }
+        settings-open: root.settings-menu;
+        toggle-settings => { root.settings-toggle-requested(); }
+        maximized: root.titlebar-maximized;
+        max-hover: root.titlebar-max-hover;
+        minimize => { root.titlebar-minimize(); }
+        close => { root.quit-requested(); }
+    }
+
     if root.quit-confirm-open : Rectangle {
         x: 0;
         y: 0;
@@ -2234,21 +2248,6 @@ export component AppWindow inherits Window {
             cancelled => { root.quit-cancelled(); }
             confirmed => { root.quit-confirmed(); }
         }
-    }
-
-    // drawn last so it sits above the content and the drag surface beneath it
-    title-bar := TitleBar {
-        y: 0;
-        width: 100%;
-        caption: root.title;
-        right-open: root.right-open;
-        toggle-right => { root.right-open = !root.right-open; }
-        settings-open: root.settings-menu;
-        toggle-settings => { root.settings-toggle-requested(); }
-        maximized: root.titlebar-maximized;
-        max-hover: root.titlebar-max-hover;
-        minimize => { root.titlebar-minimize(); }
-        close => { root.titlebar-close(); }
     }
 }
 
