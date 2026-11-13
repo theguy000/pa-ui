@@ -1055,7 +1055,6 @@ impl Sidebar {
             {
                 let weak = ui.as_weak();
                 let store = store.clone();
-                let groups = self.groups.clone();
                 ui.on_setting_chosen(move |key, val| {
                     let Some(ui) = weak.upgrade() else { return };
                     ui.set_settings_open_choice("".into());
@@ -1069,17 +1068,11 @@ impl Sidebar {
                     };
                     if changed {
                         if key.as_str() == "interface-size" {
-                            let held = groups.borrow();
-                            let (active, idle, done) = if held.0.is_empty() && held.1.is_empty() && held.2.is_empty() {
-                                groups_of(
-                                    &ui.get_active_items(),
-                                    &ui.get_idle_items(),
-                                    &ui.get_done_items(),
-                                )
-                            } else {
-                                held.clone()
-                            };
-                            drop(held);
+                            let (active, idle, done) = groups_of(
+                                &ui.get_active_items(),
+                                &ui.get_idle_items(),
+                                &ui.get_done_items(),
+                            );
                             let folded = [
                                 ui.get_active_folded(),
                                 ui.get_idle_folded(),

@@ -3439,18 +3439,65 @@ mod status_strip_tests {
         assert_eq!(h.ui.global::<crate::Type>().get_body(), 15.0);
         assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 32.0);
 
+        let entries_y = || -> Vec<f32> {
+            h.ui
+                .get_session_entries()
+                .iter()
+                .filter(|e| !e.is_header)
+                .map(|e| e.at)
+                .collect()
+        };
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 32.0);
+
         h.ui.invoke_setting_chosen("interface-size".into(), "Compact".into());
         assert_eq!(h.ui.global::<crate::Type>().get_body(), 13.5);
         assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 28.0);
+        assert_eq!(h.ui.get_fold_index(), -1);
         assert!(h.ui.get_sessions_height() < default_h);
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 28.0);
 
         h.ui.invoke_setting_chosen("interface-size".into(), "Large".into());
         assert_eq!(h.ui.global::<crate::Type>().get_body(), 17.0);
         assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 36.0);
+        assert_eq!(h.ui.get_fold_index(), -1);
         assert!(h.ui.get_sessions_height() > default_h);
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 36.0);
 
         h.ui.invoke_setting_chosen("interface-size".into(), "Default".into());
         assert_eq!(h.ui.get_sessions_height(), default_h);
+
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_live = h.tick.attach_generation.get();
+        h.send_at(gen_live, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "id": "m_live",
+                    "role": "assistant",
+                    "timestamp": "2026-11-10T12:03:00Z"
+                }
+            }),
+        });
+        h.send_at(gen_live, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": {"id": "m_live", "role": "assistant"},
+                "assistantMessageEvent": {"type": "text_delta", "delta": "hi"}
+            }),
+        });
+        h.run();
+        assert!(!h.tick.sheet.rows().last().unwrap().timestamp.is_empty());
+
+        let seed_rows = vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "seed1", "sessionId": "useed1", "firstMessage": "Seeded",
+            "workerState": "ready", "activity": "idle"
+        }))];
+        h.tick.sidebar.seed(&h.ui, seed_rows);
+        assert_eq!(h.ui.get_sessions().row_count(), 1);
+        assert_eq!(h.ui.get_idle_items().row_count(), 1);
 
         h.ui.invoke_setting_chosen("code-font".into(), "JetBrains Mono".into());
         assert_eq!(h.ui.global::<crate::Appearance>().get_code_font().as_str(), "JetBrains Mono");
