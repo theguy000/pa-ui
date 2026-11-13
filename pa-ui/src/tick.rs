@@ -3439,7 +3439,7 @@ mod status_strip_tests {
         let global = h.ui.global::<crate::Theme>();
         assert_eq!(
             global.get_quit_confirm_danger_ink(),
-            slint::Color::from_rgb_u8(0xf7, 0xeb, 0xe7)
+            slint::Color::from_rgb_u8(0xf3, 0xde, 0xd8)
         );
         assert_eq!(
             global.get_quit_confirm_ink(),
