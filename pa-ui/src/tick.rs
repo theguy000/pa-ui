@@ -3550,7 +3550,6 @@ mod status_strip_tests {
         assert!(h.ui.get_quit_confirm_open());
         let tick_before = h.ui.get_quit_confirm_focus_tick();
 
-        // Clicking settings gear in the title bar while the modal is open must be blocked by the modal backdrop.
         let gear_pos = slint::LogicalPosition::new(1200.0 - 189.0, 16.0);
         h.ui.window().dispatch_event(WindowEvent::PointerPressed {
             position: gear_pos,
@@ -3586,7 +3585,6 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_composer_text().as_str(), "b");
         h.ui.set_composer_text("".into());
 
-        // Preserves open overlay focus rather than pulling focus behind it.
         h.ui.set_search_open(true);
         assert_eq!(
             h.ui.window()
@@ -3600,8 +3598,33 @@ mod status_strip_tests {
         assert!(h.ui.get_search_open());
         assert_eq!(h.ui.get_search_focus_tick(), search_tick_before + 1);
         h.ui.set_search_open(false);
-        h.ui.invoke_focus_composer();
 
+        h.ui.set_settings_menu(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("settings close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "x");
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.set_settings_menu(false);
+
+        h.ui.set_share_open(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("share close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "y");
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.set_share_open(false);
+        h.ui.invoke_focus_composer();
         assert_eq!(
             h.ui.window()
                 .dispatch_event_with_result(WindowEvent::CloseRequested)

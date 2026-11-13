@@ -435,6 +435,15 @@ mod imp {
             }
         }
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn uninitialized_window_reports_closed_error() {
+        assert!(!has_window());
+        assert!(close().is_err());
+    }
 }
