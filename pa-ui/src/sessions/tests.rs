@@ -800,4 +800,27 @@ fn manual_move_appends_new_sessions_and_keeps_other_groups() {
     assert!(reconcile_manual_order(&rows, &mut updated));
     assert!(!updated.contains(&"stale-done".to_string()));
     assert!(updated.contains(&"ud1".to_string()));
+
+    assert_eq!(SessionOrder::parse("Last used"), Some(SessionOrder::LastUsed));
+    assert_eq!(SessionOrder::parse("Name"), Some(SessionOrder::Name));
+    assert_eq!(SessionOrder::parse("Manual"), Some(SessionOrder::Manual));
+    assert_eq!(SessionOrder::parse("Unknown"), None);
+
+    let mixed = vec![
+        row(serde_json::json!({
+            "activeSessionId": "top-empty", "sessionId": "", "firstMessage": "NoUuid",
+            "workerState": "ready", "activity": "working"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "sub1", "sessionId": "usub1", "parentSessionId": "ua1",
+            "rlmDepth": 1, "firstMessage": "Sub", "workerState": "ready", "activity": "working"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working"
+        })),
+    ];
+    let mut manual_mixed = vec!["".to_string(), "usub1".to_string(), "ua1".to_string()];
+    assert!(reconcile_manual_order(&mixed, &mut manual_mixed));
+    assert_eq!(manual_mixed, ["ua1"]);
 }

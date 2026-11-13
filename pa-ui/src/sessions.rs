@@ -257,18 +257,9 @@ pub(crate) fn apply_manual_move(
     source_id: &str,
     target_id: &str,
 ) -> Option<Vec<String>> {
-    if source_id == target_id || source_id.is_empty() || target_id.is_empty() {
-        return None;
-    }
     let top: Vec<&SessionRow> = rows.iter().filter(|row| is_top_level(row)).collect();
     let source = top.iter().copied().find(|row| row.id == source_id)?;
     let target = top.iter().copied().find(|row| row.id == target_id)?;
-    if source.session_id.is_empty()
-        || target.session_id.is_empty()
-        || source.session_id == target.session_id
-    {
-        return None;
-    }
     let group = tag_of(source);
     if group != tag_of(target) {
         return None;
@@ -886,7 +877,7 @@ impl Sidebar {
             (&[], &[], &[]),
             [false, false, false],
         );
-        apply(ui, col, -1, false);
+        apply(ui, col, 0, false);
         ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
         ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
         ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));

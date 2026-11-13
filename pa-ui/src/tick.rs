@@ -2125,8 +2125,10 @@ mod status_strip_tests {
     fn manual_order_drag_reorder_persists_and_refuses_cross_group_moves() {
         let settings_path = std::path::PathBuf::from(std::env::var("PA_SETTINGS_FILE").expect("PA_SETTINGS_FILE"));
         let _ = std::fs::remove_file(&settings_path);
-        let mut seeded = crate::settings::Settings::default();
-        seeded.manual_session_order = vec!["u-offline-keep".into()];
+        let seeded = crate::settings::Settings {
+            manual_session_order: vec!["u-offline-keep".into()],
+            ..Default::default()
+        };
         std::fs::write(&settings_path, seeded.to_json()).expect("seed settings");
         let h = Harness::new();
         h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
@@ -2193,6 +2195,11 @@ mod status_strip_tests {
         h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
         h.ui.invoke_session_dropped("i2".into(), row_mid_y("i1"));
 
+        let a2_bottom_edge = row_mid_y("a2") + 16.0;
+        h.ui.invoke_session_dropped("a2".into(), a2_bottom_edge);
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a1", "a2", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+
         assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
         assert_eq!(h.ui.get_selected_id().as_str(), "a1");
         assert!(h.ui.get_done_folded());
@@ -2235,8 +2242,30 @@ mod status_strip_tests {
         assert!(disk_pruned.manual_session_order.contains(&"ud2".to_string()));
 
         let h2 = Harness::new();
+        h2.tick.sidebar.seed(&h2.ui, rows[..2].to_vec());
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1"]);
+        assert_eq!(h2.ui.get_session_entries().row_count(), 5);
+
+        h2.ui.set_selected_id("a1".into());
         h2.tick.sidebar.apply_roster(&h2.ui, rows_without_d1);
         assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2"]);
+        h2.ui.set_selected_id("stale-rebind".into());
+        h2.tick.sidebar.apply_roster(
+            &h2.ui,
+            vec![
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-match",
+                    "sessionId": "ua1",
+                    "lifecycle": "archived"
+                })),
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-other",
+                    "sessionId": "u-other",
+                    "lifecycle": "archived"
+                })),
+            ],
+        );
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["hid-match"]);
 
         let many: Vec<SessionRow> = (0..30)
             .map(|n| {
