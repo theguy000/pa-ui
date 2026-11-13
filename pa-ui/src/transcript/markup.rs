@@ -312,6 +312,13 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
     let mut out = String::with_capacity(text.len() + 32);
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            out.push(ch);
+            if let Some(escaped) = chars.next() {
+                out.push(escaped);
+            }
+            continue;
+        }
         if ch != '`' {
             out.push(ch);
             continue;
@@ -320,13 +327,17 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
         while chars.peek() == Some(&'`') {
             ticks.push(chars.next().unwrap_or('`'));
         }
+        let mut probe = chars.clone();
         let mut body = String::new();
         let mut closed = false;
-        while let Some(next) = chars.next() {
+        while let Some(next) = probe.next() {
+            if next == '<' {
+                break;
+            }
             if next == '`' {
                 let mut closing = String::from("`");
-                while chars.peek() == Some(&'`') {
-                    closing.push(chars.next().unwrap_or('`'));
+                while probe.peek() == Some(&'`') {
+                    closing.push(probe.next().unwrap_or('`'));
                 }
                 if closing.len() == ticks.len() {
                     closed = true;
@@ -337,7 +348,14 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             }
             body.push(next);
         }
-        if closed && !body.trim().is_empty() {
+        if !closed {
+            for _ in 0..ticks.len() {
+                out.push_str(r"\`");
+            }
+            continue;
+        }
+        chars = probe;
+        if !body.trim().is_empty() {
             // A fresh span carries its weight inside the colour tag: at the
             // start of a line Slint reads `**<font>` as literal markers, while
             // `<font>**...**` parses. A span already inside bold only needs a

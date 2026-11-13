@@ -664,6 +664,31 @@ mod markup_tests {
         assert!(second.starts_with("\u{200b}<font"), "got {second:?}");
         assert!(second.contains(">  two"), "got {second:?}");
     }
+
+    #[test]
+    fn unclosed_backticks_in_streaming_headings_and_across_tags_parse() {
+        for sample in [
+            "### Current investigation (`pa-ui.",
+            "## heading with `unclosed and **bold",
+            "prose with `unclosed\n> quoted line",
+            "prose with `unclosed\n# Heading line",
+            "`open\n> quote with `close`",
+            r"\`code`",
+            r"\`unclosed",
+            "## heading \\`escaped`",
+        ] {
+            let drawn = markdown_markup(sample, &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("failed on {sample:?}: {error}\n---\n{drawn}"));
+            for line in drawn.lines() {
+                assert_eq!(
+                    line.matches("<font").count(),
+                    line.matches("</font>").count(),
+                    "font tags must balance on line {line:?} for {sample:?}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -726,14 +726,11 @@ impl Tick {
                         );
                     }
                 }
-                Msg::Event { session, event } => {
+                Msg::Event { session, event, sequence } => {
                     if !session_is_current(&ui, &session) {
                         continue;
                     }
-                    if let Some(sequence) = event
-                        .pointer("/meta/sequence")
-                        .and_then(serde_json::Value::as_u64)
-                    {
+                    if let Some(sequence) = sequence.filter(|&seq| seq > 0) {
                         if l.last_seq != 0 && sequence > l.last_seq + 1 {
                             let _ = jobs.send(Job::Tail {
                                 session: session.clone(),
@@ -1491,6 +1488,7 @@ mod status_strip_tests {
                     "content": [{"type": "text", "text": text}]
                 }
             }),
+            sequence: None,
         }
     }
 
@@ -1498,6 +1496,7 @@ mod status_strip_tests {
         Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "turn_end"}),
+            sequence: None,
         }
     }
 
@@ -1505,6 +1504,7 @@ mod status_strip_tests {
         Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": kind}),
+            sequence: None,
         }
     }
 
@@ -1967,6 +1967,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "m1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -1977,6 +1978,7 @@ mod status_strip_tests {
                 "toolName": "bash",
                 "args": {"code": "exit 1"}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -1987,6 +1989,7 @@ mod status_strip_tests {
                 "isError": true,
                 "result": {"content": [{"type": "text", "text": "exit 1"}]}
             }),
+            sequence: None,
         });
         h.run();
 
@@ -2047,6 +2050,7 @@ mod status_strip_tests {
                     "errorMessage": "provider returned 429"
                 }
             }),
+            sequence: None,
         });
         h.run();
 
@@ -2068,6 +2072,7 @@ mod status_strip_tests {
                 "type": "turn_end",
                 "message": { "stopReason": "aborted", "errorMessage": "No response produced." }
             }),
+            sequence: None,
         });
         h.run();
         assert!(!h
@@ -2091,6 +2096,7 @@ mod status_strip_tests {
                 "errorSeverity": "error",
                 "errorMessage": "Compaction failed: context too large"
             }),
+            sequence: None,
         });
         h.run();
         let rows = h.tick.sheet.rows();
@@ -2771,6 +2777,7 @@ mod status_strip_tests {
         h.send(Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "message_start", "message": user.clone()}),
+            sequence: None,
         });
         h.run();
         assert_eq!(
@@ -2786,6 +2793,7 @@ mod status_strip_tests {
         h.send(Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "message_start", "message": user}),
+            sequence: None,
         });
         h.run();
         assert_eq!(
@@ -2811,6 +2819,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -2820,6 +2829,7 @@ mod status_strip_tests {
                 "message": assistant,
                 "assistantMessageEvent": {"type": "text_delta", "delta": "the reply"}
             }),
+            sequence: None,
         });
         h.run();
 
@@ -2911,6 +2921,7 @@ mod status_strip_tests {
                     "timestamp": 1
                 }
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -2919,6 +2930,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -2933,6 +2945,7 @@ mod status_strip_tests {
                 },
                 "assistantMessageEvent": {"type": "text_delta", "delta": "the reply"}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -2945,6 +2958,7 @@ mod status_strip_tests {
                     "timestamp": 3
                 }
             }),
+            sequence: None,
         });
         h.run();
         let rows = h.tick.sheet.rows();
@@ -2974,6 +2988,7 @@ mod status_strip_tests {
         h.send(Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "message_start", "message": pre_custom}),
+            sequence: None,
         });
         h.run();
         assert_eq!(
@@ -2999,6 +3014,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -3008,6 +3024,7 @@ mod status_strip_tests {
                 "message": reply_1.clone(),
                 "assistantMessageEvent": {"type": "text_delta", "delta": "first reply"}
             }),
+            sequence: None,
         });
         h.run();
 
@@ -3022,6 +3039,7 @@ mod status_strip_tests {
         h.send(Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "message_start", "message": agent_msg_live}),
+            sequence: None,
         });
         h.run();
 
@@ -3055,6 +3073,7 @@ mod status_strip_tests {
         h.send(Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({"type": "message_start", "message": agent_msg_live.clone()}),
+            sequence: None,
         });
         h.run();
         {
@@ -3080,6 +3099,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a2", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -3089,6 +3109,7 @@ mod status_strip_tests {
                 "message": reply_2.clone(),
                 "assistantMessageEvent": {"type": "text_delta", "delta": "second reply"}
             }),
+            sequence: None,
         });
         h.run();
 
@@ -3168,6 +3189,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -3177,6 +3199,7 @@ mod status_strip_tests {
                 "message": reply,
                 "assistantMessageEvent": {"type": "text_delta", "delta": "reply"}
             }),
+            sequence: None,
         });
         h.run();
         for (index, (body, stamp)) in
@@ -3195,6 +3218,7 @@ mod status_strip_tests {
                         "timestamp": stamp
                     }
                 }),
+                sequence: None,
             });
             h.run();
             if index == 0 {
@@ -3206,6 +3230,7 @@ mod status_strip_tests {
                         "toolName": "python_repl",
                         "args": {"code": "x = 1"}
                     }),
+                    sequence: None,
                 });
                 h.run();
             }
@@ -3233,6 +3258,7 @@ mod status_strip_tests {
                 "type": "message_start",
                 "message": {"id": "a1", "role": "assistant", "content": []}
             }),
+            sequence: None,
         });
         h.run();
         h.send(Msg::Event {
@@ -3247,6 +3273,7 @@ mod status_strip_tests {
                 },
                 "assistantMessageEvent": {"type": "text_delta", "delta": "reply"}
             }),
+            sequence: None,
         });
         h.run();
         for stamp in [101, 102] {
@@ -3262,6 +3289,7 @@ mod status_strip_tests {
                         "timestamp": stamp
                     }
                 }),
+                sequence: None,
             });
             h.run();
         }
@@ -3336,6 +3364,7 @@ mod status_strip_tests {
                         "content": [{"type": "text", "text": "a new prompt"}]
                     }
                 }),
+                sequence: None,
             },
         );
         h.run();
@@ -3951,6 +3980,7 @@ mod status_strip_tests {
                     "timestamp": "2026-11-10T12:03:00Z"
                 }
             }),
+            sequence: None,
         });
         h.send_at(gen_live, Msg::Event {
             session: "s1".to_string(),
@@ -3959,6 +3989,7 @@ mod status_strip_tests {
                 "message": {"id": "m_live", "role": "assistant"},
                 "assistantMessageEvent": {"type": "text_delta", "delta": "hi"}
             }),
+            sequence: None,
         });
         h.run();
         assert!(!h.tick.sheet.rows().last().unwrap().timestamp.is_empty());
@@ -4222,6 +4253,7 @@ fn main() {}
         h.send_at(gen, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen, Msg::Event {
             session: "s2".to_string(),
@@ -4229,10 +4261,12 @@ fn main() {}
                 "type": "turn_end",
                 "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
             }),
+            sequence: None,
         });
         h.send_at(gen, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "agent_end"}),
+            sequence: None,
         });
         h.run();
         assert_eq!(sent.borrow().len(), 1);
@@ -4252,6 +4286,7 @@ fn main() {}
         h.send_at(gen_s1, Msg::Event {
             session: "s1".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen_s1, Msg::SessionClosed {
             session: "s2".to_string(),
@@ -4282,6 +4317,7 @@ fn main() {}
         h.send_at(gen_s2, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen_s2, Msg::SessionClosed {
             session: "s2".to_string(),
@@ -4308,6 +4344,7 @@ fn main() {}
         h.send_at(gen_sub, Msg::Event {
             session: "sub1".to_string(),
             event: serde_json::json!({"type": "agent_end"}),
+            sequence: None,
         });
         h.send_at(gen_sub, Msg::SessionClosed {
             session: "sub1".to_string(),
@@ -4322,6 +4359,7 @@ fn main() {}
         h.send_at(gen_busy, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.run();
         assert!(h.ui.get_busy());
@@ -4338,6 +4376,7 @@ fn main() {}
         h.send_at(gen_busy, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.run();
         assert!(h.ui.get_busy());
@@ -4379,6 +4418,7 @@ fn main() {}
                 "type": "turn_end",
                 "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
             }),
+            sequence: None,
         });
         h.run();
         h.ui.set_selected_id("s2".into());
@@ -4388,6 +4428,7 @@ fn main() {}
         h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "agent_end"}),
+            sequence: None,
         });
         h.run();
         assert_eq!(sent.borrow().len(), 1);
@@ -4409,10 +4450,12 @@ fn main() {}
         h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "agent_end"}),
+            sequence: None,
         });
         h.send_at(gen_clean, Msg::SessionClosed {
             session: "s1".to_string(),
@@ -4432,6 +4475,7 @@ fn main() {}
         h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen_clean, Msg::SessionClosed {
             session: "s2".to_string(),
@@ -4444,6 +4488,7 @@ fn main() {}
         h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
+            sequence: None,
         });
         h.send_at(gen_clean, Msg::SessionClosed {
             session: "s2".to_string(),
@@ -4766,5 +4811,107 @@ fn main() {}
             .dispatch_event_with_result(WindowEvent::CloseRequested)
             .expect("idle close requested");
         assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
+    }
+
+    #[test]
+    fn sequence_gap_triggers_tail_refresh_while_contiguous_sequence_does_not() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.send_at(
+            0,
+            Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({ "type": "turn_start" }),
+                sequence: Some(10),
+            },
+        );
+        h.send_at(
+            0,
+            Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({ "type": "agent_start" }),
+                sequence: Some(11),
+            },
+        );
+        h.run();
+        while let Ok(job) = h.jobs.try_recv() {
+            assert!(
+                !matches!(job, Job::Tail { .. }),
+                "contiguous sequences must not trigger Tail"
+            );
+        }
+
+        h.send_at(
+            0,
+            Msg::Event {
+                session: "s".to_string(),
+                event: serde_json::json!({ "type": "message_start", "message": { "role": "assistant", "content": [] } }),
+                sequence: Some(13),
+            },
+        );
+        h.run();
+        let mut tails = 0usize;
+        while let Ok(job) = h.jobs.try_recv() {
+            if matches!(job, Job::Tail { .. }) {
+                tails += 1;
+            }
+        }
+        assert_eq!(tails, 1, "a skipped sequence must request Job::Tail");
+    }
+
+    #[test]
+    fn failed_async_bash_completion_after_idle_renders_with_subsequent_turn() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        h.send_at(0, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({ "type": "agent_end", "messages": [] }),
+            sequence: Some(1),
+        });
+        h.send_at(0, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({ "type": "agent_start" }),
+            sequence: Some(2),
+        });
+        h.send_at(0, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "customType": "async_bash_completion",
+                    "content": "[bash-done pid:6012 exit:1]\n\nCommand: \"echo hi\"",
+                    "display": true,
+                    "details": { "pid": 6012, "command": "echo hi", "exitCode": 1 }
+                }
+            }),
+            sequence: Some(3),
+        });
+        h.send_at(0, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": { "id": "m2", "role": "assistant", "content": [] }
+            }),
+            sequence: Some(4),
+        });
+        h.send_at(0, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "text_delta", "delta": "Next reply" },
+                "message": { "id": "m2", "role": "assistant" }
+            }),
+            sequence: Some(5),
+        });
+        h.run();
+        let rows = h.tick.sheet.rows();
+        assert!(
+            rows.iter().any(|row| row.title == "Background shell command finished" && row.meta == "exit 1" && row.failed),
+            "failed async_bash_completion row must appear in the sheet"
+        );
+        assert!(
+            rows.iter().any(|row| row.body.contains("Next reply")),
+            "subsequent turn text must render after failed async_bash_completion"
+        );
     }
 }

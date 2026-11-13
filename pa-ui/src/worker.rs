@@ -108,7 +108,7 @@ pub(crate) enum Msg {
         more: bool,
     },
     /// one `session_event` from the attached session, forwarded verbatim
-    Event { session: String, event: serde_json::Value },
+    Event { session: String, event: serde_json::Value, sequence: Option<u64> },
     PromptResult { session: Option<String>, error: Option<String> },
     /// the daemon refused a prompt: hand the text back to the composer
     PromptRejected { session: Option<String>, text: String },
@@ -1145,6 +1145,10 @@ pub(crate) fn worker_inner(
                         if crate::env_cfg::cfg().debug {
                             eprintln!("[tail] {session} FAILED: {error}");
                         }
+                        out.send(Msg::Error {
+                            session: Some(session),
+                            message: format!("Could not refresh transcript: {error}"),
+                        });
                     }
                     }
                 }
@@ -1379,6 +1383,7 @@ pub(crate) fn worker_inner(
             if Some(session.to_string()) != attached {
                 continue;
             }
+            let mut event_sequence = None;
             if let Some(meta) = frame.get("meta") {
                 let generation = meta
                     .get("generation")
@@ -1386,8 +1391,12 @@ pub(crate) fn worker_inner(
                     .unwrap_or_default();
                 let sequence = meta
                     .get("sequence")
+                    .or_else(|| meta.pointer("/cursor/sequence"))
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
+                if sequence > 0 {
+                    event_sequence = Some(sequence);
+                }
                 if !generation.is_empty() && sequence > 0 {
                     resume = Some((generation.to_string(), sequence));
                 }
@@ -1396,6 +1405,7 @@ pub(crate) fn worker_inner(
                 out.send(Msg::Event {
                     session: session.to_string(),
                     event: event.clone(),
+                    sequence: event_sequence,
                 });
                 if let Some(label) = pa_client::activity_label(event) {
                     out.send(Msg::Activity { label: label.to_string() });
@@ -1543,7 +1553,7 @@ mod tests {
             more: false,
         }
         .is_session_scoped());
-        assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null }.is_session_scoped());
+        assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null, sequence: None }.is_session_scoped());
         assert!(Msg::ExtraCommands(Vec::new()).is_session_scoped());
         assert!(Msg::Stats {
             session: String::new(),
