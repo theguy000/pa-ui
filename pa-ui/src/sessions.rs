@@ -1223,11 +1223,7 @@ impl Sidebar {
                         let mut state = store.state.borrow_mut();
                         let prev_order = state.session_order;
                         let ok = state.choose(key.as_str(), val.as_str());
-                        if ok
-                            && key == "session-order"
-                            && prev_order != SessionOrder::Manual
-                            && state.session_order == SessionOrder::Manual
-                        {
+                        if ok && key == "session-order" && state.session_order == SessionOrder::Manual {
                             let rows = sidebar.cache.borrow();
                             seed_manual_order(&rows, prev_order, &mut state.manual_session_order);
                         }

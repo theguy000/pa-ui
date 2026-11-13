@@ -2295,12 +2295,46 @@ mod status_strip_tests {
         let after_cy = h2.ui.invoke_get_sidebar_cy();
         assert!((after_cy - before_cy).abs() < 1.0);
 
+        let _ = std::fs::remove_file(&settings_path);
         let h3 = Harness::new();
-        h3.tick.sidebar.apply_roster(&h3.ui, rows[..2].to_vec());
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(ids_of(h3.ui.get_idle_items()), ["i1", "i2"]);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2"]);
+
+        let mut with_d3 = rows.clone();
+        with_d3.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "d3", "sessionId": "ud3", "firstMessage": "Done 3",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-07T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_d3);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2", "d3"]);
+        assert_eq!(h3.ui.get_fold_index(), -1);
+
+        let mut moved_group = rows.clone();
+        moved_group[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.apply_roster(&h3.ui, moved_group);
+        assert_eq!(h3.ui.get_fold_index(), -2);
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(h3.ui.get_fold_index(), -2);
+
+        h3.send(Msg::CatalogReady);
+        h3.send(Msg::Sessions(Ok(rows.clone())));
+        h3.run();
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
         h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
-        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1"]);
+        assert_eq!(h3.ui.get_fold_index(), -1);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h3.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
         h3.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
-        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1"]);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
         let mut with_new = rows[..2].to_vec();
         with_new.push(SessionRow::from_value(&serde_json::json!({
             "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "Aardvark",
@@ -2309,6 +2343,37 @@ mod status_strip_tests {
         })));
         h3.tick.sidebar.apply_roster(&h3.ui, with_new);
         assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "a3"]);
+
+        let mut seed_moved = rows[..2].to_vec();
+        seed_moved[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.seed(&h3.ui, seed_moved);
+        assert_eq!(h3.ui.get_fold_index(), 0);
+
+        let _ = std::fs::remove_file(&settings_path);
+        std::fs::write(
+            &settings_path,
+            crate::settings::Settings {
+                session_order: crate::sessions::SessionOrder::Manual,
+                ..Default::default()
+            }
+            .to_json(),
+        )
+        .expect("manual settings");
+        let h4 = Harness::new();
+        h4.tick.sidebar.apply_roster(&h4.ui, rows[..2].to_vec());
+        h4.ui.invoke_setting_chosen("queue-key".into(), "Alt+Enter".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+        h4.send(Msg::CatalogReady);
+        h4.send(Msg::Sessions(Ok(rows[..2].to_vec())));
+        h4.run();
+        assert_eq!(
+            crate::settings::Settings::load_from(&settings_path).manual_session_order,
+            ["ua1", "ua2"]
+        );
     }
 
     // One test, not six: Slint binds its platform to the test thread, and the
