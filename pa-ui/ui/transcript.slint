@@ -2,7 +2,7 @@
 // message opens into. Both are driven by TRow and carry no state of their own.
 
 import { ScrollView } from "std-widgets.slint";
-import { TRow, Type } from "types.slint";
+import { Appearance, TRow, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash, IconWarning } from "icons.slint";
 import { Theme } from "theme.slint";
@@ -324,13 +324,13 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: "thinking";
                     color: Theme.transcript-thinking-label-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
                 Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
 
@@ -358,7 +358,7 @@ export component TranscriptRow inherits VerticalLayout {
                 y: 0px;
                 text: "x";
                 font-family: "Cascadia Code";
-                font-size: 11px;
+                font-size: Appearance.cell-output-size;
                 opacity: 0;
             }
             ScrollView {
@@ -373,7 +373,7 @@ export component TranscriptRow inherits VerticalLayout {
                         text: data.body;
                         default-color: Theme.transcript-thinking-ink;
                         default-font-family: "Cascadia Code";
-                        default-font-size: 11px;
+                        default-font-size: Appearance.cell-output-size;
                     }
                 }
             }
@@ -423,7 +423,7 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: data.title;
                     color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
-                    font-size: 11px;
+                    font-size: Appearance.label-size;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
@@ -432,7 +432,7 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
                 // the separator is full white so the run reads as two parts
@@ -440,14 +440,14 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: "\u{00b7}";
                     color: Theme.transcript-cell-separator-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
                 }
                 Text {
                     text: data.elapsed;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
                 }
@@ -512,7 +512,7 @@ export component TranscriptRow inherits VerticalLayout {
                     text: data.code;
                     default-color: Theme.transcript-cell-code-ink;
                     default-font-family: "Cascadia Code";
-                    default-font-size: 12px;
+                    default-font-size: Appearance.cell-code-size;
                 }
                 if data.has-output : Rectangle {
                     height: 1px;
@@ -523,7 +523,7 @@ export component TranscriptRow inherits VerticalLayout {
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-cell-output-ink;
                     default-font-family: "Cascadia Code";
-                    default-font-size: 11px;
+                    default-font-size: Appearance.cell-output-size;
                 }
             }
         }
@@ -573,7 +573,7 @@ export component TranscriptRow inherits VerticalLayout {
                     color: is-summary ? Theme.transcript-heading-ink
                         : data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-notice-ink;
-                    font-size: 11px;
+                    font-size: Appearance.label-size;
                     font-weight: is-summary ? 600 : 400;
                     vertical-alignment: center;
                     overflow: elide;
@@ -583,7 +583,7 @@ export component TranscriptRow inherits VerticalLayout {
                 if data.meta != "" : Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
             }
@@ -604,7 +604,7 @@ export component TranscriptRow inherits VerticalLayout {
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
-                    default-font-size: 13px;
+                    default-font-size: Appearance.item-size;
                     link-clicked(link) => { root.open-link(link); }
                 }
             }
@@ -670,7 +670,7 @@ export component TranscriptRow inherits VerticalLayout {
                 width: parent.width - 24px;
                 text: data.code;
                 default-color: Theme.transcript-code-ink;
-                default-font-size: 11.5px;
+                default-font-size: Appearance.code-size;
                 default-font-family: "Cascadia Code";
             }
         }
@@ -685,7 +685,7 @@ export component TranscriptRow inherits VerticalLayout {
         table-text := StyledText {
             text: data.body;
             default-color: Theme.transcript-table-ink;
-            default-font-size: 11px;
+            default-font-size: Appearance.cell-output-size;
             default-font-family: "Cascadia Code";
         }
     }

@@ -1,5 +1,6 @@
 // The window's own code. Every concern lives in a module beside this file; what
 // is left here is the wiring script and the constants it shares.
+mod appearance;
 mod composer;
 mod composer_canvas;
 mod env_cfg;

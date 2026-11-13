@@ -2,7 +2,7 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
+import { Appearance, EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { ActivityChip, Chip, ContextCard, ContextRing } from "composer.slint";
@@ -17,7 +17,7 @@ import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
 // re-exported here because the window's Rust side reaches it through this
 // file: only a global the compiled file exports becomes a global in Rust.
 import { Theme } from "theme.slint";
-export { Theme }
+export { Appearance, Theme, Type }
 
 export component AppWindow inherits Window {
     // the failure reason of a cell, drawn here so no row can paint over it
@@ -419,11 +419,11 @@ export component AppWindow inherits Window {
                 let shown = root.fold-open
                     ? root.fold-progress > 0.0
                     : root.fold-progress < 1.0;
-                return shown ? 32px : 0px;
+                return shown ? Appearance.session-row-height : 0px;
             }
-            return entry.folded ? 0px : 32px;
+            return entry.folded ? 0px : Appearance.session-row-height;
         }
-        root.row-opacity(index) > 0.01 ? 32px : 0px
+        root.row-opacity(index) > 0.01 ? Appearance.session-row-height : 0px
     }
 
     public function group-toggled(label: string) {
@@ -1013,7 +1013,7 @@ export component AppWindow inherits Window {
                                 color: new-session.hot
                                     ? Theme.sidebar-new-session-ink-hover
                                     : Theme.sidebar-new-session-ink;
-                                font-size: 12px;
+                                font-size: Appearance.item-size - 1px;
                             }
                         }
                     }

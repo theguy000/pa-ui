@@ -2086,6 +2086,7 @@ mod status_strip_tests {
         reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
+        appearance_settings_reach_ui_globals_and_sidebar();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3410,5 +3411,37 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn appearance_settings_reach_ui_globals_and_sidebar() {
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "s1", "sessionId": "u1", "firstMessage": "One",
+                "workerState": "ready", "activity": "idle"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "s2", "sessionId": "u2", "firstMessage": "Two",
+                "workerState": "ready", "activity": "idle"
+            })),
+        ])));
+        h.run();
+
+        let default_h = h.ui.get_sessions_height();
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 15.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 32.0);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Compact".into());
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 13.5);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 28.0);
+        assert!(h.ui.get_sessions_height() < default_h);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Large".into());
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 17.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 36.0);
+        assert!(h.ui.get_sessions_height() > default_h);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Default".into());
+        assert_eq!(h.ui.get_sessions_height(), default_h);
     }
 }
