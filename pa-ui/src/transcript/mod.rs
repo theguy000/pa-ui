@@ -512,11 +512,11 @@ pub(crate) fn stamp_rows(rows: &mut [Row], stamp: &str) {
     if stamp.is_empty() {
         return;
     }
-    if let Some(target) = rows
-        .iter_mut()
-        .find(|row| matches!(row.kind, KIND_USER | KIND_AGENT))
-        .or_else(|| rows.first_mut())
-    {
+    let index = rows
+        .iter()
+        .position(|row| matches!(row.kind, KIND_USER | KIND_AGENT))
+        .unwrap_or(0);
+    if let Some(target) = rows.get_mut(index) {
         target.timestamp = stamp.to_string();
     }
 }
