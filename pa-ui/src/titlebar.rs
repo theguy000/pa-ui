@@ -58,6 +58,18 @@ pub fn close() {
     imp::close();
 }
 
+pub fn show_toast(session_id: &str, title: &str, body: &str, failed: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        imp::show_toast(session_id, title, body, failed)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (session_id, title, body, failed);
+        Err("Windows notifications are only supported on Windows".to_string())
+    }
+}
+
 
 #[cfg(windows)]
 mod imp {
@@ -69,18 +81,43 @@ mod imp {
     static HWND: AtomicIsize = AtomicIsize::new(0);
     static UI: OnceLock<Weak<AppWindow>> = OnceLock::new();
     static HOVER: AtomicBool = AtomicBool::new(false);
-    static PUBLISHED: Mutex<(bool, bool)> = Mutex::new((false, false));
+    static ACTIVE: AtomicBool = AtomicBool::new(true);
+    static PUBLISHED: Mutex<(bool, bool, bool)> = Mutex::new((false, false, true));
+    static TOAST_ICON_ADDED: AtomicBool = AtomicBool::new(false);
+    static TOAST_SESSION: Mutex<Option<String>> = Mutex::new(None);
 
+    const WM_DESTROY: u32 = 0x0002;
     const WM_SIZE: u32 = 0x0005;
+    const WM_ACTIVATE: u32 = 0x0006;
     const WM_NCCALCSIZE: u32 = 0x0083;
     const WM_NCHITTEST: u32 = 0x0084;
     const WM_MOUSELEAVE: u32 = 0x02A3;
     const WM_NCLBUTTONDOWN: u32 = 0x00A1;
     const WM_SYSCOMMAND: u32 = 0x0112;
     const WM_CLOSE: u32 = 0x0010;
+    const WM_APP_TOAST: u32 = 0x8001;
     const SC_MAXIMIZE: usize = 0xF030;
     const SC_RESTORE: usize = 0xF120;
+    const SW_RESTORE: i32 = 9;
     const WM_DPICHANGED: u32 = 0x02E0;
+
+    const TOAST_ICON_ID: u32 = 1;
+    const NIM_ADD: u32 = 0x00000000;
+    const NIM_MODIFY: u32 = 0x00000001;
+    const NIM_DELETE: u32 = 0x00000002;
+    const NIM_SETVERSION: u32 = 0x00000004;
+    const NOTIFYICON_VERSION_4: u32 = 4;
+    const NIF_MESSAGE: u32 = 0x00000001;
+    const NIF_ICON: u32 = 0x00000002;
+    const NIF_TIP: u32 = 0x00000004;
+    const NIF_INFO: u32 = 0x00000010;
+    const NIIF_INFO: u32 = 0x00000001;
+    const NIIF_ERROR: u32 = 0x00000003;
+    const NIN_BALLOONHIDE: u32 = 0x0403;
+    const NIN_BALLOONTIMEOUT: u32 = 0x0404;
+    const NIN_BALLOONUSERCLICK: u32 = 0x0405;
+    const IMAGE_ICON: u32 = 1;
+    const LR_DEFAULTSIZE: u32 = 0x0040;
 
     const HTCLIENT: isize = 1;
     const HTCAPTION: isize = 2;
@@ -116,6 +153,25 @@ mod imp {
     }
 
     #[repr(C)]
+    struct NotifyIconDataW {
+        cb_size: u32,
+        h_wnd: isize,
+        u_id: u32,
+        u_flags: u32,
+        u_callback_message: u32,
+        h_icon: isize,
+        sz_tip: [u16; 128],
+        dw_state: u32,
+        dw_state_mask: u32,
+        sz_info: [u16; 256],
+        u_timeout_or_version: u32,
+        sz_info_title: [u16; 64],
+        dw_info_flags: u32,
+        guid_item: [u8; 16],
+        h_balloon_icon: isize,
+    }
+
+    #[repr(C)]
     struct TrackMouse {
         size: u32,
         flags: u32,
@@ -148,6 +204,11 @@ mod imp {
         fn GetWindowRect(hwnd: isize, rect: *mut Rect) -> i32;
         fn GetDpiForWindow(hwnd: isize) -> u32;
         fn IsZoomed(hwnd: isize) -> i32;
+        fn IsIconic(hwnd: isize) -> i32;
+        fn ShowWindow(hwnd: isize, cmd_show: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn BringWindowToTop(hwnd: isize) -> i32;
+        fn GetForegroundWindow() -> isize;
         fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
         fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
         fn EnumWindows(callback: extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
@@ -155,11 +216,18 @@ mod imp {
         fn IsWindowVisible(hwnd: isize) -> i32;
         fn GetSystemMetrics(index: i32) -> i32;
         fn TrackMouseEvent(event: *mut TrackMouse) -> i32;
+        fn LoadImageW(instance: isize, name: *const u16, kind: u32, cx: i32, cy: i32, flags: u32) -> isize;
     }
 
     #[link(name = "kernel32")]
     extern "system" {
         fn GetCurrentProcessId() -> u32;
+        fn GetModuleHandleW(name: *const u16) -> isize;
+    }
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn Shell_NotifyIconW(message: u32, data: *const NotifyIconDataW) -> i32;
     }
 
     #[link(name = "dwmapi")]
@@ -193,17 +261,19 @@ mod imp {
     fn publish(hwnd: isize) {
         let maximized = unsafe { IsZoomed(hwnd) != 0 };
         let hover = HOVER.load(Ordering::Relaxed);
+        let active = ACTIVE.load(Ordering::Relaxed);
         let mut published = PUBLISHED.lock().expect("titlebar state");
-        if *published == (maximized, hover) {
+        if *published == (maximized, hover, active) {
             return;
         }
-        *published = (maximized, hover);
+        *published = (maximized, hover, active);
         drop(published);
         let weak = UI.get().cloned();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.and_then(|weak| weak.upgrade()) {
                 ui.set_titlebar_maximized(maximized);
                 ui.set_titlebar_max_hover(hover);
+                ui.set_window_active(active);
             }
         });
     }
@@ -234,6 +304,7 @@ mod imp {
             let rounded: i32 = DWMWCP_ROUND;
             DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &rounded, 4);
 
+            ACTIVE.store(GetForegroundWindow() == hwnd, Ordering::Relaxed);
             SetWindowSubclass(hwnd, subclass, 1, 0);
             // Make Windows re-run WM_NCCALCSIZE with the new rules.
             SetWindowPos(hwnd, 0, 0, 0, 0, 0,
@@ -248,6 +319,88 @@ mod imp {
         if hwnd != 0 {
             unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
         }
+    }
+
+    fn copy_utf16<const N: usize>(dest: &mut [u16; N], text: &str) {
+        dest.fill(0);
+        for (slot, unit) in dest.iter_mut().take(N - 1).zip(text.encode_utf16()) {
+            *slot = unit;
+        }
+    }
+
+    fn small_app_icon() -> isize {
+        unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            let w = GetSystemMetrics(49);
+            let h = GetSystemMetrics(50);
+            LoadImageW(instance, 1usize as *const u16, IMAGE_ICON, w, h, LR_DEFAULTSIZE)
+        }
+    }
+
+    fn blank_notify_icon(hwnd: isize) -> NotifyIconDataW {
+        NotifyIconDataW {
+            cb_size: std::mem::size_of::<NotifyIconDataW>() as u32,
+            h_wnd: hwnd,
+            u_id: TOAST_ICON_ID,
+            u_flags: 0,
+            u_callback_message: 0,
+            h_icon: 0,
+            sz_tip: [0; 128],
+            dw_state: 0,
+            dw_state_mask: 0,
+            sz_info: [0; 256],
+            u_timeout_or_version: 0,
+            sz_info_title: [0; 64],
+            dw_info_flags: 0,
+            guid_item: [0; 16],
+            h_balloon_icon: 0,
+        }
+    }
+
+    fn remove_toast_icon(hwnd: isize) {
+        if TOAST_ICON_ADDED.swap(false, Ordering::SeqCst) {
+            let data = blank_notify_icon(hwnd);
+            unsafe {
+                Shell_NotifyIconW(NIM_DELETE, &data);
+            }
+        }
+    }
+
+    pub(super) fn show_toast(
+        session_id: &str,
+        title: &str,
+        body: &str,
+        failed: bool,
+    ) -> Result<(), String> {
+        let hwnd = HWND.load(Ordering::SeqCst);
+        if hwnd == 0 {
+            return Err("window handle is not initialized".to_string());
+        }
+        *TOAST_SESSION.lock().unwrap() = Some(session_id.to_string());
+        let mut data = blank_notify_icon(hwnd);
+        data.u_flags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_INFO;
+        data.u_callback_message = WM_APP_TOAST;
+        data.h_icon = small_app_icon();
+        copy_utf16(&mut data.sz_tip, "Prime Agent");
+        copy_utf16(&mut data.sz_info_title, title);
+        copy_utf16(&mut data.sz_info, body);
+        data.dw_info_flags = if failed { NIIF_ERROR } else { NIIF_INFO };
+        let added_now = !TOAST_ICON_ADDED.swap(true, Ordering::SeqCst);
+        let cmd = if added_now { NIM_ADD } else { NIM_MODIFY };
+        let ok = unsafe { Shell_NotifyIconW(cmd, &data) != 0 };
+        if !ok {
+            if added_now {
+                TOAST_ICON_ADDED.store(false, Ordering::SeqCst);
+            }
+            return Err("Shell_NotifyIconW failed".to_string());
+        }
+        if added_now {
+            data.u_timeout_or_version = NOTIFYICON_VERSION_4;
+            unsafe {
+                Shell_NotifyIconW(NIM_SETVERSION, &data);
+            }
+        }
+        Ok(())
     }
 
     fn scale(hwnd: isize) -> f64 {
@@ -387,6 +540,43 @@ mod imp {
                     let result = DefSubclassProc(hwnd, msg, wparam, lparam);
                     publish(hwnd);
                     result
+                }
+
+                WM_ACTIVATE => {
+                    let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+                    ACTIVE.store((wparam & 0xffff) != 0, Ordering::Relaxed);
+                    publish(hwnd);
+                    result
+                }
+
+                WM_APP_TOAST => {
+                    let code = (lparam & 0xffff) as u32;
+                    if code == NIN_BALLOONUSERCLICK {
+                        remove_toast_icon(hwnd);
+                        let session = TOAST_SESSION.lock().unwrap().take();
+                        if IsIconic(hwnd) != 0 {
+                            ShowWindow(hwnd, SW_RESTORE);
+                        }
+                        SetForegroundWindow(hwnd);
+                        BringWindowToTop(hwnd);
+                        if let Some(session) = session {
+                            if let Some(weak) = UI.get().cloned() {
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(ui) = weak.upgrade() {
+                                        ui.invoke_notice_picked(session.into());
+                                    }
+                                });
+                            }
+                        }
+                    } else if code == NIN_BALLOONTIMEOUT || code == NIN_BALLOONHIDE {
+                        remove_toast_icon(hwnd);
+                    }
+                    0
+                }
+
+                WM_DESTROY => {
+                    remove_toast_icon(hwnd);
+                    DefSubclassProc(hwnd, msg, wparam, lparam)
                 }
 
                 // The Snap Layouts flyout needs this button to belong to Windows, so

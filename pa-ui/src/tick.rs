@@ -37,6 +37,11 @@ pub(crate) struct Tick {
     pub retained_errors: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>>,
     /// The draft a refused prompt should restore when its Session comes back.
     pub retained_rejections: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    pub roster_seeded: std::cell::Cell<bool>,
+    pub turn_failed: std::cell::Cell<bool>,
+    pub turn_aborted: std::cell::Cell<bool>,
+    pub announced_session: std::cell::Cell<Option<String>>,
+    pub toast: std::cell::RefCell<Rc<dyn crate::notify::ToastNotifier>>,
 }
 
 pub(crate) struct Local {
@@ -401,9 +406,33 @@ impl Tick {
             }
             match message {
                 Msg::Sessions(Ok(rows)) => {
+                    let before = sidebar.cache.borrow().clone();
+                    let was_seeded = self.roster_seeded.replace(true);
+                    let announced = self.announced_session.take().filter(|id| {
+                        !rows
+                            .iter()
+                            .any(|row| row.id == *id && row.roster_status() == "Running")
+                    });
                     if let Some(rebound) = sidebar.apply_roster(&ui, rows.clone()) {
                         l.loaded = Some(rebound);
                     }
+                    if was_seeded {
+                        let toast = self.toast.borrow().clone();
+                        for (id, name) in crate::notify::finished_top_level_rows(
+                            &before,
+                            &rows,
+                            announced.as_deref(),
+                        ) {
+                            crate::notify::dispatch(
+                                &ui,
+                                toast.as_ref(),
+                                &id,
+                                &name,
+                                crate::notify::TurnOutcome::Finished,
+                            );
+                        }
+                    }
+                    self.announced_session.set(announced);
                     let selected = ui.get_selected_id().to_string();
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         models.sync_session_row(&ui, row);
@@ -711,6 +740,15 @@ impl Tick {
                         sheet::force_scroll_to_end(&ui);
                     }
                     if matches!(kind, Some("turn_start" | "agent_start")) {
+                        self.turn_failed.set(false);
+                        self.turn_aborted.set(false);
+                        if self
+                            .announced_session
+                            .take()
+                            .is_some_and(|announced| announced != session)
+                        {
+                            // Keep unrelated announcement deduplication only across its own run.
+                        }
                         open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("compaction_start") {
@@ -737,7 +775,11 @@ impl Tick {
                         continue;
                     }
                     if kind == Some("turn_end") {
+                        if turn_aborted(&event) {
+                            self.turn_aborted.set(true);
+                        }
                         if let Some(error) = turn_failure(&event) {
+                            self.turn_failed.set(true);
                             let current = ui.get_selected_id();
                             let failed = if current.is_empty() || session == current.as_str() {
                                 self.command_word.failure_label().unwrap_or("Turn failed")
@@ -753,7 +795,27 @@ impl Tick {
                     }
                     if kind == Some("compaction_end") {
                         if let Some(error) = compaction_failure(&event) {
+                            self.turn_failed.set(true);
                             self.record_error(&ui, Some(&session), &error);
+                        }
+                    }
+                    if kind == Some("agent_end") {
+                        let aborted = self.turn_aborted.replace(false);
+                        let failed = self.turn_failed.replace(false);
+                        if !aborted {
+                            let already = self.announced_session.take();
+                            if already.as_deref() != Some(session.as_str()) {
+                                let name =
+                                    crate::notify::session_label(&sidebar.cache.borrow(), &session);
+                                let outcome = if failed {
+                                    crate::notify::TurnOutcome::Failed
+                                } else {
+                                    crate::notify::TurnOutcome::Finished
+                                };
+                                let toast = self.toast.borrow().clone();
+                                crate::notify::dispatch(&ui, toast.as_ref(), &session, &name, outcome);
+                            }
+                            self.announced_session.set(Some(session.clone()));
                         }
                     }
                     if matches!(kind, Some("turn_end" | "agent_end" | "compaction_end")) {
@@ -1099,6 +1161,10 @@ impl Tick {
                     models.sync_session_state(&ui, &state);
                 }
                 Msg::Reconnected => {
+                    self.roster_seeded.set(false);
+                    self.turn_failed.set(false);
+                    self.turn_aborted.set(false);
+                    self.announced_session.set(None);
                     l.loaded = None;
                     l.open_live = None;
                     l.settled_session = None;
@@ -1164,6 +1230,19 @@ impl Tick {
                     }
                     let message = session_closed_message(&reason);
                     self.record_error(&ui, Some(&session), &message);
+                    let already = self.announced_session.take();
+                    if already.as_deref() != Some(session.as_str()) {
+                        let name = crate::notify::session_label(&sidebar.cache.borrow(), &session);
+                        let toast = self.toast.borrow().clone();
+                        crate::notify::dispatch(
+                            &ui,
+                            toast.as_ref(),
+                            &session,
+                            &name,
+                            crate::notify::TurnOutcome::Failed,
+                        );
+                    }
+                    self.announced_session.set(Some(session));
                 }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
@@ -1248,14 +1327,18 @@ fn session_closed_message(reason: &str) -> String {
 /// assistant message (`message.errorMessage`, `stopReason: "error"`), while an
 /// engine failure can arrive as the top-level `error`. A deliberate Stop is
 /// not an error row: its aborted message already says the Turn was stopped.
-fn turn_failure(event: &serde_json::Value) -> Option<String> {
+fn turn_aborted(event: &serde_json::Value) -> bool {
     let message = event.get("message");
-    let aborted = event.get("aborted").and_then(serde_json::Value::as_bool) == Some(true)
+    event.get("aborted").and_then(serde_json::Value::as_bool) == Some(true)
         || message
             .and_then(|message| message.get("stopReason"))
             .and_then(serde_json::Value::as_str)
-            == Some("aborted");
-    if aborted {
+            == Some("aborted")
+}
+
+fn turn_failure(event: &serde_json::Value) -> Option<String> {
+    let message = event.get("message");
+    if turn_aborted(event) {
         return None;
     }
     event
@@ -1340,6 +1423,11 @@ mod status_strip_tests {
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
+                roster_seeded: std::cell::Cell::new(false),
+                turn_failed: std::cell::Cell::new(false),
+                turn_aborted: std::cell::Cell::new(false),
+                announced_session: std::cell::Cell::new(None),
+                toast: std::cell::RefCell::new(Rc::new(crate::notify::WindowsToastNotifier)),
             });
             Self {
                 ui,
@@ -2086,6 +2174,7 @@ mod status_strip_tests {
         reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
+        notifications_in_app_and_system_toast_adapter_follow_policy();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3410,5 +3499,216 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn notifications_in_app_and_system_toast_adapter_follow_policy() {
+        #[derive(Clone)]
+        struct RecordingToast {
+            sent: Rc<std::cell::RefCell<Vec<(String, String, String, bool)>>>,
+            fail: Rc<std::cell::Cell<bool>>,
+        }
+        impl crate::notify::ToastNotifier for RecordingToast {
+            fn send(
+                &self,
+                session_id: &str,
+                title: &str,
+                body: &str,
+                failed: bool,
+            ) -> Result<(), String> {
+                self.sent.borrow_mut().push((
+                    session_id.to_string(),
+                    title.to_string(),
+                    body.to_string(),
+                    failed,
+                ));
+                if self.fail.get() {
+                    Err("toast unavailable".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let sent = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let fail = Rc::new(std::cell::Cell::new(false));
+        let recorder = Rc::new(RecordingToast {
+            sent: sent.clone(),
+            fail: fail.clone(),
+        });
+
+        if let Ok(path) = std::env::var("PA_SETTINGS_FILE") {
+            let _ = std::fs::remove_file(path);
+        }
+        let h = Harness::new();
+        *h.tick.toast.borrow_mut() = recorder;
+        h.ui.set_window_active(true);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Only when unfocused".into());
+        assert!(h.ui.get_setting_in_app_notifications());
+
+        let mk_row = |id: &str, uuid: &str, name: &str, working: bool, depth: u64| {
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": id,
+                "sessionId": uuid,
+                "firstMessage": name,
+                "workerState": "ready",
+                "activity": if working { "working" } else { "idle" },
+                "rlmDepth": depth
+            }))
+        };
+
+        // Initial roster + Transcript replay do not notify.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+            mk_row("s3", "u3", "Background two", true, 0),
+            mk_row("sub1", "usub", "Subagent", true, 1),
+        ])));
+        h.run();
+        h.ui.set_selected_id("s1".into());
+        h.send(Msg::Transcript {
+            session: "s1".to_string(),
+            rows: Vec::new(),
+            skipped: 0,
+            messages: Vec::new(),
+        });
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert!(sent.borrow().is_empty());
+
+        // Background top-level Session finishes while focused -> in-app notice only (subagent ignored).
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("s3", "u3", "Background two", true, 0),
+            mk_row("sub1", "usub", "Subagent", false, 1),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s2");
+        assert_eq!(h.ui.get_notice_name().as_str(), "Background one");
+        assert!(!h.ui.get_notice_failed());
+        assert!(sent.borrow().is_empty());
+        let tick_before = h.ui.get_notice_tick();
+
+        // Newer notice replaces current notice instead of stacking.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("s3", "u3", "Background two", false, 0),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s3");
+        assert_eq!(h.ui.get_notice_name().as_str(), "Background two");
+        assert!(h.ui.get_notice_tick() > tick_before);
+
+        // Dismiss clears notice without changing selection.
+        h.ui.invoke_notice_dismissed();
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(h.ui.get_selected_id().as_str(), "s1");
+
+        // Clicking notice opens that Session.
+        crate::notify::show(&h.ui, "s2", "Background one", false);
+        h.ui.invoke_notice_picked("s2".into());
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(h.ui.get_selected_id().as_str(), "s2");
+
+        // Reconnect suppresses stale Running -> Idle transitions.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Reconnected);
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert!(sent.borrow().is_empty());
+
+        // Always delivers toast while focused (even if toast fails, banner still opens).
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        fail.set(true);
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0].0, "s1");
+        assert!(!sent.borrow()[0].3);
+        h.ui.invoke_notice_dismissed();
+        fail.set(false);
+        sent.borrow_mut().clear();
+
+        // Unfocused selected Session emits failed toast once on turn_end error + agent_end, not duplicated by roster.
+        h.ui.set_window_active(false);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Only when unfocused".into());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        let gen = h.tick.attach_generation.get();
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
+            }),
+        });
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session failed".into(), "Background one".into(), true));
+        sent.borrow_mut().clear();
+
+        // Off suppresses toast even when unfocused.
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Off".into());
+        h.send(Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        // Disabling in-app notices while focused suppresses the banner without disabling Always toasts.
+        h.ui.set_window_active(true);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        h.ui.invoke_setting_toggled("in-app-notifications".into());
+        assert!(!h.ui.get_setting_in_app_notifications());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(sent.borrow().len(), 1);
     }
 }

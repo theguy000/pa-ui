@@ -1073,6 +1073,35 @@ impl Sidebar {
         }
         {
             let weak = ui.as_weak();
+            ui.on_notice_picked(move |id| {
+                let Some(ui) = weak.upgrade() else { return };
+                crate::notify::clear(&ui);
+                if id.is_empty() {
+                    return;
+                }
+                ui.set_model_menu(false);
+                ui.set_queue_open(false);
+                ui.set_settings_menu(false);
+                ui.set_search_open(false);
+                ui.set_share_open(false);
+                let changed = ui.get_selected_id() != id;
+                ui.set_selected_id(id.clone());
+                if changed {
+                    ui.invoke_selection_picked(id);
+                }
+                ui.set_hover_title(SharedString::new());
+                ui.invoke_focus_composer();
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            ui.on_notice_dismissed(move || {
+                let Some(ui) = weak.upgrade() else { return };
+                crate::notify::clear(&ui);
+            });
+        }
+        {
+            let weak = ui.as_weak();
             ui.on_search_closed(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_search_field_typed(false);

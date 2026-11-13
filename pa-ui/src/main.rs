@@ -6,6 +6,7 @@ mod env_cfg;
 mod images;
 mod live;
 mod models;
+mod notify;
 mod preview;
 #[cfg(test)]
 mod probes;
@@ -28,6 +29,7 @@ mod worker;
 // have to know which module a helper ended up in.
 pub(crate) use composer::*;
 pub(crate) use models::*;
+pub(crate) use notify::*;
 pub(crate) use sessions::*;
 pub(crate) use sheet::*;
 pub(crate) use slash::*;
@@ -244,6 +246,11 @@ fn main() -> Result<(), slint::PlatformError> {
         scroll_ticks: std::cell::Cell::new(0),
         retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
         retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
+        roster_seeded: std::cell::Cell::new(false),
+        turn_failed: std::cell::Cell::new(false),
+        turn_aborted: std::cell::Cell::new(false),
+        announced_session: std::cell::Cell::new(None),
+        toast: std::cell::RefCell::new(Rc::new(WindowsToastNotifier)),
     });
 
     // A sidebar pick changes the selection synchronously, but the transcript
