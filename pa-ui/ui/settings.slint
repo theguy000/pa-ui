@@ -147,7 +147,7 @@ component SettingsSegmented3 inherits Rectangle {
             height: 100%;
             text: root.opt-a;
             color: root.value == root.opt-a || seg-a.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 11.5px;
+            font-size: Appearance.session-count-size;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -169,7 +169,7 @@ component SettingsSegmented3 inherits Rectangle {
             height: 100%;
             text: root.opt-b;
             color: root.value == root.opt-b || seg-b.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 11.5px;
+            font-size: Appearance.session-count-size;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -191,7 +191,7 @@ component SettingsSegmented3 inherits Rectangle {
             height: 100%;
             text: root.opt-c;
             color: root.value == root.opt-c || seg-c.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 11.5px;
+            font-size: Appearance.session-count-size;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -227,7 +227,7 @@ component SettingsSegmented2 inherits Rectangle {
             height: 100%;
             text: root.opt-a;
             color: root.value == root.opt-a || seg-a.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 11.5px;
+            font-size: Appearance.session-count-size;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -249,7 +249,7 @@ component SettingsSegmented2 inherits Rectangle {
             height: 100%;
             text: root.opt-b;
             color: root.value == root.opt-b || seg-b.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 11.5px;
+            font-size: Appearance.session-count-size;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -275,7 +275,7 @@ component SettingsThemeCard inherits Button {
         height: 18px;
         text: root.item.label;
         color: root.item.current || root.hot ? Theme.model-menu-row-ink-current : Theme.model-menu-row-ink;
-        font-size: 12.5px;
+        font-size: Appearance.session-header-size;
         font-weight: root.item.current ? 600 : 500;
         vertical-alignment: center;
         wrap: no-wrap;
@@ -289,7 +289,7 @@ component SettingsThemeCard inherits Button {
         height: 16px;
         text: root.item.current ? "Active" : "Theme";
         color: root.item.current ? Theme.model-menu-effort-ink : Theme.model-menu-detail-ink;
-        font-size: 10.5px;
+        font-size: Appearance.session-count-size - 1px;
         vertical-alignment: center;
     }
 
@@ -401,7 +401,7 @@ component SettingsRail inherits Rectangle {
             height: parent.height;
             text: "Search";
             color: Theme.search-row-ink;
-            font-size: 12.5px;
+            font-size: Appearance.session-header-size;
             vertical-alignment: center;
         }
 
@@ -412,7 +412,7 @@ component SettingsRail inherits Rectangle {
             height: parent.height;
             text <=> root.query;
             color: Theme.search-row-ink-hover;
-            font-size: 12.5px;
+            font-size: Appearance.session-header-size;
             vertical-alignment: center;
             single-line: true;
             edited => { root.search-edited(self.text); }
@@ -453,7 +453,7 @@ component SettingsRail inherits Rectangle {
             text: "General";
             color: root.page == "general" || nav-general.hot
                 ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 13px;
+            font-size: Type.item;
             font-weight: root.page == "general" ? 600 : 400;
             vertical-alignment: center;
         }
@@ -486,7 +486,7 @@ component SettingsRail inherits Rectangle {
             text: "Appearance";
             color: root.page == "appearance" || nav-appearance.hot
                 ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            font-size: 13px;
+            font-size: Type.item;
             font-weight: root.page == "appearance" ? 600 : 400;
             vertical-alignment: center;
         }
