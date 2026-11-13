@@ -32,16 +32,18 @@ fn evaluate_close(ui: &AppWindow, sidebar: &sessions::Sidebar, confirmed: &Cell<
     close_decision(running, ui.get_setting_confirm_quit())
 }
 
-pub(crate) fn open_confirmation(ui: &AppWindow) {
+fn open_confirmation(ui: &AppWindow) {
     if !ui.get_quit_confirm_open() {
         ui.set_quit_confirm_open(true);
         ui.set_quit_confirm_focus_tick(ui.get_quit_confirm_focus_tick() + 1);
     }
 }
 
-fn finish_close(ui: &AppWindow) {
+fn trigger_close(ui: &AppWindow) {
     if !crate::titlebar::close() {
-        let _ = ui.window().hide();
+        let _ = ui
+            .window()
+            .dispatch_event_with_result(slint::platform::WindowEvent::CloseRequested);
     }
 }
 
@@ -52,12 +54,25 @@ pub(crate) fn bind(ui: &AppWindow, sidebar: &Rc<sessions::Sidebar>) {
         let weak = ui.as_weak();
         let sidebar = sidebar.clone();
         let confirmed = confirmed.clone();
+        ui.window().on_close_requested(move || {
+            let Some(ui) = weak.upgrade() else {
+                return slint::CloseRequestResponse::HideWindow;
+            };
+            match evaluate_close(&ui, &sidebar, &confirmed) {
+                CloseDecision::Quit => slint::CloseRequestResponse::HideWindow,
+                CloseDecision::Confirm => {
+                    open_confirmation(&ui);
+                    slint::CloseRequestResponse::KeepWindowShown
+                }
+            }
+        });
+    }
+
+    {
+        let weak = ui.as_weak();
         ui.on_titlebar_close(move || {
             let Some(ui) = weak.upgrade() else { return };
-            match evaluate_close(&ui, &sidebar, &confirmed) {
-                CloseDecision::Quit => finish_close(&ui),
-                CloseDecision::Confirm => open_confirmation(&ui),
-            }
+            trigger_close(&ui);
         });
     }
 
@@ -77,7 +92,7 @@ pub(crate) fn bind(ui: &AppWindow, sidebar: &Rc<sessions::Sidebar>) {
             let Some(ui) = weak.upgrade() else { return };
             confirmed.set(true);
             ui.set_quit_confirm_open(false);
-            finish_close(&ui);
+            trigger_close(&ui);
         });
     }
 }

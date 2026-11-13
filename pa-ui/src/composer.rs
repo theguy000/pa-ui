@@ -296,7 +296,10 @@ impl Composer {
                         return;
                     }
                     SlashAction::Quit => {
-                        let _ = slint::quit_event_loop();
+                        ui.set_composer_text("".into());
+                        ui.set_composer_has_text(false);
+                        ui.set_composer_command("".into());
+                        ui.invoke_titlebar_close();
                         return;
                     }
                     SlashAction::Rename(name) => {

@@ -19,6 +19,37 @@ export component QuitConfirmPopup inherits Panel {
         keys.focus();
     }
 
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: false;
+        init => {
+            root.focused-button = 0;
+            self.focus();
+        }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancelled();
+                return EventResult.accept;
+            }
+            if event.text == Key.Tab || event.text == Key.RightArrow || event.text == Key.LeftArrow {
+                root.focused-button = root.focused-button == 0 ? 1 : 0;
+                return EventResult.accept;
+            }
+            if event.text == Key.Return || event.text == " " {
+                if root.focused-button == 0 {
+                    root.cancelled();
+                } else {
+                    root.confirmed();
+                }
+                return EventResult.accept;
+            }
+            reject
+        }
+    }
+
     IconWarning {
         x: 20px;
         y: 20px;
@@ -124,33 +155,4 @@ export component QuitConfirmPopup inherits Panel {
         }
     }
 
-    keys := FocusScope {
-        x: 0;
-        y: 0;
-        width: 0px;
-        height: 0px;
-        init => {
-            root.focused-button = 0;
-            self.focus();
-        }
-        key-pressed(event) => {
-            if event.text == Key.Escape {
-                root.cancelled();
-                return EventResult.accept;
-            }
-            if event.text == Key.Tab || event.text == Key.RightArrow || event.text == Key.LeftArrow {
-                root.focused-button = root.focused-button == 0 ? 1 : 0;
-                return EventResult.accept;
-            }
-            if event.text == Key.Return || event.text == " " {
-                if root.focused-button == 0 {
-                    root.cancelled();
-                } else {
-                    root.confirmed();
-                }
-                return EventResult.accept;
-            }
-            reject
-        }
-    }
 }

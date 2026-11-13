@@ -2088,6 +2088,7 @@ mod status_strip_tests {
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
         quit_confirmation_guards_busy_titlebar_close();
+        window_close_request_and_escape_share_quit_decision();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3479,5 +3480,109 @@ mod status_strip_tests {
 
         h.ui.invoke_quit_confirmed();
         assert!(!h.ui.get_quit_confirm_open());
+    }
+
+    fn window_close_request_and_escape_share_quit_decision() {
+        use slint::platform::{Key, WindowEvent, WindowEventDispatchResult};
+
+        let h = Harness::new();
+        let active_row = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-1",
+            "sessionId": "s-act",
+            "name": "Active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![active_row]);
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(1200.0, 800.0),
+        });
+        h.ui.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+
+        let blocked = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close requested");
+        assert_eq!(blocked, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+
+        let second = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("second close requested");
+        assert_eq!(second, WindowEventDispatchResult::Rejected);
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: Key::Escape.into() });
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: Key::Escape.into() });
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_composer_focused());
+
+        h.ui.set_composer_text("/quit".into());
+        h.ui.set_composer_has_text(true);
+        h.ui.invoke_send_requested("/quit".into());
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_composer_focused());
+
+        let reopened = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("reopen close requested");
+        assert_eq!(reopened, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_composer_focused());
+
+        let reopened2 = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("reopen2 close requested");
+        assert_eq!(reopened2, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: Key::Tab.into() });
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: Key::Tab.into() });
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
+        h.ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let allowed = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("confirmed close requested");
+        assert_eq!(allowed, WindowEventDispatchResult::Accepted);
+
+        let h_idle = Harness::new();
+        let idle_allowed = h_idle
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("idle close requested");
+        assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
     }
 }

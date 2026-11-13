@@ -56,12 +56,13 @@ pub fn init(ui: slint::Weak<crate::AppWindow>) -> bool {
 pub fn close() -> bool {
     #[cfg(windows)]
     {
-        return imp::close();
+        imp::close()
     }
     #[cfg(not(windows))]
-    false
+    {
+        false
+    }
 }
-
 
 #[cfg(windows)]
 mod imp {
