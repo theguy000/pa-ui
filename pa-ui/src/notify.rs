@@ -334,6 +334,34 @@ mod tests {
             ),
             vec![("a1".to_string(), "Alpha".to_string())]
         );
-        assert!(finished_top_level_rows(&[active_top], &[idle_top], Some("a1")).is_empty());
+        assert!(finished_top_level_rows(&[active_top.clone()], &[idle_top.clone()], Some("a1")).is_empty());
+
+        let rekeyed_idle = row(json!({
+            "activeSessionId": "a2", "sessionId": "u1", "firstMessage": "Alpha",
+            "workerState": "ready", "activity": "idle"
+        }));
+        assert_eq!(
+            finished_top_level_rows(&[active_top.clone()], &[rekeyed_idle.clone()], None),
+            vec![("a2".to_string(), "Alpha".to_string())]
+        );
+        assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], Some("a1")).is_empty());
+
+        let blank_prev = row(json!({
+            "activeSessionId": "b1", "sessionId": "", "firstMessage": "Blank",
+            "workerState": "ready", "activity": "working"
+        }));
+        let blank_other = row(json!({
+            "activeSessionId": "b2", "sessionId": "", "firstMessage": "Blank",
+            "workerState": "ready", "activity": "idle"
+        }));
+        assert!(finished_top_level_rows(&[blank_prev], &[blank_other], None).is_empty());
+    }
+
+    #[test]
+    fn windows_toast_notifier_errors_without_a_window() {
+        let err = WindowsToastNotifier
+            .send("s1", "Session finished", "Alpha", false)
+            .unwrap_err();
+        assert!(!err.is_empty());
     }
 }

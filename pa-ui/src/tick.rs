@@ -408,11 +408,15 @@ impl Tick {
                 Msg::Sessions(Ok(rows)) => {
                     let before = sidebar.cache.borrow().clone();
                     let was_seeded = self.roster_seeded.replace(true);
-                    let announced = self.announced_session.take().filter(|id| {
+                    let announced = self.announced_session.take();
+                    let skip_finished = announced.as_deref().filter(|id| {
                         !rows
                             .iter()
                             .any(|row| row.id == *id && row.roster_status() == "Running")
                     });
+                    if announced.is_some() && skip_finished.is_none() {
+                        self.announced_session.set(announced.clone());
+                    }
                     if let Some(rebound) = sidebar.apply_roster(&ui, rows.clone()) {
                         l.loaded = Some(rebound);
                     }
@@ -421,7 +425,7 @@ impl Tick {
                         for (id, name) in crate::notify::finished_top_level_rows(
                             &before,
                             &rows,
-                            announced.as_deref(),
+                            skip_finished,
                         ) {
                             crate::notify::dispatch(
                                 &ui,
@@ -432,7 +436,6 @@ impl Tick {
                             );
                         }
                     }
-                    self.announced_session.set(announced);
                     let selected = ui.get_selected_id().to_string();
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
                         models.sync_session_row(&ui, row);
@@ -3605,11 +3608,34 @@ mod status_strip_tests {
         assert!(!h.ui.get_notice_open());
         assert_eq!(h.ui.get_selected_id().as_str(), "s1");
 
-        // Clicking notice opens that Session.
+        // Clicking notice opens that Session only when selection actually changes.
+        let picked = Rc::new(std::cell::Cell::new(0usize));
+        {
+            let picked = picked.clone();
+            h.ui.on_selection_picked(move |_| picked.set(picked.get() + 1));
+        }
         crate::notify::show(&h.ui, "s2", "Background one", false);
         h.ui.invoke_notice_picked("s2".into());
         assert!(!h.ui.get_notice_open());
         assert_eq!(h.ui.get_selected_id().as_str(), "s2");
+        assert_eq!(picked.get(), 1);
+        crate::notify::show(&h.ui, "s2", "Background one", false);
+        h.ui.invoke_notice_picked("s2".into());
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(picked.get(), 1);
+
+        // Empty selected_id + empty session_id still dispatches rather than treating "" as selected.
+        h.ui.set_selected_id("".into());
+        crate::notify::dispatch(
+            &h.ui,
+            h.tick.toast.borrow().as_ref(),
+            "",
+            "Fallback",
+            crate::notify::TurnOutcome::Finished,
+        );
+        assert!(h.ui.get_notice_open());
+        h.ui.invoke_notice_dismissed();
+        h.ui.set_selected_id("s2".into());
 
         // Reconnect suppresses stale Running -> Idle transitions.
         h.send(Msg::Sessions(Ok(vec![
@@ -3647,7 +3673,9 @@ mod status_strip_tests {
         fail.set(false);
         sent.borrow_mut().clear();
 
-        // Unfocused selected Session emits failed toast once on turn_end error + agent_end, not duplicated by roster.
+        // Unfocused selected Session emits failed toast once on turn_end error + agent_end,
+        // keeps announced_session across stale Running snapshots and other-session turn_start,
+        // and clears it once the roster shows s2 idle or s2 starts a new turn.
         h.ui.set_window_active(false);
         h.ui.invoke_setting_chosen("session-notifications".into(), "Only when unfocused".into());
         h.send(Msg::Sessions(Ok(vec![
@@ -3672,19 +3700,68 @@ mod status_strip_tests {
             event: serde_json::json!({"type": "agent_end"}),
         });
         h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session failed".into(), "Background one".into(), true));
+        sent.borrow_mut().clear();
+
+        // A stale snapshot where s2 is still Running keeps announced_session intact, and switching
+        // to s1 with a turn_start for s1 keeps s2's announced flag, so SessionClosed on s2 does not double-notify.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_s1 = h.tick.attach_generation.get();
+        h.send_at(gen_s1, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_s1, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        // Once the roster catches up (s2 idle) and s2 closes, SessionClosed notifies.
         h.send(Msg::Sessions(Ok(vec![
             mk_row("s1", "u1", "Focused chat", false, 0),
             mk_row("s2", "u2", "Background one", false, 0),
         ])));
         h.run();
-        assert!(!h.ui.get_notice_open());
+        h.send_at(gen_s1, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
         assert_eq!(sent.borrow().len(), 1);
         assert_eq!(sent.borrow()[0], ("s2".into(), "Session failed".into(), "Background one".into(), true));
         sent.borrow_mut().clear();
 
-        // Off suppresses toast even when unfocused.
+        // A new turn_start on s2 clears announced_session so a second close notifies again; Off suppresses it.
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_s2 = h.tick.attach_generation.get();
+        h.send_at(gen_s2, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_s2, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        sent.borrow_mut().clear();
+
         h.ui.invoke_setting_chosen("session-notifications".into(), "Off".into());
-        h.send(Msg::SessionClosed {
+        h.send_at(gen_s2, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_s2, Msg::SessionClosed {
             session: "s2".to_string(),
             reason: "killed".to_string(),
         });
