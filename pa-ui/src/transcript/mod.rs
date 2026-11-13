@@ -94,6 +94,7 @@ pub struct Row {
     /// how long the call took, drawn as its own column: a separator dot between
     /// two dim runs reads as a full stop
     pub elapsed: String,
+    pub timestamp: String,
 }
 
 /// The one line a generic error row carries: the first non-empty line, with
@@ -135,6 +136,7 @@ impl Row {
             reason: String::new(),
             image: String::new(),
             elapsed: String::new(),
+            timestamp: String::new(),
             message: String::new(),
         }
     }
@@ -496,8 +498,14 @@ fn build_message(
             _ => {}
         }
     }
+    let stamp = crate::appearance::format_timestamp(message.get("timestamp"));
+    let mut stamped = false;
     for row in &mut rows {
         row.message = owner.to_string();
+        if !stamped && !stamp.is_empty() && matches!(row.kind, KIND_USER | KIND_AGENT) {
+            row.timestamp.clone_from(&stamp);
+            stamped = true;
+        }
     }
     rows
 }

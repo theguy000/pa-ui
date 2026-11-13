@@ -53,14 +53,14 @@ export component SessionGroupHeader inherits Rectangle {
         width: 12px;
         height: parent.height;
         opacity: header-touch.has-hover ? 1.0 : 0.0;
-        animate opacity { duration: 120ms; easing: ease-in-out; }
+        animate opacity { duration: Appearance.hover-duration; easing: ease-in-out; }
 
         IconCaret {
             x: 0;
             y: (parent.height - self.height) / 2 + 1px;
             up: false;
             transform-rotation: root.closed ? -90deg : 0deg;
-            animate transform-rotation { duration: 160ms; easing: ease-in-out; }
+            animate transform-rotation { duration: Appearance.fold-caret-duration; easing: ease-in-out; }
             width: 10px;
             height: 10px;
             viewbox-width: 10;
@@ -206,7 +206,7 @@ export component SessionRow inherits Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
                 tint: menu.on ? Theme.sidebar-name-ink-selected : transparent;
-                animate tint { duration: 100ms; }
+                animate tint { duration: Appearance.menu-duration; }
             }
         }
     }

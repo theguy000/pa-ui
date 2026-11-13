@@ -1,6 +1,7 @@
 // Shapes the window draws more than once, so one edit reaches every copy.
 // Rationale for each lives in pa-ui/design/README.md.
 
+import { Appearance } from "types.slint";
 import { Theme } from "theme.slint";
 
 /// What a button is for; decides the field it paints unless its part names one.
@@ -30,7 +31,7 @@ export component Button inherits Rectangle {
         : kind == ButtonKind.chip ? Theme.composer-chip-fill-hover
         : Theme.button-quiet-fill-hover;
     // The caption snaps at 0ms and the folding mark runs on its own curve.
-    in property <duration> fade: 120ms;
+    in property <duration> fade: Appearance.hover-duration;
     in property <easing> fade-curve: linear;
     // The caption keeps the arrow the native bar draws.
     in property <MouseCursor> cursor: MouseCursor.pointer;

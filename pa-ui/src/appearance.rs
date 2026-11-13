@@ -2,6 +2,8 @@
 
 use crate::settings::Settings;
 use crate::{AppWindow, Appearance, Type};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use serde_json::Value;
 use slint::ComponentHandle;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -201,6 +203,54 @@ pub(crate) fn tokens(settings: &Settings) -> AppearanceTokens {
     }
 }
 
+pub(crate) fn parse_timestamp_utc(value: &Value) -> Option<DateTime<Utc>> {
+    if let Some(raw) = value.as_i64() {
+        if raw <= 0 {
+            return None;
+        }
+        return if raw >= 1_000_000_000_000 {
+            DateTime::from_timestamp_millis(raw)
+        } else {
+            DateTime::from_timestamp(raw, 0)
+        };
+    }
+    if let Some(raw) = value.as_str() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Ok(parsed) = DateTime::parse_from_rfc3339(trimmed) {
+            return Some(parsed.with_timezone(&Utc));
+        }
+    }
+    None
+}
+
+pub(crate) fn format_timestamp_with<Tz: TimeZone>(
+    value: Option<&Value>,
+    today: NaiveDate,
+    tz: &Tz,
+) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let Some(utc) = value.and_then(parse_timestamp_utc) else {
+        return String::new();
+    };
+    let local = utc.with_timezone(tz);
+    if local.date_naive() == today {
+        local.format("%H:%M").to_string()
+    } else {
+        local.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+pub(crate) fn format_timestamp(value: Option<&Value>) -> String {
+    let tz = Local;
+    let today = tz.from_utc_datetime(&Utc::now().naive_utc()).date_naive();
+    format_timestamp_with(value, today, &tz)
+}
+
 pub(crate) fn apply(ui: &AppWindow, settings: &Settings) {
     let t = tokens(settings);
     let typ = ui.global::<Type>();
@@ -311,5 +361,38 @@ mod tests {
         assert_eq!(t.spacing, spacing_tokens(RowSpacing::Compact));
         assert!(t.show_timestamps);
         assert_eq!(t.motion, motion_tokens(true));
+    }
+
+    #[test]
+    fn timestamps_format_in_local_time_and_omit_missing_values() {
+        use chrono::FixedOffset;
+        use serde_json::json;
+
+        let offset = FixedOffset::east_opt(2 * 3600).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 11, 12).unwrap();
+
+        let same_day_ms = json!(1_794_500_700_000_i64); // 2026-11-12T16:25:00Z -> 18:25 at +02:00
+        assert_eq!(
+            format_timestamp_with(Some(&same_day_ms), today, &offset),
+            "18:25"
+        );
+
+        let same_day_s = json!(1_794_500_700_i64);
+        assert_eq!(
+            format_timestamp_with(Some(&same_day_s), today, &offset),
+            "18:25"
+        );
+
+        let older_iso = json!("2026-11-10T23:30:00Z"); // 2026-11-11 01:30 at +02:00
+        assert_eq!(
+            format_timestamp_with(Some(&older_iso), today, &offset),
+            "2026-11-11 01:30"
+        );
+
+        assert_eq!(format_timestamp_with(None, today, &offset), "");
+        assert_eq!(format_timestamp_with(Some(&json!(null)), today, &offset), "");
+        assert_eq!(format_timestamp_with(Some(&json!(0)), today, &offset), "");
+        assert_eq!(format_timestamp_with(Some(&json!(-5)), today, &offset), "");
+        assert_eq!(format_timestamp_with(Some(&json!("not-a-date")), today, &offset), "");
     }
 }

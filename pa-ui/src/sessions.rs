@@ -183,6 +183,7 @@ fn tag_word_rank(word: &str) -> u8 {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn session_entries(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -333,6 +334,7 @@ pub(crate) fn groups_from(
     session_groups(&session_items(rows))
 }
 
+#[cfg(test)]
 pub(crate) fn column(
     groups: Groups<'_>,
     folded: [bool; 3],
@@ -422,6 +424,7 @@ pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: 
     ui.invoke_restore_sidebar_cy(saved_cy);
 }
 
+#[cfg(test)]
 pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
     entries_height_at(entries, ROW_HEIGHT as f32)
 }

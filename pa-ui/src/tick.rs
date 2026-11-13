@@ -894,7 +894,11 @@ impl Tick {
                         if l.open_live.as_ref().is_some_and(|turn| turn.message == key) {
                             continue;
                         }
-                        l.open_live = Some(live::Live::new(key.clone()));
+                        let mut live = live::Live::new(key.clone());
+                        live.set_timestamp(crate::appearance::format_timestamp(
+                            message.get("timestamp"),
+                        ));
+                        l.open_live = Some(live);
                         sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
                         sheet::trace("live rows opened", &sheet.rows());
@@ -902,7 +906,11 @@ impl Tick {
                     }
                     if l.open_live.is_none() && kind == Some("message_update") {
                         let key = transcript::message_key(message);
-                        l.open_live = Some(live::Live::new(key.clone()));
+                        let mut live = live::Live::new(key.clone());
+                        live.set_timestamp(crate::appearance::format_timestamp(
+                            message.get("timestamp"),
+                        ));
+                        l.open_live = Some(live);
                         sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
                     }
@@ -3443,5 +3451,42 @@ mod status_strip_tests {
 
         h.ui.invoke_setting_chosen("interface-size".into(), "Default".into());
         assert_eq!(h.ui.get_sessions_height(), default_h);
+
+        h.ui.invoke_setting_chosen("code-font".into(), "JetBrains Mono".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_code_font().as_str(), "JetBrains Mono");
+        h.ui.invoke_setting_chosen("code-font".into(), "Consolas".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_code_font().as_str(), "Consolas");
+
+        h.ui.invoke_setting_chosen("row-spacing".into(), "Compact".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_row_pad_y(), 3.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_cell_pad_y(), 2.0);
+        h.ui.invoke_setting_chosen("row-spacing".into(), "Comfortable".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_row_pad_y(), 6.0);
+
+        assert!(!h.ui.global::<crate::Appearance>().get_show_timestamps());
+        h.ui.invoke_setting_toggled("show-timestamps".into());
+        assert!(h.ui.global::<crate::Appearance>().get_show_timestamps());
+
+        assert!(h.ui.global::<crate::Appearance>().get_smooth_scroll());
+        h.ui.invoke_setting_toggled("reduce-motion".into());
+        assert!(!h.ui.global::<crate::Appearance>().get_smooth_scroll());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_fold_duration(), 0);
+
+        let built = transcript::build(
+            &[
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:00:00Z",
+                    "content": [{"type": "text", "text": "hello"}]
+                }),
+                serde_json::json!({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "no stamp"}]
+                }),
+            ],
+            10,
+        ).0;
+        assert!(!built[0].timestamp.is_empty());
+        assert_eq!(built[1].timestamp, "");
     }
 }

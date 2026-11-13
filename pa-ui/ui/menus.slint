@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
+import { Appearance, EffortItem, ModelGroup, SessionMenuItem, SlashItem } from "types.slint";
 import { IconCaret, IconCheck, IconMenuCopy, IconMenuDone, IconMenuPencil,
     IconMenuShare, IconTrash } from "icons.slint";
 import { Theme } from "theme.slint";
@@ -50,7 +50,7 @@ export component SlashMenu inherits Panel {
                 // list is names only, like a menu should be.
                 background: index == root.index || slash-touch.has-hover
                     ? Theme.panel-row-fill-hover : transparent;
-                animate background { duration: 90ms; }
+                animate background { duration: Appearance.menu-duration; }
 
                 HorizontalLayout {
                     x: 10px;
@@ -79,7 +79,7 @@ export component SlashMenu inherits Panel {
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         opacity: index == root.index || slash-touch.has-hover ? 1 : 0;
-                        animate opacity { duration: 90ms; }
+                        animate opacity { duration: Appearance.menu-duration; }
                     }
                 }
 
@@ -408,7 +408,7 @@ export component SessionMenu inherits Panel {
         border-radius: 6px;
         background: item-touch.has-hover ? (item.danger ? Theme.button-danger-fill-hover
             : Theme.panel-row-fill-hover) : transparent;
-        animate background { duration: 90ms; }
+        animate background { duration: Appearance.menu-duration; }
 
         property <color> row-ink: item.danger
             ? (item-touch.has-hover ? Theme.composer-stop-mark : Theme.transcript-cell-ink-failed)

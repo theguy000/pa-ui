@@ -177,7 +177,7 @@ export component AppWindow inherits Window {
     in-out property <[image]> attachment-images: [];
     // 44px tiles plus the layout's 10px spacing plus a hairline of slack
     out property <length> attach-h: root.attachment-images.length > 0 ? 62px : 0px;
-    animate attach-h { duration: 170ms; easing: ease-out; }
+    animate attach-h { duration: Appearance.band-duration; easing: ease-out; }
     // input + box chrome (10+8 padding, 10 spacing, 24 button row, 2 borders)
     // + strip (24) + band padding (8+10)
     // 13px text is ~17px per line: 4 lines by default, 10 at most
@@ -192,14 +192,14 @@ export component AppWindow inherits Window {
     // turn that queued it has ended.
     in-out property <length> busy-h: root.busy || root.queued-count > 0 ? 26px : 0px;
     animate busy-h {
-        duration: root.busy ? 190ms : 110ms;
+        duration: Appearance.band-duration > 0ms ? (root.busy ? 190ms : 110ms) : 0ms;
         easing: root.busy ? ease-out : ease-in;
     }
     // the contents come in a beat after the gap opens, and go before it shuts
     in-out property <float> busy-fade: root.busy || root.queued-count > 0 ? 1.0 : 0.0;
     animate busy-fade {
-        duration: root.busy ? 150ms : 90ms;
-        delay: root.busy ? 60ms : 0ms;
+        duration: Appearance.band-duration > 0ms ? (root.busy ? 150ms : 90ms) : 0ms;
+        delay: Appearance.band-duration > 0ms ? (root.busy ? 60ms : 0ms) : 0ms;
         easing: ease-out;
     }
     out property <length> composer-total: root.box-height + 46px + root.busy-h;
@@ -348,7 +348,7 @@ export component AppWindow inherits Window {
     in property <[float]> splice-at: [];
 
     animate fold-mix {
-        duration: 220ms;
+        duration: Appearance.fold-duration;
         easing: ease-in-out;
     }
 
@@ -561,7 +561,7 @@ export component AppWindow inherits Window {
     in-out property <bool> composer-has-text: false;
     out property <bool> stop-mode: root.busy && !root.composer-has-text;
     in-out property <float> stop-mix: root.stop-mode ? 1.0 : 0.0;
-    animate stop-mix { duration: 240ms; easing: ease-in-out; }
+    animate stop-mix { duration: Appearance.band-duration > 0ms ? 240ms : 0ms; easing: ease-in-out; }
     // the composer taking the caret is "somewhere else" too
 
     // A latch, not a measurement: while it is true a new row pulls the view
@@ -670,7 +670,7 @@ export component AppWindow inherits Window {
             }
             let target = -root.scroll-range;
             let gap = transcript-list.content-y - target;
-            if (gap <= 1.5px) {
+            if (!Appearance.smooth-scroll || gap <= 1.5px) {
                 transcript-list.content-y = target;
             } else if (gap > 600px) {
                 // On initial session attach or huge jump, close most of the gap and glide the last 140px
@@ -698,7 +698,7 @@ export component AppWindow inherits Window {
     // 60fps inertial momentum timer (Flickable-style deceleration)
     flick-timer := Timer {
         interval: 16ms;
-        running: abs(root.flick-vel) > 0.8px && !root.scrollbar-dragging && !root.follow-bottom;
+        running: Appearance.smooth-scroll && abs(root.flick-vel) > 0.8px && !root.scrollbar-dragging && !root.follow-bottom;
         triggered => {
             let next-y = max(
                 -root.scroll-range,
@@ -726,10 +726,15 @@ export component AppWindow inherits Window {
             root.reader-moved-up();
         }
         let step = transcript-list.height * 0.82;
-        // Impulse into flick velocity for butter-smooth inertial glide
-        root.flick-vel = clamp(root.flick-vel - (step * direction) * 0.24, -220px, 220px);
-        let immediate = transcript-list.content-y - (step * direction) * 0.18;
-        transcript-list.content-y = max(-root.scroll-range, min(0px, immediate));
+        if (Appearance.smooth-scroll) {
+            // Impulse into flick velocity for butter-smooth inertial glide
+            root.flick-vel = clamp(root.flick-vel - (step * direction) * 0.24, -220px, 220px);
+            let immediate = transcript-list.content-y - (step * direction) * 0.18;
+            transcript-list.content-y = max(-root.scroll-range, min(0px, immediate));
+        } else {
+            root.flick-vel = 0px;
+            transcript-list.content-y = max(-root.scroll-range, min(0px, transcript-list.content-y - step * direction));
+        }
         root.seen-content-y = transcript-list.content-y;
         if (direction > 0) {
             root.reader-reached-floor();
@@ -741,7 +746,14 @@ export component AppWindow inherits Window {
         if (direction < 0) {
             root.reader-moved-up();
         }
-        root.flick-vel = clamp(root.flick-vel - (36px * direction), -140px, 140px);
+        if (Appearance.smooth-scroll) {
+            root.flick-vel = clamp(root.flick-vel - (36px * direction), -140px, 140px);
+        } else {
+            root.flick-vel = 0px;
+            transcript-list.content-y = max(-root.scroll-range, min(0px, transcript-list.content-y - 108px * direction));
+            root.seen-content-y = transcript-list.content-y;
+            root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
+        }
         if (direction > 0) {
             root.reader-reached-floor();
         }
@@ -1221,7 +1233,7 @@ export component AppWindow inherits Window {
                                     root.reader-reached-floor();
                                 }
                                 // Smoothly boost wheel impulses into inertial coasting
-                                if (!root.scrollbar-dragging && abs(delta) >= 20px && abs(delta) <= 300px) {
+                                if (Appearance.smooth-scroll && !root.scrollbar-dragging && abs(delta) >= 20px && abs(delta) <= 300px) {
                                     root.programmatic-scroll = true;
                                     transcript-list.content-y = root.seen-content-y + delta * 0.45;
                                     root.programmatic-scroll = false;
@@ -1300,7 +1312,7 @@ export component AppWindow inherits Window {
                                 background: bar-touch.pressed ? Theme.transcript-scroll-thumb-pressed
                                     : bar-touch.has-hover ? Theme.transcript-scroll-thumb-hover
                                     : Theme.transcript-scroll-thumb;
-                                animate background { duration: 120ms; }
+                                animate background { duration: Appearance.hover-duration; }
                             }
 
                             bar-touch := TouchArea {
@@ -1473,7 +1485,7 @@ export component AppWindow inherits Window {
                         border-radius: 7px;
                         background: Theme.composer-attachment-remove-fill;
                         opacity: thumb-touch.has-hover ? 0.92 : 0.0;
-                        animate opacity { duration: 120ms; }
+                        animate opacity { duration: Appearance.hover-duration; }
                         Rectangle {
                             x: (parent.width - 7px) / 2;
                             y: (parent.height - 1.5px) / 2;

@@ -30,6 +30,7 @@ pub enum Part {
 pub struct Live {
     /// which message these rows are: the store's copy of it replaces them
     pub message: String,
+    pub timestamp: String,
     pub parts: Vec<Part>,
 }
 
@@ -38,7 +39,14 @@ impl Live {
     pub fn new(message: String) -> Self {
         Self {
             message,
+            timestamp: String::new(),
             parts: Vec::new(),
+        }
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: String) {
+        if self.timestamp.is_empty() && !timestamp.is_empty() {
+            self.timestamp = timestamp;
         }
     }
 
@@ -132,8 +140,16 @@ impl Live {
                 }
             }
         }
+        let mut stamped = false;
         for row in &mut out {
             row.message.clone_from(&self.message);
+            if !stamped
+                && !self.timestamp.is_empty()
+                && matches!(row.kind, transcript::KIND_USER | transcript::KIND_AGENT)
+            {
+                row.timestamp.clone_from(&self.timestamp);
+                stamped = true;
+            }
         }
         out
     }

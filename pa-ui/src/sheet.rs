@@ -1442,6 +1442,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         reason: transcript::plain(&row.reason).into(),
         image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
+        timestamp: row.timestamp.clone().into(),
     }
 }
 

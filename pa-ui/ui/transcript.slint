@@ -243,10 +243,17 @@ export component TranscriptRow inherits VerticalLayout {
 
     if data.kind == 0 : HorizontalLayout {
         alignment: end;
+        spacing: 8px;
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 6px;
-        padding-bottom: 6px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+            vertical-alignment: center;
+        }
         Rectangle {
             background: Theme.transcript-message-fill;
             border-radius: 10px;
@@ -268,12 +275,18 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    if data.kind == 1 : Rectangle {
-        height: agent-text.preferred-height + 12px;
+    if data.kind == 1 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+        }
         agent-text := StyledText {
-            x: 24px;
-            y: 6px;
-            width: parent.width - 48px;
             text: data.body;
             default-color: Theme.transcript-prose-ink;
             default-font-size: Type.body;
@@ -283,18 +296,18 @@ export component TranscriptRow inherits VerticalLayout {
     }
 
     if data.kind == 11 : Rectangle {
-        height: quote-text.preferred-height + 12px;
+        height: quote-text.preferred-height + Appearance.row-pad-y * 2;
         quote-bar := Rectangle {
             x: 24px;
-            y: 6px;
+            y: Appearance.row-pad-y;
             width: 2px;
-            height: parent.height - 12px;
+            height: parent.height - Appearance.row-pad-y * 2;
             border-radius: 1px;
             background: Theme.transcript-quote-edge;
         }
         quote-text := StyledText {
             x: 36px;
-            y: 6px;
+            y: Appearance.row-pad-y;
             width: parent.width - 60px;
             text: data.body;
             default-color: Theme.transcript-quote-ink;
@@ -307,9 +320,9 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 2 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             width: self.preferred-width;
@@ -357,7 +370,7 @@ export component TranscriptRow inherits VerticalLayout {
                 x: -200px;
                 y: 0px;
                 text: "x";
-                font-family: "Cascadia Code";
+                font-family: Appearance.code-font;
                 font-size: Appearance.cell-output-size;
                 opacity: 0;
             }
@@ -365,14 +378,14 @@ export component TranscriptRow inherits VerticalLayout {
                 width: parent.width;
                 height: parent.height;
                 VerticalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    padding-top: 12px;
-                    padding-bottom: 12px;
+                    padding-left: Appearance.expanded-pad-x;
+                    padding-right: Appearance.expanded-pad-x;
+                    padding-top: Appearance.expanded-pad-y;
+                    padding-bottom: Appearance.expanded-pad-y;
                     think-text := StyledText {
                         text: data.body;
                         default-color: Theme.transcript-thinking-ink;
-                        default-font-family: "Cascadia Code";
+                        default-font-family: Appearance.code-font;
                         default-font-size: Appearance.cell-output-size;
                     }
                 }
@@ -383,9 +396,9 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 3 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             height: 26px;
@@ -503,15 +516,15 @@ export component TranscriptRow inherits VerticalLayout {
             border-radius: 8px;
             height: self.preferred-height;
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                padding-top: 10px;
-                padding-bottom: 10px;
-                spacing: 8px;
+                padding-left: Appearance.expanded-pad-x;
+                padding-right: Appearance.expanded-pad-x;
+                padding-top: Appearance.expanded-pad-y;
+                padding-bottom: Appearance.expanded-pad-y;
+                spacing: Appearance.expanded-gap;
                 StyledText {
                     text: data.code;
                     default-color: Theme.transcript-cell-code-ink;
-                    default-font-family: "Cascadia Code";
+                    default-font-family: Appearance.code-font;
                     default-font-size: Appearance.cell-code-size;
                 }
                 if data.has-output : Rectangle {
@@ -522,7 +535,7 @@ export component TranscriptRow inherits VerticalLayout {
                     text: data.output;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-cell-output-ink;
-                    default-font-family: "Cascadia Code";
+                    default-font-family: Appearance.code-font;
                     default-font-size: Appearance.cell-output-size;
                 }
             }
@@ -534,9 +547,9 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 5 || is-summary : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             height: 26px;
@@ -594,12 +607,12 @@ export component TranscriptRow inherits VerticalLayout {
             border-color: Theme.transcript-cell-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
-            height: custom-text.preferred-height + 24px;
+            height: custom-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px;
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                padding-top: 10px;
-                padding-bottom: 10px;
+                padding-left: Appearance.expanded-pad-x;
+                padding-right: Appearance.expanded-pad-x;
+                padding-top: Appearance.expanded-pad-y;
+                padding-bottom: Appearance.expanded-pad-y;
                 custom-text := StyledText {
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
@@ -649,10 +662,10 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 6 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 5px;
-        padding-bottom: 5px;
+        padding-top: Appearance.code-pad-y;
+        padding-bottom: Appearance.code-pad-y;
         Rectangle {
-            height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
+            height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta == "" ? 0px : 15px);
             background: Theme.transcript-code-fill;
             border-radius: 8px;
 
@@ -666,12 +679,12 @@ export component TranscriptRow inherits VerticalLayout {
             }
             code-text := StyledText {
                 x: 12px;
-                y: 12px + (data.meta == "" ? 0px : 15px);
+                y: Appearance.expanded-pad-y + 2px + (data.meta == "" ? 0px : 15px);
                 width: parent.width - 24px;
                 text: data.code;
                 default-color: Theme.transcript-code-ink;
                 default-font-size: Appearance.code-size;
-                default-font-family: "Cascadia Code";
+                default-font-family: Appearance.code-font;
             }
         }
     }
@@ -680,13 +693,13 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 7 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 5px;
-        padding-bottom: 5px;
+        padding-top: Appearance.code-pad-y;
+        padding-bottom: Appearance.code-pad-y;
         table-text := StyledText {
             text: data.body;
             default-color: Theme.transcript-table-ink;
             default-font-size: Appearance.cell-output-size;
-            default-font-family: "Cascadia Code";
+            default-font-family: Appearance.code-font;
         }
     }
     // an image the user sent: the picture itself, thumbnailed, on the same edge
@@ -695,8 +708,8 @@ export component TranscriptRow inherits VerticalLayout {
         alignment: end;
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
         Rectangle {
             width: 220px;
             height: 150px;

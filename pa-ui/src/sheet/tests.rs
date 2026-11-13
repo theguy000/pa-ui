@@ -60,6 +60,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         image: String::new(),
         message: message.to_string(),
         elapsed: String::new(),
+        timestamp: String::new(),
     }
 }
 
