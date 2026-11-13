@@ -2067,6 +2067,73 @@ export component AppWindow inherits Window {
 
 
 
+    if root.notice-open : Panel {
+        x: root.width - 22px - self.width;
+        y: root.height - root.composer-total - self.height - 14px;
+        width: 320px;
+        height: 64px;
+        border-radius: 14px;
+
+        notice-touch := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.notice-picked(root.notice-session); }
+        }
+
+        Text {
+            x: 14px;
+            y: 10px;
+            width: parent.width - 28px - 24px;
+            height: 18px;
+            text: root.notice-name;
+            color: Theme.search-row-ink-hover;
+            font-size: 13px;
+            font-weight: 600;
+            overflow: elide;
+        }
+
+        Text {
+            x: 14px;
+            y: 31px;
+            width: parent.width - 28px - 24px;
+            height: 18px;
+            text: root.notice-failed ? "This Session failed" : "This Session finished";
+            color: root.notice-failed ? Theme.transcript-cell-ink-failed : Theme.search-row-ink;
+            font-size: 12px;
+            overflow: elide;
+        }
+
+        notice-close := Button {
+            x: parent.width - 10px - 22px;
+            y: 10px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            fill: transparent;
+            fill-hover: Theme.panel-row-fill-hover;
+            described: "Dismiss the notice";
+            clicked => { root.notice-dismissed(); }
+            IconCross {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                tint: notice-close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            }
+        }
+    }
+
+    changed notice-tick => {
+        notice-timer.restart();
+    }
+
+    notice-timer := Timer {
+        interval: 6s;
+        running: root.notice-open;
+        triggered => { root.notice-open = false; }
+    }
+
     // The search popup, over the middle of the window: a place to find one
     // session out of all of them, not a part of any column. It is the last thing
     // the window draws, so it paints above the menus and the title bar, and the
@@ -2216,81 +2283,6 @@ export component AppWindow inherits Window {
             font-size: 12px;
             font-weight: 500;
         }
-    }
-
-    // A turn ending somewhere else in the window. It sits above the composer so
-    // it never covers the transcript, and it clears itself so nothing has to
-    // poll it away.
-    if root.notice-open : Rectangle {
-        x: root.width - 22px - self.width;
-        y: root.height - root.composer-total - self.height - 14px;
-        width: 320px;
-        height: 64px;
-        border-radius: 14px;
-        background: Theme.panel-surface;
-        border-width: 1px;
-        border-color: Theme.panel-edge;
-        drop-shadow-blur: 12px;
-        drop-shadow-color: Theme.panel-shadow;
-
-        notice-touch := TouchArea {
-            x: 0;
-            y: 0;
-            width: parent.width;
-            height: parent.height;
-            mouse-cursor: pointer;
-            clicked => { root.notice-picked(root.notice-session); }
-        }
-
-        Text {
-            x: 14px;
-            y: 10px;
-            width: parent.width - 28px - 24px;
-            height: 18px;
-            text: root.notice-name;
-            color: Theme.search-row-ink-hover;
-            font-size: 13px;
-            font-weight: 600;
-            overflow: elide;
-        }
-
-        Text {
-            x: 14px;
-            y: 31px;
-            width: parent.width - 28px - 24px;
-            height: 18px;
-            text: root.notice-failed ? "This Session failed" : "This Session finished";
-            color: root.notice-failed ? Theme.transcript-cell-ink-failed : Theme.search-row-ink;
-            font-size: 12px;
-            overflow: elide;
-        }
-
-        notice-close := Button {
-            x: parent.width - 10px - 22px;
-            y: 10px;
-            width: 22px;
-            height: 22px;
-            border-radius: 11px;
-            fill: transparent;
-            fill-hover: Theme.panel-row-fill-hover;
-            described: "Dismiss the notice";
-            clicked => { root.notice-dismissed(); }
-            IconCross {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                tint: notice-close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
-            }
-        }
-    }
-
-    changed notice-tick => {
-        notice-timer.restart();
-    }
-
-    notice-timer := Timer {
-        interval: 6s;
-        running: root.notice-open;
-        triggered => { root.notice-open = false; }
     }
 
     // drawn last so it sits above the content and the drag surface beneath it

@@ -742,12 +742,9 @@ impl Tick {
                     if matches!(kind, Some("turn_start" | "agent_start")) {
                         self.turn_failed.set(false);
                         self.turn_aborted.set(false);
-                        if self
-                            .announced_session
-                            .take()
-                            .is_some_and(|announced| announced != session)
-                        {
-                            // Keep unrelated announcement deduplication only across its own run.
+                        let announced = self.announced_session.take();
+                        if announced.as_deref() != Some(session.as_str()) {
+                            self.announced_session.set(announced);
                         }
                         open_status(&ui, &mut l, busy_since, "Waiting");
                     }
@@ -3502,9 +3499,10 @@ mod status_strip_tests {
     }
 
     fn notifications_in_app_and_system_toast_adapter_follow_policy() {
+        type RecordedToast = (String, String, String, bool);
         #[derive(Clone)]
         struct RecordingToast {
-            sent: Rc<std::cell::RefCell<Vec<(String, String, String, bool)>>>,
+            sent: Rc<std::cell::RefCell<Vec<RecordedToast>>>,
             fail: Rc<std::cell::Cell<bool>>,
         }
         impl crate::notify::ToastNotifier for RecordingToast {

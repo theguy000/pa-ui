@@ -333,7 +333,7 @@ mod imp {
             let instance = GetModuleHandleW(std::ptr::null());
             let w = GetSystemMetrics(49);
             let h = GetSystemMetrics(50);
-            LoadImageW(instance, 1usize as *const u16, IMAGE_ICON, w, h, LR_DEFAULTSIZE)
+            LoadImageW(instance, std::ptr::without_provenance::<u16>(1), IMAGE_ICON, w, h, LR_DEFAULTSIZE)
         }
     }
 
