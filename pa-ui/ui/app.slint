@@ -285,6 +285,29 @@ export component AppWindow inherits Window {
     }
 
     callback selection-picked(string);
+    callback session-dropped(string, length);
+    private property <string> drag-session-id: "";
+    private property <string> drag-session-status: "";
+    private property <int> drag-source-index: -1;
+    private property <length> drag-pointer-y: 0px;
+
+    function clear-session-drag() {
+        root.drag-session-id = "";
+        root.drag-session-status = "";
+        root.drag-source-index = -1;
+    }
+
+    changed setting-session-order => {
+        if root.setting-session-order != "Manual" {
+            root.clear-session-drag();
+        }
+    }
+
+    changed sidebar-open => {
+        if !root.sidebar-open {
+            root.clear-session-drag();
+        }
+    }
     callback wake();
     callback scroll-paging();
     callback attachment-ready();
@@ -1044,6 +1067,7 @@ export component AppWindow inherits Window {
                     content-width: self.width;
                     content-height: max(0px, root.animated-sessions-height - 88px);
                     interactive: true;
+                    mouse-drag-pan-enabled: root.setting-session-order != "Manual";
 
                     sidebar-content := Rectangle {
                         x: 0px;
@@ -1051,7 +1075,14 @@ export component AppWindow inherits Window {
                         width: parent.width;
                         height: max(0px, root.animated-sessions-height - 88px);
 
-                        for entry[k] in root.session-entries : Rectangle {
+                        for entry[k] in root.session-entries : slot := Rectangle {
+                            property <bool> drop-hit: root.drag-session-id != ""
+                                && !entry.is-header && !entry.folded
+                                && entry.item.status == root.drag-session-status
+                                && root.drag-pointer-y >= sidebar-list.absolute-position.y
+                                && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
+                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
+                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + 32px;
                             visible: !entry.is-header && root.row-h(k) > 0.5px
                                 && root.row-opacity(k) > 0.01;
                             y: root.row-y(k) - 88px;
@@ -1067,6 +1098,10 @@ export component AppWindow inherits Window {
                                 selected: root.selected-id != "" && entry.item.id == root.selected-id;
                                 editing: root.editing-id != "" && entry.item.id == root.editing-id;
                                 menu-open: root.menu-id != "" && root.menu-id == entry.item.id;
+                                reorderable: root.setting-session-order == "Manual";
+                                dragging-this: root.drag-session-id == entry.item.id;
+                                drop-before: slot.drop-hit && entry.item.id != root.drag-session-id && k < root.drag-source-index;
+                                drop-after: slot.drop-hit && entry.item.id != root.drag-session-id && k > root.drag-source-index;
                                 draft <=> root.draft;
                                 picked(id) => {
                                     root.model-menu = false;
@@ -1117,6 +1152,30 @@ export component AppWindow inherits Window {
                                         root.menu-y = y;
                                         root.session-menu-opened(id);
                                     }
+                                }
+                                drag-started(id, status, py) => {
+                                    root.menu-id = "";
+                                    root.hover-title = "";
+                                    root.drag-session-id = id;
+                                    root.drag-session-status = status;
+                                    root.drag-source-index = k;
+                                    root.drag-pointer-y = py;
+                                }
+                                drag-moved(py) => {
+                                    root.drag-pointer-y = py;
+                                }
+                                drag-ended(commit, py) => {
+                                    root.drag-pointer-y = py;
+                                    if commit
+                                        && py >= sidebar-list.absolute-position.y
+                                        && py < sidebar-list.absolute-position.y + sidebar-list.height
+                                    {
+                                        root.session-dropped(
+                                            root.drag-session-id,
+                                            py - sidebar-content.absolute-position.y + 88px,
+                                        );
+                                    }
+                                    root.clear-session-drag();
                                 }
                             }
                         }
