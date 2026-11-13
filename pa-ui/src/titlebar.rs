@@ -53,9 +53,13 @@ pub fn init(ui: slint::Weak<crate::AppWindow>) -> bool {
 
 /// Close the way the native close button would, so anything listening for a
 /// close request still sees one.
-pub fn close() {
+pub fn close() -> bool {
     #[cfg(windows)]
-    imp::close();
+    {
+        return imp::close();
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 
@@ -243,11 +247,9 @@ mod imp {
         }
     }
 
-    pub(super) fn close() {
+    pub(super) fn close() -> bool {
         let hwnd = HWND.load(Ordering::SeqCst);
-        if hwnd != 0 {
-            unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
-        }
+        hwnd != 0 && unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) != 0 }
     }
 
     fn scale(hwnd: isize) -> f64 {

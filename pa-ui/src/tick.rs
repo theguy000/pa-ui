@@ -1315,6 +1315,7 @@ mod status_strip_tests {
             let command_word = CommandWord::new();
             let composer = composer::Composer::new(&ui, &job_tx, &models, command_word.clone());
             let sidebar = sessions::Sidebar::new(&ui, &job_tx);
+            crate::quit::bind(&ui, &sidebar);
             let busy_since = Rc::new(std::cell::Cell::new(SystemTime::now()));
             let tick = Rc::new(Tick {
                 weak: ui.as_weak(),
@@ -2086,6 +2087,7 @@ mod status_strip_tests {
         reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
+        quit_confirmation_guards_busy_titlebar_close();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3410,5 +3412,72 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn quit_confirmation_guards_busy_titlebar_close() {
+        let h = Harness::new();
+        let idle = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Idle chat",
+            "workerState": "idle",
+            "activity": "idle",
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:00:00Z"
+        }));
+        let active_sub = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "sub-1",
+            "sessionId": "s-sub",
+            "parentSessionId": "s-idle",
+            "name": "Worker",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 1,
+            "modified": "2026-11-12T00:01:00Z"
+        }));
+        let active_other = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-2",
+            "sessionId": "s-act",
+            "name": "Other active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone(), active_sub.clone()]);
+        h.ui.set_selected_id("idle-1".into());
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_titlebar_close();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
+        h.ui.set_setting_confirm_quit(false);
+        h.ui.invoke_titlebar_close();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_titlebar_close();
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+        assert_eq!(tick_before, 1);
+
+        h.ui.invoke_titlebar_close();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        h.ui.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_composer_focused());
+
+        h.ui.invoke_titlebar_close();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), 2);
+
+        h.ui.invoke_quit_confirmed();
+        assert!(!h.ui.get_quit_confirm_open());
     }
 }

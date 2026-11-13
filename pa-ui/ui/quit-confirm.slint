@@ -1,0 +1,156 @@
+import { Button, ButtonKind, Panel } from "primitives.slint";
+import { IconCross, IconWarning } from "icons.slint";
+import { Theme } from "theme.slint";
+
+export component QuitConfirmPopup inherits Panel {
+    in property <int> focus-tick: 0;
+    private property <int> focused-button: 0;
+
+    callback cancelled();
+    callback confirmed();
+
+    width: 420px;
+    height: 184px;
+    border-radius: 20px;
+    border-width: 0px;
+
+    changed focus-tick => {
+        root.focused-button = 0;
+        keys.focus();
+    }
+
+    IconWarning {
+        x: 20px;
+        y: 20px;
+        tint: Theme.search-match-ink;
+    }
+
+    Text {
+        x: 44px;
+        y: 15px;
+        width: parent.width - 44px - 54px;
+        height: 28px;
+        text: "A Session is still running";
+        color: Theme.search-row-ink-hover;
+        font-size: 16px;
+        font-weight: 600;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    close := Button {
+        width: 26px;
+        height: 26px;
+        border-radius: 13px;
+        x: parent.width - 20px - self.width;
+        y: 16px;
+        fill: transparent;
+        fill-hover: Theme.panel-row-fill-hover;
+        described: "Cancel quitting";
+        clicked => { root.cancelled(); }
+        IconCross {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: 54px;
+        width: 100%;
+        height: 1px;
+        background: Theme.panel-edge;
+    }
+
+    Text {
+        x: 22px;
+        y: 70px;
+        width: parent.width - 44px;
+        height: 44px;
+        text: "A Session still has a running turn. Quitting closes the window without stopping it.";
+        color: Theme.search-row-ink;
+        font-size: 12px;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    cancel := Button {
+        x: parent.width - 22px - 72px - 8px - 84px;
+        y: parent.height - 54px;
+        width: 84px;
+        height: 32px;
+        border-radius: 8px;
+        kind: ButtonKind.primary;
+        border-width: keys.has-focus && root.focused-button == 0 ? 1px : 0px;
+        border-color: Theme.search-match-ink;
+        described: "Cancel quitting";
+        clicked => { root.cancelled(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: "Cancel";
+            color: Theme.search-row-ink-hover;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    quit := Button {
+        x: parent.width - 22px - 72px;
+        y: parent.height - 54px;
+        width: 72px;
+        height: 32px;
+        border-radius: 8px;
+        kind: ButtonKind.danger;
+        border-width: keys.has-focus && root.focused-button == 1 ? 1px : 0px;
+        border-color: Theme.search-match-ink;
+        described: "Quit anyway";
+        clicked => { root.confirmed(); }
+        Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: "Quit";
+            color: Theme.composer-stop-mark;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0px;
+        height: 0px;
+        init => {
+            root.focused-button = 0;
+            self.focus();
+        }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancelled();
+                return EventResult.accept;
+            }
+            if event.text == Key.Tab || event.text == Key.RightArrow || event.text == Key.LeftArrow {
+                root.focused-button = root.focused-button == 0 ? 1 : 0;
+                return EventResult.accept;
+            }
+            if event.text == Key.Return || event.text == " " {
+                if root.focused-button == 0 {
+                    root.cancelled();
+                } else {
+                    root.confirmed();
+                }
+                return EventResult.accept;
+            }
+            reject
+        }
+    }
+}

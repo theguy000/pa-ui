@@ -10,6 +10,7 @@ import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
 import { SettingsPopup } from "settings.slint";
 import { SearchPopup } from "search.slint";
 import { SharePopup } from "share.slint";
+import { QuitConfirmPopup } from "quit-confirm.slint";
 import { TitleBar } from "chrome.slint";
 import { StatusStrip } from "status-strip.slint";
 import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
@@ -30,6 +31,10 @@ export component AppWindow inherits Window {
     // the custom title bar, driven from src/titlebar.rs
     callback titlebar-minimize();
     callback titlebar-close();
+    in-out property <bool> quit-confirm-open: false;
+    in-out property <int> quit-confirm-focus-tick: 0;
+    callback quit-confirmed();
+    callback quit-cancelled();
     in-out property <bool> titlebar-maximized: false;
     in-out property <bool> titlebar-max-hover: false;
 
@@ -123,6 +128,7 @@ export component AppWindow inherits Window {
     in-out property <length> composer-caret-x: 0px;
     in-out property <length> composer-caret-y: 0px;
     in-out property <length> composer-caret-height: 18px;
+    out property <bool> composer-focused: draft-window.has-focus;
     out property <int> composer-caret: draft-window.caret-offset;
     out property <int> composer-anchor: draft-window.anchor-offset;
     out property <length> composer-width: draft-window.width;
@@ -1538,6 +1544,9 @@ export component AppWindow inherits Window {
                                 // While the popup is up it owns the keyboard: a
                                 // word meant for its field must not reach the
                                 // words the reader was writing as well.
+                                if root.quit-confirm-open {
+                                    return EventResult.accept;
+                                }
                                 if root.search-open && root.search-field-typed {
                                     return EventResult.accept;
                                 }
@@ -2204,6 +2213,26 @@ export component AppWindow inherits Window {
             color: Theme.sidebar-open-tip-ink;
             font-size: 12px;
             font-weight: 500;
+        }
+    }
+
+    if root.quit-confirm-open : Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+        }
+
+        quit-confirm-popup := QuitConfirmPopup {
+            x: max(root.search-clearance, (root.width - self.width) / 2);
+            y: max(root.search-clearance, (root.height - self.height) / 2);
+            focus-tick: root.quit-confirm-focus-tick;
+            cancelled => { root.quit-cancelled(); }
+            confirmed => { root.quit-confirmed(); }
         }
     }
 
