@@ -3758,8 +3758,9 @@ mod status_strip_tests {
         assert_eq!(sent.borrow().len(), 1);
         sent.borrow_mut().clear();
 
-        // Subagent SessionClosed does not notify even when Always is active, while a
-        // background top-level SessionClosed still notifies while draft_chat is open.
+        // Subagent agent_end & SessionClosed do not notify even when Always is active;
+        // closing an unrelated session leaves selected turn busy, while closing the selected
+        // session clears busy and still notifies while draft_chat is open.
         h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
         h.send(Msg::Sessions(Ok(vec![
             mk_row("s1", "u1", "Focused chat", false, 0),
@@ -3767,16 +3768,62 @@ mod status_strip_tests {
             mk_row("sub1", "usub", "Subagent", true, 1),
         ])));
         h.run();
-        h.send_at(gen_s2, Msg::SessionClosed {
+        h.ui.set_selected_id("sub1".into());
+        h.run();
+        let gen_sub = h.tick.attach_generation.get();
+        h.ui.set_window_active(false);
+        h.send_at(gen_sub, Msg::Event {
+            session: "sub1".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.send_at(gen_sub, Msg::SessionClosed {
             session: "sub1".to_string(),
             reason: "killed".to_string(),
         });
         h.run();
         assert!(sent.borrow().is_empty());
 
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_busy = h.tick.attach_generation.get();
+        h.send_at(gen_busy, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        h.send_at(gen_busy, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(!h.ui.get_busy());
+        assert_eq!(sent.borrow().len(), 1);
+        sent.borrow_mut().clear();
+
+        // Closing another session does not clear selected s2's busy strip.
+        h.send_at(gen_busy, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        h.send_at(gen_busy, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        sent.borrow_mut().clear();
+
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
         h.ui.set_draft_chat(true);
         h.ui.set_window_active(true);
-        h.send_at(gen_s2, Msg::SessionClosed {
+        h.send_at(gen_busy, Msg::SessionClosed {
             session: "s1".to_string(),
             reason: "killed".to_string(),
         });

@@ -363,7 +363,13 @@ mod tests {
             ),
             vec![("a2".to_string(), "Alpha".to_string(), TurnOutcome::Finished)]
         );
-        assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], &skip_a1).is_empty());
+        assert!(finished_top_level_rows(
+            std::slice::from_ref(&active_top),
+            std::slice::from_ref(&rekeyed_idle),
+            &skip_a1,
+        )
+        .is_empty());
+        assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], &["a2".to_string()]).is_empty());
 
         let blank_prev = row(json!({
             "activeSessionId": "b1", "sessionId": "", "firstMessage": "Blank",
