@@ -220,14 +220,9 @@ pub(crate) fn balance_strong(text: &str) -> String {
         if index > 0 {
             out.push('\n');
         }
-        let open_at = if open { leading_font_prefix_len(line) } else { 0 };
-        let close_at = if line.ends_with("</font>") {
-            line.len() - "</font>".len()
-        } else {
-            line.len()
-        };
-        let (head, rest) = line.split_at(open_at.min(close_at));
-        let (mid, tail) = rest.split_at(close_at - head.len());
+        let (open_at, close_at) = line_font_bounds(line);
+        let (head, rest) = line.split_at(open_at);
+        let (mid, tail) = rest.split_at(close_at - open_at);
         out.push_str(head);
         if open {
             out.push_str("**");
@@ -245,26 +240,51 @@ pub(crate) fn balance_strong(text: &str) -> String {
     out
 }
 
-fn leading_font_prefix_len(line: &str) -> usize {
+fn line_font_bounds(line: &str) -> (usize, usize) {
+    let Some(suffix_start) = line.len().checked_sub("</font>".len()) else {
+        return (0, line.len());
+    };
+    if !line.ends_with("</font>") {
+        return (0, line.len());
+    }
     let mut pos = 0;
-    loop {
-        let rest = &line[pos..];
-        if let Some(after_open) = rest.strip_prefix("<font ") {
-            if let Some(gt) = after_open.find('>') {
-                let next = pos + "<font ".len() + gt + 1;
-                if let Some(end_tag) = line[next..].find("</font>") {
-                    let after_close = next + end_tag + "</font>".len();
-                    if line[after_close..].starts_with(" <font ") {
-                        pos = after_close + 1;
-                        continue;
-                    }
-                }
-                return next;
+    while let Some(after_open) = line[pos..].strip_prefix("<font ") {
+        let Some(gt) = after_open.find('>') else {
+            break;
+        };
+        let body_start = pos + "<font ".len() + gt + 1;
+        if let Some(end_rel) = line[body_start..].find("</font>") {
+            let after_close = body_start + end_rel + "</font>".len();
+            if after_close < line.len() && line[after_close..].starts_with(" <font ") {
+                pos = after_close + 1;
+                continue;
             }
+        }
+        // Only treat `<font ...>` as wrapping the line when its nesting stays
+        // open until the trailing `</font>`.
+        let mut depth = 1usize;
+        let mut scan = body_start;
+        while scan < suffix_start {
+            if line[scan..].starts_with("<font ") {
+                depth += 1;
+                scan += "<font ".len();
+            } else if line[scan..].starts_with("</font>") {
+                depth -= 1;
+                if depth == 0 {
+                    return (0, line.len());
+                }
+                scan += "</font>".len();
+            } else {
+                let ch = line[scan..].chars().next().unwrap_or(' ');
+                scan += ch.len_utf8();
+            }
+        }
+        if depth == 1 {
+            return (body_start, suffix_start);
         }
         break;
     }
-    pos
+    (0, line.len())
 }
 
 

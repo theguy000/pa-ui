@@ -678,6 +678,8 @@ mod markup_tests {
             "## heading \\`escaped`",
             "> quoted **bold",
             "> quoted **bold\n> more**",
+            "**bold\nsee `code`",
+            "**bold\n`code` and `more`",
         ] {
             let drawn = markdown_markup(sample, &shipped());
             StyledText::from_markdown(&drawn)
