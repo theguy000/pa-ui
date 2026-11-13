@@ -280,5 +280,9 @@ mod activity_chip_contract {
             compact.contains("HorizontalLayout{spacing:8px;ActivityChip{"),
             "the composer row was centred or the chip moved off the left edge"
         );
+        assert!(
+            compact.contains("Rectangle{x:12px;y:parent.height-8px-25px;width:parent.width-24px;height:25px;background:transparent;HorizontalLayout{spacing:8px;ActivityChip{"),
+            "composer dock row must remain pinned to the bottom of composer-box"
+        );
     }
 }

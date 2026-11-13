@@ -148,7 +148,7 @@ fn escape_code_span(text: &str, out: &mut String) {
 
 /// Plain text rendered verbatim (thinking, output, notices).
 pub fn plain_markup(text: &str) -> String {
-    let decoded = decode_entities(text);
+    let decoded = decode_entities(text).replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::with_capacity(decoded.len() + 16);
     escape(&decoded, &mut out);
     guard_block_markers(&out)
@@ -173,87 +173,122 @@ pub(crate) fn escape_html(text: &str) -> String {
 }
 
 
-/// How many `**` markers a line carries, ignoring escapes and code spans.
-///
-/// Each marker toggles bold, so an odd count means the line leaves bold open.
-pub(crate) fn strong_markers(line: &str) -> usize {
-    let bytes: Vec<char> = line.chars().collect();
-    let mut count = 0;
-    let mut in_code = false;
-    let mut escaped = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        let ch = bytes[index];
-        if escaped {
-            escaped = false;
-            index += 1;
-            continue;
-        }
-        match ch {
-            '\\' => {
-                escaped = true;
-                index += 1;
-            }
-            '`' => {
-                in_code = !in_code;
-                index += 1;
-            }
-            '*' if !in_code && index + 1 < bytes.len() && bytes[index + 1] == '*' => {
-                count += 1;
-                index += 2;
-            }
-            _ => index += 1,
-        }
-    }
-    count
-}
-
-
 /// A `**span**` that runs over a line break is not something the Slint text
 /// parser accepts, so it printed the asterisks instead of the weight. Each line
 /// is rebalanced here: a span still open at the end of a line is closed there
 /// and reopened at the start of the next one.
+fn is_cm_punct(ch: char) -> bool {
+    ch.is_ascii_punctuation()
+}
+
+fn unclosed_strong_depth(slice: &str) -> usize {
+    unclosed_strong_depth_before(slice, ' ')
+}
+
+fn unclosed_strong_depth_before(slice: &str, eol_after: char) -> usize {
+    let bytes = slice.as_bytes();
+    let mut depth = 0usize;
+    let mut in_code = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 1;
+            if i < bytes.len() {
+                i += slice[i..].chars().next().map_or(1, char::len_utf8);
+            }
+            continue;
+        }
+        if bytes[i] == b'`' {
+            in_code = !in_code;
+            i += 1;
+            continue;
+        }
+        if !in_code && bytes[i] == b'<' {
+            if let Some(gt) = slice[i..].find('>') {
+                i += gt + 1;
+                continue;
+            }
+        }
+        if !in_code && bytes[i] == b'*' {
+            let start = i;
+            while i < bytes.len() && bytes[i] == b'*' {
+                i += 1;
+            }
+            let run = i - start;
+            if run >= 2 {
+                let before = slice[..start].chars().next_back().unwrap_or(' ');
+                let after = slice[i..].chars().next().unwrap_or(eol_after);
+                let after_ws = after.is_whitespace();
+                let before_ws = before.is_whitespace();
+                let after_p = is_cm_punct(after);
+                let before_p = is_cm_punct(before);
+                let left = !after_ws && (!after_p || before_ws || before_p);
+                let right = !before_ws && (!before_p || after_ws || after_p);
+                for _ in 0..(run / 2) {
+                    if right && (!left || depth > 0) {
+                        depth = depth.saturating_sub(1);
+                    } else if left {
+                        depth += 1;
+                    }
+                }
+            }
+            continue;
+        }
+        i += slice[i..].chars().next().map_or(1, char::len_utf8);
+    }
+    depth
+}
+
 pub(crate) fn balance_strong(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
-    let mut open = false;
+    let mut open_depth = 0usize;
     for (index, line) in text.split('\n').enumerate() {
         if index > 0 {
             out.push('\n');
         }
         let (open_at, close_at) = line_font_bounds(line);
         if open_at == 0 && close_at == line.len() && line.contains("<font ") {
-            open = balance_prose_with_fonts(line, open, &mut out);
+            open_depth = balance_prose_with_fonts(line, open_depth, &mut out);
             continue;
         }
         let (head, rest) = line.split_at(open_at);
         let (mid, tail) = rest.split_at(close_at - open_at);
         out.push_str(head);
-        if open {
-            out.push_str("**");
+        if mid.trim().is_empty() {
+            out.push_str(mid);
+            out.push_str(tail);
+            continue;
         }
-        out.push_str(mid);
-        // the markers we just added do not count: parity of the line decides
-        if strong_markers(line) % 2 == 1 {
-            open = !open;
+        let mid_start = out.len();
+        if open_depth > 0 {
+            let ws = mid.len() - mid.trim_start().len();
+            out.push_str(&mid[..ws]);
+            for _ in 0..open_depth {
+                out.push_str("**");
+            }
+            out.push_str(&mid[ws..]);
+        } else {
+            out.push_str(mid);
         }
-        if open {
-            out.push_str("**");
+        open_depth = unclosed_strong_depth(&out[mid_start..]);
+        if open_depth > 0 {
+            close_strong_before_trailing_ws(mid_start, open_depth, &mut out);
         }
         out.push_str(tail);
     }
     out
 }
 
-fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> bool {
+fn balance_prose_with_fonts(line: &str, mut open_depth: usize, out: &mut String) -> usize {
     let line_start = out.len();
     let mut pos = 0;
     while pos < line.len() {
         let Some(font_rel) = line[pos..].find("<font ") else {
-            push_prose_chunk(&line[pos..], line_start, &mut open, out);
+            push_prose_chunk(&line[pos..], line_start, &mut open_depth, out);
             break;
         };
         let chunk = &line[pos..pos + font_rel];
-        push_prose_chunk(chunk, line_start, &mut open, out);
+        push_prose_chunk(chunk, line_start, &mut open_depth, out);
 
         let tag_start = pos + font_rel;
         let Some(gt_rel) = line[tag_start..].find('>') else {
@@ -272,10 +307,11 @@ fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> boo
 
         // Ensure no outer `**` stays open across `<font>...</font>`, placing any
         // closing `**` before trailing whitespace so CommonMark recognizes it.
-        if strong_markers(&out[line_start..]) % 2 == 1 {
-            close_strong_before_trailing_ws(line_start, out);
-        } else if open && out[line_start..].ends_with('\u{200b}') {
-            // Drop any `\u{200b}` inserted before `<font>` solely as a bold separator.
+        let unclosed_here = unclosed_strong_depth_before(&out[line_start..], '<');
+        if unclosed_here > 0 {
+            close_strong_before_trailing_ws_before(line_start, unclosed_here, '<', out);
+            open_depth = open_depth.max(unclosed_here);
+        } else if open_depth > 0 && out[line_start..].ends_with('\u{200b}') {
             out.pop();
         }
 
@@ -284,7 +320,7 @@ fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> boo
         let already_bold = trimmed_body.starts_with("**")
             && trimmed_body.ends_with("**")
             && trimmed_body.len() >= 4;
-        if open && !already_bold && !font_body.trim().is_empty() {
+        if open_depth > 0 && !already_bold && !font_body.trim().is_empty() {
             let ws = font_body.len() - font_body.trim_start().len();
             out.push_str(&font_body[..ws]);
             out.push_str("**");
@@ -295,55 +331,93 @@ fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> boo
         }
         out.push_str("</font>");
 
-        if open && line[after_font..].starts_with("**") {
+        if open_depth > 0 && line[after_font..].starts_with("**") {
             pos = after_font + "**".len();
-            open = false;
+            open_depth -= 1;
         } else {
             pos = after_font;
         }
     }
-    if strong_markers(&out[line_start..]) % 2 == 1 {
-        close_strong_before_trailing_ws(line_start, out);
+    let unclosed_tail = unclosed_strong_depth(&out[line_start..]);
+    if unclosed_tail > 0 {
+        close_strong_before_trailing_ws(line_start, unclosed_tail, out);
+        open_depth = open_depth.max(unclosed_tail);
     }
-    open
+    open_depth
 }
 
-fn close_strong_before_trailing_ws(line_start: usize, out: &mut String) {
+fn close_strong_before_trailing_ws(line_start: usize, count: usize, out: &mut String) {
+    close_strong_before_trailing_ws_before(line_start, count, ' ', out);
+}
+
+fn close_strong_before_trailing_ws_before(
+    line_start: usize,
+    mut count: usize,
+    eol_after: char,
+    out: &mut String,
+) {
+    if count == 0 {
+        return;
+    }
     let trimmed_len = line_start + out[line_start..].trim_end().len();
     let ws = out[trimmed_len..].to_string();
+    let next_after = if ws.is_empty() { eol_after } else { ' ' };
     out.truncate(trimmed_len);
-    if out[line_start..].ends_with("**\u{200b}") && !out[line_start..].ends_with("\\**\u{200b}") {
-        out.truncate(out.len() - "**\u{200b}".len());
-    } else if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
-        out.truncate(out.len() - 2);
-    } else {
-        if out[line_start..].ends_with('\u{200b}') {
-            out.pop();
+    while count > 0 {
+        let cur_depth = unclosed_strong_depth_before(&out[line_start..], next_after);
+        let popped = if out[line_start..].ends_with("**\u{200b}")
+            && !out[line_start..].ends_with("\\**\u{200b}")
+        {
+            let prev = out.len();
+            out.truncate(prev - "**\u{200b}".len());
+            if unclosed_strong_depth_before(&out[line_start..], next_after) < cur_depth {
+                true
+            } else {
+                out.push_str("**\u{200b}");
+                false
+            }
+        } else if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
+            let prev = out.len();
+            out.truncate(prev - 2);
+            if unclosed_strong_depth_before(&out[line_start..], next_after) < cur_depth {
+                true
+            } else {
+                out.push_str("**");
+                false
+            }
+        } else {
+            false
+        };
+        if !popped {
+            if out[line_start..].ends_with('\u{200b}') {
+                out.pop();
+            }
+            out.push_str("**");
         }
-        out.push_str("**");
+        count -= 1;
     }
     out.push_str(&ws);
 }
 
-fn push_prose_chunk(chunk: &str, line_start: usize, open: &mut bool, out: &mut String) {
+fn push_prose_chunk(chunk: &str, line_start: usize, open_depth: &mut usize, out: &mut String) {
     if chunk.is_empty() {
         return;
     }
-    let need_opener = *open
-        && strong_markers(&out[line_start..]) % 2 == 0
+    let need_opener = *open_depth > 0
+        && unclosed_strong_depth(&out[line_start..]) == 0
         && !chunk.trim_matches('\u{200b}').trim().is_empty()
         && !chunk.starts_with("**");
     if need_opener {
         let ws = chunk.len() - chunk.trim_start().len();
         out.push_str(&chunk[..ws]);
-        out.push_str("**");
+        for _ in 0..*open_depth {
+            out.push_str("**");
+        }
         out.push_str(&chunk[ws..]);
     } else {
         out.push_str(chunk);
     }
-    if strong_markers(chunk) % 2 == 1 {
-        *open = !*open;
-    }
+    *open_depth = unclosed_strong_depth(&out[line_start..]);
 }
 
 fn line_font_bounds(line: &str) -> (usize, usize) {
@@ -359,11 +433,13 @@ fn line_font_bounds(line: &str) -> (usize, usize) {
             break;
         };
         let body_start = pos + "<font ".len() + gt + 1;
-        if let Some(end_rel) = line[body_start..].find("</font>") {
-            let after_close = body_start + end_rel + "</font>".len();
-            if after_close < line.len() && line[after_close..].starts_with(" <font ") {
-                pos = after_close + 1;
-                continue;
+        if pos == 0 {
+            if let Some(end_rel) = line[body_start..].find("</font>") {
+                let after_close = body_start + end_rel + "</font>".len();
+                if after_close < line.len() && line[after_close..].starts_with(" <font ") {
+                    pos = after_close + 1;
+                    continue;
+                }
             }
         }
         // Only treat `<font ...>` as wrapping the line when its nesting stays
@@ -407,7 +483,7 @@ pub(crate) fn quote_body(line: &str) -> Option<&str> {
 /// of the renderer's cramped box. Everything the renderer cannot parse is taken
 /// out on the way.
 pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
-    let decoded = decode_entities(text);
+    let decoded = decode_entities(text).replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::with_capacity(decoded.len() + 16);
     for (index, line) in decoded.split('\n').enumerate() {
         if index > 0 {
@@ -449,7 +525,7 @@ pub fn quote_markup(text: &str, theme: &Resolved) -> String {
     markdown_markup(text, theme)
         .split('\n')
         .map(|line| {
-            if line.trim().is_empty() {
+            if line.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}').is_empty() {
                 line.to_string()
             } else {
                 format!("*{line}*")
@@ -518,7 +594,8 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             // start of a line Slint reads `**<font>` as literal markers, while
             // `<font>**...**` parses. A span already inside bold only needs a
             // zero-width separator so the opening markers parse there.
-            let bold_already = strong_markers(&out) % 2 == 1;
+            let line_start = out.rfind('\n').map_or(0, |p| p + 1);
+            let bold_already = unclosed_strong_depth_before(&out[line_start..], '<') > 0;
             if bold_already && out.ends_with("**") {
                 out.push('\u{200b}');
             }
@@ -979,11 +1056,25 @@ pub fn highlight_python(code: &str, theme: &Resolved) -> String {
 /// as a heading/list/quote — both unsupported in Slint. A zero-width prefix
 /// disables that block syntax without putting NBSP characters into text layout.
 pub(crate) fn guard_block_markers(markup: &str) -> String {
+    let lines: Vec<&str> = markup.split('\n').collect();
+    let last_non_empty = lines.iter().rposition(|l| !l.trim().is_empty());
     let mut out = String::with_capacity(markup.len() + 32);
-    for (index, line) in markup.split('\n').enumerate() {
+    let mut seen_non_empty = false;
+    let mut emitted_blank = false;
+    for (index, line) in lines.iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
+        if line.trim().is_empty() {
+            let has_more = last_non_empty.is_some_and(|last| index < last);
+            if seen_non_empty && has_more && !emitted_blank {
+                out.push('\u{200b}');
+                emitted_blank = true;
+            }
+            continue;
+        }
+        seen_non_empty = true;
+        emitted_blank = false;
         let indent = line.len() - line.trim_start_matches(' ').len();
         if indent > 0 {
             out.push('\u{200b}');
@@ -991,7 +1082,16 @@ pub(crate) fn guard_block_markers(markup: &str) -> String {
         }
         let rest = &line[indent..];
         let first = rest.chars().next();
-        if indent == 0 && matches!(first, Some('#' | '>' | '-' | '+' | '*' | '=' | '~' | '|' | '0'..='9')) {
+        let star_is_block = first == Some('*')
+            && (rest == "*"
+                || rest.starts_with("* ")
+                || rest.starts_with("*\t")
+                || (rest.chars().all(|ch| ch == '*' || ch == ' ' || ch == '\t')
+                    && rest.chars().filter(|&ch| ch == '*').count() >= 3));
+        if indent == 0
+            && (star_is_block
+                || matches!(first, Some('#' | '>' | '-' | '+' | '=' | '~' | '|' | '0'..='9')))
+        {
             out.push('\u{200b}');
         }
         out.push_str(rest);

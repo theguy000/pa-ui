@@ -2541,6 +2541,7 @@ mod status_strip_tests {
         an_older_page_from_another_session_cannot_enter_the_sheet();
         switching_sessions_clears_the_previous_sheet();
         attaching_a_session_resumes_follow_bottom();
+        follow_bottom_survives_layout_clamps_and_scroll_to_end();
         attaching_asks_for_stats_and_queue();
         a_queue_for_another_session_does_not_touch_the_lanes();
         a_new_user_prompt_brings_the_transcript_to_the_floor();
@@ -2689,6 +2690,19 @@ mod status_strip_tests {
             h.ui.get_follow_bottom(),
             "a new selection must resume following the newest row"
         );
+    }
+
+    fn follow_bottom_survives_layout_clamps_and_scroll_to_end() {
+        let h = Harness::new();
+        h.ui.set_follow_bottom(true);
+        h.ui.set_busy(true);
+        h.ui.set_prev_scroll_range(500.0);
+        h.ui.invoke_scroll_to_end();
+        assert!(h.ui.get_follow_bottom());
+
+        h.ui.set_busy(false);
+        h.ui.invoke_scroll_to_end();
+        assert!(h.ui.get_follow_bottom());
     }
 
     fn attaching_a_session_resumes_follow_bottom() {

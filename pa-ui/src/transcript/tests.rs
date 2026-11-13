@@ -704,6 +704,41 @@ mod markup_tests {
             StyledText::from_markdown(&drawn)
                 .unwrap_or_else(|error| panic!("failed at prefix len {end}: {error}\n---\n{drawn}"));
         }
+
+        let crlf_and_backtick = concat!(
+            "# Goal\r\n",
+            "- fixed `highlight_inline_code` (`\\`-escape, `r\"\\`\"` for unclosed, `strong_markers(&out) % 2 == 1` parity, `\\u{200b}`, `<font>****</font>`)\r\n",
+            "- [ ] **Investigate spacing (`\"space is not properly created.\"`): inspect** `pa-ui/src/transcript/markup.rs` **(e.g., `balance_prose_with_fonts`, whitespace/`\\u{200b}` **around `<font>` / `**` / inline code).**"
+        );
+        for (idx, _) in crlf_and_backtick.char_indices() {
+            let drawn = markdown_markup(&crlf_and_backtick[..idx], &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("crlf/backtick failed at {idx}: {error}\n---\n{drawn}"));
+        }
+        StyledText::from_markdown(&markdown_markup(crlf_and_backtick, &shipped()))
+            .expect("full crlf_and_backtick must parse");
+    }
+
+    #[test]
+    fn blank_lines_and_rules_preserve_paragraph_spacing() {
+        let two_paras = markdown_markup("First\n\nSecond", &shipped());
+        let st = StyledText::from_markdown(&two_paras).expect("two paragraphs parse");
+        assert_eq!(two_paras, "First\n\u{200b}\nSecond", "got {two_paras:?}");
+        let _ = st;
+
+        let collapsed = markdown_markup("First\n\n\nSecond", &shipped());
+        assert_eq!(collapsed.matches("\u{200b}").count(), 1, "got {collapsed:?}");
+
+        let with_rule = markdown_markup("Before\n\n---\n\nAfter", &shipped());
+        assert_eq!(with_rule.matches("\u{200b}").count(), 1, "got {with_rule:?}");
+        StyledText::from_markdown(&with_rule).expect("rule spacing parses");
+
+        let trailing = markdown_markup("First\n\n", &shipped());
+        assert!(!trailing.contains("\u{200b}"), "trailing blank should not emit zwsp: {trailing:?}");
+
+        let quoted = quote_markup("One\n\nTwo", &shipped());
+        assert!(!quoted.contains("*\u{200b}*"), "quote blank line wrapped in italics: {quoted:?}");
+        StyledText::from_markdown(&quoted).expect("quoted blank line parses");
     }
 }
 
