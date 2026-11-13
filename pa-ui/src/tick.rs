@@ -2105,6 +2105,7 @@ mod status_strip_tests {
         settings_choices_expand_collapse_and_select();
         quit_confirmation_guards_busy_titlebar_close();
         window_close_request_and_escape_share_quit_decision();
+        every_role_reaches_the_theme_global();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3429,6 +3430,34 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn every_role_reaches_the_theme_global() {
+        let h = Harness::new();
+        let theme = crate::theme::Resolved::shipped();
+        crate::theme::apply(&h.ui, &theme);
+        let global = h.ui.global::<crate::Theme>();
+        assert_eq!(
+            global.get_quit_confirm_danger_ink(),
+            slint::Color::from_rgb_u8(0xf7, 0xeb, 0xe7)
+        );
+        assert_eq!(
+            global.get_quit_confirm_ink(),
+            theme.get(crate::theme::Role::QuitConfirmInk).to_slint()
+        );
+        assert_eq!(
+            global.get_search_row_ink_hover(),
+            theme.get(crate::theme::Role::SearchRowInkHover).to_slint()
+        );
+        assert_eq!(
+            global.get_panel_surface(),
+            theme.get(crate::theme::Role::PanelSurface).to_slint()
+        );
+        crate::theme::apply(&h.ui, &crate::theme::light());
+        assert_ne!(
+            h.ui.global::<crate::Theme>().get_quit_confirm_ink(),
+            global.get_quit_confirm_ink()
+        );
     }
 
     fn quit_confirmation_guards_busy_titlebar_close() {
