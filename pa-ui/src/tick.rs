@@ -180,6 +180,8 @@ impl Tick {
             reset_activity(&ui);
             l.open_live = None;
             l.last_seq = 0;
+            self.turn_failed.set(false);
+            self.turn_aborted.set(false);
             composer.in_flight.set(false);
             self.sync_status_to_selection(&ui, l, &selected, busy_since);
             let generation = self.attach_generation.get() + 1;
@@ -422,18 +424,12 @@ impl Tick {
                     }
                     if was_seeded {
                         let toast = self.toast.borrow().clone();
-                        for (id, name) in crate::notify::finished_top_level_rows(
+                        for (id, name, outcome) in crate::notify::finished_top_level_rows(
                             &before,
                             &rows,
                             skip_finished,
                         ) {
-                            crate::notify::dispatch(
-                                &ui,
-                                toast.as_ref(),
-                                &id,
-                                &name,
-                                crate::notify::TurnOutcome::Finished,
-                            );
+                            crate::notify::dispatch(&ui, toast.as_ref(), &id, &name, outcome);
                         }
                     }
                     let selected = ui.get_selected_id().to_string();
@@ -803,10 +799,14 @@ impl Tick {
                         let aborted = self.turn_aborted.replace(false);
                         let failed = self.turn_failed.replace(false);
                         if !aborted {
+                            let rows = sidebar.cache.borrow();
+                            let top_level = rows
+                                .iter()
+                                .find(|row| row.id == session)
+                                .is_none_or(crate::sessions::is_top_level);
                             let already = self.announced_session.take();
-                            if already.as_deref() != Some(session.as_str()) {
-                                let name =
-                                    crate::notify::session_label(&sidebar.cache.borrow(), &session);
+                            if top_level && already.as_deref() != Some(session.as_str()) {
+                                let name = crate::notify::session_label(&rows, &session);
                                 let outcome = if failed {
                                     crate::notify::TurnOutcome::Failed
                                 } else {
@@ -815,7 +815,9 @@ impl Tick {
                                 let toast = self.toast.borrow().clone();
                                 crate::notify::dispatch(&ui, toast.as_ref(), &session, &name, outcome);
                             }
-                            self.announced_session.set(Some(session.clone()));
+                            if top_level {
+                                self.announced_session.set(Some(session.clone()));
+                            }
                         }
                     }
                     if matches!(kind, Some("turn_end" | "agent_end" | "compaction_end")) {
@@ -1215,24 +1217,26 @@ impl Tick {
                     self.record_error(&ui, session.as_deref(), &message);
                 }
                 Msg::SessionClosed { session, reason } => {
-                    if ui.get_draft_chat() {
-                        let message = session_closed_message(&reason);
-                        self.record_error(&ui, Some(&session), &message);
-                        continue;
-                    }
-                    let current = ui.get_selected_id();
-                    if current.is_empty() || session == current.as_str() {
-                        composer.in_flight.set(false);
-                        sheet.answer_ended();
-                        l.open_live = None;
-                        l.settled_session = None;
-                        self.clear_status(&ui, &mut l);
-                    }
                     let message = session_closed_message(&reason);
                     self.record_error(&ui, Some(&session), &message);
+                    if !ui.get_draft_chat() {
+                        let current = ui.get_selected_id();
+                        if current.is_empty() || session == current.as_str() {
+                            composer.in_flight.set(false);
+                            sheet.answer_ended();
+                            l.open_live = None;
+                            l.settled_session = None;
+                            self.clear_status(&ui, &mut l);
+                        }
+                    }
+                    let rows = sidebar.cache.borrow();
+                    let top_level = rows
+                        .iter()
+                        .find(|row| row.id == session)
+                        .is_none_or(crate::sessions::is_top_level);
                     let already = self.announced_session.take();
-                    if already.as_deref() != Some(session.as_str()) {
-                        let name = crate::notify::session_label(&sidebar.cache.borrow(), &session);
+                    if top_level && already.as_deref() != Some(session.as_str()) {
+                        let name = crate::notify::session_label(&rows, &session);
                         let toast = self.toast.borrow().clone();
                         crate::notify::dispatch(
                             &ui,
@@ -1242,7 +1246,11 @@ impl Tick {
                             crate::notify::TurnOutcome::Failed,
                         );
                     }
-                    self.announced_session.set(Some(session));
+                    if top_level {
+                        self.announced_session.set(Some(session));
+                    } else if let Some(prev) = already {
+                        self.announced_session.set(Some(prev));
+                    }
                 }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
@@ -3756,12 +3764,68 @@ mod status_strip_tests {
         assert_eq!(sent.borrow().len(), 1);
         sent.borrow_mut().clear();
 
+        // Subagent SessionClosed does not notify even when Always is active, while a
+        // background top-level SessionClosed still notifies while draft_chat is open.
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("sub1", "usub", "Subagent", true, 1),
+        ])));
+        h.run();
+        h.send_at(gen_s2, Msg::SessionClosed {
+            session: "sub1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        h.ui.set_draft_chat(true);
+        h.ui.set_window_active(true);
+        h.send_at(gen_s2, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s1");
+        assert!(h.ui.get_notice_failed());
+        assert_eq!(sent.borrow().len(), 1);
+        h.ui.invoke_notice_dismissed();
+        h.ui.set_draft_chat(false);
+        sent.borrow_mut().clear();
+
+        // Switching away after turn_end(error) on s1 resets turn_failed before s2's agent_end.
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_err = h.tick.attach_generation.get();
+        h.send_at(gen_err, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
+            }),
+        });
+        h.run();
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_clean = h.tick.attach_generation.get();
+        h.ui.set_window_active(false);
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session finished".into(), "Background one".into(), false));
+        sent.borrow_mut().clear();
+
         h.ui.invoke_setting_chosen("session-notifications".into(), "Off".into());
-        h.send_at(gen_s2, Msg::Event {
+        h.send_at(gen_clean, Msg::Event {
             session: "s2".to_string(),
             event: serde_json::json!({"type": "turn_start"}),
         });
-        h.send_at(gen_s2, Msg::SessionClosed {
+        h.send_at(gen_clean, Msg::SessionClosed {
             session: "s2".to_string(),
             reason: "killed".to_string(),
         });

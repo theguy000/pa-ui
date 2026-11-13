@@ -107,7 +107,7 @@ pub(crate) fn finished_top_level_rows(
     before: &[SessionRow],
     after: &[SessionRow],
     skip_id: Option<&str>,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, TurnOutcome)> {
     let mut finished = Vec::new();
     for prev in before {
         if !is_top_level(prev) || tag_of(prev) != RowTag::Active {
@@ -128,7 +128,12 @@ pub(crate) fn finished_top_level_rows(
         } else {
             label.to_string()
         };
-        finished.push((now.id.clone(), name));
+        let outcome = if now.worker_state == "failed" {
+            TurnOutcome::Failed
+        } else {
+            TurnOutcome::Finished
+        };
+        finished.push((now.id.clone(), name, outcome));
     }
     finished
 }
@@ -332,9 +337,18 @@ mod tests {
                 &[idle_top.clone(), idle_sub, archived_from_idle],
                 None,
             ),
-            vec![("a1".to_string(), "Alpha".to_string())]
+            vec![("a1".to_string(), "Alpha".to_string(), TurnOutcome::Finished)]
         );
         assert!(finished_top_level_rows(&[active_top.clone()], &[idle_top.clone()], Some("a1")).is_empty());
+
+        let failed_top = row(json!({
+            "activeSessionId": "a1", "sessionId": "u1", "firstMessage": "Alpha",
+            "workerState": "failed", "activity": "idle"
+        }));
+        assert_eq!(
+            finished_top_level_rows(&[active_top.clone()], &[failed_top], None),
+            vec![("a1".to_string(), "Alpha".to_string(), TurnOutcome::Failed)]
+        );
 
         let rekeyed_idle = row(json!({
             "activeSessionId": "a2", "sessionId": "u1", "firstMessage": "Alpha",
@@ -342,7 +356,7 @@ mod tests {
         }));
         assert_eq!(
             finished_top_level_rows(&[active_top.clone()], &[rekeyed_idle.clone()], None),
-            vec![("a2".to_string(), "Alpha".to_string())]
+            vec![("a2".to_string(), "Alpha".to_string(), TurnOutcome::Finished)]
         );
         assert!(finished_top_level_rows(&[active_top], &[rekeyed_idle], Some("a1")).is_empty());
 
