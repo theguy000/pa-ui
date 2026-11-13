@@ -12,6 +12,7 @@ pub(crate) struct Settings {
     pub thread_notifications: String,
     pub in_app_notifications: bool,
     pub session_order: String,
+    pub manual_session_order: Vec<String>,
     pub confirm_quit: bool,
     pub confirm_delete_session: bool,
     pub queue_key: String,
@@ -31,6 +32,7 @@ impl Default for Settings {
             thread_notifications: "Off".to_string(),
             in_app_notifications: true,
             session_order: "Last used".to_string(),
+            manual_session_order: Vec::new(),
             confirm_quit: false,
             confirm_delete_session: true,
             queue_key: "Ctrl+Enter".to_string(),
@@ -132,6 +134,7 @@ impl Settings {
             "thread-notifications": self.thread_notifications,
             "in-app-notifications": self.in_app_notifications,
             "session-order": self.session_order,
+            "manual-session-order": self.manual_session_order,
             "confirm-quit": self.confirm_quit,
             "confirm-delete-session": self.confirm_delete_session,
             "queue-key": self.queue_key,
@@ -240,6 +243,15 @@ fn apply_fields(out: &mut Settings, map: &Map<String, Value>) {
     }
     if let Some(v) = map.get("session-order").and_then(Value::as_str) {
         out.session_order = valid_option(SESSION_ORDER_OPTIONS, v, "Last used");
+    }
+    if let Some(items) = map.get("manual-session-order").and_then(Value::as_array) {
+        let mut seen = std::collections::HashSet::new();
+        out.manual_session_order = items
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|id| !id.is_empty() && seen.insert((*id).to_string()))
+            .map(str::to_string)
+            .collect();
     }
     if let Some(v) = map.get("confirm-quit").and_then(Value::as_bool) {
         out.confirm_quit = v;
@@ -364,6 +376,10 @@ mod tests {
             thread_notifications: "Always".to_string(),
             in_app_notifications: false,
             session_order: "Name".to_string(),
+            manual_session_order: vec![
+                "01a1c539-d4a3-72e5-9022-a1138888f7a1".to_string(),
+                "01a1c539-d4a3-72e5-9022-a1138888f7a2".to_string(),
+            ],
             confirm_quit: true,
             confirm_delete_session: false,
             queue_key: "Ctrl+Enter".to_string(),
@@ -378,6 +394,14 @@ mod tests {
         let encoded = custom.to_json();
         let decoded = Settings::from_json(&encoded);
         assert_eq!(decoded, custom);
+    }
+
+    #[test]
+    fn manual_session_order_ignores_empty_non_string_and_duplicate_ids() {
+        let loaded = Settings::from_json(
+            r#"{"manual-session-order": ["u1", "", 42, "u2", "u1", "u3"]}"#,
+        );
+        assert_eq!(loaded.manual_session_order, vec!["u1", "u2", "u3"]);
     }
 
     #[test]

@@ -1098,7 +1098,11 @@ impl Tick {
                     }
                     models.sync_session_state(&ui, &state);
                 }
+                Msg::CatalogReady => {
+                    sidebar.set_catalog_ready(true);
+                }
                 Msg::Reconnected => {
+                    sidebar.set_catalog_ready(false);
                     l.loaded = None;
                     l.open_live = None;
                     l.settled_session = None;
@@ -2118,6 +2122,127 @@ mod status_strip_tests {
         assert!((after_cy - before_cy).abs() < 1.0, "scroll moved from {before_cy} to {after_cy}");
     }
 
+    fn manual_order_drag_reorder_persists_and_refuses_cross_group_moves() {
+        let settings_path = std::path::PathBuf::from(std::env::var("PA_SETTINGS_FILE").expect("PA_SETTINGS_FILE"));
+        let _ = std::fs::remove_file(&settings_path);
+        let h = Harness::new();
+        let rows = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "Idle 1",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i2", "sessionId": "ui2", "firstMessage": "Idle 2",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "Done 1",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d2", "sessionId": "ud2", "firstMessage": "Done 2",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+        ];
+        let ids_of = |model: slint::ModelRc<SessionItem>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|item| item.id.to_string())
+                .collect()
+        };
+        let search_ids_of = |model: slint::ModelRc<SearchRow>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|row| row.id.to_string())
+                .collect()
+        };
+
+        h.tick.sidebar.apply_roster(&h.ui, rows.clone());
+        h.ui.set_selected_id("a1".into());
+        h.ui.set_done_folded(true);
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+
+        h.ui.invoke_session_moved("a2".into(), "a1".into());
+        h.ui.invoke_session_moved("i2".into(), "i1".into());
+        h.ui.invoke_session_moved("d2".into(), "d1".into());
+
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "a1");
+        assert!(h.ui.get_done_folded());
+
+        h.ui.invoke_search_open_requested();
+        assert_eq!(search_ids_of(h.ui.get_search_rows()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_search_closed();
+
+        h.ui.invoke_session_moved("a2".into(), "i2".into());
+        h.ui.invoke_session_moved("i1".into(), "d1".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        let disk = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk.manual_session_order.contains(&"ua2".to_string()));
+        assert!(disk.manual_session_order.contains(&"ud2".to_string()));
+
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        h.send(Msg::Reconnected);
+        h.run();
+        h.send(Msg::Sessions(Ok(rows[..4].to_vec())));
+        h.run();
+        let disk_partial = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk_partial.manual_session_order.contains(&"ud2".to_string()));
+
+        h.send(Msg::CatalogReady);
+        let rows_without_d1: Vec<SessionRow> = rows
+            .iter()
+            .filter(|row| row.id != "d1")
+            .cloned()
+            .collect();
+        h.send(Msg::Sessions(Ok(rows_without_d1.clone())));
+        h.run();
+        let disk_pruned = crate::settings::Settings::load_from(&settings_path);
+        assert!(!disk_pruned.manual_session_order.contains(&"ud1".to_string()));
+        assert!(disk_pruned.manual_session_order.contains(&"ud2".to_string()));
+
+        let h2 = Harness::new();
+        h2.tick.sidebar.apply_roster(&h2.ui, rows_without_d1);
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2"]);
+
+        let many: Vec<SessionRow> = (0..30)
+            .map(|n| {
+                SessionRow::from_value(&serde_json::json!({
+                    "activeSessionId": format!("m-{n:02}"),
+                    "sessionId": format!("mu-{n:02}"),
+                    "firstMessage": format!("Row {n:02}"),
+                    "workerState": "ready",
+                    "activity": "working",
+                    "lastActivityAt": format!("2026-11-01T00:{:02}:00Z", 29 - n)
+                }))
+            })
+            .collect();
+        h2.tick.sidebar.apply_roster(&h2.ui, many);
+        h2.ui.invoke_restore_sidebar_cy(-120.0);
+        let before_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((before_cy + 120.0).abs() < 1.0);
+        h2.ui.invoke_session_moved("m-05".into(), "m-02".into());
+        let after_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((after_cy - before_cy).abs() < 1.0);
+    }
+
     // One test, not six: Slint binds its platform to the test thread, and the
     // harness runs each test on a new thread. The scenarios share this thread.
     #[test]
@@ -2188,6 +2313,7 @@ mod status_strip_tests {
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
         session_order_choice_reorders_the_cached_roster();
+        manual_order_drag_reorder_persists_and_refuses_cross_group_moves();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }

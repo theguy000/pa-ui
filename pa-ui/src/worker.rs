@@ -114,6 +114,7 @@ pub(crate) enum Msg {
     PromptRejected { session: Option<String>, text: String },
     /// the pipe came back: the old attachment is gone, re-attach
     Reconnected,
+    CatalogReady,
     Queue {
         session: String,
         steering: Vec<String>,
@@ -1214,6 +1215,7 @@ pub(crate) fn worker_inner(
                         frame.get("success").and_then(serde_json::Value::as_bool) == Some(true);
                     if success {
                         saved_rows = saved_rows_from_response(&frame).unwrap_or(streamed);
+                        out.send(Msg::CatalogReady);
                     }
                     out.send(Msg::Sessions(Ok(merged_sessions(&saved_rows, &roster))));
                     continue;

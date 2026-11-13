@@ -669,3 +669,137 @@ fn search_match_rows_with_order_follows_session_order() {
         .collect();
     assert_eq!(ids, ["a", "z"]);
 }
+
+#[test]
+fn manual_order_prunes_stale_uuids_and_preserves_order() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "u1", "firstMessage": "One",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "u2", "firstMessage": "Two",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    let mut manual = vec![
+        "missing".to_string(),
+        "u2".to_string(),
+        "u2".to_string(),
+        "u1".to_string(),
+        "deleted".to_string(),
+    ];
+    assert!(reconcile_manual_order(&rows, &mut manual));
+    assert_eq!(manual, ["u2", "u1"]);
+    assert!(!reconcile_manual_order(&rows, &mut manual));
+}
+
+#[test]
+fn manual_move_reorders_within_active_idle_and_done_groups() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "A2",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "I1",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i2", "sessionId": "ui2", "firstMessage": "I2",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d2", "sessionId": "ud2", "firstMessage": "D2",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+    ];
+    let manual = apply_manual_move(&rows, &[], "a2", "a1", true).expect("active move");
+    let manual = apply_manual_move(&rows, &manual, "i2", "i1", true).expect("idle move");
+    let manual = apply_manual_move(&rows, &manual, "d2", "d1", true).expect("done move");
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &manual)
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a2", "a1", "i2", "i1", "d2", "d1"]);
+}
+
+#[test]
+fn manual_move_refuses_cross_group_move() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "I1",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "i1", true), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "d1", true), None);
+    assert_eq!(apply_manual_move(&rows, &[], "i1", "d1", true), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "a1", true), None);
+}
+
+#[test]
+fn manual_move_appends_new_sessions_and_keeps_other_groups() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-07T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "A2",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "A3",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-10T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    let prior = vec![
+        "ud1".to_string(),
+        "stale-done".to_string(),
+        "ua1".to_string(),
+    ];
+    let updated_no_prune =
+        apply_manual_move(&rows, &prior, "a3", "a1", false).expect("move uncatalogued");
+    assert!(updated_no_prune.contains(&"stale-done".to_string()));
+    assert!(updated_no_prune.contains(&"ud1".to_string()));
+
+    let updated = apply_manual_move(&rows, &prior, "a3", "a1", true).expect("move active");
+    assert!(!updated.contains(&"stale-done".to_string()));
+    assert!(updated.contains(&"ud1".to_string()));
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &updated)
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a3", "a1", "a2", "d1"]);
+}

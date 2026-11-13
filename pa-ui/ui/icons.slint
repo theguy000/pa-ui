@@ -563,3 +563,16 @@ export component IconRestore inherits Path {
     stroke-line-join: round;
     commands: "M 3 7 L 3 13 L 9 13 M 4.5 13 A 8 8 0 1 1 6.3 17.7";
 }
+
+export component IconGrip inherits Rectangle {
+    in property <color> tint: Theme.sidebar-group-caret;
+    width: 8px;
+    height: 12px;
+    background: transparent;
+    Rectangle { x: 1px; y: 1px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+    Rectangle { x: 5px; y: 1px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+    Rectangle { x: 1px; y: 5px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+    Rectangle { x: 5px; y: 5px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+    Rectangle { x: 1px; y: 9px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+    Rectangle { x: 5px; y: 9px; width: 2px; height: 2px; border-radius: 1px; background: root.tint; }
+}
