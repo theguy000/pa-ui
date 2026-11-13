@@ -221,6 +221,10 @@ pub(crate) fn balance_strong(text: &str) -> String {
             out.push('\n');
         }
         let (open_at, close_at) = line_font_bounds(line);
+        if open_at == 0 && close_at == line.len() && line.contains("<font ") {
+            open = balance_prose_with_fonts(line, open, &mut out);
+            continue;
+        }
         let (head, rest) = line.split_at(open_at);
         let (mid, tail) = rest.split_at(close_at - open_at);
         out.push_str(head);
@@ -238,6 +242,105 @@ pub(crate) fn balance_strong(text: &str) -> String {
         out.push_str(tail);
     }
     out
+}
+
+fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> bool {
+    let line_start = out.len();
+    let mut pos = 0;
+    while pos < line.len() {
+        let Some(font_rel) = line[pos..].find("<font ") else {
+            push_prose_chunk(&line[pos..], line_start, &mut open, out);
+            break;
+        };
+        let chunk = &line[pos..pos + font_rel];
+        push_prose_chunk(chunk, line_start, &mut open, out);
+
+        let tag_start = pos + font_rel;
+        let Some(gt_rel) = line[tag_start..].find('>') else {
+            out.push_str(&line[tag_start..]);
+            break;
+        };
+        let body_start = tag_start + gt_rel + 1;
+        let Some(end_rel) = line[body_start..].find("</font>") else {
+            out.push_str(&line[tag_start..]);
+            break;
+        };
+        let body_end = body_start + end_rel;
+        let after_font = body_end + "</font>".len();
+        let font_open_tag = &line[tag_start..body_start];
+        let font_body = &line[body_start..body_end];
+
+        // Ensure no outer `**` stays open across `<font>...</font>`.
+        if strong_markers(&out[line_start..]) % 2 == 1 {
+            if out[line_start..].ends_with("**\u{200b}")
+                && !out[line_start..].ends_with("\\**\u{200b}")
+            {
+                out.truncate(out.len() - "**\u{200b}".len());
+            } else if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
+                out.truncate(out.len() - 2);
+            } else {
+                if out[line_start..].ends_with('\u{200b}') && !chunk.ends_with('\u{200b}') {
+                    out.pop();
+                }
+                out.push_str("**");
+            }
+        } else if open && out[line_start..].ends_with('\u{200b}') {
+            // Drop any `\u{200b}` inserted before `<font>` solely as a bold separator.
+            out.pop();
+        }
+
+        out.push_str(font_open_tag);
+        let trimmed_body = font_body.trim_start_matches('\u{200b}');
+        let already_bold = trimmed_body.starts_with("**")
+            && trimmed_body.ends_with("**")
+            && trimmed_body.len() >= 4;
+        if open && !already_bold && !font_body.trim().is_empty() {
+            let ws = font_body.len() - font_body.trim_start().len();
+            out.push_str(&font_body[..ws]);
+            out.push_str("**");
+            out.push_str(&font_body[ws..]);
+            out.push_str("**");
+        } else {
+            out.push_str(font_body);
+        }
+        out.push_str("</font>");
+
+        if open && line[after_font..].starts_with("**") {
+            pos = after_font + "**".len();
+            open = false;
+        } else {
+            pos = after_font;
+        }
+    }
+    if strong_markers(&out[line_start..]) % 2 == 1 {
+        if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
+            out.truncate(out.len() - 2);
+        } else {
+            out.push_str("**");
+        }
+    }
+    open
+}
+
+fn push_prose_chunk(chunk: &str, line_start: usize, open: &mut bool, out: &mut String) {
+    if chunk.is_empty() {
+        return;
+    }
+    let need_opener = *open
+        && strong_markers(&out[line_start..]) % 2 == 0
+        && !chunk.trim_matches('\u{200b}').trim().is_empty()
+        && !chunk.starts_with("**");
+    if need_opener {
+        let ws = chunk.len() - chunk.trim_start().len();
+        out.push_str(&chunk[..ws]);
+        out.push_str("**");
+        out.push_str(&chunk[ws..]);
+    } else {
+        out.push_str(chunk);
+    }
+    if strong_markers(chunk) % 2 == 1 {
+        *open = !*open;
+    }
 }
 
 fn line_font_bounds(line: &str) -> (usize, usize) {

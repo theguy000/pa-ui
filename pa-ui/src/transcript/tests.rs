@@ -693,6 +693,16 @@ mod markup_tests {
                 );
             }
         }
+
+        let real_crash = "[agent-message from child:rev94-std]\n\nRe-reviewed PR #94 at HEAD 6ca85c4 and updated C:\\Users\\ISTIAK~1\\AppData\\Local\\Temp\\pa-ui-vm-sync\\rev94.md.\n\nVerdict: changes requested (by static inspection; cargo/rustc not run locally).\n\nVerified clean:\n- pa-ui/src/tick.rs: both new scenarios now run inside status_strip_tests::the_status_strip_holds_and_clears_command_words, drain initial attach jobs, and send events at generation 1.\n- pa-ui/src/transcript/markup.rs: balance_strong + leading_font_prefix_len fix multi-line bold inside # headings and > quotes.\n\nNew issue found in balance_strong (pa-ui/src/transcript/markup.rs:223-268):\n- balance_strong treats any leading `<font ...>` and any trailing `</font>` as an outer line-wrapping `<font>` tag, but prose lines with inline code (`<font color=\"code\">...</font>`) can also start with `<font ` or end with `</font>`:\n  1. `**bold\\nsee \\`code\\`` produces `**see <font color=\"code\">code**</font>` (opens `**` outside `<font>`, closes inside).\n  2. `**bold\\n\\`code\\` and \\`more\\`` produces `<font color=\"code\">**code</font> and <font color=\"code\">more**</font>` (opens `**` inside the first `<font>`, closes inside the second).\n  Crossing `**` across `<font>` boundaries fails `StyledText::from_markdown` and panics in `styled()`. Only step inside `<font>` / `</font>` when the leading `<font>` actually wraps the remainder of the line to the trailing `</font>`.\n\nNext: fix `balance_strong` / `leading_font_prefix_len` so inline-code `<font>` spans on prose lines are not split across `**`.";
+        let mut end = 0usize;
+        while end < real_crash.len() {
+            end += real_crash[end..].chars().next().map_or(1, char::len_utf8);
+            let prefix = &real_crash[..end];
+            let drawn = markdown_markup(prefix, &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("failed at prefix len {end}: {error}\n---\n{drawn}"));
+        }
     }
 }
 
