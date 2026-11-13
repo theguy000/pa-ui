@@ -522,24 +522,19 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
             if bold_already && out.ends_with("**") {
                 out.push('\u{200b}');
             }
-            open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-            if !bold_already {
-                out.push_str("**");
-            }
             for (index, line) in body.trim().split('\n').enumerate() {
                 if index > 0 {
-                    if !bold_already {
-                        out.push_str("**");
-                    }
-                    out.push_str("</font>");
                     out.push('\n');
-                    if bold_already {
-                        out.push('\u{200b}');
-                    }
-                    open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                    if !bold_already {
-                        out.push_str("**");
-                    }
+                }
+                if line.is_empty() {
+                    continue;
+                }
+                if index > 0 && bold_already {
+                    out.push('\u{200b}');
+                }
+                open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
+                if !bold_already {
+                    out.push_str("**");
                 }
                 if index > 0
                     && !bold_already
@@ -548,11 +543,11 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
                     out.push('\u{200b}');
                 }
                 escape_code_span(line, &mut out);
+                if !bold_already {
+                    out.push_str("**");
+                }
+                out.push_str("</font>");
             }
-            if !bold_already {
-                out.push_str("**");
-            }
-            out.push_str("</font>");
         } else {
             out.push_str(&ticks);
             out.push_str(&body);
