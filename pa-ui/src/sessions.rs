@@ -823,6 +823,14 @@ impl Sidebar {
         *self.selected_uuid.borrow_mut() = None;
     }
 
+    pub fn has_running_top_level(&self, settled: Option<&str>) -> bool {
+        self.cache.borrow().iter().any(|row| {
+            settled != Some(row.id.as_str())
+                && is_top_level(row)
+                && tag_of(row) == RowTag::Active
+        })
+    }
+
     pub fn family_cost(&self, session: &str, own_cost: f64) -> (f64, bool) {
         if let Ok(rows) = self.cache.try_borrow() {
             compute_family_cost(&rows, session, own_cost)

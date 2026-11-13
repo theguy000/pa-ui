@@ -7,6 +7,7 @@ mod images;
 mod live;
 mod models;
 mod preview;
+mod quit;
 #[cfg(test)]
 mod probes;
 mod search;
@@ -318,7 +319,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    ui.on_titlebar_close(titlebar::close);
+    quit::bind(&ui, &tick);
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();

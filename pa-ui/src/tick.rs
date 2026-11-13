@@ -144,6 +144,22 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
+    pub(crate) fn settled_active_session_id(&self) -> Option<String> {
+        let settled = self.settled_session.take();
+        self.settled_session.set(settled.clone());
+        settled
+    }
+
+    /// Whether any top-level Session still has a turn in flight, the settled
+    /// selection included: a close has to warn about work it would leave behind.
+    pub(crate) fn has_running_top_level_turn(&self, ui: &AppWindow) -> bool {
+        if ui.get_busy() {
+            return true;
+        }
+        let settled = self.settled_active_session_id();
+        self.sidebar.has_running_top_level(settled.as_deref())
+    }
+
     fn follow_selection(
         &self,
         ui: &AppWindow,
@@ -1345,6 +1361,7 @@ mod status_strip_tests {
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
             });
+            crate::quit::bind(&ui, &tick);
             Self {
                 ui,
                 tick,
@@ -2447,6 +2464,9 @@ mod status_strip_tests {
         settings_choices_expand_collapse_and_select();
         session_order_choice_reorders_the_cached_roster();
         manual_order_drag_reorder_persists_and_refuses_cross_group_moves();
+        quit_confirmation_guards_busy_titlebar_close();
+        window_close_request_and_escape_share_quit_decision();
+        every_role_reaches_the_theme_global();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3771,5 +3791,302 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn every_role_reaches_the_theme_global() {
+        let h = Harness::new();
+        let theme = crate::theme::Resolved::shipped();
+        crate::theme::apply(&h.ui, &theme);
+        let global = h.ui.global::<crate::Theme>();
+        assert_eq!(
+            global.get_quit_confirm_danger_ink(),
+            slint::Color::from_rgb_u8(0xf3, 0xde, 0xd8)
+        );
+        assert_eq!(
+            global.get_quit_confirm_ink(),
+            theme.get(crate::theme::Role::QuitConfirmInk).to_slint()
+        );
+        assert_eq!(
+            global.get_search_row_ink_hover(),
+            theme.get(crate::theme::Role::SearchRowInkHover).to_slint()
+        );
+        assert_eq!(
+            global.get_panel_surface(),
+            theme.get(crate::theme::Role::PanelSurface).to_slint()
+        );
+        let shipped_ink = global.get_quit_confirm_ink();
+        crate::theme::apply(&h.ui, &crate::theme::light());
+        assert_ne!(
+            h.ui.global::<crate::Theme>().get_quit_confirm_ink(),
+            shipped_ink
+        );
+    }
+
+    fn quit_confirmation_guards_busy_titlebar_close() {
+        let h = Harness::new();
+        let idle = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Idle chat",
+            "workerState": "idle",
+            "activity": "idle",
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:00:00Z"
+        }));
+        let active_sub = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "sub-1",
+            "sessionId": "s-sub",
+            "parentSessionId": "s-idle",
+            "name": "Worker",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 1,
+            "modified": "2026-11-12T00:01:00Z"
+        }));
+        let active_other = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-2",
+            "sessionId": "s-act",
+            "name": "Other active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone(), active_sub.clone()]);
+        h.ui.set_selected_id("idle-1".into());
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let stale_only = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Settled",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+        h.tick.sidebar.seed(&h.ui, vec![stale_only]);
+        h.tick.settled_session.set(Some("idle-1".to_string()));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+        h.tick.settled_session.set(None);
+
+        h.ui.set_busy(true);
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone()]);
+        assert!(h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
+        h.ui.set_setting_confirm_quit(false);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+        assert_eq!(tick_before, 1);
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        h.ui.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), 2);
+
+        h.ui.invoke_quit_confirmed();
+        assert!(!h.ui.get_quit_confirm_open());
+    }
+
+    fn window_close_request_and_escape_share_quit_decision() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent, WindowEventDispatchResult};
+
+        let type_char = |h: &Harness, ch: &str| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: ch.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: ch.into() });
+        };
+
+        let press_key = |h: &Harness, key: Key| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: key.into() });
+        };
+
+        let h = Harness::new();
+        let active_row = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-1",
+            "sessionId": "s-act",
+            "name": "Active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![active_row]);
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(1200.0, 800.0),
+        });
+        h.ui.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+
+        let blocked = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close requested");
+        assert_eq!(blocked, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+
+        let gear_pos = slint::LogicalPosition::new(1200.0 - 189.0, 16.0);
+        h.ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        h.ui.window().dispatch_event(WindowEvent::PointerReleased {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        assert!(!h.ui.get_settings_menu());
+
+        let second = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("second close requested");
+        assert_eq!(second, WindowEventDispatchResult::Rejected);
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        // Even if the last running turn settles while the prompt is visible,
+        // another close request keeps the prompt open until Cancel or Quit.
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "idle"
+        }))])));
+        h.run();
+        let after_idle = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close while prompt open after idle");
+        assert_eq!(after_idle, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "working"
+        }))])));
+        h.run();
+
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "a");
+        assert_eq!(h.ui.get_composer_text().as_str(), "a");
+
+        h.ui.set_composer_text("/quit".into());
+        h.ui.set_composer_has_text(true);
+        h.ui.invoke_send_requested("/quit".into());
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "b");
+        assert_eq!(h.ui.get_composer_text().as_str(), "b");
+        h.ui.set_composer_text("".into());
+
+        h.ui.set_search_open(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("overlay close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        let search_tick_before = h.ui.get_search_focus_tick();
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_search_open());
+        assert_eq!(h.ui.get_search_focus_tick(), search_tick_before + 1);
+        h.ui.set_search_open(false);
+
+        h.ui.set_settings_menu(true);
+        let settings_tick = h.ui.get_settings_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("settings close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_focus_tick(), settings_tick + 1);
+        crate::settings::close_settings(&h.ui);
+
+        h.ui.set_share_open(true);
+        let share_tick = h.ui.get_share_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("share close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_share_open());
+        assert_eq!(h.ui.get_share_focus_tick(), share_tick + 1);
+        h.ui.set_share_open(false);
+        h.ui.invoke_focus_composer();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "c");
+        assert_eq!(h.ui.get_composer_text().as_str(), "c");
+
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen2 close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Tab);
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let allowed = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("confirmed close requested");
+        assert_eq!(allowed, WindowEventDispatchResult::Accepted);
+
+        let h_idle = Harness::new();
+        h_idle.ui.set_setting_confirm_quit(true);
+        let idle_allowed = h_idle
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("idle close requested");
+        assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
     }
 }
