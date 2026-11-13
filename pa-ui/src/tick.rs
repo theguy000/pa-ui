@@ -37,6 +37,11 @@ pub(crate) struct Tick {
     pub retained_errors: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>>,
     /// The draft a refused prompt should restore when its Session comes back.
     pub retained_rejections: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    pub roster_seeded: std::cell::Cell<bool>,
+    pub turn_failed: std::cell::Cell<bool>,
+    pub turn_aborted: std::cell::Cell<bool>,
+    pub announced_sessions: std::cell::RefCell<std::collections::HashSet<String>>,
+    pub toast: std::cell::RefCell<Rc<dyn crate::notify::ToastNotifier>>,
 }
 
 pub(crate) struct Local {
@@ -144,6 +149,22 @@ fn session_is_current(ui: &AppWindow, session: &str) -> bool {
 }
 
 impl Tick {
+    pub(crate) fn settled_active_session_id(&self) -> Option<String> {
+        let settled = self.settled_session.take();
+        self.settled_session.set(settled.clone());
+        settled
+    }
+
+    /// Whether any top-level Session still has a turn in flight, the settled
+    /// selection included: a close has to warn about work it would leave behind.
+    pub(crate) fn has_running_top_level_turn(&self, ui: &AppWindow) -> bool {
+        if ui.get_busy() {
+            return true;
+        }
+        let settled = self.settled_active_session_id();
+        self.sidebar.has_running_top_level(settled.as_deref())
+    }
+
     fn follow_selection(
         &self,
         ui: &AppWindow,
@@ -175,6 +196,8 @@ impl Tick {
             reset_activity(&ui);
             l.open_live = None;
             l.last_seq = 0;
+            self.turn_failed.set(false);
+            self.turn_aborted.set(false);
             composer.in_flight.set(false);
             self.sync_status_to_selection(&ui, l, &selected, busy_since);
             let generation = self.attach_generation.get() + 1;
@@ -401,8 +424,30 @@ impl Tick {
             }
             match message {
                 Msg::Sessions(Ok(rows)) => {
+                    let before = sidebar.cache.borrow().clone();
+                    let was_seeded = self.roster_seeded.replace(true);
+                    let mut skip_finished = Vec::new();
+                    self.announced_sessions.borrow_mut().retain(|id| {
+                        let still_running = rows
+                            .iter()
+                            .any(|row| row.id == *id && row.roster_status() == "Running");
+                        if !still_running {
+                            skip_finished.push(id.clone());
+                        }
+                        still_running
+                    });
                     if let Some(rebound) = sidebar.apply_roster(&ui, rows.clone()) {
                         l.loaded = Some(rebound);
+                    }
+                    if was_seeded {
+                        let toast = self.toast.borrow().clone();
+                        for (id, name, outcome) in crate::notify::finished_top_level_rows(
+                            &before,
+                            &rows,
+                            &skip_finished,
+                        ) {
+                            crate::notify::dispatch(&ui, toast.as_ref(), &id, &name, outcome);
+                        }
                     }
                     let selected = ui.get_selected_id().to_string();
                     if let Some(row) = rows.iter().find(|row| row.id == selected) {
@@ -711,6 +756,9 @@ impl Tick {
                         sheet::force_scroll_to_end(&ui);
                     }
                     if matches!(kind, Some("turn_start" | "agent_start")) {
+                        self.turn_failed.set(false);
+                        self.turn_aborted.set(false);
+                        self.announced_sessions.borrow_mut().remove(&session);
                         open_status(&ui, &mut l, busy_since, "Waiting");
                     }
                     if kind == Some("compaction_start") {
@@ -737,7 +785,11 @@ impl Tick {
                         continue;
                     }
                     if kind == Some("turn_end") {
+                        if turn_aborted(&event) {
+                            self.turn_aborted.set(true);
+                        }
                         if let Some(error) = turn_failure(&event) {
+                            self.turn_failed.set(true);
                             let current = ui.get_selected_id();
                             let failed = if current.is_empty() || session == current.as_str() {
                                 self.command_word.failure_label().unwrap_or("Turn failed")
@@ -753,7 +805,31 @@ impl Tick {
                     }
                     if kind == Some("compaction_end") {
                         if let Some(error) = compaction_failure(&event) {
+                            self.turn_failed.set(true);
                             self.record_error(&ui, Some(&session), &error);
+                        }
+                    }
+                    if kind == Some("agent_end") {
+                        let aborted = self.turn_aborted.replace(false);
+                        let failed = self.turn_failed.replace(false);
+                        if !aborted {
+                            let rows = sidebar.cache.borrow();
+                            let top_level = rows
+                                .iter()
+                                .find(|row| row.id == session)
+                                .is_none_or(crate::sessions::is_top_level);
+                            if top_level
+                                && self.announced_sessions.borrow_mut().insert(session.clone())
+                            {
+                                let name = crate::notify::session_label(&rows, &session);
+                                let outcome = if failed {
+                                    crate::notify::TurnOutcome::Failed
+                                } else {
+                                    crate::notify::TurnOutcome::Finished
+                                };
+                                let toast = self.toast.borrow().clone();
+                                crate::notify::dispatch(&ui, toast.as_ref(), &session, &name, outcome);
+                            }
                         }
                     }
                     if matches!(kind, Some("turn_end" | "agent_end" | "compaction_end")) {
@@ -1106,7 +1182,15 @@ impl Tick {
                     }
                     models.sync_session_state(&ui, &state);
                 }
+                Msg::CatalogReady => {
+                    sidebar.set_catalog_ready(true);
+                }
                 Msg::Reconnected => {
+                    self.roster_seeded.set(false);
+                    self.turn_failed.set(false);
+                    self.turn_aborted.set(false);
+                    self.announced_sessions.borrow_mut().clear();
+                    sidebar.set_catalog_ready(false);
                     l.loaded = None;
                     l.open_live = None;
                     l.settled_session = None;
@@ -1157,21 +1241,38 @@ impl Tick {
                     self.record_error(&ui, session.as_deref(), &message);
                 }
                 Msg::SessionClosed { session, reason } => {
-                    if ui.get_draft_chat() {
-                        let message = session_closed_message(&reason);
-                        self.record_error(&ui, Some(&session), &message);
-                        continue;
-                    }
-                    let current = ui.get_selected_id();
-                    if current.is_empty() || session == current.as_str() {
-                        composer.in_flight.set(false);
-                        sheet.answer_ended();
-                        l.open_live = None;
-                        l.settled_session = None;
-                        self.clear_status(&ui, &mut l);
-                    }
                     let message = session_closed_message(&reason);
                     self.record_error(&ui, Some(&session), &message);
+                    if !ui.get_draft_chat() {
+                        let current = ui.get_selected_id();
+                        if current.is_empty() || session == current.as_str() {
+                            composer.in_flight.set(false);
+                            sheet.answer_ended();
+                            l.open_live = None;
+                            l.settled_session = None;
+                            self.clear_status(&ui, &mut l);
+                        }
+                    }
+                    let rows = sidebar.cache.borrow();
+                    let top_level = rows
+                        .iter()
+                        .find(|row| row.id == session)
+                        .is_none_or(crate::sessions::is_top_level);
+                    let failure_close = !matches!(reason.as_str(), "shutdown" | "replaced");
+                    if top_level
+                        && self.announced_sessions.borrow_mut().insert(session.clone())
+                        && failure_close
+                    {
+                        let name = crate::notify::session_label(&rows, &session);
+                        let toast = self.toast.borrow().clone();
+                        crate::notify::dispatch(
+                            &ui,
+                            toast.as_ref(),
+                            &session,
+                            &name,
+                            crate::notify::TurnOutcome::Failed,
+                        );
+                    }
                 }
                 Msg::Shared(Ok(shared)) => {
                     // The card opened when the menu item was taken; fill it with
@@ -1256,14 +1357,18 @@ fn session_closed_message(reason: &str) -> String {
 /// assistant message (`message.errorMessage`, `stopReason: "error"`), while an
 /// engine failure can arrive as the top-level `error`. A deliberate Stop is
 /// not an error row: its aborted message already says the Turn was stopped.
-fn turn_failure(event: &serde_json::Value) -> Option<String> {
+fn turn_aborted(event: &serde_json::Value) -> bool {
     let message = event.get("message");
-    let aborted = event.get("aborted").and_then(serde_json::Value::as_bool) == Some(true)
+    event.get("aborted").and_then(serde_json::Value::as_bool) == Some(true)
         || message
             .and_then(|message| message.get("stopReason"))
             .and_then(serde_json::Value::as_str)
-            == Some("aborted");
-    if aborted {
+            == Some("aborted")
+}
+
+fn turn_failure(event: &serde_json::Value) -> Option<String> {
+    let message = event.get("message");
+    if turn_aborted(event) {
         return None;
     }
     event
@@ -1348,7 +1453,13 @@ mod status_strip_tests {
                 scroll_ticks: std::cell::Cell::new(0),
                 retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
                 retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
+                roster_seeded: std::cell::Cell::new(false),
+                turn_failed: std::cell::Cell::new(false),
+                turn_aborted: std::cell::Cell::new(false),
+                announced_sessions: std::cell::RefCell::new(std::collections::HashSet::new()),
+                toast: std::cell::RefCell::new(Rc::new(crate::notify::WindowsToastNotifier)),
             });
+            crate::quit::bind(&ui, &tick);
             Self {
                 ui,
                 tick,
@@ -2025,6 +2136,361 @@ mod status_strip_tests {
         }
     }
 
+    fn session_order_choice_reorders_the_cached_roster() {
+        let h = Harness::new();
+        let rows = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "zeta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d", "sessionId": "u-d", "firstMessage": "Done",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-10T12:00:00Z"
+            })),
+        ];
+        h.tick.sidebar.apply_roster(&h.ui, rows);
+        h.ui.set_selected_id("z".into());
+        h.ui.set_done_folded(true);
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+
+        let sessions = h.ui.get_sessions();
+        let ids: Vec<String> = (0..sessions.row_count())
+            .filter_map(|index| sessions.row_data(index))
+            .map(|item| item.id.to_string())
+            .collect();
+        assert_eq!(ids, ["a", "z", "d"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "z");
+        assert!(h.ui.get_done_folded());
+
+        h.ui.invoke_search_open_requested();
+        let search_rows = h.ui.get_search_rows();
+        let search_ids: Vec<String> = (0..search_rows.row_count())
+            .filter_map(|index| search_rows.row_data(index))
+            .map(|row| row.id.to_string())
+            .collect();
+        assert_eq!(search_ids, ["a", "z", "d"]);
+
+        h.ui.invoke_search_typed("".into());
+        let typed_rows = h.ui.get_search_rows();
+        let typed_ids: Vec<String> = (0..typed_rows.row_count())
+            .filter_map(|index| typed_rows.row_data(index))
+            .map(|row| row.id.to_string())
+            .collect();
+        assert_eq!(typed_ids, ["a", "z", "d"]);
+
+        let rows2 = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "zeta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-11T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "m", "sessionId": "u-m", "firstMessage": "Middle",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d", "sessionId": "u-d", "firstMessage": "Done",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-10T12:00:00Z"
+            })),
+        ];
+        h.tick.sidebar.apply_roster(&h.ui, rows2);
+        let sessions2 = h.ui.get_sessions();
+        let ids2: Vec<String> = (0..sessions2.row_count())
+            .filter_map(|index| sessions2.row_data(index))
+            .map(|item| item.id.to_string())
+            .collect();
+        assert_eq!(ids2, ["a", "m", "z", "d"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "z");
+        assert!(h.ui.get_done_folded());
+
+        let many: Vec<SessionRow> = (0..30)
+            .map(|n| {
+                SessionRow::from_value(&serde_json::json!({
+                    "activeSessionId": format!("s-{n:02}"),
+                    "sessionId": format!("u-{n:02}"),
+                    "firstMessage": format!("Item {:02}", 29 - n),
+                    "workerState": "ready",
+                    "activity": "working",
+                    "lastActivityAt": format!("2026-11-01T00:{:02}:00Z", n)
+                }))
+            })
+            .collect();
+        h.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
+        h.tick.sidebar.apply_roster(&h.ui, many);
+        h.ui.invoke_restore_sidebar_cy(-120.0);
+        let before_cy = h.ui.invoke_get_sidebar_cy();
+        assert!((before_cy + 120.0).abs() < 1.0, "expected -120 scroll, got {before_cy}");
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        let after_cy = h.ui.invoke_get_sidebar_cy();
+        assert!((after_cy - before_cy).abs() < 1.0, "scroll moved from {before_cy} to {after_cy}");
+    }
+
+    fn manual_order_drag_reorder_persists_and_refuses_cross_group_moves() {
+        let settings_path = std::path::PathBuf::from(std::env::var("PA_SETTINGS_FILE").expect("PA_SETTINGS_FILE"));
+        let _ = std::fs::remove_file(&settings_path);
+        let seeded = crate::settings::Settings {
+            manual_session_order: vec!["u-offline-keep".into()],
+            ..Default::default()
+        };
+        std::fs::write(&settings_path, seeded.to_json()).expect("seed settings");
+        let h = Harness::new();
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        let pre_connect = crate::settings::Settings::load_from(&settings_path);
+        assert_eq!(pre_connect.manual_session_order, ["u-offline-keep"]);
+        let rows = vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "Alpha",
+                "workerState": "ready", "activity": "working",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "Idle 1",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "i2", "sessionId": "ui2", "firstMessage": "Idle 2",
+                "workerState": "ready", "activity": "idle",
+                "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "Done 1",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "d2", "sessionId": "ud2", "firstMessage": "Done 2",
+                "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
+            })),
+        ];
+        let ids_of = |model: slint::ModelRc<SessionItem>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|item| item.id.to_string())
+                .collect()
+        };
+        let search_ids_of = |model: slint::ModelRc<SearchRow>| -> Vec<String> {
+            (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .map(|row| row.id.to_string())
+                .collect()
+        };
+
+        h.tick.sidebar.apply_roster(&h.ui, rows.clone());
+        h.ui.set_selected_id("a1".into());
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+
+        let row_mid_y = |id: &str| -> f32 {
+            let entries = h.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == id)
+                .map(|entry| entry.at + 16.0)
+                .expect("row entry y")
+        };
+
+        h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
+        h.ui.set_done_folded(true);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+        h.ui.invoke_session_dropped("i2".into(), row_mid_y("i1"));
+
+        let a2_bottom_edge = row_mid_y("a2") + 16.0;
+        h.ui.invoke_session_dropped("a2".into(), a2_bottom_edge);
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a1", "a2", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("a1"));
+
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        assert_eq!(h.ui.get_selected_id().as_str(), "a1");
+        assert!(h.ui.get_done_folded());
+
+        h.ui.invoke_search_open_requested();
+        assert_eq!(search_ids_of(h.ui.get_search_rows()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+        h.ui.invoke_search_closed();
+
+        h.ui.invoke_session_dropped("a2".into(), row_mid_y("i2"));
+        h.ui.invoke_session_dropped("i1".into(), row_mid_y("d1"));
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        let disk = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk.manual_session_order.contains(&"ua2".to_string()));
+        assert!(disk.manual_session_order.contains(&"ud2".to_string()));
+
+        h.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
+
+        h.send(Msg::Reconnected);
+        h.run();
+        h.send(Msg::Sessions(Ok(rows[..4].to_vec())));
+        h.run();
+        let disk_partial = crate::settings::Settings::load_from(&settings_path);
+        assert!(disk_partial.manual_session_order.contains(&"ud2".to_string()));
+
+        h.send(Msg::CatalogReady);
+        let rows_without_d1: Vec<SessionRow> = rows
+            .iter()
+            .filter(|row| row.id != "d1")
+            .cloned()
+            .collect();
+        h.send(Msg::Sessions(Ok(rows_without_d1.clone())));
+        h.run();
+        let disk_pruned = crate::settings::Settings::load_from(&settings_path);
+        assert!(!disk_pruned.manual_session_order.contains(&"u-offline-keep".to_string()));
+        assert!(!disk_pruned.manual_session_order.contains(&"ud1".to_string()));
+        assert!(disk_pruned.manual_session_order.contains(&"ud2".to_string()));
+
+        let h2 = Harness::new();
+        h2.tick.sidebar.seed(&h2.ui, rows[..2].to_vec());
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1"]);
+        assert_eq!(h2.ui.get_session_entries().row_count(), 5);
+
+        h2.ui.set_selected_id("a1".into());
+        h2.tick.sidebar.apply_roster(&h2.ui, rows_without_d1);
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2"]);
+        h2.ui.set_selected_id("stale-rebind".into());
+        h2.tick.sidebar.apply_roster(
+            &h2.ui,
+            vec![
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-match",
+                    "sessionId": "ua1",
+                    "lifecycle": "archived"
+                })),
+                SessionRow::from_value(&serde_json::json!({
+                    "id": "hid-other",
+                    "sessionId": "u-other",
+                    "lifecycle": "archived"
+                })),
+            ],
+        );
+        assert_eq!(ids_of(h2.ui.get_sessions()), ["hid-match"]);
+
+        let many: Vec<SessionRow> = (0..30)
+            .map(|n| {
+                SessionRow::from_value(&serde_json::json!({
+                    "activeSessionId": format!("m-{n:02}"),
+                    "sessionId": format!("mu-{n:02}"),
+                    "firstMessage": format!("Row {n:02}"),
+                    "workerState": "ready",
+                    "activity": "working",
+                    "lastActivityAt": format!("2026-11-01T00:{:02}:00Z", 29 - n)
+                }))
+            })
+            .collect();
+        h2.tick.sidebar.apply_roster(&h2.ui, many);
+        h2.ui.invoke_restore_sidebar_cy(-120.0);
+        let before_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((before_cy + 120.0).abs() < 1.0);
+        let m02_y = {
+            let entries = h2.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| !entry.is_header && entry.item.id.as_str() == "m-02")
+                .map(|entry| entry.at + 16.0)
+                .expect("m-02 y")
+        };
+        h2.ui.invoke_session_dropped("m-05".into(), m02_y);
+        let after_cy = h2.ui.invoke_get_sidebar_cy();
+        assert!((after_cy - before_cy).abs() < 1.0);
+
+        let _ = std::fs::remove_file(&settings_path);
+        let h3 = Harness::new();
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(ids_of(h3.ui.get_idle_items()), ["i1", "i2"]);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2"]);
+
+        let mut with_d3 = rows.clone();
+        with_d3.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "d3", "sessionId": "ud3", "firstMessage": "Done 3",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-07T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_d3);
+        assert_eq!(ids_of(h3.ui.get_done_items()), ["d1", "d2", "d3"]);
+        assert_eq!(h3.ui.get_fold_index(), -1);
+
+        let mut moved_group = rows.clone();
+        moved_group[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.apply_roster(&h3.ui, moved_group);
+        assert_eq!(h3.ui.get_fold_index(), -2);
+        h3.tick.sidebar.apply_roster(&h3.ui, rows.clone());
+        assert_eq!(h3.ui.get_fold_index(), -2);
+
+        h3.send(Msg::CatalogReady);
+        h3.send(Msg::Sessions(Ok(rows.clone())));
+        h3.run();
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        assert_eq!(h3.ui.get_fold_index(), -1);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        h3.ui.invoke_setting_chosen("session-order".into(), "Last used".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+
+        h3.ui.invoke_setting_chosen("session-order".into(), "Name".into());
+        h3.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "i1", "i2", "d1", "d2"]);
+        let mut with_new = rows[..2].to_vec();
+        with_new.push(SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "Aardvark",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-11T12:00:00Z"
+        })));
+        h3.tick.sidebar.apply_roster(&h3.ui, with_new);
+        assert_eq!(ids_of(h3.ui.get_sessions()), ["a2", "a1", "a3"]);
+
+        let mut seed_moved = rows[..2].to_vec();
+        seed_moved[0] = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "Beta",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        }));
+        h3.tick.sidebar.seed(&h3.ui, seed_moved);
+        assert_eq!(h3.ui.get_fold_index(), 0);
+
+        let _ = std::fs::remove_file(&settings_path);
+        std::fs::write(
+            &settings_path,
+            crate::settings::Settings {
+                session_order: crate::sessions::SessionOrder::Manual,
+                ..Default::default()
+            }
+            .to_json(),
+        )
+        .expect("manual settings");
+        let h4 = Harness::new();
+        h4.tick.sidebar.apply_roster(&h4.ui, rows[..2].to_vec());
+        h4.ui.invoke_setting_chosen("queue-key".into(), "Alt+Enter".into());
+        assert!(crate::settings::Settings::load_from(&settings_path).manual_session_order.is_empty());
+        h4.send(Msg::CatalogReady);
+        h4.send(Msg::Sessions(Ok(rows[..2].to_vec())));
+        h4.run();
+        assert_eq!(
+            crate::settings::Settings::load_from(&settings_path).manual_session_order,
+            ["ua1", "ua2"]
+        );
+    }
+
     // One test, not six: Slint binds its platform to the test thread, and the
     // harness runs each test on a new thread. The scenarios share this thread.
     #[test]
@@ -2094,6 +2560,12 @@ mod status_strip_tests {
         reopen_last_session_uses_the_client_side_selection();
         settings_popup_mutual_exclusion_and_persistence();
         settings_choices_expand_collapse_and_select();
+        notifications_in_app_and_system_toast_adapter_follow_policy();
+        session_order_choice_reorders_the_cached_roster();
+        manual_order_drag_reorder_persists_and_refuses_cross_group_moves();
+        quit_confirmation_guards_busy_titlebar_close();
+        window_close_request_and_escape_share_quit_decision();
+        every_role_reaches_the_theme_global();
         appearance_settings_reach_ui_globals_and_sidebar();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
@@ -3386,7 +3858,7 @@ mod status_strip_tests {
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
 
         for key in [
-            "thread-notifications",
+            "session-notifications",
             "session-order",
             "queue-key",
             "code-font",
@@ -3397,7 +3869,7 @@ mod status_strip_tests {
             assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
         }
 
-        h.ui.invoke_toggle_settings_choice("thread-notifications".into());
+        h.ui.invoke_toggle_settings_choice("session-notifications".into());
         h.ui.invoke_toggle_settings_choice("session-order".into());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "session-order");
 
@@ -3562,5 +4034,737 @@ fn main() {}
         assert!(!non_prose[0].timestamp.is_empty());
         assert!(!non_prose[1].timestamp.is_empty());
         assert!(!non_prose[2].timestamp.is_empty());
+    }
+
+    fn notifications_in_app_and_system_toast_adapter_follow_policy() {
+        type RecordedToast = (String, String, String, bool);
+        #[derive(Clone)]
+        struct RecordingToast {
+            sent: Rc<std::cell::RefCell<Vec<RecordedToast>>>,
+            fail: Rc<std::cell::Cell<bool>>,
+        }
+        impl crate::notify::ToastNotifier for RecordingToast {
+            fn send(
+                &self,
+                session_id: &str,
+                title: &str,
+                body: &str,
+                failed: bool,
+            ) -> Result<(), String> {
+                self.sent.borrow_mut().push((
+                    session_id.to_string(),
+                    title.to_string(),
+                    body.to_string(),
+                    failed,
+                ));
+                if self.fail.get() {
+                    Err("toast unavailable".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let sent = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let fail = Rc::new(std::cell::Cell::new(false));
+        let recorder = Rc::new(RecordingToast {
+            sent: sent.clone(),
+            fail: fail.clone(),
+        });
+
+        if let Ok(path) = std::env::var("PA_SETTINGS_FILE") {
+            let _ = std::fs::remove_file(path);
+        }
+        let h = Harness::new();
+        *h.tick.toast.borrow_mut() = recorder;
+        h.ui.set_window_active(true);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Only when unfocused".into());
+        assert!(h.ui.get_setting_in_app_notifications());
+
+        let mk_row = |id: &str, uuid: &str, name: &str, working: bool, depth: u64| {
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": id,
+                "sessionId": uuid,
+                "firstMessage": name,
+                "workerState": "ready",
+                "activity": if working { "working" } else { "idle" },
+                "rlmDepth": depth
+            }))
+        };
+
+        // Initial roster + Transcript replay do not notify.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+            mk_row("s3", "u3", "Background two", true, 0),
+            mk_row("sub1", "usub", "Subagent", true, 1),
+        ])));
+        h.run();
+        h.ui.set_selected_id("s1".into());
+        h.send(Msg::Transcript {
+            session: "s1".to_string(),
+            rows: Vec::new(),
+            skipped: 0,
+            messages: Vec::new(),
+        });
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert!(sent.borrow().is_empty());
+
+        // Background top-level Session finishes while focused -> in-app notice only (subagent ignored).
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("s3", "u3", "Background two", true, 0),
+            mk_row("sub1", "usub", "Subagent", false, 1),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s2");
+        assert_eq!(h.ui.get_notice_name().as_str(), "Background one");
+        assert!(!h.ui.get_notice_failed());
+        assert!(sent.borrow().is_empty());
+        let tick_before = h.ui.get_notice_tick();
+
+        // Newer notice replaces current notice instead of stacking.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("s3", "u3", "Background two", false, 0),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s3");
+        assert_eq!(h.ui.get_notice_name().as_str(), "Background two");
+        assert!(h.ui.get_notice_tick() > tick_before);
+
+        // Dismiss clears notice without changing selection.
+        h.ui.invoke_notice_dismissed();
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(h.ui.get_selected_id().as_str(), "s1");
+
+        // Clicking notice opens that Session only when selection actually changes.
+        let picked = Rc::new(std::cell::Cell::new(0usize));
+        {
+            let picked = picked.clone();
+            h.ui.on_selection_picked(move |_| picked.set(picked.get() + 1));
+        }
+        crate::notify::show(&h.ui, "s2", "Background one", false);
+        h.ui.invoke_notice_picked("s2".into());
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(h.ui.get_selected_id().as_str(), "s2");
+        assert_eq!(picked.get(), 1);
+        crate::notify::show(&h.ui, "s2", "Background one", false);
+        h.ui.invoke_notice_picked("s2".into());
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(picked.get(), 1);
+
+        // Empty selected_id + empty session_id still dispatches rather than treating "" as selected.
+        h.ui.set_selected_id("".into());
+        crate::notify::dispatch(
+            &h.ui,
+            h.tick.toast.borrow().as_ref(),
+            "",
+            "Fallback",
+            crate::notify::TurnOutcome::Finished,
+        );
+        assert!(h.ui.get_notice_open());
+        h.ui.invoke_notice_dismissed();
+        h.ui.set_selected_id("s2".into());
+
+        // Reconnect suppresses stale Running -> Idle transitions.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Reconnected);
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert!(sent.borrow().is_empty());
+
+        // Always delivers toast while focused (even if toast fails, banner still opens).
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        fail.set(true);
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0].0, "s1");
+        assert!(!sent.borrow()[0].3);
+        h.ui.invoke_notice_dismissed();
+        fail.set(false);
+        sent.borrow_mut().clear();
+
+        // Unfocused selected Session emits failed toast once on turn_end error + agent_end,
+        // keeps announced_session across stale Running snapshots and other-session turn_start,
+        // and clears it once the roster shows s2 idle or s2 starts a new turn.
+        h.ui.set_window_active(false);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Only when unfocused".into());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        let gen = h.tick.attach_generation.get();
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
+            }),
+        });
+        h.send_at(gen, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session failed".into(), "Background one".into(), true));
+        sent.borrow_mut().clear();
+
+        // A stale snapshot where s2 is still Running keeps announced_session intact, and switching
+        // to s1 with a turn_start for s1 keeps s2's announced flag, so SessionClosed on s2 does not double-notify.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_s1 = h.tick.attach_generation.get();
+        h.send_at(gen_s1, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_s1, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        // Once the roster catches up (s2 idle) and s2 closes, SessionClosed notifies.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send_at(gen_s1, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session failed".into(), "Background one".into(), true));
+        sent.borrow_mut().clear();
+
+        // A new turn_start on s2 clears announced_session so a second close notifies again; Off suppresses it.
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_s2 = h.tick.attach_generation.get();
+        h.send_at(gen_s2, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_s2, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        sent.borrow_mut().clear();
+
+        // Subagent agent_end & SessionClosed do not notify even when Always is active;
+        // closing an unrelated session leaves selected turn busy, while closing the selected
+        // session clears busy and still notifies while draft_chat is open.
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+            mk_row("sub1", "usub", "Subagent", true, 1),
+        ])));
+        h.run();
+        h.ui.set_selected_id("sub1".into());
+        h.run();
+        let gen_sub = h.tick.attach_generation.get();
+        h.ui.set_window_active(false);
+        h.send_at(gen_sub, Msg::Event {
+            session: "sub1".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.send_at(gen_sub, Msg::SessionClosed {
+            session: "sub1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_busy = h.tick.attach_generation.get();
+        h.send_at(gen_busy, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        h.send_at(gen_busy, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(!h.ui.get_busy());
+        assert_eq!(sent.borrow().len(), 1);
+        sent.borrow_mut().clear();
+
+        // Closing another session does not clear selected s2's busy strip.
+        h.send_at(gen_busy, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        h.send_at(gen_busy, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(h.ui.get_busy());
+        sent.borrow_mut().clear();
+
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.ui.set_draft_chat(true);
+        h.ui.set_window_active(true);
+        h.send_at(gen_busy, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(h.ui.get_notice_open());
+        assert_eq!(h.ui.get_notice_session().as_str(), "s1");
+        assert!(h.ui.get_notice_failed());
+        assert_eq!(sent.borrow().len(), 1);
+        h.ui.invoke_notice_dismissed();
+        h.ui.set_draft_chat(false);
+        sent.borrow_mut().clear();
+
+        // Switching away after turn_end(error) on s1 resets turn_failed before s2's agent_end.
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_err = h.tick.attach_generation.get();
+        h.send_at(gen_err, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "turn_end",
+                "message": {"role": "assistant", "stopReason": "error", "errorMessage": "quota"}
+            }),
+        });
+        h.run();
+        h.ui.set_selected_id("s2".into());
+        h.run();
+        let gen_clean = h.tick.attach_generation.get();
+        h.ui.set_window_active(false);
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(sent.borrow()[0], ("s2".into(), "Session finished".into(), "Background one".into(), false));
+        sent.borrow_mut().clear();
+
+        // Concurrent agent_end(s2) + SessionClosed(s1) + catching-up roster does not duplicate s2,
+        // and daemon shutdown / replaced SessionClosed does not mislabel a Session as failed.
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", true, 0),
+        ])));
+        h.run();
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "agent_end"}),
+        });
+        h.send_at(gen_clean, Msg::SessionClosed {
+            session: "s1".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert_eq!(sent.borrow().len(), 2);
+        sent.borrow_mut().clear();
+
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_clean, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "shutdown".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Off".into());
+        h.send_at(gen_clean, Msg::Event {
+            session: "s2".to_string(),
+            event: serde_json::json!({"type": "turn_start"}),
+        });
+        h.send_at(gen_clean, Msg::SessionClosed {
+            session: "s2".to_string(),
+            reason: "killed".to_string(),
+        });
+        h.run();
+        assert!(sent.borrow().is_empty());
+
+        // Disabling in-app notices while focused suppresses the banner without disabling Always toasts.
+        h.ui.set_window_active(true);
+        h.ui.invoke_setting_chosen("session-notifications".into(), "Always".into());
+        h.ui.invoke_setting_toggled("in-app-notifications".into());
+        assert!(!h.ui.get_setting_in_app_notifications());
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", true, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        h.send(Msg::Sessions(Ok(vec![
+            mk_row("s1", "u1", "Focused chat", false, 0),
+            mk_row("s2", "u2", "Background one", false, 0),
+        ])));
+        h.run();
+        assert!(!h.ui.get_notice_open());
+        assert_eq!(sent.borrow().len(), 1);
+    }
+
+    fn every_role_reaches_the_theme_global() {
+        let h = Harness::new();
+        let theme = crate::theme::Resolved::shipped();
+        crate::theme::apply(&h.ui, &theme);
+        let global = h.ui.global::<crate::Theme>();
+        assert_eq!(
+            global.get_quit_confirm_danger_ink(),
+            slint::Color::from_rgb_u8(0xf3, 0xde, 0xd8)
+        );
+        assert_eq!(
+            global.get_quit_confirm_ink(),
+            theme.get(crate::theme::Role::QuitConfirmInk).to_slint()
+        );
+        assert_eq!(
+            global.get_search_row_ink_hover(),
+            theme.get(crate::theme::Role::SearchRowInkHover).to_slint()
+        );
+        assert_eq!(
+            global.get_panel_surface(),
+            theme.get(crate::theme::Role::PanelSurface).to_slint()
+        );
+        let shipped_ink = global.get_quit_confirm_ink();
+        crate::theme::apply(&h.ui, &crate::theme::light());
+        assert_ne!(
+            h.ui.global::<crate::Theme>().get_quit_confirm_ink(),
+            shipped_ink
+        );
+    }
+
+    fn quit_confirmation_guards_busy_titlebar_close() {
+        let h = Harness::new();
+        let idle = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Idle chat",
+            "workerState": "idle",
+            "activity": "idle",
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:00:00Z"
+        }));
+        let active_sub = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "sub-1",
+            "sessionId": "s-sub",
+            "parentSessionId": "s-idle",
+            "name": "Worker",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 1,
+            "modified": "2026-11-12T00:01:00Z"
+        }));
+        let active_other = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-2",
+            "sessionId": "s-act",
+            "name": "Other active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone(), active_sub.clone()]);
+        h.ui.set_selected_id("idle-1".into());
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let stale_only = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "idle-1",
+            "sessionId": "s-idle",
+            "name": "Settled",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+        h.tick.sidebar.seed(&h.ui, vec![stale_only]);
+        h.tick.settled_session.set(Some("idle-1".to_string()));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+        h.tick.settled_session.set(None);
+
+        h.ui.set_busy(true);
+        h.tick.sidebar.seed(&h.ui, vec![idle.clone()]);
+        assert!(h.tick.has_running_top_level_turn(&h.ui));
+        h.ui.set_busy(false);
+        assert!(!h.tick.has_running_top_level_turn(&h.ui));
+
+        h.tick.sidebar.seed(&h.ui, vec![idle, active_sub, active_other]);
+        h.ui.set_setting_confirm_quit(false);
+        h.ui.invoke_quit_requested();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+        assert_eq!(tick_before, 1);
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        h.ui.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+
+        h.ui.invoke_quit_requested();
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), 2);
+
+        h.ui.invoke_quit_confirmed();
+        assert!(!h.ui.get_quit_confirm_open());
+    }
+
+    fn window_close_request_and_escape_share_quit_decision() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent, WindowEventDispatchResult};
+
+        let type_char = |h: &Harness, ch: &str| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: ch.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: ch.into() });
+        };
+
+        let press_key = |h: &Harness, key: Key| {
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+            h.ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: key.into() });
+        };
+
+        let h = Harness::new();
+        let active_row = SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "act-1",
+            "sessionId": "s-act",
+            "name": "Active",
+            "workerState": "busy",
+            "activity": "working",
+            "isSessionActive": true,
+            "rlmDepth": 0,
+            "modified": "2026-11-12T00:02:00Z"
+        }));
+
+        h.tick.sidebar.seed(&h.ui, vec![active_row]);
+        h.ui.set_setting_confirm_quit(true);
+        h.ui.window().dispatch_event(WindowEvent::Resized {
+            size: slint::LogicalSize::new(1200.0, 800.0),
+        });
+        h.ui.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+
+        let blocked = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close requested");
+        assert_eq!(blocked, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        let tick_before = h.ui.get_quit_confirm_focus_tick();
+
+        let gear_pos = slint::LogicalPosition::new(1200.0 - 189.0, 16.0);
+        h.ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        h.ui.window().dispatch_event(WindowEvent::PointerReleased {
+            position: gear_pos,
+            button: PointerEventButton::Left,
+        });
+        assert!(!h.ui.get_settings_menu());
+
+        let second = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("second close requested");
+        assert_eq!(second, WindowEventDispatchResult::Rejected);
+        assert_eq!(h.ui.get_quit_confirm_focus_tick(), tick_before);
+
+        // Even if the last running turn settles while the prompt is visible,
+        // another close request keeps the prompt open until Cancel or Quit.
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "idle"
+        }))])));
+        h.run();
+        let after_idle = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("close while prompt open after idle");
+        assert_eq!(after_idle, WindowEventDispatchResult::Rejected);
+        assert!(h.ui.get_quit_confirm_open());
+        h.send(Msg::Sessions(Ok(vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "s1", "sessionId": "u1", "workerState": "ready", "activity": "working"
+        }))])));
+        h.run();
+
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "a");
+        assert_eq!(h.ui.get_composer_text().as_str(), "a");
+
+        h.ui.set_composer_text("/quit".into());
+        h.ui.set_composer_has_text(true);
+        h.ui.invoke_send_requested("/quit".into());
+        assert!(h.ui.get_quit_confirm_open());
+        assert_eq!(h.ui.get_composer_text().as_str(), "");
+        h.ui.invoke_quit_cancelled();
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "b");
+        assert_eq!(h.ui.get_composer_text().as_str(), "b");
+        h.ui.set_composer_text("".into());
+
+        h.ui.set_search_open(true);
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("overlay close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        let search_tick_before = h.ui.get_search_focus_tick();
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_search_open());
+        assert_eq!(h.ui.get_search_focus_tick(), search_tick_before + 1);
+        h.ui.set_search_open(false);
+
+        h.ui.set_settings_menu(true);
+        let settings_tick = h.ui.get_settings_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("settings close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_settings_menu());
+        assert_eq!(h.ui.get_settings_focus_tick(), settings_tick + 1);
+        crate::settings::close_settings(&h.ui);
+
+        h.ui.set_share_open(true);
+        let share_tick = h.ui.get_share_focus_tick();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("share close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Escape);
+        assert!(!h.ui.get_quit_confirm_open());
+        assert!(h.ui.get_share_open());
+        assert_eq!(h.ui.get_share_focus_tick(), share_tick + 1);
+        h.ui.set_share_open(false);
+        h.ui.invoke_focus_composer();
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+        type_char(&h, "c");
+        assert_eq!(h.ui.get_composer_text().as_str(), "c");
+
+        assert_eq!(
+            h.ui.window()
+                .dispatch_event_with_result(WindowEvent::CloseRequested)
+                .expect("reopen2 close requested"),
+            WindowEventDispatchResult::Rejected
+        );
+        press_key(&h, Key::Tab);
+        press_key(&h, Key::Return);
+        assert!(!h.ui.get_quit_confirm_open());
+
+        let allowed = h
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("confirmed close requested");
+        assert_eq!(allowed, WindowEventDispatchResult::Accepted);
+
+        let h_idle = Harness::new();
+        h_idle.ui.set_setting_confirm_quit(true);
+        let idle_allowed = h_idle
+            .ui
+            .window()
+            .dispatch_event_with_result(WindowEvent::CloseRequested)
+            .expect("idle close requested");
+        assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
     }
 }

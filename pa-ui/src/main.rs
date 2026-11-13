@@ -7,7 +7,9 @@ mod env_cfg;
 mod images;
 mod live;
 mod models;
+mod notify;
 mod preview;
+mod quit;
 #[cfg(test)]
 mod probes;
 mod search;
@@ -29,6 +31,7 @@ mod worker;
 // have to know which module a helper ended up in.
 pub(crate) use composer::*;
 pub(crate) use models::*;
+pub(crate) use notify::*;
 pub(crate) use sessions::*;
 pub(crate) use sheet::*;
 pub(crate) use slash::*;
@@ -245,6 +248,11 @@ fn main() -> Result<(), slint::PlatformError> {
         scroll_ticks: std::cell::Cell::new(0),
         retained_errors: std::cell::RefCell::new(std::collections::HashMap::new()),
         retained_rejections: std::cell::RefCell::new(std::collections::HashMap::new()),
+        roster_seeded: std::cell::Cell::new(false),
+        turn_failed: std::cell::Cell::new(false),
+        turn_aborted: std::cell::Cell::new(false),
+        announced_sessions: std::cell::RefCell::new(std::collections::HashSet::new()),
+        toast: std::cell::RefCell::new(Rc::new(WindowsToastNotifier)),
     });
 
     // A sidebar pick changes the selection synchronously, but the transcript
@@ -319,7 +327,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    ui.on_titlebar_close(titlebar::close);
+    quit::bind(&ui, &tick);
 
     if let Ok(path) = std::env::var("PA_SNAPSHOT") {
         let shot_ui = ui.as_weak();
@@ -330,7 +338,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if !query.is_empty() {
                 ui.set_search_query(query.as_str().into());
             }
-            sessions::open_search(&ui, &sidebar.cache.borrow());
+            sidebar.open_search(&ui);
         }
         if let Ok(url) = std::env::var("PA_SHARE") {
             ui.set_share_url(url.as_str().into());

@@ -1,7 +1,7 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { MarqueeText } from "marquee-text.slint";
-import { IconChevronDown, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
+import { IconChevronDown, IconCross, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
 import { Appearance, EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
@@ -10,6 +10,7 @@ import { EffortLadder, ModelMenu, SessionMenu, SlashMenu } from "menus.slint";
 import { SettingsPopup } from "settings.slint";
 import { SearchPopup } from "search.slint";
 import { SharePopup } from "share.slint";
+import { QuitConfirmPopup } from "quit-confirm.slint";
 import { TitleBar } from "chrome.slint";
 import { StatusStrip } from "status-strip.slint";
 import { Button, ButtonKind, Panel, PanelButton } from "primitives.slint";
@@ -29,7 +30,11 @@ export component AppWindow inherits Window {
 
     // the custom title bar, driven from src/titlebar.rs
     callback titlebar-minimize();
-    callback titlebar-close();
+    callback quit-requested();
+    in-out property <bool> quit-confirm-open: false;
+    in-out property <int> quit-confirm-focus-tick: 0;
+    callback quit-confirmed();
+    callback quit-cancelled();
     in-out property <bool> titlebar-maximized: false;
     in-out property <bool> titlebar-max-hover: false;
 
@@ -250,7 +255,7 @@ export component AppWindow inherits Window {
     in-out property <string> settings-open-choice: "";
     in-out property <bool> themes-open: true;
     in-out property <[ThemeItem]> theme-items;
-    in-out property <string> setting-thread-notifications: "Off";
+    in-out property <string> setting-session-notifications: "Off";
     in-out property <bool> setting-in-app-notifications: true;
     in-out property <string> setting-session-order: "Last used";
     in-out property <bool> setting-confirm-quit: false;
@@ -285,6 +290,29 @@ export component AppWindow inherits Window {
     }
 
     callback selection-picked(string);
+    callback session-dropped(string, length);
+    private property <string> drag-session-id: "";
+    private property <string> drag-session-status: "";
+    private property <int> drag-source-index: -1;
+    private property <length> drag-pointer-y: 0px;
+
+    function clear-session-drag() {
+        root.drag-session-id = "";
+        root.drag-session-status = "";
+        root.drag-source-index = -1;
+    }
+
+    changed setting-session-order => {
+        if root.setting-session-order != "Manual" {
+            root.clear-session-drag();
+        }
+    }
+
+    changed sidebar-open => {
+        if !root.sidebar-open {
+            root.clear-session-drag();
+        }
+    }
     callback wake();
     callback scroll-paging();
     callback attachment-ready();
@@ -503,6 +531,15 @@ export component AppWindow inherits Window {
     // gist exists. `share-copied` says whether the window managed to put the
     // link on the clipboard; the card's Copy control always offers a second try.
     in-out property <bool> share-open: false;
+    in-out property <bool> window-active: true;
+    in-out property <bool> notice-open: false;
+    in-out property <int> notice-tick: 0;
+    in-out property <string> notice-name: "";
+    in-out property <string> notice-session: "";
+    in-out property <bool> notice-failed: false;
+    callback notice-picked(string);
+    callback notice-dismissed();
+    in-out property <int> share-focus-tick: 0;
     in-out property <bool> share-pending: false;
     in-out property <string> share-url: "";
     in-out property <string> share-error: "";
@@ -1056,6 +1093,7 @@ export component AppWindow inherits Window {
                     content-width: self.width;
                     content-height: max(0px, root.animated-sessions-height - 88px);
                     interactive: true;
+                    mouse-drag-pan-enabled: root.setting-session-order != "Manual";
 
                     sidebar-content := Rectangle {
                         x: 0px;
@@ -1063,7 +1101,14 @@ export component AppWindow inherits Window {
                         width: parent.width;
                         height: max(0px, root.animated-sessions-height - 88px);
 
-                        for entry[k] in root.session-entries : Rectangle {
+                        for entry[k] in root.session-entries : slot := Rectangle {
+                            property <bool> drop-hit: root.drag-session-id != ""
+                                && !entry.is-header && !entry.folded
+                                && entry.item.status == root.drag-session-status
+                                && root.drag-pointer-y >= sidebar-list.absolute-position.y
+                                && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
+                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
+                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + 32px;
                             visible: !entry.is-header && root.row-h(k) > 0.5px
                                 && root.row-opacity(k) > 0.01;
                             y: root.row-y(k) - 88px;
@@ -1079,6 +1124,10 @@ export component AppWindow inherits Window {
                                 selected: root.selected-id != "" && entry.item.id == root.selected-id;
                                 editing: root.editing-id != "" && entry.item.id == root.editing-id;
                                 menu-open: root.menu-id != "" && root.menu-id == entry.item.id;
+                                reorderable: root.setting-session-order == "Manual";
+                                dragging-this: root.drag-session-id == entry.item.id;
+                                drop-before: slot.drop-hit && entry.item.id != root.drag-session-id && k < root.drag-source-index;
+                                drop-after: slot.drop-hit && entry.item.id != root.drag-session-id && k > root.drag-source-index;
                                 draft <=> root.draft;
                                 picked(id) => {
                                     root.model-menu = false;
@@ -1129,6 +1178,30 @@ export component AppWindow inherits Window {
                                         root.menu-y = y;
                                         root.session-menu-opened(id);
                                     }
+                                }
+                                drag-started(id, status, py) => {
+                                    root.menu-id = "";
+                                    root.hover-title = "";
+                                    root.drag-session-id = id;
+                                    root.drag-session-status = status;
+                                    root.drag-source-index = k;
+                                    root.drag-pointer-y = py;
+                                }
+                                drag-moved(py) => {
+                                    root.drag-pointer-y = py;
+                                }
+                                drag-ended(commit, py) => {
+                                    root.drag-pointer-y = py;
+                                    if commit
+                                        && py >= sidebar-list.absolute-position.y
+                                        && py < sidebar-list.absolute-position.y + sidebar-list.height
+                                    {
+                                        root.session-dropped(
+                                            root.drag-session-id,
+                                            py - sidebar-content.absolute-position.y + 88px,
+                                        );
+                                    }
+                                    root.clear-session-drag();
                                 }
                             }
                         }
@@ -1550,6 +1623,9 @@ export component AppWindow inherits Window {
                                 // While the popup is up it owns the keyboard: a
                                 // word meant for its field must not reach the
                                 // words the reader was writing as well.
+                                if root.quit-confirm-open {
+                                    return EventResult.accept;
+                                }
                                 if root.search-open && root.search-field-typed {
                                     return EventResult.accept;
                                 }
@@ -2071,6 +2147,73 @@ export component AppWindow inherits Window {
 
 
 
+    if root.notice-open : Panel {
+        x: root.width - 22px - self.width;
+        y: root.height - root.composer-total - self.height - 14px;
+        width: 320px;
+        height: 64px;
+        border-radius: 14px;
+
+        notice-touch := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.notice-picked(root.notice-session); }
+        }
+
+        Text {
+            x: 14px;
+            y: 10px;
+            width: parent.width - 28px - 24px;
+            height: 18px;
+            text: root.notice-name;
+            color: Theme.search-row-ink-hover;
+            font-size: 13px;
+            font-weight: 600;
+            overflow: elide;
+        }
+
+        Text {
+            x: 14px;
+            y: 31px;
+            width: parent.width - 28px - 24px;
+            height: 18px;
+            text: root.notice-failed ? "This Session failed" : "This Session finished";
+            color: root.notice-failed ? Theme.transcript-cell-ink-failed : Theme.search-row-ink;
+            font-size: 12px;
+            overflow: elide;
+        }
+
+        notice-close := Button {
+            x: parent.width - 10px - 22px;
+            y: 10px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            fill: transparent;
+            fill-hover: Theme.panel-row-fill-hover;
+            described: "Dismiss the notice";
+            clicked => { root.notice-dismissed(); }
+            IconCross {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                tint: notice-close.hot ? Theme.search-row-ink-hover : Theme.search-row-ink;
+            }
+        }
+    }
+
+    changed notice-tick => {
+        notice-timer.restart();
+    }
+
+    notice-timer := Timer {
+        interval: 6s;
+        running: root.notice-open;
+        triggered => { root.notice-open = false; }
+    }
+
     // The search popup, over the middle of the window: a place to find one
     // session out of all of them, not a part of any column. It is the last thing
     // the window draws, so it paints above the menus and the title bar, and the
@@ -2139,6 +2282,7 @@ export component AppWindow inherits Window {
             error: root.share-error;
             action-error: root.share-action-error;
             copied: root.share-copied;
+            focus-tick: root.share-focus-tick;
             copy-requested => { root.share-copy-requested(); }
             open-requested => { root.share-open-link-requested(); }
             dismissed => { root.share-dismissed(); }
@@ -2167,7 +2311,7 @@ export component AppWindow inherits Window {
             open-choice <=> root.settings-open-choice;
             focus-tick: root.settings-focus-tick;
             theme-items: root.theme-items;
-            thread-notifications: root.setting-thread-notifications;
+            session-notifications: root.setting-session-notifications;
             in-app-notifications: root.setting-in-app-notifications;
             session-order: root.setting-session-order;
             confirm-quit: root.setting-confirm-quit;
@@ -2222,7 +2366,8 @@ export component AppWindow inherits Window {
         }
     }
 
-    // drawn last so it sits above the content and the drag surface beneath it
+    // Below the modal: while the dialog is up its backdrop covers this bar, so
+    // no title bar control can be clicked behind the question.
     title-bar := TitleBar {
         y: 0;
         width: 100%;
@@ -2234,7 +2379,27 @@ export component AppWindow inherits Window {
         maximized: root.titlebar-maximized;
         max-hover: root.titlebar-max-hover;
         minimize => { root.titlebar-minimize(); }
-        close => { root.titlebar-close(); }
+        close => { root.quit-requested(); }
+    }
+
+    if root.quit-confirm-open : Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+        }
+
+        quit-confirm-popup := QuitConfirmPopup {
+            x: max(root.search-clearance, (root.width - self.width) / 2);
+            y: max(root.search-clearance, (root.height - self.height) / 2);
+            focus-tick: root.quit-confirm-focus-tick;
+            cancelled => { root.quit-cancelled(); }
+            confirmed => { root.quit-confirmed(); }
+        }
     }
 }
 

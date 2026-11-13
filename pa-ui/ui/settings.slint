@@ -508,7 +508,7 @@ export component SettingsPopup inherits Panel {
     in property <int> focus-tick: 0;
     in property <[ThemeItem]> theme-items;
 
-    in property <string> thread-notifications: "Off";
+    in property <string> session-notifications: "Off";
     in property <bool> in-app-notifications: true;
     in property <string> session-order: "Last used";
     in property <bool> confirm-quit: false;
@@ -615,17 +615,17 @@ export component SettingsPopup inherits Panel {
                     heading: "Notifications";
 
                     SettingsRow {
-                        title: "Thread notifications";
-                        description: "System alerts when a Session finishes, fails, or needs attention.";
+                        title: "Session notifications";
+                        description: "System alerts when a Session finishes or fails.";
                         SettingsChoice {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
-                            value: root.thread-notifications;
+                            value: root.session-notifications;
                             options: ["Off", "Only when unfocused", "Always"];
-                            expanded: root.open-choice == "thread-notifications";
-                            described: "Thread notifications";
-                            clicked => { root.choice-toggled("thread-notifications"); }
-                            picked(value) => { root.setting-chosen("thread-notifications", value); }
+                            expanded: root.open-choice == "session-notifications";
+                            described: "Session notifications";
+                            clicked => { root.choice-toggled("session-notifications"); }
+                            picked(value) => { root.setting-chosen("session-notifications", value); }
                             dismissed => { root.choice-dismissed(); }
                         }
                     }

@@ -165,6 +165,34 @@ fn done_rows_sort_by_recency_not_catalog_order() {
 }
 
 #[test]
+fn name_order_is_case_insensitive_inside_each_status_group() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "zeta",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "b", "sessionId": "u-b", "firstMessage": "apple",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-07T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d", "sessionId": "u-d", "firstMessage": "first alphabetically",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-10T12:00:00Z"
+        })),
+    ];
+    let items = session_items_with_order(&rows, SessionOrder::Name, &[]);
+    let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
+    assert_eq!(ids, ["a", "b", "z", "d"]);
+}
+
+#[test]
 fn session_entries_positions_headers_and_rows_by_fold_state() {
     let a = vec![resident(serde_json::json!({
         "activeSessionId": "a1", "sessionId": "ua1", "lifecycle": "live", "activity": "working"
@@ -521,4 +549,285 @@ fn search_uses_the_same_top_level_rule_as_the_sidebar() {
     let rows = vec![parent, child];
     assert_eq!(session_items(&rows).len(), 1);
     assert_eq!(match_rows(&rows, "").row_count(), 1);
+}
+
+#[test]
+fn last_used_order_sorts_by_recency_then_name_then_id_within_groups() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "u2", "firstMessage": "Same",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "u1", "firstMessage": "Same",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "newer", "sessionId": "u0", "firstMessage": "Zebra",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "alpha", "sessionId": "u3", "firstMessage": "Alpha",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+    ];
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::LastUsed, &[])
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["newer", "alpha", "a1", "a2"]);
+}
+
+#[test]
+fn name_order_tie_breaks_by_recency_then_id() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "older-b", "sessionId": "u1", "firstMessage": "Alpha",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "older-a", "sessionId": "u2", "firstMessage": "alpha",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "newer", "sessionId": "u3", "firstMessage": "ALPHA",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Name, &[])
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["newer", "older-a", "older-b"]);
+}
+
+#[test]
+fn manual_order_accepts_uuid_list_and_appends_unlisted_by_recency() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a-new-1", "sessionId": "u-new-1", "firstMessage": "New older",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-07T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a-second", "sessionId": "u-second", "firstMessage": "Second",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a-first", "sessionId": "u-first", "firstMessage": "First",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-06T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a-new-2", "sessionId": "u-new-2", "firstMessage": "New newer",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-10T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "done-listed-first", "sessionId": "u-done", "firstMessage": "Done",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-11T12:00:00Z"
+        })),
+    ];
+    let manual = vec![
+        "u-done".to_string(),
+        "u-first".to_string(),
+        "u-second".to_string(),
+    ];
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &manual)
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a-first", "a-second", "a-new-2", "a-new-1", "done-listed-first"]);
+}
+
+#[test]
+fn search_match_rows_with_order_follows_session_order() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "z", "sessionId": "u-z", "firstMessage": "Zeta",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-10T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a", "sessionId": "u-a", "firstMessage": "Alpha",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+    ];
+    let found = match_rows_with_order(&rows, "", SessionOrder::Name, &[]);
+    let ids: Vec<String> = (0..found.row_count())
+        .filter_map(|index| found.row_data(index))
+        .map(|row| row.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a", "z"]);
+}
+
+#[test]
+fn manual_order_prunes_stale_uuids_and_preserves_order() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "u1", "firstMessage": "One",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "u2", "firstMessage": "Two",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    let mut manual = vec![
+        "missing".to_string(),
+        "u2".to_string(),
+        "u2".to_string(),
+        "u1".to_string(),
+        "deleted".to_string(),
+    ];
+    assert!(reconcile_manual_order(&rows, &mut manual));
+    assert_eq!(manual, ["u2", "u1"]);
+    assert!(!reconcile_manual_order(&rows, &mut manual));
+}
+
+#[test]
+fn manual_move_reorders_within_active_idle_and_done_groups() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "A2",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "I1",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i2", "sessionId": "ui2", "firstMessage": "I2",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d2", "sessionId": "ud2", "firstMessage": "D2",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+    ];
+    let manual = apply_manual_move(&rows, &[], "a2", "a1").expect("active move");
+    let manual = apply_manual_move(&rows, &manual, "i2", "i1").expect("idle move");
+    let manual = apply_manual_move(&rows, &manual, "d2", "d1").expect("done move");
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &manual)
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a2", "a1", "i2", "i1", "d2", "d1"]);
+}
+
+#[test]
+fn manual_move_refuses_cross_group_move() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "i1", "sessionId": "ui1", "firstMessage": "I1",
+            "workerState": "ready", "activity": "idle",
+            "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "i1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "d1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "i1", "d1"), None);
+    assert_eq!(apply_manual_move(&rows, &[], "a1", "a1"), None);
+}
+
+#[test]
+fn manual_move_appends_new_sessions_and_keeps_other_groups() {
+    let rows = vec![
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-07T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a2", "sessionId": "ua2", "firstMessage": "A2",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-08T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a3", "sessionId": "ua3", "firstMessage": "A3",
+            "workerState": "ready", "activity": "working",
+            "lastActivityAt": "2026-11-10T12:00:00Z"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "d1", "sessionId": "ud1", "firstMessage": "D1",
+            "lifecycle": "archived", "lastActivityAt": "2026-11-09T12:00:00Z"
+        })),
+    ];
+    let prior = vec![
+        "ud1".to_string(),
+        "stale-done".to_string(),
+        "ua1".to_string(),
+    ];
+    let mut updated = apply_manual_move(&rows, &prior, "a3", "a1").expect("move uncatalogued");
+    assert!(updated.contains(&"stale-done".to_string()));
+    assert!(updated.contains(&"ud1".to_string()));
+    let ids: Vec<String> = session_items_with_order(&rows, SessionOrder::Manual, &updated)
+        .into_iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["a3", "a1", "a2", "d1"]);
+    assert!(reconcile_manual_order(&rows, &mut updated));
+    assert!(!updated.contains(&"stale-done".to_string()));
+    assert!(updated.contains(&"ud1".to_string()));
+
+    assert_eq!(SessionOrder::parse("Last used"), Some(SessionOrder::LastUsed));
+    assert_eq!(SessionOrder::parse("Name"), Some(SessionOrder::Name));
+    assert_eq!(SessionOrder::parse("Manual"), Some(SessionOrder::Manual));
+    assert_eq!(SessionOrder::parse("Unknown"), None);
+
+    let mixed = vec![
+        row(serde_json::json!({
+            "activeSessionId": "top-empty", "sessionId": "", "firstMessage": "NoUuid",
+            "workerState": "ready", "activity": "working"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "sub1", "sessionId": "usub1", "parentSessionId": "ua1",
+            "rlmDepth": 1, "firstMessage": "Sub", "workerState": "ready", "activity": "working"
+        })),
+        row(serde_json::json!({
+            "activeSessionId": "a1", "sessionId": "ua1", "firstMessage": "A1",
+            "workerState": "ready", "activity": "working"
+        })),
+    ];
+    let mut manual_mixed = vec!["".to_string(), "usub1".to_string(), "ua1".to_string()];
+    assert!(reconcile_manual_order(&mixed, &mut manual_mixed));
+    assert_eq!(manual_mixed, ["ua1"]);
+
+    let mut seeded = Vec::new();
+    assert!(!seed_manual_order(&[], SessionOrder::Name, &mut seeded));
+    assert!(seed_manual_order(&rows, SessionOrder::Name, &mut seeded));
+    assert_eq!(seeded, ["ua1", "ua2", "ua3", "ud1"]);
+    assert!(!seed_manual_order(&rows, SessionOrder::LastUsed, &mut seeded));
+    assert_eq!(seeded, ["ua1", "ua2", "ua3", "ud1"]);
 }
