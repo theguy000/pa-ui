@@ -220,10 +220,19 @@ pub(crate) fn balance_strong(text: &str) -> String {
         if index > 0 {
             out.push('\n');
         }
+        let open_at = if open { leading_font_prefix_len(line) } else { 0 };
+        let close_at = if line.ends_with("</font>") {
+            line.len() - "</font>".len()
+        } else {
+            line.len()
+        };
+        let (head, rest) = line.split_at(open_at.min(close_at));
+        let (mid, tail) = rest.split_at(close_at - head.len());
+        out.push_str(head);
         if open {
             out.push_str("**");
         }
-        out.push_str(line);
+        out.push_str(mid);
         // the markers we just added do not count: parity of the line decides
         if strong_markers(line) % 2 == 1 {
             open = !open;
@@ -231,8 +240,31 @@ pub(crate) fn balance_strong(text: &str) -> String {
         if open {
             out.push_str("**");
         }
+        out.push_str(tail);
     }
     out
+}
+
+fn leading_font_prefix_len(line: &str) -> usize {
+    let mut pos = 0;
+    loop {
+        let rest = &line[pos..];
+        if let Some(after_open) = rest.strip_prefix("<font ") {
+            if let Some(gt) = after_open.find('>') {
+                let next = pos + "<font ".len() + gt + 1;
+                if let Some(end_tag) = line[next..].find("</font>") {
+                    let after_close = next + end_tag + "</font>".len();
+                    if line[after_close..].starts_with(" <font ") {
+                        pos = after_close + 1;
+                        continue;
+                    }
+                }
+                return next;
+            }
+        }
+        break;
+    }
+    pos
 }
 
 

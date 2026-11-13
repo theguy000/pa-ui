@@ -676,6 +676,8 @@ mod markup_tests {
             r"\`code`",
             r"\`unclosed",
             "## heading \\`escaped`",
+            "> quoted **bold",
+            "> quoted **bold\n> more**",
         ] {
             let drawn = markdown_markup(sample, &shipped());
             StyledText::from_markdown(&drawn)

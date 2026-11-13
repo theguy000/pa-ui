@@ -2573,6 +2573,8 @@ mod status_strip_tests {
         window_close_request_and_escape_share_quit_decision();
         every_role_reaches_the_theme_global();
         appearance_settings_reach_ui_globals_and_sidebar();
+        sequence_gap_triggers_tail_refresh_while_contiguous_sequence_does_not();
+        failed_async_bash_completion_after_idle_renders_with_subsequent_turn();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -4813,12 +4815,13 @@ fn main() {}
         assert_eq!(idle_allowed, WindowEventDispatchResult::Accepted);
     }
 
-    #[test]
     fn sequence_gap_triggers_tail_refresh_while_contiguous_sequence_does_not() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
+        h.run();
+        while h.jobs.try_recv().is_ok() {}
         h.send_at(
-            0,
+            1,
             Msg::Event {
                 session: "s".to_string(),
                 event: serde_json::json!({ "type": "turn_start" }),
@@ -4826,7 +4829,7 @@ fn main() {}
             },
         );
         h.send_at(
-            0,
+            1,
             Msg::Event {
                 session: "s".to_string(),
                 event: serde_json::json!({ "type": "agent_start" }),
@@ -4842,7 +4845,7 @@ fn main() {}
         }
 
         h.send_at(
-            0,
+            1,
             Msg::Event {
                 session: "s".to_string(),
                 event: serde_json::json!({ "type": "message_start", "message": { "role": "assistant", "content": [] } }),
@@ -4859,21 +4862,22 @@ fn main() {}
         assert_eq!(tails, 1, "a skipped sequence must request Job::Tail");
     }
 
-    #[test]
     fn failed_async_bash_completion_after_idle_renders_with_subsequent_turn() {
         let h = Harness::new();
         h.ui.set_selected_id("s".into());
-        h.send_at(0, Msg::Event {
+        h.run();
+        while h.jobs.try_recv().is_ok() {}
+        h.send_at(1, Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({ "type": "agent_end", "messages": [] }),
             sequence: Some(1),
         });
-        h.send_at(0, Msg::Event {
+        h.send_at(1, Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({ "type": "agent_start" }),
             sequence: Some(2),
         });
-        h.send_at(0, Msg::Event {
+        h.send_at(1, Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({
                 "type": "message_start",
@@ -4886,7 +4890,7 @@ fn main() {}
             }),
             sequence: Some(3),
         });
-        h.send_at(0, Msg::Event {
+        h.send_at(1, Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({
                 "type": "message_start",
@@ -4894,7 +4898,7 @@ fn main() {}
             }),
             sequence: Some(4),
         });
-        h.send_at(0, Msg::Event {
+        h.send_at(1, Msg::Event {
             session: "s".to_string(),
             event: serde_json::json!({
                 "type": "message_update",
