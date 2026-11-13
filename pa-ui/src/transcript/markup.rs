@@ -270,20 +270,10 @@ fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> boo
         let font_open_tag = &line[tag_start..body_start];
         let font_body = &line[body_start..body_end];
 
-        // Ensure no outer `**` stays open across `<font>...</font>`.
+        // Ensure no outer `**` stays open across `<font>...</font>`, placing any
+        // closing `**` before trailing whitespace so CommonMark recognizes it.
         if strong_markers(&out[line_start..]) % 2 == 1 {
-            if out[line_start..].ends_with("**\u{200b}")
-                && !out[line_start..].ends_with("\\**\u{200b}")
-            {
-                out.truncate(out.len() - "**\u{200b}".len());
-            } else if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
-                out.truncate(out.len() - 2);
-            } else {
-                if out[line_start..].ends_with('\u{200b}') && !chunk.ends_with('\u{200b}') {
-                    out.pop();
-                }
-                out.push_str("**");
-            }
+            close_strong_before_trailing_ws(line_start, out);
         } else if open && out[line_start..].ends_with('\u{200b}') {
             // Drop any `\u{200b}` inserted before `<font>` solely as a bold separator.
             out.pop();
@@ -313,13 +303,26 @@ fn balance_prose_with_fonts(line: &str, mut open: bool, out: &mut String) -> boo
         }
     }
     if strong_markers(&out[line_start..]) % 2 == 1 {
-        if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
-            out.truncate(out.len() - 2);
-        } else {
-            out.push_str("**");
-        }
+        close_strong_before_trailing_ws(line_start, out);
     }
     open
+}
+
+fn close_strong_before_trailing_ws(line_start: usize, out: &mut String) {
+    let trimmed_len = line_start + out[line_start..].trim_end().len();
+    let ws = out[trimmed_len..].to_string();
+    out.truncate(trimmed_len);
+    if out[line_start..].ends_with("**\u{200b}") && !out[line_start..].ends_with("\\**\u{200b}") {
+        out.truncate(out.len() - "**\u{200b}".len());
+    } else if out[line_start..].ends_with("**") && !out[line_start..].ends_with("\\**") {
+        out.truncate(out.len() - 2);
+    } else {
+        if out[line_start..].ends_with('\u{200b}') {
+            out.pop();
+        }
+        out.push_str("**");
+    }
+    out.push_str(&ws);
 }
 
 fn push_prose_chunk(chunk: &str, line_start: usize, open: &mut bool, out: &mut String) {

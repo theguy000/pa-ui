@@ -680,6 +680,7 @@ mod markup_tests {
             "> quoted **bold\n> more**",
             "**bold\nsee `code`",
             "**bold\n`code` and `more`",
+            "All four PRs are **merged into `main`** (`d85b93b`).\n- **Two defects already spotted in `pa-ui`**:",
             "1. `**bold\\nsee \\`code\\`` produces `**see <font color=\"code\">code**</font>` (opens `**` outside `<font>`, closes inside).\n2. `**bold\\n\\`code\\` and \\`more\\`` produces `<font color=\"code\">**code</font>`",
         ] {
             let drawn = markdown_markup(sample, &shipped());
