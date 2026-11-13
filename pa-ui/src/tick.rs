@@ -970,7 +970,11 @@ impl Tick {
                         if l.open_live.as_ref().is_some_and(|turn| turn.message == key) {
                             continue;
                         }
-                        l.open_live = Some(live::Live::new(key.clone()));
+                        let mut live = live::Live::new(key.clone());
+                        live.set_timestamp(crate::appearance::format_timestamp(
+                            message.get("timestamp"),
+                        ));
+                        l.open_live = Some(live);
                         sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
                         sheet::trace("live rows opened", &sheet.rows());
@@ -978,7 +982,11 @@ impl Tick {
                     }
                     if l.open_live.is_none() && kind == Some("message_update") {
                         let key = transcript::message_key(message);
-                        l.open_live = Some(live::Live::new(key.clone()));
+                        let mut live = live::Live::new(key.clone());
+                        live.set_timestamp(crate::appearance::format_timestamp(
+                            message.get("timestamp"),
+                        ));
+                        l.open_live = Some(live);
                         sheet.answer_began(&key);
                         l.stream_started = SystemTime::now();
                     }
@@ -2558,6 +2566,7 @@ mod status_strip_tests {
         quit_confirmation_guards_busy_titlebar_close();
         window_close_request_and_escape_share_quit_decision();
         every_role_reaches_the_theme_global();
+        appearance_settings_reach_ui_globals_and_sidebar();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -3882,6 +3891,149 @@ mod status_strip_tests {
         h.ui.invoke_settings_toggle_requested();
         assert!(h.ui.get_settings_menu());
         assert_eq!(h.ui.get_settings_open_choice().as_str(), "");
+    }
+
+    fn appearance_settings_reach_ui_globals_and_sidebar() {
+        let h = Harness::new();
+        h.send(Msg::Sessions(Ok(vec![
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "s1", "sessionId": "u1", "firstMessage": "One",
+                "workerState": "ready", "activity": "idle"
+            })),
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "s2", "sessionId": "u2", "firstMessage": "Two",
+                "workerState": "ready", "activity": "idle"
+            })),
+        ])));
+        h.run();
+
+        let default_h = h.ui.get_sessions_height();
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 15.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 32.0);
+
+        let entries_y = || -> Vec<f32> {
+            h.ui
+                .get_session_entries()
+                .iter()
+                .filter(|e| !e.is_header)
+                .map(|e| e.at)
+                .collect()
+        };
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 32.0);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Compact".into());
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 13.5);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 28.0);
+        assert_eq!(h.ui.get_fold_index(), -1);
+        assert!(h.ui.get_sessions_height() < default_h);
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 28.0);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Large".into());
+        assert_eq!(h.ui.global::<crate::Type>().get_body(), 17.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_session_row_height(), 36.0);
+        assert_eq!(h.ui.get_fold_index(), -1);
+        assert!(h.ui.get_sessions_height() > default_h);
+        assert_eq!(entries_y().windows(2).next().unwrap()[1] - entries_y()[0], 36.0);
+
+        h.ui.invoke_setting_chosen("interface-size".into(), "Default".into());
+        assert_eq!(h.ui.get_sessions_height(), default_h);
+
+        h.ui.set_selected_id("s1".into());
+        h.run();
+        let gen_live = h.tick.attach_generation.get();
+        h.send_at(gen_live, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "id": "m_live",
+                    "role": "assistant",
+                    "timestamp": "2026-11-10T12:03:00Z"
+                }
+            }),
+        });
+        h.send_at(gen_live, Msg::Event {
+            session: "s1".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "message": {"id": "m_live", "role": "assistant"},
+                "assistantMessageEvent": {"type": "text_delta", "delta": "hi"}
+            }),
+        });
+        h.run();
+        assert!(!h.tick.sheet.rows().last().unwrap().timestamp.is_empty());
+
+        let seed_rows = vec![SessionRow::from_value(&serde_json::json!({
+            "activeSessionId": "seed1", "sessionId": "useed1", "firstMessage": "Seeded",
+            "workerState": "ready", "activity": "idle"
+        }))];
+        h.tick.sidebar.seed(&h.ui, seed_rows);
+        assert_eq!(h.ui.get_sessions().row_count(), 1);
+        assert_eq!(h.ui.get_idle_items().row_count(), 1);
+
+        h.ui.invoke_setting_chosen("code-font".into(), "JetBrains Mono".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_code_font().as_str(), "JetBrains Mono");
+        h.ui.invoke_setting_chosen("code-font".into(), "Consolas".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_code_font().as_str(), "Consolas");
+
+        h.ui.invoke_setting_chosen("row-spacing".into(), "Compact".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_row_pad_y(), 3.0);
+        assert_eq!(h.ui.global::<crate::Appearance>().get_cell_pad_y(), 2.0);
+        h.ui.invoke_setting_chosen("row-spacing".into(), "Comfortable".into());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_row_pad_y(), 6.0);
+
+        assert!(!h.ui.global::<crate::Appearance>().get_show_timestamps());
+        h.ui.invoke_setting_toggled("show-timestamps".into());
+        assert!(h.ui.global::<crate::Appearance>().get_show_timestamps());
+
+        assert!(h.ui.global::<crate::Appearance>().get_smooth_scroll());
+        h.ui.invoke_setting_toggled("reduce-motion".into());
+        assert!(!h.ui.global::<crate::Appearance>().get_smooth_scroll());
+        assert_eq!(h.ui.global::<crate::Appearance>().get_fold_duration(), 0);
+
+        let built = transcript::build(
+            &[
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:00:00Z",
+                    "content": [{"type": "text", "text": "hello"}]
+                }),
+                serde_json::json!({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "no stamp"}]
+                }),
+            ],
+            10,
+        ).0;
+        assert!(!built[0].timestamp.is_empty());
+        assert_eq!(built[1].timestamp, "");
+
+        let non_prose = transcript::build(
+            &[
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:00:00Z",
+                    "content": [{"type": "text", "text": "```rust
+fn main() {}
+```"}]
+                }),
+                serde_json::json!({
+                    "role": "user",
+                    "timestamp": "2026-11-10T12:01:00Z",
+                    "content": [{"type": "image", "data": "AA=="}]
+                }),
+                serde_json::json!({
+                    "role": "assistant",
+                    "timestamp": "2026-11-10T12:02:00Z",
+                    "content": [{"type": "text", "text": "> quoted"}]
+                }),
+            ],
+            10,
+        ).0;
+        assert_eq!(non_prose.len(), 3);
+        assert!(!non_prose[0].timestamp.is_empty());
+        assert!(!non_prose[1].timestamp.is_empty());
+        assert!(!non_prose[2].timestamp.is_empty());
     }
 
     fn notifications_in_app_and_system_toast_adapter_follow_policy() {

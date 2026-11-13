@@ -227,6 +227,7 @@ impl Settings {
         ui.set_setting_row_spacing(self.row_spacing.clone().into());
         ui.set_setting_show_timestamps(self.show_timestamps);
         ui.set_setting_reduce_motion(self.reduce_motion);
+        crate::appearance::apply(ui, self);
     }
 }
 

@@ -9,7 +9,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Button, Panel } from "primitives.slint";
 import { MatchedName } from "search-name.slint";
-import { SearchRow } from "types.slint";
+import { Appearance, SearchRow, Type } from "types.slint";
 import { IconCross, IconSearch } from "icons.slint";
 import { Theme } from "theme.slint";
 
@@ -227,6 +227,7 @@ export component SearchPopup inherits Panel {
                 y: 0;
                 width: parent.width - 20px - age.preferred-width - 10px;
                 height: parent.height;
+                font-size: Type.item;
                 glyphs: row.glyphs;
                 highlighted: index == root.index;
             }
@@ -239,7 +240,7 @@ export component SearchPopup inherits Panel {
                 height: parent.height;
                 text: row.age;
                 color: Theme.search-age-ink;
-                font-size: 11px;
+                font-size: Appearance.label-size;
                 vertical-alignment: center;
             }
 

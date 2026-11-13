@@ -94,6 +94,7 @@ pub struct Row {
     /// how long the call took, drawn as its own column: a separator dot between
     /// two dim runs reads as a full stop
     pub elapsed: String,
+    pub timestamp: String,
 }
 
 /// The one line a generic error row carries: the first non-empty line, with
@@ -135,6 +136,7 @@ impl Row {
             reason: String::new(),
             image: String::new(),
             elapsed: String::new(),
+            timestamp: String::new(),
             message: String::new(),
         }
     }
@@ -499,7 +501,24 @@ fn build_message(
     for row in &mut rows {
         row.message = owner.to_string();
     }
+    if matches!(role, "user" | "assistant") {
+        let stamp = crate::appearance::format_timestamp(message.get("timestamp"));
+        stamp_rows(&mut rows, &stamp);
+    }
     rows
+}
+
+pub(crate) fn stamp_rows(rows: &mut [Row], stamp: &str) {
+    if stamp.is_empty() {
+        return;
+    }
+    let index = rows
+        .iter()
+        .position(|row| matches!(row.kind, KIND_USER | KIND_AGENT))
+        .unwrap_or(0);
+    if let Some(target) = rows.get_mut(index) {
+        target.timestamp = stamp.to_string();
+    }
 }
 
 /// Build the transcript rows for the newest `limit` messages.

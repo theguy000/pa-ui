@@ -5,10 +5,37 @@
 // a 24px line; this toolkit gives no control over that line, so the size carries
 // the difference instead: one point up, on the spacing the font chooses.
 export global Type {
-    out property <length> body: 15px;
+    in-out property <length> body: 15px;
     // The sidebar: the harness sets its list of conversations at 13px, one step
     // under the conversation itself.
-    out property <length> item: 13px;
+    in-out property <length> item: 13px;
+}
+
+export global Appearance {
+    in-out property <length> label-size: 11px;
+    in-out property <length> meta-size: 10px;
+    in-out property <length> session-header-size: 12.5px;
+    in-out property <length> session-count-size: 11.5px;
+    in-out property <length> session-row-height: 32px;
+    in-out property <length> code-size: 11.5px;
+    in-out property <length> cell-code-size: 12px;
+    in-out property <length> cell-output-size: 11px;
+    in-out property <string> code-font: "Cascadia Code";
+    in-out property <length> row-pad-y: 6px;
+    in-out property <length> cell-pad-y: 4px;
+    in-out property <length> code-pad-y: 5px;
+    in-out property <length> cell-gap: 6px;
+    in-out property <length> expanded-pad-x: 12px;
+    in-out property <length> expanded-pad-y: 10px;
+    in-out property <length> expanded-gap: 8px;
+    in-out property <bool> show-timestamps: false;
+    in-out property <bool> reduce-motion: false;
+    in-out property <duration> hover-duration: 120ms;
+    in-out property <duration> menu-duration: 90ms;
+    in-out property <duration> fold-duration: 220ms;
+    in-out property <duration> fold-caret-duration: 160ms;
+    in-out property <duration> band-duration: 170ms;
+    in-out property <bool> smooth-scroll: true;
 }
 
 export struct TRow {
@@ -26,6 +53,7 @@ export struct TRow {
     reason: string,
     image: image,
     elapsed: string,
+    timestamp: string,
 }
 
 export struct SessionItem {

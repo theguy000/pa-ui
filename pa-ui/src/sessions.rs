@@ -355,6 +355,7 @@ fn tag_word_rank(word: &str) -> u8 {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn session_entries(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -362,6 +363,26 @@ pub(crate) fn session_entries(
     active_folded: bool,
     idle_folded: bool,
     done_folded: bool,
+) -> Vec<SessionEntry> {
+    session_entries_at(
+        active,
+        idle,
+        done,
+        active_folded,
+        idle_folded,
+        done_folded,
+        ROW_HEIGHT as f32,
+    )
+}
+
+pub(crate) fn session_entries_at(
+    active: &[SessionItem],
+    idle: &[SessionItem],
+    done: &[SessionItem],
+    active_folded: bool,
+    idle_folded: bool,
+    done_folded: bool,
+    row_height: f32,
 ) -> Vec<SessionEntry> {
     let mut entries = Vec::with_capacity(active.len() + idle.len() + done.len() + 3);
     let mut at: f32 = COLUMN_TOP as f32;
@@ -383,7 +404,7 @@ pub(crate) fn session_entries(
         });
         at += HEADER_HEIGHT as f32;
         for (number, row) in rows.iter().enumerate() {
-            let row_target = header_at + HEADER_HEIGHT as f32 + number as f32 * ROW_HEIGHT as f32;
+            let row_target = header_at + HEADER_HEIGHT as f32 + number as f32 * row_height;
             let row_at = if folded { header_at } else { row_target };
             entries.push(SessionEntry {
                 is_header: false,
@@ -397,7 +418,7 @@ pub(crate) fn session_entries(
             });
         }
         if !folded {
-            at += rows.len() as f32 * ROW_HEIGHT as f32;
+            at += rows.len() as f32 * row_height;
         }
     }
     entries
@@ -479,28 +500,61 @@ impl Column {
 
 pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
 
+#[cfg(test)]
+pub(crate) fn groups_from(
+    rows: &[SessionRow],
+) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
+    session_groups(&session_items(rows))
+}
+
 pub(crate) fn column(
     groups: Groups<'_>,
     folded: [bool; 3],
     was: Groups<'_>,
     was_folded: [bool; 3],
 ) -> Column {
+    column_at(groups, folded, was, was_folded, ROW_HEIGHT as f32)
+}
+
+pub(crate) fn column_at(
+    groups: Groups<'_>,
+    folded: [bool; 3],
+    was: Groups<'_>,
+    was_folded: [bool; 3],
+    row_height: f32,
+) -> Column {
     let (active, idle, done) = groups;
     let first_fill = was.0.len() + was.1.len() + was.2.len() == 0 && folded == was_folded;
     let previous = if first_fill {
         Vec::new()
     } else {
-        session_entries(was.0, was.1, was.2, was_folded[0], was_folded[1], was_folded[2])
+        session_entries_at(
+            was.0,
+            was.1,
+            was.2,
+            was_folded[0],
+            was_folded[1],
+            was_folded[2],
+            row_height,
+        )
     };
-    let entries = session_entries(active, idle, done, folded[0], folded[1], folded[2]);
+    let entries = session_entries_at(
+        active,
+        idle,
+        done,
+        folded[0],
+        folded[1],
+        folded[2],
+        row_height,
+    );
     let from_y = if first_fill {
         entries.iter().map(|entry| entry.at).collect()
     } else {
         from_y(&previous, &entries, 16.0)
     };
     Column {
-        was_height: entries_height(&previous),
-        height: entries_height(&entries),
+        was_height: entries_height_at(&previous, row_height),
+        height: entries_height_at(&entries, row_height),
         previous,
         entries,
         from_y,
@@ -542,7 +596,12 @@ pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: 
     ui.invoke_restore_sidebar_cy(saved_cy);
 }
 
+#[cfg(test)]
 pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
+    entries_height_at(entries, ROW_HEIGHT as f32)
+}
+
+pub(crate) fn entries_height_at(entries: &[SessionEntry], row_height: f32) -> f32 {
     entries
         .iter()
         .filter(|entry| entry.is_header || !entry.folded)
@@ -551,10 +610,14 @@ pub(crate) fn entries_height(entries: &[SessionEntry]) -> f32 {
                 + if entry.is_header {
                     HEADER_HEIGHT as f32
                 } else {
-                    ROW_HEIGHT as f32
+                    row_height
                 }
         })
         .fold(COLUMN_TOP as f32, f32::max)
+}
+
+fn row_height_for(ui: &AppWindow) -> f32 {
+    ui.global::<crate::Appearance>().get_session_row_height()
 }
 
 pub(crate) const HEADER_HEIGHT: i32 = 32;
@@ -864,11 +927,12 @@ impl Sidebar {
         let active_changed = active != prev.0;
         let idle_changed = idle != prev.1;
         let done_changed = done != prev.2;
-        let col = column(
+        let col = column_at(
             (&active, &idle, &done),
             folded,
             (&prev.0, &prev.1, &prev.2),
             folded,
+            row_height_for(ui),
         );
         let selected = if selected < 0 && any_moved(&col.previous, &col.entries) {
             -2
@@ -1154,7 +1218,13 @@ impl Sidebar {
                     held.clone()
                 };
                 drop(held);
-                let col = column((&active, &idle, &done), now, (&active, &idle, &done), was);
+                let col = column_at(
+                    (&active, &idle, &done),
+                    now,
+                    (&active, &idle, &done),
+                    was,
+                    row_height_for(&ui),
+                );
                 apply(&ui, col, index as i32, !now[index]);
             });
         }
@@ -1241,6 +1311,26 @@ impl Sidebar {
                         ok
                     };
                     if changed {
+                        if key.as_str() == "interface-size" {
+                            let (active, idle, done) = groups_of(
+                                &ui.get_active_items(),
+                                &ui.get_idle_items(),
+                                &ui.get_done_items(),
+                            );
+                            let folded = [
+                                ui.get_active_folded(),
+                                ui.get_idle_folded(),
+                                ui.get_done_folded(),
+                            ];
+                            let col = column_at(
+                                (&active, &idle, &done),
+                                folded,
+                                (&[], &[], &[]),
+                                folded,
+                                row_height_for(&ui),
+                            );
+                            apply(&ui, col, -1, false);
+                        }
                         if let Err(error) = store.persist() {
                             eprintln!("[settings] {error}");
                         }

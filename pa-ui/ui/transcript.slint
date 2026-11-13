@@ -2,7 +2,7 @@
 // message opens into. Both are driven by TRow and carry no state of their own.
 
 import { ScrollView } from "std-widgets.slint";
-import { TRow, Type } from "types.slint";
+import { Appearance, TRow, Type } from "types.slint";
 import { MarqueeText } from "marquee-text.slint";
 import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash, IconWarning } from "icons.slint";
 import { Theme } from "theme.slint";
@@ -243,10 +243,17 @@ export component TranscriptRow inherits VerticalLayout {
 
     if data.kind == 0 : HorizontalLayout {
         alignment: end;
+        spacing: 8px;
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 6px;
-        padding-bottom: 6px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+            vertical-alignment: center;
+        }
         Rectangle {
             background: Theme.transcript-message-fill;
             border-radius: 10px;
@@ -268,12 +275,18 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    if data.kind == 1 : Rectangle {
-        height: agent-text.preferred-height + 12px;
+    if data.kind == 1 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+        }
         agent-text := StyledText {
-            x: 24px;
-            y: 6px;
-            width: parent.width - 48px;
             text: data.body;
             default-color: Theme.transcript-prose-ink;
             default-font-size: Type.body;
@@ -282,34 +295,46 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    if data.kind == 11 : Rectangle {
-        height: quote-text.preferred-height + 12px;
-        quote-bar := Rectangle {
-            x: 24px;
-            y: 6px;
-            width: 2px;
-            height: parent.height - 12px;
-            border-radius: 1px;
-            background: Theme.transcript-quote-edge;
+    if data.kind == 11 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: Appearance.row-pad-y;
+        padding-bottom: Appearance.row-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
         }
-        quote-text := StyledText {
-            x: 36px;
-            y: 6px;
-            width: parent.width - 60px;
-            text: data.body;
-            default-color: Theme.transcript-quote-ink;
-            default-font-size: Type.body;
-            link-color: Theme.transcript-link-ink;
-            link-clicked(link) => { root.open-link(link); }
+        Rectangle {
+            height: quote-text.preferred-height;
+            quote-bar := Rectangle {
+                x: 0px;
+                y: 0px;
+                width: 2px;
+                height: parent.height;
+                border-radius: 1px;
+                background: Theme.transcript-quote-edge;
+            }
+            quote-text := StyledText {
+                x: 12px;
+                y: 0px;
+                width: parent.width - 12px;
+                text: data.body;
+                default-color: Theme.transcript-quote-ink;
+                default-font-size: Type.body;
+                link-color: Theme.transcript-link-ink;
+                link-clicked(link) => { root.open-link(link); }
+            }
         }
     }
 
     if data.kind == 2 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             width: self.preferred-width;
@@ -324,13 +349,19 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: "thinking";
                     color: Theme.transcript-thinking-label-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
                 Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
+                    vertical-alignment: center;
+                }
+                if Appearance.show-timestamps && data.timestamp != "" : Text {
+                    text: data.timestamp;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
 
@@ -352,28 +383,31 @@ export component TranscriptRow inherits VerticalLayout {
             border-color: Theme.transcript-thinking-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
-            height: min(think-text.preferred-height + 24px, 6 * think-probe.preferred-height + 24px);
+            height: min(
+                think-text.preferred-height + (Appearance.expanded-pad-y + 2px) * 2,
+                6 * think-probe.preferred-height + (Appearance.expanded-pad-y + 2px) * 2
+            );
             think-probe := Text {
                 x: -200px;
                 y: 0px;
                 text: "x";
-                font-family: "Cascadia Code";
-                font-size: 11px;
+                font-family: Appearance.code-font;
+                font-size: Appearance.cell-output-size;
                 opacity: 0;
             }
             ScrollView {
                 width: parent.width;
                 height: parent.height;
                 VerticalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    padding-top: 12px;
-                    padding-bottom: 12px;
+                    padding-left: Appearance.expanded-pad-x;
+                    padding-right: Appearance.expanded-pad-x;
+                    padding-top: Appearance.expanded-pad-y + 2px;
+                    padding-bottom: Appearance.expanded-pad-y + 2px;
                     think-text := StyledText {
                         text: data.body;
                         default-color: Theme.transcript-thinking-ink;
-                        default-font-family: "Cascadia Code";
-                        default-font-size: 11px;
+                        default-font-family: Appearance.code-font;
+                        default-font-size: Appearance.cell-output-size;
                     }
                 }
             }
@@ -383,9 +417,9 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 3 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             height: 26px;
@@ -423,7 +457,7 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: data.title;
                     color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
-                    font-size: 11px;
+                    font-size: Appearance.label-size;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
@@ -432,7 +466,7 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
                 // the separator is full white so the run reads as two parts
@@ -440,16 +474,22 @@ export component TranscriptRow inherits VerticalLayout {
                 Text {
                     text: "\u{00b7}";
                     color: Theme.transcript-cell-separator-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
                 }
                 Text {
                     text: data.elapsed;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                     visible: data.elapsed != "";
+                }
+                if Appearance.show-timestamps && data.timestamp != "" : Text {
+                    text: data.timestamp;
+                    color: Theme.transcript-cell-meta-ink;
+                    font-size: Appearance.meta-size;
+                    vertical-alignment: center;
                 }
 
                 if data.failed : Rectangle {
@@ -503,16 +543,16 @@ export component TranscriptRow inherits VerticalLayout {
             border-radius: 8px;
             height: self.preferred-height;
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                padding-top: 10px;
-                padding-bottom: 10px;
-                spacing: 8px;
+                padding-left: Appearance.expanded-pad-x;
+                padding-right: Appearance.expanded-pad-x;
+                padding-top: Appearance.expanded-pad-y;
+                padding-bottom: Appearance.expanded-pad-y;
+                spacing: Appearance.expanded-gap;
                 StyledText {
                     text: data.code;
                     default-color: Theme.transcript-cell-code-ink;
-                    default-font-family: "Cascadia Code";
-                    default-font-size: 12px;
+                    default-font-family: Appearance.code-font;
+                    default-font-size: Appearance.cell-code-size;
                 }
                 if data.has-output : Rectangle {
                     height: 1px;
@@ -522,8 +562,8 @@ export component TranscriptRow inherits VerticalLayout {
                     text: data.output;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-cell-output-ink;
-                    default-font-family: "Cascadia Code";
-                    default-font-size: 11px;
+                    default-font-family: Appearance.code-font;
+                    default-font-size: Appearance.cell-output-size;
                 }
             }
         }
@@ -534,9 +574,9 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 5 || is-summary : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 6px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        spacing: Appearance.cell-gap;
 
         Rectangle {
             height: 26px;
@@ -573,7 +613,7 @@ export component TranscriptRow inherits VerticalLayout {
                     color: is-summary ? Theme.transcript-heading-ink
                         : data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-notice-ink;
-                    font-size: 11px;
+                    font-size: Appearance.label-size;
                     font-weight: is-summary ? 600 : 400;
                     vertical-alignment: center;
                     overflow: elide;
@@ -583,7 +623,7 @@ export component TranscriptRow inherits VerticalLayout {
                 if data.meta != "" : Text {
                     text: data.meta;
                     color: Theme.transcript-cell-meta-ink;
-                    font-size: 10px;
+                    font-size: Appearance.meta-size;
                     vertical-alignment: center;
                 }
             }
@@ -594,17 +634,17 @@ export component TranscriptRow inherits VerticalLayout {
             border-color: Theme.transcript-cell-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
-            height: custom-text.preferred-height + 24px;
+            height: custom-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px;
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                padding-top: 10px;
-                padding-bottom: 10px;
+                padding-left: Appearance.expanded-pad-x;
+                padding-right: Appearance.expanded-pad-x;
+                padding-top: Appearance.expanded-pad-y;
+                padding-bottom: Appearance.expanded-pad-y;
                 custom-text := StyledText {
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
-                    default-font-size: 13px;
+                    default-font-size: Type.item;
                     link-clicked(link) => { root.open-link(link); }
                 }
             }
@@ -649,10 +689,10 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 6 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 5px;
-        padding-bottom: 5px;
+        padding-top: Appearance.code-pad-y;
+        padding-bottom: Appearance.code-pad-y;
         Rectangle {
-            height: code-text.preferred-height + 24px + (data.meta == "" ? 0px : 15px);
+            height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
             background: Theme.transcript-code-fill;
             border-radius: 8px;
 
@@ -661,17 +701,24 @@ export component TranscriptRow inherits VerticalLayout {
                 y: 9px;
                 text: data.meta;
                 color: Theme.transcript-code-label-ink;
-                font-size: 9px;
+                font-size: Appearance.meta-size - 1px;
                 visible: data.meta != "";
+            }
+            if Appearance.show-timestamps && data.timestamp != "" : Text {
+                x: parent.width - 12px - self.preferred-width;
+                y: 9px;
+                text: data.timestamp;
+                color: Theme.transcript-cell-meta-ink;
+                font-size: Appearance.meta-size;
             }
             code-text := StyledText {
                 x: 12px;
-                y: 12px + (data.meta == "" ? 0px : 15px);
+                y: Appearance.expanded-pad-y + 2px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
                 width: parent.width - 24px;
                 text: data.code;
                 default-color: Theme.transcript-code-ink;
-                default-font-size: 11.5px;
-                default-font-family: "Cascadia Code";
+                default-font-size: Appearance.code-size;
+                default-font-family: Appearance.code-font;
             }
         }
     }
@@ -680,23 +727,36 @@ export component TranscriptRow inherits VerticalLayout {
     if data.kind == 7 : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 5px;
-        padding-bottom: 5px;
+        padding-top: Appearance.code-pad-y;
+        padding-bottom: Appearance.code-pad-y;
+        spacing: 2px;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+        }
         table-text := StyledText {
             text: data.body;
             default-color: Theme.transcript-table-ink;
-            default-font-size: 11px;
-            default-font-family: "Cascadia Code";
+            default-font-size: Appearance.cell-output-size;
+            default-font-family: Appearance.code-font;
         }
     }
     // an image the user sent: the picture itself, thumbnailed, on the same edge
     // as the bubble so the sent turn reads as one thing
     if data.kind == 8 : HorizontalLayout {
         alignment: end;
+        spacing: 8px;
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 4px;
-        padding-bottom: 4px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+        if Appearance.show-timestamps && data.timestamp != "" : Text {
+            text: data.timestamp;
+            color: Theme.transcript-cell-meta-ink;
+            font-size: Appearance.meta-size;
+            vertical-alignment: center;
+        }
         Rectangle {
             width: 220px;
             height: 150px;

@@ -2,6 +2,7 @@
 // opens off it.
 
 import { IconCaret, IconHeartbeat, IconShells, IconSubagents } from "icons.slint";
+import { Appearance } from "types.slint";
 import { Theme } from "theme.slint";
 import { Button, ButtonKind } from "primitives.slint";
 
@@ -18,7 +19,7 @@ export component Ledger inherits Rectangle {
         Text {
             text: root.label;
             color: Theme.composer-card-label-ink;
-            font-size: 10px;
+            font-size: Appearance.meta-size;
             vertical-alignment: center;
         }
         Rectangle { horizontal-stretch: 1; background: transparent; }
@@ -233,7 +234,7 @@ export component Chip inherits Button {
         Text {
             text: root.label;
             color: root.on ? Theme.composer-chip-ink-hover : Theme.composer-chip-ink;
-            font-size: 10px;
+            font-size: Appearance.meta-size;
             vertical-alignment: center;
         }
         Rectangle {

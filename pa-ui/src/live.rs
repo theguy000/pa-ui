@@ -30,6 +30,7 @@ pub enum Part {
 pub struct Live {
     /// which message these rows are: the store's copy of it replaces them
     pub message: String,
+    pub timestamp: String,
     pub parts: Vec<Part>,
 }
 
@@ -38,8 +39,13 @@ impl Live {
     pub fn new(message: String) -> Self {
         Self {
             message,
+            timestamp: String::new(),
             parts: Vec::new(),
         }
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: String) {
+        self.timestamp = timestamp;
     }
 
     pub fn push_text(&mut self, delta: &str) {
@@ -135,6 +141,7 @@ impl Live {
         for row in &mut out {
             row.message.clone_from(&self.message);
         }
+        transcript::stamp_rows(&mut out, &self.timestamp);
         out
     }
 }

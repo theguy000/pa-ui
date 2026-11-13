@@ -60,6 +60,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         image: String::new(),
         message: message.to_string(),
         elapsed: String::new(),
+        timestamp: String::new(),
     }
 }
 
@@ -358,4 +359,16 @@ fn a_quote_row_estimates_its_narrower_column() {
     let quote = row("m", transcript::KIND_QUOTE, "", "", &body);
     assert!(estimate_row_height(&quote) > estimate_row_height(&agent));
     assert_eq!(estimate_row_height(&quote), (3.0 * 22.5) + 12.0);
+}
+
+#[test]
+fn to_slint_copies_row_fields_and_timestamp() {
+    let mut r = row("m1", transcript::KIND_USER, "Title", "id1", "hello");
+    r.elapsed = "2s".to_string();
+    r.timestamp = "18:25".to_string();
+    let trow = to_slint(&r);
+    assert_eq!(trow.kind, transcript::KIND_USER);
+    assert_eq!(trow.title.as_str(), "Title");
+    assert_eq!(trow.elapsed.as_str(), "2s");
+    assert_eq!(trow.timestamp.as_str(), "18:25");
 }
