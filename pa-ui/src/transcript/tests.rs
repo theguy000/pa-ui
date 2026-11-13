@@ -1082,4 +1082,24 @@ mod quote_tests {
         assert_eq!(rows[1].body, "*one*\n*two*\n*lazy*");
         assert_eq!(rows[2].kind, KIND_AGENT);
     }
+
+    #[test]
+    fn strong_depth_handles_code_tags_escapes_and_punctuation_flanking() {
+        assert_eq!(markup::unclosed_strong_depth("`<tag**>` and **open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("<font **>text"), 0);
+        assert_eq!(markup::unclosed_strong_depth("\\**escaped"), 0);
+        assert_eq!(markup::unclosed_strong_depth("trailing\\"), 0);
+        assert_eq!(markup::unclosed_strong_depth("foo(**bar"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**bar)**"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a**b"), 1);
+        assert_eq!(markup::unclosed_strong_depth("a**b**"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a**(b"), 0);
+        assert_eq!(markup::unclosed_strong_depth("**a**(b"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a)**b"), 1);
+        assert_eq!(markup::unclosed_strong_depth("é**open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**open >"), 1);
+        assert_eq!(markup::unclosed_strong_depth("`**` **open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**foo **bar"), 2);
+        assert_eq!(markup::unclosed_strong_depth("**foo (**bar"), 2);
+    }
 }

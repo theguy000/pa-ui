@@ -173,64 +173,66 @@ pub(crate) fn escape_html(text: &str) -> String {
 }
 
 
-fn is_cm_punct(ch: char) -> bool {
-    ch.is_ascii_punctuation()
-}
-
-fn unclosed_strong_depth(slice: &str) -> usize {
+pub(crate) fn unclosed_strong_depth(slice: &str) -> usize {
     unclosed_strong_depth_before(slice, ' ')
 }
 
 fn unclosed_strong_depth_before(slice: &str, eol_after: char) -> usize {
-    let bytes = slice.as_bytes();
     let mut depth = 0usize;
     let mut in_code = false;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            i += 1;
-            if i < bytes.len() {
-                i += slice[i..].chars().next().map_or(1, char::len_utf8);
+    let mut prev = ' ';
+    let mut rest = slice;
+    while let Some(ch) = rest.chars().next() {
+        if ch == '\\' {
+            rest = &rest[1..];
+            if let Some(escaped) = rest.chars().next() {
+                prev = escaped;
+                rest = &rest[escaped.len_utf8()..];
+            } else {
+                prev = '\\';
             }
             continue;
         }
-        if bytes[i] == b'`' {
+        if ch == '`' {
             in_code = !in_code;
-            i += 1;
+            prev = '`';
+            rest = &rest[1..];
             continue;
         }
-        if !in_code && bytes[i] == b'<' {
-            if let Some(gt) = slice[i..].find('>') {
-                i += gt + 1;
+        if !in_code && ch == '<' {
+            if let Some((_, after_gt)) = rest.split_once('>') {
+                prev = '>';
+                rest = after_gt;
                 continue;
             }
         }
-        if !in_code && bytes[i] == b'*' {
-            let start = i;
-            while i < bytes.len() && bytes[i] == b'*' {
-                i += 1;
-            }
-            let run = i - start;
-            if run >= 2 {
-                let before = slice[..start].chars().next_back().unwrap_or(' ');
-                let after = slice[i..].chars().next().unwrap_or(eol_after);
-                let after_ws = after.is_whitespace();
-                let before_ws = before.is_whitespace();
-                let after_p = is_cm_punct(after);
-                let before_p = is_cm_punct(before);
-                let left = !after_ws && (!after_p || before_ws || before_p);
-                let right = !before_ws && (!before_p || after_ws || after_p);
-                for _ in 0..(run / 2) {
-                    if right && (!left || depth > 0) {
-                        depth = depth.saturating_sub(1);
-                    } else if left {
-                        depth += 1;
+        if !in_code {
+            if let Some(after_first) = rest.strip_prefix('*') {
+                let after_stars = after_first.trim_start_matches('*');
+                let run = rest.bytes().take_while(|&b| b == b'*').count();
+                if run >= 2 {
+                    let after = after_stars.chars().next().unwrap_or(eol_after);
+                    let after_ws = after.is_whitespace();
+                    let before_ws = prev.is_whitespace();
+                    let after_p = after.is_ascii_punctuation();
+                    let before_p = prev.is_ascii_punctuation();
+                    let left = !after_ws && (!after_p || before_ws || before_p);
+                    let right = !before_ws && (!before_p || after_ws || after_p);
+                    for _ in 0..(run / 2) {
+                        if right && (!left || depth > 0) {
+                            depth = depth.saturating_sub(1);
+                        } else if left {
+                            depth += 1;
+                        }
                     }
                 }
+                prev = '*';
+                rest = after_stars;
+                continue;
             }
-            continue;
         }
-        i += slice[i..].chars().next().map_or(1, char::len_utf8);
+        prev = ch;
+        rest = &rest[ch.len_utf8()..];
     }
     depth
 }

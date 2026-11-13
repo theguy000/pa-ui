@@ -20,7 +20,7 @@ pub(crate) trait Redraw {
     fn remove(&mut self, at: usize);
 }
 
-const MAX_MOUNTED_ROWS: usize = 72;
+pub(crate) const MAX_MOUNTED_ROWS: usize = 72;
 const OVERSCAN_ROWS: usize = 20;
 const SHIFT_STEP: usize = 6;
 
@@ -221,6 +221,7 @@ struct VirtualSlintRows {
     last_viewport_h: f32,
     in_slint_call: bool,
     content_dirty: bool,
+    row_mutated: bool,
 }
 
 impl VirtualSlintRows {
@@ -237,6 +238,7 @@ impl VirtualSlintRows {
             last_viewport_h: 800.0,
             in_slint_call: false,
             content_dirty: false,
+            row_mutated: false,
         }
     }
 
@@ -247,8 +249,12 @@ impl VirtualSlintRows {
     }
 }
 
+fn needs_redraw(row_mutated: bool, patch: &ModelPatch) -> bool {
+    row_mutated || !matches!(patch, ModelPatch::None)
+}
+
 fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
-    let (ui_weak, model, patch, top, bottom, win_start) = {
+    let (ui_weak, model, patch, top, bottom, win_start, row_mutated) = {
         let Ok(mut vs) = vstate.try_borrow_mut() else {
             return;
         };
@@ -297,7 +303,18 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         let (target_start, target_end) = if total <= MAX_MOUNTED_ROWS {
             (0, total)
         } else if follow_bottom {
-            (total.saturating_sub(MAX_MOUNTED_ROWS), total)
+            let min_start = total.saturating_sub(MAX_MOUNTED_ROWS);
+            let start = if !force
+                && !vs.content_dirty
+                && vs.win_end <= total
+                && vs.win_start <= min_start
+                && min_start - vs.win_start < SHIFT_STEP
+            {
+                vs.win_start
+            } else {
+                min_start
+            };
+            (start, total)
         } else {
             let scroll_top = (-vs.last_scroll_y).max(0.0);
             let scroll_bottom = scroll_top + vs.last_viewport_h.max(600.0);
@@ -342,6 +359,8 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         let old_end = vs.win_end;
         let dirty = vs.content_dirty;
         vs.content_dirty = false;
+        let row_mutated = vs.row_mutated;
+        vs.row_mutated = false;
         let need_shift = force
             || dirty
             || old_end <= old_start
@@ -397,7 +416,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
 
         let (top, bottom, wstart) = vs.compute_spacers();
         vs.in_slint_call = true;
-        (vs.ui.clone(), vs.model.clone(), patch, top, bottom, wstart)
+        (vs.ui.clone(), vs.model.clone(), patch, top, bottom, wstart, row_mutated)
     };
 
     if let Some(ui) = ui_weak.as_ref().and_then(|w| w.upgrade()) {
@@ -412,6 +431,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
     }
 
+    let mutated = needs_redraw(row_mutated, &patch);
     match patch {
         ModelPatch::None => {}
         ModelPatch::Full(slice) => {
@@ -465,6 +485,9 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
         if (ui.get_bottom_pad() - bottom2).abs() > 0.5 {
             ui.set_bottom_pad(bottom2);
+        }
+        if mutated {
+            ui.window().request_redraw();
         }
     }
 }
@@ -1194,6 +1217,7 @@ impl Redraw for SharedVirtualAdapter {
             if at < vs.all_rows.len() {
                 vs.all_rows[at] = row.clone();
                 if at >= vs.win_start && at < vs.win_end {
+                    vs.row_mutated = true;
                     model_update = Some((vs.model.clone(), at - vs.win_start, row));
                 }
             }
@@ -1206,7 +1230,9 @@ impl Redraw for SharedVirtualAdapter {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             let pos = at.min(vs.all_rows.len());
             vs.all_rows.insert(pos, row);
-            vs.content_dirty = true;
+            if vs.win_end <= vs.win_start || pos < vs.win_end {
+                vs.content_dirty = true;
+            }
         }
     }
     fn remove(&mut self, at: usize) {

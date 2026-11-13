@@ -1385,20 +1385,10 @@ pub(crate) fn worker_inner(
             }
             let mut event_sequence = None;
             if let Some(meta) = frame.get("meta") {
-                let generation = meta
-                    .get("generation")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let sequence = meta
-                    .get("sequence")
-                    .or_else(|| meta.pointer("/cursor/sequence"))
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0);
-                if sequence > 0 {
-                    event_sequence = Some(sequence);
-                }
-                if !generation.is_empty() && sequence > 0 {
-                    resume = Some((generation.to_string(), sequence));
+                let (seq_opt, cursor) = meta_event_cursor(meta);
+                event_sequence = seq_opt;
+                if let Some(cursor) = cursor {
+                    resume = Some(cursor);
                 }
             }
             if let Some(event) = frame.get("event") {
@@ -1430,6 +1420,26 @@ pub(crate) fn worker_inner(
         }
 
     }
+}
+
+pub(crate) fn meta_event_cursor(
+    meta: &serde_json::Value,
+) -> (Option<u64>, Option<(String, u64)>) {
+    let generation = meta
+        .get("generation")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let sequence = meta
+        .get("sequence")
+        .or_else(|| meta.pointer("/cursor/sequence"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|&seq| seq > 0);
+    let resume = if !generation.is_empty() {
+        sequence.map(|seq| (generation.to_string(), seq))
+    } else {
+        None
+    };
+    (sequence, resume)
 }
 
 #[cfg(test)]
@@ -1790,5 +1800,24 @@ mod tests {
         assert!(direct_loss_for_attached(Some("a"), "a"));
         assert!(!direct_loss_for_attached(Some("a"), "b"));
         assert!(!direct_loss_for_attached(None, "a"));
+    }
+
+    #[test]
+    fn meta_event_cursor_extracts_positive_sequence_and_generation() {
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({"sequence": 0, "generation": "g1"})),
+            (None, None)
+        );
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({"sequence": 3, "generation": ""})),
+            (Some(3), None)
+        );
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({
+                "generation": "g2",
+                "cursor": {"sequence": 7}
+            })),
+            (Some(7), Some(("g2".to_string(), 7)))
+        );
     }
 }

@@ -285,4 +285,14 @@ mod activity_chip_contract {
             "composer dock row must remain pinned to the bottom of composer-box"
         );
     }
+
+    #[test]
+    fn changed_scroll_range_ignores_large_transient_shrink_but_keeps_small_chrome_clamp() {
+        let app = include_str!("../ui/app.slint");
+        let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            compact.contains("root.prev-scroll-range-root.scroll-range<=120px"),
+            "changed scroll-range must only clamp small UI chrome shrinks, not large layout re-measure drops"
+        );
+    }
 }

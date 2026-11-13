@@ -730,7 +730,7 @@ impl Tick {
                     if !session_is_current(&ui, &session) {
                         continue;
                     }
-                    if let Some(sequence) = sequence.filter(|&seq| seq > 0) {
+                    if let Some(sequence) = sequence {
                         if l.last_seq != 0 && sequence > l.last_seq + 1 {
                             let _ = jobs.send(Job::Tail {
                                 session: session.clone(),
@@ -2576,6 +2576,7 @@ mod status_strip_tests {
         appearance_settings_reach_ui_globals_and_sidebar();
         sequence_gap_triggers_tail_refresh_while_contiguous_sequence_does_not();
         failed_async_bash_completion_after_idle_renders_with_subsequent_turn();
+        appending_rows_beyond_window_keeps_virtual_model_incremental();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -4931,5 +4932,80 @@ fn main() {}
             rows.iter().any(|row| row.body.contains("Next reply")),
             "subsequent turn text must render after failed async_bash_completion"
         );
+    }
+
+    fn appending_rows_beyond_window_keeps_virtual_model_incremental() {
+        let h = Harness::new();
+        let make_row = |i: usize| {
+            let msg = serde_json::json!({
+                "id": format!("m{i}"),
+                "role": "assistant",
+                "content": [{ "type": "text", "text": format!("msg {i}") }]
+            });
+            crate::transcript::build(std::slice::from_ref(&msg), 1)
+                .0
+                .into_iter()
+                .next()
+                .expect("agent row")
+        };
+        let small_over: Vec<crate::transcript::Row> = (0..75).map(make_row).collect();
+        h.tick.sheet.replace(small_over);
+        let model = h.ui.get_transcript();
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(h.ui.get_window_start() as usize, 75 - crate::sheet::MAX_MOUNTED_ROWS);
+
+        let initial: Vec<crate::transcript::Row> = (0..80).map(make_row).collect();
+        h.tick.sheet.replace(initial.clone());
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+        let win0 = h.ui.get_window_start();
+        assert_eq!(win0 as usize, 80 - crate::sheet::MAX_MOUNTED_ROWS);
+
+        let mut edited = initial.clone();
+        let edited_msg = serde_json::json!({
+            "id": "m79",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "msg 79 edited" }]
+        });
+        edited[79] = crate::transcript::build(std::slice::from_ref(&edited_msg), 1)
+            .0
+            .into_iter()
+            .next()
+            .expect("edited row");
+        h.tick.sheet.merge(edited);
+        let last_mounted = slint::Model::row_data(&model, slint::Model::row_count(&model) - 1)
+            .expect("mounted tail");
+        assert_eq!(last_mounted.body, crate::transcript::styled("msg 79 edited"));
+
+        let mut inserted_inside = initial.clone();
+        let multi = serde_json::json!({
+            "id": "m75",
+            "role": "assistant",
+            "content": [
+                { "type": "text", "text": "msg 75" },
+                { "type": "toolCall", "id": "tc75", "name": "bash", "arguments": {"command": "echo ok"} }
+            ]
+        });
+        let multi_rows = crate::transcript::build(std::slice::from_ref(&multi), 1).0;
+        assert_eq!(multi_rows.len(), 2);
+        inserted_inside.splice(75..76, multi_rows);
+        h.tick.sheet.merge(inserted_inside);
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(h.ui.get_window_start() as usize, 81 - crate::sheet::MAX_MOUNTED_ROWS);
+
+        h.tick.sheet.replace(initial.clone());
+        let win0 = h.ui.get_window_start();
+        let mut one_more = initial.clone();
+        one_more.push(make_row(80));
+        h.tick.sheet.merge(one_more);
+        assert_eq!(h.ui.get_window_start(), win0);
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS + 1);
+
+        let mut six_more = initial;
+        for i in 80..86 {
+            six_more.push(make_row(i));
+        }
+        h.tick.sheet.merge(six_more);
+        assert_eq!(h.ui.get_window_start() as usize, 86 - crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
     }
 }

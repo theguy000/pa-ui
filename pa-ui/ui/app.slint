@@ -684,8 +684,13 @@ export component AppWindow inherits Window {
     );
 
     changed scroll-range => {
-        // If the scroll range shrank (e.g. busy bar or attachments closing) while parked, keep content-y and seen-content-y synced
-        if (root.scroll-range < root.prev-scroll-range && root.follow-bottom && !root.scrollbar-dragging) {
+        // Ignore large transient shrinks while virtualized rows re-measure after model patches;
+        // only clamp small UI chrome shrinks (busy strip / attachments closing).
+        if (root.scroll-range < root.prev-scroll-range
+            && root.prev-scroll-range - root.scroll-range <= 120px
+            && root.follow-bottom
+            && !root.scrollbar-dragging)
+        {
             root.programmatic-scroll = true;
             transcript-list.content-y = -root.scroll-range;
             root.seen-content-y = transcript-list.content-y;
@@ -853,7 +858,9 @@ export component AppWindow inherits Window {
     }
 
     public function scroll-to-end() {
-        if (root.follow-bottom && !root.scrollbar-dragging && !Appearance.smooth-scroll) {
+        if (root.follow-bottom && !root.scrollbar-dragging
+            && (!Appearance.smooth-scroll || transcript-list.content-y < -root.scroll-range))
+        {
             root.programmatic-scroll = true;
             transcript-list.content-y = -root.scroll-range;
             root.seen-content-y = transcript-list.content-y;
