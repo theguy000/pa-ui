@@ -140,17 +140,189 @@ fn sidebar_row_visible(row: &SessionRow, selected: &str) -> bool {
     !anonymous_empty(row) || row.id == selected
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SessionOrder {
+    #[default]
+    LastUsed,
+    Name,
+    Manual,
+}
+
+impl SessionOrder {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::LastUsed => "Last used",
+            Self::Name => "Name",
+            Self::Manual => "Manual",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "Last used" => Some(Self::LastUsed),
+            "Name" => Some(Self::Name),
+            "Manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn from_setting(value: &str) -> Self {
+        Self::parse(value).unwrap_or_else(|| {
+            eprintln!("[settings] unsupported session order {value:?}; using Last used");
+            Self::LastUsed
+        })
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn session_items(rows: &[SessionRow]) -> Vec<SessionItem> {
+    session_items_with_order(rows, SessionOrder::LastUsed, &[])
+}
+
+pub(crate) fn ordered_rows<'a>(
+    rows: &'a [SessionRow],
+    order: SessionOrder,
+    manual: &[String],
+) -> Vec<&'a SessionRow> {
+    let mut manual_pos: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    if order == SessionOrder::Manual {
+        for (index, uuid) in manual.iter().enumerate() {
+            if !uuid.is_empty() {
+                manual_pos.entry(uuid.as_str()).or_insert(index);
+            }
+        }
+    }
+    let manual_rank = |row: &SessionRow| -> usize {
+        if row.session_id.is_empty() {
+            usize::MAX
+        } else {
+            manual_pos
+                .get(row.session_id.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        }
+    };
     let mut top: Vec<&SessionRow> = rows.iter().filter(|row| is_top_level(row)).collect();
     top.sort_by(|left, right| {
-        tag_of(left)
-            .rank()
-            .cmp(&tag_of(right).rank())
-            .then_with(|| recency(right).cmp(&recency(left)))
-            .then_with(|| display_name(left).cmp(&display_name(right)))
-            .then_with(|| left.id.cmp(&right.id))
+        let groups = tag_of(left).rank().cmp(&tag_of(right).rank());
+        let by_recency = || {
+            recency(right)
+                .cmp(&recency(left))
+                .then_with(|| display_name(left).cmp(&display_name(right)))
+                .then_with(|| left.id.cmp(&right.id))
+        };
+        match order {
+            SessionOrder::LastUsed => groups.then_with(by_recency),
+            SessionOrder::Name => groups
+                .then_with(|| {
+                    display_name(left)
+                        .to_lowercase()
+                        .cmp(&display_name(right).to_lowercase())
+                })
+                .then_with(|| recency(right).cmp(&recency(left)))
+                .then_with(|| left.id.cmp(&right.id)),
+            SessionOrder::Manual => groups
+                .then_with(|| manual_rank(left).cmp(&manual_rank(right)))
+                .then_with(by_recency),
+        }
     });
-    top.into_iter().map(to_item).collect()
+    top
+}
+
+pub(crate) fn session_items_with_order(
+    rows: &[SessionRow],
+    order: SessionOrder,
+    manual: &[String],
+) -> Vec<SessionItem> {
+    ordered_rows(rows, order, manual)
+        .into_iter()
+        .map(to_item)
+        .collect()
+}
+
+pub(crate) fn seed_manual_order(
+    rows: &[SessionRow],
+    order: SessionOrder,
+    manual: &mut Vec<String>,
+) -> bool {
+    if !manual.is_empty() {
+        return false;
+    }
+    let seeded: Vec<String> = ordered_rows(rows, order, &[])
+        .into_iter()
+        .filter(|row| !row.session_id.is_empty())
+        .map(|row| row.session_id.clone())
+        .collect();
+    if seeded.is_empty() {
+        return false;
+    }
+    *manual = seeded;
+    true
+}
+
+pub(crate) fn reconcile_manual_order(rows: &[SessionRow], manual: &mut Vec<String>) -> bool {
+    let valid: std::collections::HashSet<&str> = rows
+        .iter()
+        .filter(|row| is_top_level(row) && !row.session_id.is_empty())
+        .map(|row| row.session_id.as_str())
+        .collect();
+    let mut seen = std::collections::HashSet::with_capacity(manual.len());
+    let before = manual.len();
+    manual.retain(|uuid| valid.contains(uuid.as_str()) && seen.insert(uuid.clone()));
+    manual.len() != before
+}
+
+pub(crate) fn apply_manual_move(
+    rows: &[SessionRow],
+    manual: &[String],
+    source_id: &str,
+    target_id: &str,
+) -> Option<Vec<String>> {
+    let top: Vec<&SessionRow> = rows.iter().filter(|row| is_top_level(row)).collect();
+    let source = top.iter().copied().find(|row| row.id == source_id)?;
+    let target = top.iter().copied().find(|row| row.id == target_id)?;
+    let group = tag_of(source);
+    if group != tag_of(target) {
+        return None;
+    }
+    let mut group_uuids: Vec<String> = Vec::new();
+    let mut seen_group = std::collections::HashSet::new();
+    for row in ordered_rows(rows, SessionOrder::Manual, manual) {
+        if tag_of(row) == group
+            && !row.session_id.is_empty()
+            && seen_group.insert(row.session_id.clone())
+        {
+            group_uuids.push(row.session_id.clone());
+        }
+    }
+    let from = group_uuids.iter().position(|uuid| uuid == &source.session_id)?;
+    let to = group_uuids.iter().position(|uuid| uuid == &target.session_id)?;
+    if from == to {
+        return None;
+    }
+    let moved = group_uuids.remove(from);
+    group_uuids.insert(to, moved);
+
+    let mut out: Vec<String> = manual
+        .iter()
+        .filter(|uuid| !uuid.is_empty() && !seen_group.contains(uuid.as_str()))
+        .cloned()
+        .collect();
+    out.extend(group_uuids);
+    Some(out)
+}
+
+fn drop_target_at(ui: &AppWindow, target_y: f32) -> Option<String> {
+    let entries = ui.get_session_entries();
+    (0..entries.row_count())
+        .filter_map(|index| entries.row_data(index))
+        .find(|entry| {
+            !entry.is_header
+                && !entry.folded
+                && target_y >= entry.at
+                && target_y < entry.at + ROW_HEIGHT as f32
+        })
+        .map(|entry| entry.item.id.to_string())
 }
 
 fn recency(row: &SessionRow) -> i64 {
@@ -306,12 +478,6 @@ impl Column {
 }
 
 pub(crate) type Groups<'a> = (&'a [SessionItem], &'a [SessionItem], &'a [SessionItem]);
-
-pub(crate) fn groups_from(
-    rows: &[SessionRow],
-) -> (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>) {
-    session_groups(&session_items(rows))
-}
 
 pub(crate) fn column(
     groups: Groups<'_>,
@@ -565,13 +731,36 @@ pub(crate) fn match_rows(sessions: &[SessionRow], query: &str) -> ModelRc<Search
     ModelRc::from(Rc::new(VecModel::from(rows)))
 }
 
-pub(crate) fn open_search(ui: &AppWindow, sessions: &[SessionRow]) {
+pub(crate) fn match_rows_with_order(
+    sessions: &[SessionRow],
+    query: &str,
+    order: SessionOrder,
+    manual: &[String],
+) -> ModelRc<SearchRow> {
+    let ordered: Vec<SessionRow> = ordered_rows(sessions, order, manual)
+        .into_iter()
+        .cloned()
+        .collect();
+    match_rows(&ordered, query)
+}
+
+fn open_search_with_order(
+    ui: &AppWindow,
+    sessions: &[SessionRow],
+    order: SessionOrder,
+    manual: &[String],
+) {
     // The search popup and the share card are the two surfaces that open over
     // the whole window; only one of them is ever up.
     ui.set_share_open(false);
     ui.set_settings_menu(false);
     let query = ui.get_search_query();
-    ui.set_search_rows(match_rows(sessions, query.as_str()));
+    ui.set_search_rows(match_rows_with_order(
+        sessions,
+        query.as_str(),
+        order,
+        manual,
+    ));
     ui.set_search_index(0);
     ui.set_search_field_typed(false);
     ui.set_search_open(true);
@@ -585,6 +774,7 @@ pub(crate) struct Sidebar {
     pub selected_uuid: RefCell<Option<String>>,
     groups: Rc<RefCell<(Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>)>>,
     settings: Rc<crate::settings::SettingsStore>,
+    catalog_ready: std::cell::Cell<bool>,
 }
 
 impl Sidebar {
@@ -594,6 +784,7 @@ impl Sidebar {
             selected_uuid: RefCell::new(None),
             groups: Rc::new(RefCell::new((Vec::new(), Vec::new(), Vec::new()))),
             settings: crate::settings::SettingsStore::new(crate::settings::default_settings_path()),
+            catalog_ready: std::cell::Cell::new(false),
         });
         sidebar.bind_ui(ui, job_tx);
         sidebar
@@ -648,20 +839,78 @@ impl Sidebar {
         }
     }
 
-    pub fn seed(&self, ui: &AppWindow, rows: Vec<SessionRow>) {
-        let (active, idle, done) = groups_from(&rows);
+    pub fn set_catalog_ready(&self, ready: bool) {
+        self.catalog_ready.set(ready);
+    }
+
+    fn order(&self) -> SessionOrder {
+        self.settings.state.borrow().session_order
+    }
+
+    pub fn open_search(&self, ui: &AppWindow) {
+        let manual = self.settings.state.borrow().manual_session_order.clone();
+        open_search_with_order(ui, &self.cache.borrow(), self.order(), &manual);
+    }
+
+    fn apply_items(
+        &self,
+        ui: &AppWindow,
+        items: Vec<SessionItem>,
+        folded: [bool; 3],
+        selected: i32,
+    ) -> Option<SessionItem> {
+        let (active, idle, done) = session_groups(&items);
+        let prev = self.groups.borrow().clone();
+        let active_changed = active != prev.0;
+        let idle_changed = idle != prev.1;
+        let done_changed = done != prev.2;
         let col = column(
             (&active, &idle, &done),
-            [false, false, false],
-            (&[], &[], &[]),
-            [false, false, false],
+            folded,
+            (&prev.0, &prev.1, &prev.2),
+            folded,
         );
-        apply(ui, col, -1, false);
-        ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active.clone()))));
-        ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle.clone()))));
-        ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done.clone()))));
-        ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(session_items(&rows)))));
-        *self.groups.borrow_mut() = (active, idle, done);
+        let selected = if selected < 0 && any_moved(&col.previous, &col.entries) {
+            -2
+        } else {
+            selected
+        };
+        if col.changed() {
+            apply(ui, col, selected, false);
+        }
+        *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
+        if active_changed {
+            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+        }
+        if idle_changed {
+            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
+        }
+        if done_changed {
+            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
+        }
+        let first = items.first().cloned();
+        if active_changed || idle_changed || done_changed {
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
+        }
+        first
+    }
+
+    fn project_roster(&self, ui: &AppWindow, rows: &[SessionRow]) -> Option<SessionItem> {
+        let order = self.order();
+        let manual = self.settings.state.borrow().manual_session_order.clone();
+        let items = session_items_with_order(rows, order, &manual);
+        let folded = [
+            ui.get_active_folded(),
+            ui.get_idle_folded(),
+            ui.get_done_folded(),
+        ];
+        self.apply_items(ui, items, folded, -1)
+    }
+
+    pub fn seed(&self, ui: &AppWindow, rows: Vec<SessionRow>) {
+        let manual = self.settings.state.borrow().manual_session_order.clone();
+        let items = session_items_with_order(&rows, self.order(), &manual);
+        self.apply_items(ui, items, [false, false, false], 0);
         *self.cache.borrow_mut() = rows;
     }
 
@@ -679,45 +928,21 @@ impl Sidebar {
             })
             .collect();
         *self.cache.borrow_mut() = rows.clone();
-        let items: Vec<SessionItem> = session_items(&rows);
-        let (active, idle, done) = session_groups(&items);
-        let folded = [
-            ui.get_active_folded(),
-            ui.get_idle_folded(),
-            ui.get_done_folded(),
-        ];
-        let col = {
-            let prev = self.groups.borrow();
-            column(
-                (&active, &idle, &done),
-                folded,
-                (&prev.0, &prev.1, &prev.2),
-                folded,
-            )
-        };
-        let (previous_active, previous_idle, previous_done) = self.groups.borrow().clone();
-        let active_changed = active != previous_active;
-        let idle_changed = idle != previous_idle;
-        let done_changed = done != previous_done;
-        *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
-        if active_changed {
-            ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
+        if self.catalog_ready.get() {
+            let changed = {
+                let mut state = self.settings.state.borrow_mut();
+                let pruned = reconcile_manual_order(&rows, &mut state.manual_session_order);
+                let seeded = state.session_order == SessionOrder::Manual
+                    && seed_manual_order(&rows, SessionOrder::LastUsed, &mut state.manual_session_order);
+                pruned || seeded
+            };
+            if changed {
+                if let Err(error) = self.settings.persist() {
+                    eprintln!("[settings] {error}");
+                }
+            }
         }
-        if idle_changed {
-            ui.set_idle_items(ModelRc::from(Rc::new(VecModel::from(idle))));
-        }
-        if done_changed {
-            ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done))));
-        }
-
-        let any_group_move = any_moved(&col.previous, &col.entries);
-        if col.changed() {
-            apply(ui, col, if any_group_move { -2 } else { -1 }, false);
-        }
-        let visible_first = items.first().cloned();
-        if active_changed || idle_changed || done_changed {
-            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(items))));
-        }
+        let visible_first = self.project_roster(ui, &rows);
 
         if ui.get_selected_id().is_empty() && !ui.get_draft_chat() {
             let preferred = std::env::var("PA_SELECT").ok();
@@ -766,7 +991,7 @@ impl Sidebar {
         rebound_out
     }
 
-    fn bind_ui(&self, ui: &AppWindow, job_tx: &Sender<Job>) {
+    fn bind_ui(self: &Rc<Self>, ui: &AppWindow, job_tx: &Sender<Job>) {
         {
             let jobs = job_tx.clone();
             let window = ui.as_weak();
@@ -998,12 +1223,18 @@ impl Sidebar {
             {
                 let weak = ui.as_weak();
                 let store = store.clone();
+                let sidebar = self.clone();
                 ui.on_setting_chosen(move |key, val| {
                     let Some(ui) = weak.upgrade() else { return };
                     ui.set_settings_open_choice("".into());
                     let changed = {
                         let mut state = store.state.borrow_mut();
+                        let prev_order = state.session_order;
                         let ok = state.choose(key.as_str(), val.as_str());
+                        if ok && key == "session-order" && state.session_order == SessionOrder::Manual {
+                            let rows = sidebar.cache.borrow();
+                            seed_manual_order(&rows, prev_order, &mut state.manual_session_order);
+                        }
                         if ok {
                             state.apply_to_ui(&ui);
                         }
@@ -1012,6 +1243,10 @@ impl Sidebar {
                     if changed {
                         if let Err(error) = store.persist() {
                             eprintln!("[settings] {error}");
+                        }
+                        if key == "session-order" {
+                            let rows = sidebar.cache.borrow();
+                            sidebar.project_roster(&ui, &rows);
                         }
                     }
                 });
@@ -1045,21 +1280,55 @@ impl Sidebar {
         }
 
         {
-            let sessions = self.cache.clone();
+            let sidebar = self.clone();
             let weak = ui.as_weak();
             ui.on_search_open_requested(move || {
                 let Some(ui) = weak.upgrade() else { return };
-                open_search(&ui, &sessions.borrow());
+                sidebar.open_search(&ui);
             });
         }
         {
             let weak = ui.as_weak();
-            let rows = self.cache.clone();
+            let sidebar = self.clone();
             ui.on_search_typed(move |query| {
                 let Some(ui) = weak.upgrade() else { return };
-                let found = match_rows(&rows.borrow(), query.as_str());
+                let manual = sidebar.settings.state.borrow().manual_session_order.clone();
+                let found = match_rows_with_order(
+                    &sidebar.cache.borrow(),
+                    query.as_str(),
+                    sidebar.order(),
+                    &manual,
+                );
                 ui.set_search_index(0);
                 ui.set_search_rows(found);
+            });
+        }
+        {
+            let weak = ui.as_weak();
+            let sidebar = self.clone();
+            ui.on_session_dropped(move |source, target_y| {
+                let Some(ui) = weak.upgrade() else { return };
+                if sidebar.order() != SessionOrder::Manual {
+                    return;
+                }
+                let Some(target) = drop_target_at(&ui, target_y) else {
+                    return;
+                };
+                let rows = sidebar.cache.borrow();
+                let updated = {
+                    let state = sidebar.settings.state.borrow();
+                    apply_manual_move(&rows, &state.manual_session_order, source.as_str(), &target)
+                };
+                if let Some(mut next) = updated {
+                    if sidebar.catalog_ready.get() {
+                        reconcile_manual_order(&rows, &mut next);
+                    }
+                    sidebar.settings.state.borrow_mut().manual_session_order = next;
+                    if let Err(error) = sidebar.settings.persist() {
+                        eprintln!("[settings] {error}");
+                    }
+                    sidebar.project_roster(&ui, &rows);
+                }
             });
         }
         {
