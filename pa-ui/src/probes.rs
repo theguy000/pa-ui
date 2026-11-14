@@ -552,6 +552,8 @@ mod lag_probe {
             wall.set(Instant::now());
             ticks_reset.set(0);
             max_reset.set(0.0);
+            sheet::reset_conversion_count();
+            sheet::reset_spacer_write_count();
         });
 
         let stop = Rc::new(Timer::default());
@@ -565,9 +567,11 @@ mod lag_probe {
             let seconds = wall.get().elapsed().as_secs_f64().max(0.001);
             let used = cpu_ms().map(|now| now - cpu.get());
             if let Some(ui) = weak.upgrade() {
+                let conversions = sheet::conversion_count();
+                let spacers = sheet::spacer_write_count();
                 match used {
                     Some(used) => eprintln!(
-                        "[lag] {label:<22} wall={seconds:.2}s cpu={used:6.0}ms ({:5.1}% core) ticks={:3} max_cb={:5.2}ms rows={} sidebar={}",
+                        "[lag] {label:<22} wall={seconds:.2}s cpu={used:6.0}ms ({:5.1}% core) ticks={:3} max_cb={:5.2}ms rows={} sidebar={} conv={conversions} spacers={spacers}",
                         (used / 1000.0) / seconds * 100.0,
                         ticks.get(),
                         max_cb.get(),
@@ -575,7 +579,7 @@ mod lag_probe {
                         ui.get_session_entries().row_count(),
                     ),
                     None => eprintln!(
-                        "[lag] {label:<22} wall={seconds:.2}s ticks={:3} max_cb={:5.2}ms rows={} sidebar={}",
+                        "[lag] {label:<22} wall={seconds:.2}s ticks={:3} max_cb={:5.2}ms rows={} sidebar={} conv={conversions} spacers={spacers}",
                         ticks.get(),
                         max_cb.get(),
                         ui.get_transcript().row_count(),
