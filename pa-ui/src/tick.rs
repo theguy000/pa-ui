@@ -5012,27 +5012,72 @@ fn main() {}
 
     fn wrapped_rows_preserve_follow_bottom_across_scroll_range_shrink() {
         let h = Harness::new();
+        h.ui.window().set_size(slint::PhysicalSize::new(1200, 800));
+        let appearance = crate::Appearance::get(&h.ui);
+        let prev_smooth = appearance.get_smooth_scroll();
+        appearance.set_smooth_scroll(false);
         h.ui.set_follow_bottom(true);
-        let long_msg = serde_json::json!({
-            "id": "m_long",
-            "role": "assistant",
-            "content": [{ "type": "text", "text": "Long wrapped line ".repeat(40) }]
-        });
-        let rows = crate::transcript::build(std::slice::from_ref(&long_msg), 1).0;
-        h.tick.sheet.replace(rows);
-        h.ui.invoke_scroll_to_end();
-        assert!(h.ui.get_follow_bottom());
+        h.ui.show().expect("show window");
 
-        // Replacing with a short row shrinks scroll-range by >120px without losing follow_bottom.
-        let short_msg = serde_json::json!({
-            "id": "m_short",
-            "role": "assistant",
-            "content": [{ "type": "text", "text": "short" }]
+        let long_msgs: Vec<serde_json::Value> = (0..20)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("m_long_{i}"),
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Long wrapped line ".repeat(20) }]
+                })
+            })
+            .collect();
+        let rows = crate::transcript::build(&long_msgs, long_msgs.len()).0;
+        h.tick.sheet.replace(rows);
+        crate::sheet::force_scroll_to_end(&h.ui);
+
+        let step = Rc::new(std::cell::Cell::new(0usize));
+        let sr_before = Rc::new(std::cell::Cell::new(0.0f32));
+        let verified = Rc::new(std::cell::Cell::new(false));
+        let verified_c = verified.clone();
+        let step_c = step.clone();
+        let sr_before_c = sr_before.clone();
+        let ui_w = h.ui.as_weak();
+        let sheet_c = h.tick.sheet.clone();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Some(ui) = ui_w.upgrade() else { return };
+            let n = step_c.get() + 1;
+            step_c.set(n);
+            if n == 2 {
+                ui.invoke_scroll_to_end();
+                let sr = ui.get_scroll_range();
+                assert!(sr > 120.0, "expected wrapped rows to overflow viewport, got {sr}");
+                assert_eq!(ui.get_seen_content_y(), ui.get_dbg_cy());
+                sr_before_c.set(sr);
+
+                let short_msg = serde_json::json!({
+                    "id": "m_short",
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "short" }]
+                });
+                let short_rows = crate::transcript::build(std::slice::from_ref(&short_msg), 1).0;
+                sheet_c.replace(short_rows);
+            } else if n == 4 {
+                ui.invoke_scroll_to_end();
+                let sr_after = ui.get_scroll_range();
+                assert!(
+                    sr_before_c.get() - sr_after > 120.0,
+                    "expected >120px scroll_range shrink: before={}, after={sr_after}",
+                    sr_before_c.get()
+                );
+                assert!(ui.get_follow_bottom());
+                assert!(!ui.get_reader_scrolled());
+                assert_eq!(ui.get_seen_content_y(), ui.get_dbg_cy());
+                verified_c.set(true);
+                let _ = slint::quit_event_loop();
+            }
         });
-        let short_rows = crate::transcript::build(std::slice::from_ref(&short_msg), 1).0;
-        h.tick.sheet.replace(short_rows);
-        h.ui.invoke_scroll_to_end();
-        assert!(h.ui.get_follow_bottom());
-        assert!(!h.ui.get_reader_scrolled());
+        slint::run_event_loop().expect("event loop");
+        drop(timer);
+        let _ = h.ui.hide();
+        appearance.set_smooth_scroll(prev_smooth);
+        assert!(verified.get(), "shrink-clamp verification timer must run");
     }
 }

@@ -285,7 +285,10 @@ mod activity_chip_contract {
             "composer dock row must remain pinned to the bottom of composer-box"
         );
     }
+}
 
+#[cfg(test)]
+mod transcript_scroll_contract {
     #[test]
     fn changed_scroll_range_ignores_large_transient_shrink_but_keeps_small_chrome_clamp() {
         let app = include_str!("../ui/app.slint");
