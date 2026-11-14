@@ -163,6 +163,22 @@ fn a_prepended_page_survives_a_later_merge() {
 }
 
 #[test]
+fn a_prepended_page_reports_the_height_the_reader_is_moved_by() {
+    let (sheet, _) = sheet();
+    sheet.replace(vec![row("m2", transcript::KIND_CODE, "rust", "", "second")]);
+    let page = vec![
+        row("m1", transcript::KIND_USER, "", "", "first"),
+        row("m1", transcript::KIND_CODE, "rust", "", "fn a() {}"),
+    ];
+    sheet.prepend(page.clone());
+    let expected: f32 = page.iter().map(crate::sheet::estimate_row_height).sum();
+    assert!(
+        (sheet.last_prepend_height() - expected).abs() < 0.01,
+        "the offset compensation must match the height the page adds above the window"
+    );
+}
+
+#[test]
 fn one_changed_row_costs_exactly_one_order() {
     let (sheet, orders) = sheet();
     sheet.replace(vec![
