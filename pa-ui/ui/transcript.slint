@@ -276,6 +276,7 @@ export component TranscriptRow inherits VerticalLayout {
     }
 
     if data.kind == 1 : VerticalLayout {
+        width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.row-pad-y;
@@ -287,6 +288,7 @@ export component TranscriptRow inherits VerticalLayout {
             font-size: Appearance.meta-size;
         }
         agent-text := StyledText {
+            width: root.width - 48px;
             text: data.body;
             default-color: Theme.transcript-prose-ink;
             default-font-size: Type.body;
@@ -296,6 +298,7 @@ export component TranscriptRow inherits VerticalLayout {
     }
 
     if data.kind == 11 : VerticalLayout {
+        width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.row-pad-y;
@@ -307,6 +310,7 @@ export component TranscriptRow inherits VerticalLayout {
             font-size: Appearance.meta-size;
         }
         Rectangle {
+            width: root.width - 48px;
             height: quote-text.preferred-height;
             quote-bar := Rectangle {
                 x: 0px;
@@ -319,7 +323,7 @@ export component TranscriptRow inherits VerticalLayout {
             quote-text := StyledText {
                 x: 12px;
                 y: 0px;
-                width: parent.width - 12px;
+                width: root.width - 60px;
                 text: data.body;
                 default-color: Theme.transcript-quote-ink;
                 default-font-size: Type.body;
@@ -543,12 +547,14 @@ export component TranscriptRow inherits VerticalLayout {
             border-radius: 8px;
             height: self.preferred-height;
             VerticalLayout {
+                width: root.width - 48px;
                 padding-left: Appearance.expanded-pad-x;
                 padding-right: Appearance.expanded-pad-x;
                 padding-top: Appearance.expanded-pad-y;
                 padding-bottom: Appearance.expanded-pad-y;
                 spacing: Appearance.expanded-gap;
                 StyledText {
+                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
                     text: data.code;
                     default-color: Theme.transcript-cell-code-ink;
                     default-font-family: Appearance.code-font;
@@ -559,6 +565,7 @@ export component TranscriptRow inherits VerticalLayout {
                     background: Theme.transcript-cell-rule;
                 }
                 if data.has-output : StyledText {
+                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
                     text: data.output;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-cell-output-ink;
@@ -630,17 +637,20 @@ export component TranscriptRow inherits VerticalLayout {
         }
 
         if data.expanded && data.has-body : Rectangle {
+            width: root.width - 48px;
             background: Theme.transcript-row-fill-expanded;
             border-color: Theme.transcript-cell-edge-expanded;
             border-width: 1px;
             border-radius: 8px;
             height: custom-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px;
             VerticalLayout {
+                width: root.width - 48px;
                 padding-left: Appearance.expanded-pad-x;
                 padding-right: Appearance.expanded-pad-x;
                 padding-top: Appearance.expanded-pad-y;
                 padding-bottom: Appearance.expanded-pad-y;
                 custom-text := StyledText {
+                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
                     text: data.body;
                     default-color: data.failed ? Theme.transcript-cell-ink-failed
                         : Theme.transcript-prose-ink;
@@ -675,7 +685,7 @@ export component TranscriptRow inherits VerticalLayout {
         error-line := StyledText {
             x: 94px;
             y: 4px;
-            width: parent.width - 118px;
+            width: root.width - 118px;
             text: data.body;
             default-color: Theme.transcript-error-ink;
             default-font-size: Type.body;
@@ -687,11 +697,13 @@ export component TranscriptRow inherits VerticalLayout {
     // roles; the syntax inside the code is still the markup builder's palette,
     // which is the TUI's warmed to sit in this theme.
     if data.kind == 6 : VerticalLayout {
+        width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.code-pad-y;
         padding-bottom: Appearance.code-pad-y;
         Rectangle {
+            width: root.width - 48px;
             height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
             background: Theme.transcript-code-fill;
             border-radius: 8px;
@@ -714,7 +726,7 @@ export component TranscriptRow inherits VerticalLayout {
             code-text := StyledText {
                 x: 12px;
                 y: Appearance.expanded-pad-y + 2px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
-                width: parent.width - 24px;
+                width: root.width - 72px;
                 text: data.code;
                 default-color: Theme.transcript-code-ink;
                 default-font-size: Appearance.code-size;
@@ -725,6 +737,7 @@ export component TranscriptRow inherits VerticalLayout {
 
     // A table, box-drawn as text: it stays copyable and needs no cell model.
     if data.kind == 7 : VerticalLayout {
+        width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.code-pad-y;
@@ -736,6 +749,7 @@ export component TranscriptRow inherits VerticalLayout {
             font-size: Appearance.meta-size;
         }
         table-text := StyledText {
+            width: root.width - 48px;
             text: data.body;
             default-color: Theme.transcript-table-ink;
             default-font-size: Appearance.cell-output-size;

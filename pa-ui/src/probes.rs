@@ -280,5 +280,52 @@ mod activity_chip_contract {
             compact.contains("HorizontalLayout{spacing:8px;ActivityChip{"),
             "the composer row was centred or the chip moved off the left edge"
         );
+        assert!(
+            compact.contains("Rectangle{x:12px;y:parent.height-8px-25px;width:parent.width-24px;height:25px;background:transparent;HorizontalLayout{spacing:8px;ActivityChip{"),
+            "composer dock row must remain pinned to the bottom of composer-box"
+        );
+    }
+}
+
+#[cfg(test)]
+mod transcript_scroll_contract {
+    #[test]
+    fn changed_scroll_range_ignores_large_transient_shrink_but_keeps_small_chrome_clamp() {
+        let app = include_str!("../ui/app.slint");
+        let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            compact.contains("root.prev-scroll-range-root.scroll-range<=120px"),
+            "changed scroll-range must only clamp small UI chrome shrinks, not large layout re-measure drops"
+        );
+    }
+
+    #[test]
+    fn wrapped_transcript_text_binds_explicit_width_from_root() {
+        let transcript = include_str!("../ui/transcript.slint");
+        let compact: String = transcript.chars().filter(|ch| !ch.is_whitespace()).collect();
+        for needle in [
+            "agent-text:=StyledText{width:root.width-48px;",
+            "quote-text:=StyledText{x:12px;y:0px;width:root.width-60px;",
+            "custom-text:=StyledText{width:root.width-48px-Appearance.expanded-pad-x*2;",
+            "error-line:=StyledText{x:94px;y:4px;width:root.width-118px;",
+            "code-text:=StyledText{x:12px;",
+            "width:root.width-72px;",
+            "table-text:=StyledText{width:root.width-48px;",
+        ] {
+            assert!(
+                compact.contains(needle),
+                "transcript.slint must bind explicit root-based width so Flickable content-height matches layout height: missing {needle}"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_scroll_range_syncs_seen_content_y_when_clamped_upward() {
+        let app = include_str!("../ui/app.slint");
+        let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            compact.contains("elseif(root.follow-bottom&&root.seen-content-y<-root.scroll-range){root.seen-content-y=-root.scroll-range;}"),
+            "changed scroll-range must clamp seen-content-y to -scroll-range when scroll-range shrinks"
+        );
     }
 }

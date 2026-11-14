@@ -108,7 +108,7 @@ pub(crate) enum Msg {
         more: bool,
     },
     /// one `session_event` from the attached session, forwarded verbatim
-    Event { session: String, event: serde_json::Value },
+    Event { session: String, event: serde_json::Value, sequence: Option<u64> },
     PromptResult { session: Option<String>, error: Option<String> },
     /// the daemon refused a prompt: hand the text back to the composer
     PromptRejected { session: Option<String>, text: String },
@@ -1145,6 +1145,10 @@ pub(crate) fn worker_inner(
                         if crate::env_cfg::cfg().debug {
                             eprintln!("[tail] {session} FAILED: {error}");
                         }
+                        out.send(Msg::Error {
+                            session: Some(session),
+                            message: format!("Could not refresh transcript: {error}"),
+                        });
                     }
                     }
                 }
@@ -1379,23 +1383,19 @@ pub(crate) fn worker_inner(
             if Some(session.to_string()) != attached {
                 continue;
             }
+            let mut event_sequence = None;
             if let Some(meta) = frame.get("meta") {
-                let generation = meta
-                    .get("generation")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let sequence = meta
-                    .get("sequence")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0);
-                if !generation.is_empty() && sequence > 0 {
-                    resume = Some((generation.to_string(), sequence));
+                let (seq_opt, cursor) = meta_event_cursor(meta);
+                event_sequence = seq_opt;
+                if let Some(cursor) = cursor {
+                    resume = Some(cursor);
                 }
             }
             if let Some(event) = frame.get("event") {
                 out.send(Msg::Event {
                     session: session.to_string(),
                     event: event.clone(),
+                    sequence: event_sequence,
                 });
                 if let Some(label) = pa_client::activity_label(event) {
                     out.send(Msg::Activity { label: label.to_string() });
@@ -1420,6 +1420,26 @@ pub(crate) fn worker_inner(
         }
 
     }
+}
+
+pub(crate) fn meta_event_cursor(
+    meta: &serde_json::Value,
+) -> (Option<u64>, Option<(String, u64)>) {
+    let generation = meta
+        .get("generation")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let sequence = meta
+        .get("sequence")
+        .or_else(|| meta.pointer("/cursor/sequence"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|&seq| seq > 0);
+    let resume = if !generation.is_empty() {
+        sequence.map(|seq| (generation.to_string(), seq))
+    } else {
+        None
+    };
+    (sequence, resume)
 }
 
 #[cfg(test)]
@@ -1543,7 +1563,7 @@ mod tests {
             more: false,
         }
         .is_session_scoped());
-        assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null }.is_session_scoped());
+        assert!(Msg::Event { session: String::new(), event: serde_json::Value::Null, sequence: None }.is_session_scoped());
         assert!(Msg::ExtraCommands(Vec::new()).is_session_scoped());
         assert!(Msg::Stats {
             session: String::new(),
@@ -1780,5 +1800,24 @@ mod tests {
         assert!(direct_loss_for_attached(Some("a"), "a"));
         assert!(!direct_loss_for_attached(Some("a"), "b"));
         assert!(!direct_loss_for_attached(None, "a"));
+    }
+
+    #[test]
+    fn meta_event_cursor_extracts_positive_sequence_and_generation() {
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({"sequence": 0, "generation": "g1"})),
+            (None, None)
+        );
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({"sequence": 3, "generation": ""})),
+            (Some(3), None)
+        );
+        assert_eq!(
+            super::meta_event_cursor(&serde_json::json!({
+                "generation": "g2",
+                "cursor": {"sequence": 7}
+            })),
+            (Some(7), Some(("g2".to_string(), 7)))
+        );
     }
 }

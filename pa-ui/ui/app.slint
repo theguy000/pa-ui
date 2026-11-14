@@ -627,7 +627,7 @@ export component AppWindow inherits Window {
     changed dbg-cy => {
         root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
     }
-    out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 80px;
+    out property <bool> at-bottom: transcript-list.content-y <= -root.scroll-range + 16px;
     /// how far the last row is from the floor of the view, in pixels
     out property <length> from-bottom: max(
         0px,
@@ -684,13 +684,19 @@ export component AppWindow inherits Window {
     );
 
     changed scroll-range => {
-        if (root.follow-bottom && !root.scrollbar-dragging && root.scroll-range >= root.prev-scroll-range && transcript-list.content-y > root.seen-content-y + 1px) {
-            root.reader-moved-up();
-        }
-        // If the scroll range shrank (e.g. busy bar closing) while parked, keep seen-content-y in sync
-        if (root.scroll-range < root.prev-scroll-range && root.follow-bottom && !root.scrollbar-dragging) {
+        // Ignore large transient shrinks while virtualized rows re-measure after model patches;
+        // only clamp small UI chrome shrinks (busy strip / attachments closing).
+        if (root.scroll-range < root.prev-scroll-range
+            && root.prev-scroll-range - root.scroll-range <= 120px
+            && root.follow-bottom
+            && !root.scrollbar-dragging)
+        {
+            root.programmatic-scroll = true;
             transcript-list.content-y = -root.scroll-range;
             root.seen-content-y = transcript-list.content-y;
+            root.programmatic-scroll = false;
+        } else if (root.follow-bottom && root.seen-content-y < -root.scroll-range) {
+            root.seen-content-y = -root.scroll-range;
         }
         root.prev-scroll-range = root.scroll-range;
     }
@@ -700,13 +706,9 @@ export component AppWindow inherits Window {
         interval: 16ms;
         running: root.follow-bottom && !root.scrollbar-dragging && root.from-bottom > 0.5px;
         triggered => {
-            if (transcript-list.content-y > root.seen-content-y + 1px && root.from-bottom > 2px) {
-                root.reader-moved-up();
-                root.seen-content-y = transcript-list.content-y;
-                return;
-            }
             let target = -root.scroll-range;
             let gap = transcript-list.content-y - target;
+            root.programmatic-scroll = true;
             if (!Appearance.smooth-scroll || gap <= 1.5px) {
                 transcript-list.content-y = target;
             } else if (gap > 600px) {
@@ -716,6 +718,7 @@ export component AppWindow inherits Window {
                 transcript-list.content-y = transcript-list.content-y - max(1.5px, gap * 0.28);
             }
             root.seen-content-y = transcript-list.content-y;
+            root.programmatic-scroll = false;
         }
     }
 
@@ -857,10 +860,13 @@ export component AppWindow inherits Window {
     }
 
     public function scroll-to-end() {
-        if (transcript-list.content-y > root.seen-content-y + 1px && root.from-bottom > 2px) {
-            root.reader-moved-up();
+        if (root.follow-bottom && !root.scrollbar-dragging
+            && (!Appearance.smooth-scroll || transcript-list.content-y < -root.scroll-range))
+        {
+            root.programmatic-scroll = true;
+            transcript-list.content-y = -root.scroll-range;
             root.seen-content-y = transcript-list.content-y;
-            return;
+            root.programmatic-scroll = false;
         }
     }
 
@@ -1509,22 +1515,21 @@ export component AppWindow inherits Window {
                 : Theme.composer-handle-fill);
     }
 
-    VerticalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-top: 10px;
-        padding-bottom: 8px;
-        spacing: 10px;
-        // a fixed-height window over a text input that is allowed to grow:
-        // pinning its bottom edge keeps the caret (newest line) in view, which
-        // a fixed-height TextInput does not do on its own
-        // thumbnails, 44px tiles at an 8px pitch, only while something is attached
-        if root.attachment-images.length > 0 : Rectangle {
-            height: 52px;
-            clip: true;
-            background: transparent;
-            HorizontalLayout {
+    // Thumbnails sit in an expanding top slot while the draft and bottom dock stay pinned
+    // to the bottom edge of composer-box, so attach/send never jumps the dock.
+    Rectangle {
+        x: 12px;
+        y: 10px;
+        width: parent.width - 24px;
+        height: max(0px, root.attach-h - 10px);
+        clip: true;
+        visible: root.attach-h > 0.5px;
+        background: transparent;
+        if root.attachment-images.length > 0 : HorizontalLayout {
+                x: 0;
                 y: (parent.height - 44px) / 2;
+                width: parent.width;
+                height: 44px;
                 spacing: 8px;
                 for image[i] in root.attachment-images : Rectangle {
                     width: 44px;
@@ -1580,10 +1585,13 @@ export component AppWindow inherits Window {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
-            }
         }
+    }
 
-        Rectangle {
+    Rectangle {
+            x: 12px;
+            y: parent.height - 8px - 25px - 10px - root.composer-height;
+            width: parent.width - 24px;
             height: root.composer-height;
             background: transparent;
 
@@ -1729,156 +1737,162 @@ export component AppWindow inherits Window {
 
             }
         }
-        HorizontalLayout {
-            spacing: 8px;
-            ActivityChip {
-                subagents: root.activity-subagents;
-                heartbeats: root.activity-heartbeats;
-                shells: root.activity-shells;
-            }
-            Rectangle {
-                horizontal-stretch: 1;
-                background: transparent;
-            }
-            // the context ring sits in the button row, not in the status strip:
-            // the strip appears and disappears with every turn, and a number you
-            // are reading should not travel
-            Rectangle {
-                width: 22px;
-                height: 24px;
-
-                ContextRing {
-                    x: 1px;
-                    y: 2px;
-                    fill: root.context-fill;
+        Rectangle {
+            x: 12px;
+            y: parent.height - 8px - 25px;
+            width: parent.width - 24px;
+            height: 25px;
+            background: transparent;
+            HorizontalLayout {
+                spacing: 8px;
+                ActivityChip {
+                    subagents: root.activity-subagents;
+                    heartbeats: root.activity-heartbeats;
+                    shells: root.activity-shells;
                 }
-
-                // the ring is 20px: the hover target is the whole cell
-                ctx-touch := TouchArea {
-                    x: 0;
-                    y: 0;
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: MouseCursor.pointer;
-                    changed has-hover => { root.ctx-hover = self.has-hover; }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
                 }
+                // the context ring sits in the button row, not in the status strip:
+                // the strip appears and disappears with every turn, and a number you
+                // are reading should not travel
+                Rectangle {
+                    width: 22px;
+                    height: 24px;
 
-                // the numbers behind the ring
-                if root.ctx-hover : Panel {
-                    x: -self.width + 20px;
-                    y: -self.height - 14px;
-                    width: 216px;
-                    height: self.preferred-height;
-                    // A panel of the composer's own: it opens off the ring rather
-                    // than off the window's edge, and its three fields are the
-                    // card's, so a theme that moves the panels leaves this one to
-                    // the composer.
-                    surface: Theme.composer-card-surface;
-                    edge: Theme.composer-card-edge;
-                    shadow: Theme.composer-card-shadow;
-                    border-radius: 8px;
-                    drop-shadow-blur: 10px;
-                    VerticalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        padding-top: 9px;
-                        padding-bottom: 9px;
-                        ContextCard {
-                            fill: root.context-fill;
-                            used: root.context-text;
-                            percent: root.ctx-percent;
-                            messages: root.stat-messages;
-                            tools: root.stat-tools;
-                            input: root.stat-in;
-                            output: root.stat-out;
-                            cached: root.stat-cache;
-                            cost: root.cost-session;
-                            cost-family: root.cost-family;
-                            cost-family-on: root.cost-family-on;
+                    ContextRing {
+                        x: 1px;
+                        y: 2px;
+                        fill: root.context-fill;
+                    }
+
+                    // the ring is 20px: the hover target is the whole cell
+                    ctx-touch := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: MouseCursor.pointer;
+                        changed has-hover => { root.ctx-hover = self.has-hover; }
+                    }
+
+                    // the numbers behind the ring
+                    if root.ctx-hover : Panel {
+                        x: -self.width + 20px;
+                        y: -self.height - 14px;
+                        width: 216px;
+                        height: self.preferred-height;
+                        // A panel of the composer's own: it opens off the ring rather
+                        // than off the window's edge, and its three fields are the
+                        // card's, so a theme that moves the panels leaves this one to
+                        // the composer.
+                        surface: Theme.composer-card-surface;
+                        edge: Theme.composer-card-edge;
+                        shadow: Theme.composer-card-shadow;
+                        border-radius: 8px;
+                        drop-shadow-blur: 10px;
+                        VerticalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-top: 9px;
+                            padding-bottom: 9px;
+                            ContextCard {
+                                fill: root.context-fill;
+                                used: root.context-text;
+                                percent: root.ctx-percent;
+                                messages: root.stat-messages;
+                                tools: root.stat-tools;
+                                input: root.stat-in;
+                                output: root.stat-out;
+                                cached: root.stat-cache;
+                                cost: root.cost-session;
+                                cost-family: root.cost-family;
+                                cost-family-on: root.cost-family-on;
+                            }
                         }
                     }
                 }
-            }
 
-            // attach: a plus in a quiet resting surface, same family as the rest
-            attach := Button {
-                width: 20px;
-                height: 20px;
-                border-radius: 6px;
-                fill: Theme.composer-attach-fill;
-                fill-hover: Theme.composer-attach-fill-hover;
-                described: "Attach a picture";
-                clicked => { root.attach-requested(); }
-                IconPlus {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    tint: attach.hot ? Theme.composer-attach-ink-hover : Theme.composer-attach-ink;
-                }
-            }
-            Chip {
-                label: root.model-label;
-                open: root.model-menu;
-                toggled => {
-                    root.settings-menu = false;
-                    root.model-menu = !root.model-menu;
-                    if root.model-menu {
-                        root.model-menu-opened();
+                // attach: a plus in a quiet resting surface, same family as the rest
+                attach := Button {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 6px;
+                    fill: Theme.composer-attach-fill;
+                    fill-hover: Theme.composer-attach-fill-hover;
+                    described: "Attach a picture";
+                    clicked => { root.attach-requested(); }
+                    IconPlus {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: attach.hot ? Theme.composer-attach-ink-hover : Theme.composer-attach-ink;
                     }
                 }
-            }
-            // One control, two jobs: send while idle, stop while working. One hit
-            // area with the branch inside it, because a button swapped on a
-            // condition does not take clicks here. Both fields are named, not a
-            // kind, since the job changes under the pointer.
-            // Both marks are always present and cross over: the arrow shrinks and
-            // turns, the square grows and turns. Slint cannot interpolate one path
-            // into another, so the morph is scale, rotation and opacity.
-            Button {
-                width: 25px;
-                height: 25px;
-                border-radius: 12.5px;
-                fill: root.stop-mode ? Theme.button-danger-fill : Theme.composer-send-fill;
-                fill-hover: root.stop-mode
-                    ? Theme.button-danger-fill-hover : Theme.composer-send-fill-hover;
-                fade: !Appearance.reduce-motion ? 240ms : 0ms;
-                fade-curve: ease-in-out;
-                described: root.stop-mode ? "Stop the turn" : "Send";
-                clicked => {
-                    root.model-menu = false;
-                    if root.stop-mode {
-                        // the daemon keeps the queue flowing behind the stopped
-                        // run, so the next waiting message is not stranded
-                        root.abort-requested();
-                    } else {
-                        root.send-requested(root.composer-text);
-                        root.composer-text = "";
+                Chip {
+                    label: root.model-label;
+                    open: root.model-menu;
+                    toggled => {
+                        root.settings-menu = false;
+                        root.model-menu = !root.model-menu;
+                        if root.model-menu {
+                            root.model-menu-opened();
+                        }
                     }
                 }
+                // One control, two jobs: send while idle, stop while working. One hit
+                // area with the branch inside it, because a button swapped on a
+                // condition does not take clicks here. Both fields are named, not a
+                // kind, since the job changes under the pointer.
+                // Both marks are always present and cross over: the arrow shrinks and
+                // turns, the square grows and turns. Slint cannot interpolate one path
+                // into another, so the morph is scale, rotation and opacity.
+                Button {
+                    width: 25px;
+                    height: 25px;
+                    border-radius: 12.5px;
+                    fill: root.stop-mode ? Theme.button-danger-fill : Theme.composer-send-fill;
+                    fill-hover: root.stop-mode
+                        ? Theme.button-danger-fill-hover : Theme.composer-send-fill-hover;
+                    fade: !Appearance.reduce-motion ? 240ms : 0ms;
+                    fade-curve: ease-in-out;
+                    described: root.stop-mode ? "Stop the turn" : "Send";
+                    clicked => {
+                        root.model-menu = false;
+                        if root.stop-mode {
+                            // the daemon keeps the queue flowing behind the stopped
+                            // run, so the next waiting message is not stranded
+                            root.abort-requested();
+                        } else {
+                            root.send-requested(root.composer-text);
+                            root.composer-text = "";
+                        }
+                    }
 
-                IconSend {
-                    width: 12px * (1.0 - 0.34 * root.stop-mix);
-                    height: self.width;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    opacity: 1.0 - root.stop-mix;
-                    transform-rotation: root.stop-mix * 45deg;
-                    tint: Theme.composer-send-mark;
-                }
+                    IconSend {
+                        width: 12px * (1.0 - 0.34 * root.stop-mix);
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        opacity: 1.0 - root.stop-mix;
+                        transform-rotation: root.stop-mix * 45deg;
+                        tint: Theme.composer-send-mark;
+                    }
 
-                Rectangle {
-                    width: 2px + 6px * root.stop-mix;
-                    height: self.width;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    // a dot rounding out into a square as it arrives
-                    border-radius: 3px - 1.5px * root.stop-mix;
-                    background: Theme.composer-stop-mark;
-                    opacity: root.stop-mix;
-                    transform-rotation: (1.0 - root.stop-mix) * -45deg;
+                    Rectangle {
+                        width: 2px + 6px * root.stop-mix;
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        // a dot rounding out into a square as it arrives
+                        border-radius: 3px - 1.5px * root.stop-mix;
+                        background: Theme.composer-stop-mark;
+                        opacity: root.stop-mix;
+                        transform-rotation: (1.0 - root.stop-mix) * -45deg;
+                    }
                 }
             }
         }
-    }
                     }
                 }
 

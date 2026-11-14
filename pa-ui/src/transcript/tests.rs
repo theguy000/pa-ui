@@ -664,6 +664,103 @@ mod markup_tests {
         assert!(second.starts_with("\u{200b}<font"), "got {second:?}");
         assert!(second.contains(">  two"), "got {second:?}");
     }
+
+    #[test]
+    fn unclosed_backticks_in_streaming_headings_and_across_tags_parse() {
+        for sample in [
+            "### Current investigation (`pa-ui.",
+            "## heading with `unclosed and **bold",
+            "prose with `unclosed\n> quoted line",
+            "prose with `unclosed\n# Heading line",
+            "`open\n> quote with `close`",
+            r"\`code`",
+            r"\`unclosed",
+            "## heading \\`escaped`",
+            "> quoted **bold",
+            "> quoted **bold\n> more**",
+            "**bold\nsee `code`",
+            "**bold\n`code` and `more`",
+            "All four PRs are **merged into `main`** (`d85b93b`).\n- **Two defects already spotted in `pa-ui`**:",
+            "1. `**bold\\nsee \\`code\\`` produces `**see <font color=\"code\">code**</font>` (opens `**` outside `<font>`, closes inside).\n2. `**bold\\n\\`code\\` and \\`more\\`` produces `<font color=\"code\">**code</font>`",
+        ] {
+            let drawn = markdown_markup(sample, &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("failed on {sample:?}: {error}\n---\n{drawn}"));
+            for line in drawn.lines() {
+                assert_eq!(
+                    line.matches("<font").count(),
+                    line.matches("</font>").count(),
+                    "font tags must balance on line {line:?} for {sample:?}"
+                );
+            }
+        }
+
+        let real_crash = "[agent-message from child:rev94-std]\n\nRe-reviewed PR #94 at HEAD 6ca85c4 and updated C:\\Users\\ISTIAK~1\\AppData\\Local\\Temp\\pa-ui-vm-sync\\rev94.md.\n\nVerdict: changes requested (by static inspection; cargo/rustc not run locally).\n\nVerified clean:\n- pa-ui/src/tick.rs: both new scenarios now run inside status_strip_tests::the_status_strip_holds_and_clears_command_words, drain initial attach jobs, and send events at generation 1.\n- pa-ui/src/transcript/markup.rs: balance_strong + leading_font_prefix_len fix multi-line bold inside # headings and > quotes.\n\nNew issue found in balance_strong (pa-ui/src/transcript/markup.rs:223-268):\n- balance_strong treats any leading `<font ...>` and any trailing `</font>` as an outer line-wrapping `<font>` tag, but prose lines with inline code (`<font color=\"code\">...</font>`) can also start with `<font ` or end with `</font>`:\n  1. `**bold\\nsee \\`code\\`` produces `**see <font color=\"code\">code**</font>` (opens `**` outside `<font>`, closes inside).\n  2. `**bold\\n\\`code\\` and \\`more\\`` produces `<font color=\"code\">**code</font> and <font color=\"code\">more**</font>` (opens `**` inside the first `<font>`, closes inside the second).\n  Crossing `**` across `<font>` boundaries fails `StyledText::from_markdown` and panics in `styled()`. Only step inside `<font>` / `</font>` when the leading `<font>` actually wraps the remainder of the line to the trailing `</font>`.\n\nNext: fix `balance_strong` / `leading_font_prefix_len` so inline-code `<font>` spans on prose lines are not split across `**`.";
+        let mut end = 0usize;
+        while end < real_crash.len() {
+            end += real_crash[end..].chars().next().map_or(1, char::len_utf8);
+            let prefix = &real_crash[..end];
+            let drawn = markdown_markup(prefix, &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("failed at prefix len {end}: {error}\n---\n{drawn}"));
+        }
+
+        let crlf_and_backtick = concat!(
+            "# Goal\r\n",
+            "- fixed `highlight_inline_code` (`\\`-escape, `r\"\\`\"` for unclosed, `strong_markers(&out) % 2 == 1` parity, `\\u{200b}`, `<font>****</font>`)\r\n",
+            "- [ ] **Investigate spacing (`\"space is not properly created.\"`): inspect** `pa-ui/src/transcript/markup.rs` **(e.g., `balance_prose_with_fonts`, whitespace/`\\u{200b}` **around `<font>` / `**` / inline code).**"
+        );
+        for (idx, _) in crlf_and_backtick.char_indices() {
+            let drawn = markdown_markup(&crlf_and_backtick[..idx], &shipped());
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|error| panic!("crlf/backtick failed at {idx}: {error}\n---\n{drawn}"));
+        }
+        StyledText::from_markdown(&markdown_markup(crlf_and_backtick, &shipped()))
+            .expect("full crlf_and_backtick must parse");
+    }
+
+    #[test]
+    fn blank_lines_and_rules_preserve_paragraph_spacing() {
+        let two_paras = markdown_markup("First\n\nSecond", &shipped());
+        let st = StyledText::from_markdown(&two_paras).expect("two paragraphs parse");
+        assert_eq!(two_paras, "First\n\u{200b}\nSecond", "got {two_paras:?}");
+        let _ = st;
+
+        let collapsed = markdown_markup("First\n\n\nSecond", &shipped());
+        assert_eq!(collapsed.matches("\u{200b}").count(), 1, "got {collapsed:?}");
+
+        let with_rule = markdown_markup("Before\n\n---\n\nAfter", &shipped());
+        assert_eq!(with_rule.matches("\u{200b}").count(), 1, "got {with_rule:?}");
+        StyledText::from_markdown(&with_rule).expect("rule spacing parses");
+
+        let trailing = markdown_markup("First\n\n", &shipped());
+        assert!(!trailing.contains("\u{200b}"), "trailing blank should not emit zwsp: {trailing:?}");
+
+        let quoted = quote_markup("One\n\nTwo", &shipped());
+        assert!(!quoted.contains("*\u{200b}*"), "quote blank line wrapped in italics: {quoted:?}");
+        StyledText::from_markdown(&quoted).expect("quoted blank line parses");
+    }
+
+    #[test]
+    fn bold_across_adjacent_inline_code_and_headings_stays_balanced() {
+        let theme = shipped();
+        for sample in [
+            "**bold `code1` `code2`**",
+            "**`code1` `code2`**",
+            "**bold `code1` `code2` end**",
+            "**`a\n\nb`**",
+            "**`a\n   \nb`**",
+            "# **bold\nnext",
+        ] {
+            let drawn = markdown_markup(sample, &theme);
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("failed on {sample:?}: {e}\n---\n{drawn}"));
+        }
+        let multi = markdown_markup("**`code1` `code2` end**", &theme);
+        assert!(multi.contains("**code2**") && multi.contains("**end**"), "got {multi:?}");
+        let heading = markdown_markup("# **bold\nnext", &theme);
+        assert!(!heading.ends_with("**next**"), "heading leaked bold: {heading:?}");
+    }
 }
 
 #[cfg(test)]
@@ -984,5 +1081,25 @@ mod quote_tests {
         assert_eq!(rows[1].kind, KIND_QUOTE);
         assert_eq!(rows[1].body, "*one*\n*two*\n*lazy*");
         assert_eq!(rows[2].kind, KIND_AGENT);
+    }
+
+    #[test]
+    fn strong_depth_handles_code_tags_escapes_and_punctuation_flanking() {
+        assert_eq!(markup::unclosed_strong_depth("`<tag**>` and **open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("<font **>text"), 0);
+        assert_eq!(markup::unclosed_strong_depth("\\**escaped"), 0);
+        assert_eq!(markup::unclosed_strong_depth("trailing\\"), 0);
+        assert_eq!(markup::unclosed_strong_depth("foo(**bar"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**bar)**"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a**b"), 1);
+        assert_eq!(markup::unclosed_strong_depth("a**b**"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a**(b"), 0);
+        assert_eq!(markup::unclosed_strong_depth("**a**(b"), 0);
+        assert_eq!(markup::unclosed_strong_depth("a)**b"), 1);
+        assert_eq!(markup::unclosed_strong_depth("é**open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**open >"), 1);
+        assert_eq!(markup::unclosed_strong_depth("`**` **open"), 1);
+        assert_eq!(markup::unclosed_strong_depth("**foo **bar"), 2);
+        assert_eq!(markup::unclosed_strong_depth("**foo (**bar"), 2);
     }
 }

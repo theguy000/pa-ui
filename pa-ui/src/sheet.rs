@@ -20,7 +20,7 @@ pub(crate) trait Redraw {
     fn remove(&mut self, at: usize);
 }
 
-const MAX_MOUNTED_ROWS: usize = 72;
+pub(crate) const MAX_MOUNTED_ROWS: usize = 72;
 const OVERSCAN_ROWS: usize = 20;
 const SHIFT_STEP: usize = 6;
 
@@ -297,7 +297,18 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         let (target_start, target_end) = if total <= MAX_MOUNTED_ROWS {
             (0, total)
         } else if follow_bottom {
-            (total.saturating_sub(MAX_MOUNTED_ROWS), total)
+            let min_start = total.saturating_sub(MAX_MOUNTED_ROWS);
+            let start = if !force
+                && !vs.content_dirty
+                && vs.win_end <= total
+                && vs.win_start <= min_start
+                && min_start - vs.win_start < SHIFT_STEP
+            {
+                vs.win_start
+            } else {
+                min_start
+            };
+            (start, total)
         } else {
             let scroll_top = (-vs.last_scroll_y).max(0.0);
             let scroll_bottom = scroll_top + vs.last_viewport_h.max(600.0);
@@ -1206,7 +1217,9 @@ impl Redraw for SharedVirtualAdapter {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             let pos = at.min(vs.all_rows.len());
             vs.all_rows.insert(pos, row);
-            vs.content_dirty = true;
+            if vs.win_end <= vs.win_start || pos < vs.win_end {
+                vs.content_dirty = true;
+            }
         }
     }
     fn remove(&mut self, at: usize) {
