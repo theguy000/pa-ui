@@ -16,3 +16,9 @@ opt-level = 2
 lto = false
 codegen-units = 16
 strip = true
+
+# A `cargo run -p pa-ui` window should feel like the shipped one. Slint's layout
+# and renderer live in dependencies, so optimize those; the workspace crates keep
+# the dev profile's checks and backtraces.
+[profile.dev.package."*"]
+opt-level = 2

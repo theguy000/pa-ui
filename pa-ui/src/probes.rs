@@ -329,3 +329,299 @@ mod transcript_scroll_contract {
         );
     }
 }
+
+
+/// Ignored measurements for the window's responsiveness. Run one with
+/// `cargo test --profile fast -p pa-ui -- --ignored --exact probes::lag_probe::<name> --nocapture`
+/// under a display, with `SLINT_DEBUG_PERFORMANCE=refresh_lazy,console` for frames.
+#[cfg(test)]
+mod lag_probe {
+    use crate::{
+        sessions::Sidebar,
+        sheet::{self, Sheet},
+        start_spinner, theme, transcript, AppWindow, Job,
+    };
+    use crossbeam_channel::unbounded;
+    use pa_client::SessionRow;
+    use slint::{ComponentHandle, Model, Timer, TimerMode};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::{Duration, Instant, SystemTime};
+
+    /// Process CPU in milliseconds, from `/proc`. The bench runs on Linux; on
+    /// other platforms the probe reports frames and wall time only.
+    fn cpu_ms() -> Option<f64> {
+        let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+        let after = stat.rsplit(')').next()?;
+        let cols: Vec<&str> = after.split_whitespace().collect();
+        let utime: u64 = cols.get(11).and_then(|v| v.parse().ok())?;
+        let stime: u64 = cols.get(12).and_then(|v| v.parse().ok())?;
+        Some((utime + stime) as f64 * 10.0)
+    }
+
+    /// A deterministic transcript: prose, a fence, a table, a quote, thinking
+    /// and a tool cell, repeated so the Sheet has real work to do.
+    fn messages(count: usize) -> Vec<serde_json::Value> {
+        use serde_json::json;
+        let mut out = Vec::new();
+        for index in 0..count {
+            out.push(json!({
+                "role": "user",
+                "timestamp": index * 4,
+                "content": [{"type": "text", "text": format!("message {index}: the store is the authority, so a poll reconciles rather than trusts. Keep the rest as it is.")}]
+            }));
+            out.push(json!({
+                "role": "assistant",
+                "timestamp": index * 4 + 1,
+                "content": [
+                    {"type": "thinking", "thinking": format!("weigh the two paths for message {index}\n\nand pick the one the store can replay")},
+                    {"type": "text", "text": format!("## Result {index}\n\nThe reconciler keeps the newest row.\n\n```rust\nfn step(x: u32) -> u32 {{\n    x + 1\n}}\n```\n\n| field | meaning |\n| --- | --- |\n| id | the row's key |\n| at | when it landed |\n\n> A poll reconciles; it never trusts.")}
+                ]
+            }));
+            out.push(json!({
+                "role": "assistant",
+                "timestamp": index * 4 + 2,
+                "content": [{"type": "toolCall", "id": format!("call-{index}"), "name": "bash", "arguments": {"code": "cargo test -p pa-ui"}}]
+            }));
+            out.push(json!({
+                "role": "tool",
+                "timestamp": index * 4 + 3,
+                "toolCallId": format!("call-{index}"),
+                "content": [{"type": "text", "text": "316 passed; 0 failed; 4 ignored"}]
+            }));
+        }
+        out
+    }
+
+    fn rows(count: usize) -> Vec<transcript::Row> {
+        let messages = messages(count);
+        transcript::build(&messages, messages.len()).0
+    }
+
+    fn sessions(done: usize) -> Vec<SessionRow> {
+        use serde_json::json;
+        let mut out = Vec::new();
+        for index in 0..2 {
+            out.push(SessionRow::from_value(&json!({
+                "activeSessionId": format!("act-{index}"),
+                "sessionId": format!("uuid-act-{index}"),
+                "name": format!("active-{index}"),
+                "workerState": "ready",
+                "lifecycle": "live",
+                "activity": "working",
+                "isSessionActive": true,
+                "lastActivity": "2026-11-14T12:58:25Z",
+            })));
+        }
+        for index in 0..done {
+            out.push(SessionRow::from_value(&json!({
+                "id": format!("done-{index}"),
+                "sessionId": format!("uuid-done-{index}"),
+                "name": format!("done session {index}"),
+                "lifecycle": "live",
+                "lastActivity": "2026-11-14T10:00:00Z",
+            })));
+        }
+        out
+    }
+
+    enum Driver {
+        None,
+        Scroll,
+        Stream,
+    }
+
+    struct Case {
+        messages: usize,
+        sidebar: bool,
+        busy: bool,
+        driver: Driver,
+    }
+
+    const WARMUP: Duration = Duration::from_millis(600);
+    const WINDOW: Duration = Duration::from_millis(2000);
+
+    fn run(label: &str, case: Case) {
+        let ui = AppWindow::new().expect("window");
+        ui.window().set_size(slint::PhysicalSize::new(1200, 830));
+        let (resolved, _) = theme::select(None);
+        theme::apply(&ui, &resolved);
+
+        let (job_tx, _job_rx) = unbounded::<Job>();
+        let (sheet, model) = Sheet::new();
+        let sheet = Rc::new(sheet);
+        sheet.bind_ui(&ui);
+        ui.set_transcript(model);
+
+        let sidebar = Sidebar::new(&ui, &job_tx);
+        if case.sidebar {
+            sidebar.apply_roster(&ui, sessions(90));
+        }
+        if case.messages > 0 {
+            sheet.replace(rows(case.messages));
+            sheet::force_scroll_to_end(&ui);
+        }
+
+        let spin_timer = Rc::new(Timer::default());
+        let spin_index = Rc::new(Cell::new(0usize));
+        let busy_since = Rc::new(Cell::new(SystemTime::now()));
+        let spin_secs = Rc::new(Cell::new(u64::MAX));
+        let spin_running = Rc::new(Cell::new(false));
+        if case.busy {
+            ui.set_busy(true);
+            ui.set_busy_label("Thinking".into());
+            spin_running.set(true);
+            start_spinner(
+                spin_timer.clone(),
+                ui.as_weak(),
+                spin_index,
+                busy_since,
+                spin_secs,
+                spin_running,
+            );
+        }
+
+        let ticks = Rc::new(Cell::new(0usize));
+        let max_cb = Rc::new(Cell::new(0.0f64));
+        let driver = Rc::new(Timer::default());
+        match case.driver {
+            Driver::None => {}
+            Driver::Scroll => {
+                let weak = ui.as_weak();
+                let ticks = ticks.clone();
+                let max_cb = max_cb.clone();
+                let sheet = sheet.clone();
+                driver.start(TimerMode::Repeated, Duration::from_millis(60), move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    let started = Instant::now();
+                    let n = ticks.get();
+                    ticks.set(n + 1);
+                    if n % 4 == 0 {
+                        ui.invoke_page_scroll(-1);
+                    } else {
+                        ui.invoke_step_scroll(-1);
+                    }
+                    let took = started.elapsed().as_secs_f64() * 1000.0;
+                    if took > max_cb.get() {
+                        max_cb.set(took);
+                    }
+                    let _ = sheet.rows().len();
+                });
+            }
+            Driver::Stream => {
+                use crate::live::Live;
+                let weak = ui.as_weak();
+                let ticks = ticks.clone();
+                let max_cb = max_cb.clone();
+                let sheet = sheet.clone();
+                let mut live = Live::new("live-probe".into());
+                live.set_timestamp("18:58".into());
+                for index in 0..25 {
+                    live.push_text("The store is the authority and the events are advisory, so a poll reconciles rather than trusts. ");
+                    if index % 6 == 5 {
+                        live.push_text("\n\n```rust\nfn step(x: u32) -> u32 { x + 1 }\n```\n\n");
+                    }
+                }
+                sheet.answer_began("live-probe");
+                sheet.merge(live.rows());
+                let live = Rc::new(std::cell::RefCell::new(live));
+                driver.start(TimerMode::Repeated, Duration::from_millis(30), move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    let started = Instant::now();
+                    ticks.set(ticks.get() + 1);
+                    live.borrow_mut().push_text("more streamed token text ");
+                    sheet.merge(live.borrow().rows());
+                    sheet::scroll_if_parked(&ui);
+                    let took = started.elapsed().as_secs_f64() * 1000.0;
+                    if took > max_cb.get() {
+                        max_cb.set(took);
+                    }
+                });
+            }
+        }
+
+        let start_cpu = Rc::new(Cell::new(0.0f64));
+        let start_wall = Rc::new(Cell::new(Instant::now()));
+        let warmup = Rc::new(Timer::default());
+        let cpu = start_cpu.clone();
+        let wall = start_wall.clone();
+        let ticks_reset = ticks.clone();
+        let max_reset = max_cb.clone();
+        warmup.start(TimerMode::SingleShot, WARMUP, move || {
+            cpu.set(cpu_ms().unwrap_or(0.0));
+            wall.set(Instant::now());
+            ticks_reset.set(0);
+            max_reset.set(0.0);
+        });
+
+        let stop = Rc::new(Timer::default());
+        let weak = ui.as_weak();
+        let label = label.to_string();
+        let cpu = start_cpu.clone();
+        let wall = start_wall.clone();
+        let ticks = ticks.clone();
+        let max_cb = max_cb.clone();
+        stop.start(TimerMode::SingleShot, WARMUP + WINDOW, move || {
+            let seconds = wall.get().elapsed().as_secs_f64().max(0.001);
+            let used = cpu_ms().map(|now| now - cpu.get());
+            if let Some(ui) = weak.upgrade() {
+                match used {
+                    Some(used) => eprintln!(
+                        "[lag] {label:<22} wall={seconds:.2}s cpu={used:6.0}ms ({:5.1}% core) ticks={:3} max_cb={:5.2}ms rows={} sidebar={}",
+                        (used / 1000.0) / seconds * 100.0,
+                        ticks.get(),
+                        max_cb.get(),
+                        ui.get_transcript().row_count(),
+                        ui.get_session_entries().row_count(),
+                    ),
+                    None => eprintln!(
+                        "[lag] {label:<22} wall={seconds:.2}s ticks={:3} max_cb={:5.2}ms rows={} sidebar={}",
+                        ticks.get(),
+                        max_cb.get(),
+                        ui.get_transcript().row_count(),
+                        ui.get_session_entries().row_count(),
+                    ),
+                }
+            }
+            let _ = slint::quit_event_loop();
+        });
+
+        ui.run().expect("run");
+    }
+
+    #[test]
+    #[ignore]
+    fn settled_idle() {
+        run(
+            "settled_idle",
+            Case { messages: 20, sidebar: true, busy: false, driver: Driver::None },
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn spinner() {
+        run(
+            "spinner",
+            Case { messages: 20, sidebar: true, busy: true, driver: Driver::None },
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn scroll_across_pages() {
+        run(
+            "scroll_across_pages",
+            Case { messages: 40, sidebar: true, busy: false, driver: Driver::Scroll },
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn stream_delta() {
+        run(
+            "stream_delta",
+            Case { messages: 20, sidebar: true, busy: true, driver: Driver::Stream },
+        );
+    }
+}
