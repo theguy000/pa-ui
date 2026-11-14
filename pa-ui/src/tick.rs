@@ -5060,6 +5060,7 @@ fn main() {}
                 let short_rows = crate::transcript::build(std::slice::from_ref(&short_msg), 1).0;
                 sheet_c.replace(short_rows);
             } else if n == 4 {
+                assert_eq!(ui.get_seen_content_y(), ui.get_dbg_cy());
                 ui.invoke_scroll_to_end();
                 let sr_after = ui.get_scroll_range();
                 assert!(

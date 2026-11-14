@@ -372,10 +372,3 @@ fn to_slint_copies_row_fields_and_timestamp() {
     assert_eq!(trow.elapsed.as_str(), "2s");
     assert_eq!(trow.timestamp.as_str(), "18:25");
 }
-
-#[test]
-fn needs_redraw_only_fires_on_row_mutation_or_window_patch() {
-    assert!(!needs_redraw(false, &ModelPatch::None));
-    assert!(needs_redraw(true, &ModelPatch::None));
-    assert!(needs_redraw(false, &ModelPatch::Full(Vec::new())));
-}

@@ -221,7 +221,6 @@ struct VirtualSlintRows {
     last_viewport_h: f32,
     in_slint_call: bool,
     content_dirty: bool,
-    row_mutated: bool,
 }
 
 impl VirtualSlintRows {
@@ -238,7 +237,6 @@ impl VirtualSlintRows {
             last_viewport_h: 800.0,
             in_slint_call: false,
             content_dirty: false,
-            row_mutated: false,
         }
     }
 
@@ -249,12 +247,8 @@ impl VirtualSlintRows {
     }
 }
 
-fn needs_redraw(row_mutated: bool, patch: &ModelPatch) -> bool {
-    row_mutated || !matches!(patch, ModelPatch::None)
-}
-
 fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
-    let (ui_weak, model, patch, top, bottom, win_start, row_mutated) = {
+    let (ui_weak, model, patch, top, bottom, win_start) = {
         let Ok(mut vs) = vstate.try_borrow_mut() else {
             return;
         };
@@ -359,8 +353,6 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         let old_end = vs.win_end;
         let dirty = vs.content_dirty;
         vs.content_dirty = false;
-        let row_mutated = vs.row_mutated;
-        vs.row_mutated = false;
         let need_shift = force
             || dirty
             || old_end <= old_start
@@ -416,7 +408,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
 
         let (top, bottom, wstart) = vs.compute_spacers();
         vs.in_slint_call = true;
-        (vs.ui.clone(), vs.model.clone(), patch, top, bottom, wstart, row_mutated)
+        (vs.ui.clone(), vs.model.clone(), patch, top, bottom, wstart)
     };
 
     if let Some(ui) = ui_weak.as_ref().and_then(|w| w.upgrade()) {
@@ -431,7 +423,6 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
     }
 
-    let mutated = needs_redraw(row_mutated, &patch);
     match patch {
         ModelPatch::None => {}
         ModelPatch::Full(slice) => {
@@ -485,9 +476,6 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
         if (ui.get_bottom_pad() - bottom2).abs() > 0.5 {
             ui.set_bottom_pad(bottom2);
-        }
-        if mutated {
-            ui.window().request_redraw();
         }
     }
 }
@@ -1217,7 +1205,6 @@ impl Redraw for SharedVirtualAdapter {
             if at < vs.all_rows.len() {
                 vs.all_rows[at] = row.clone();
                 if at >= vs.win_start && at < vs.win_end {
-                    vs.row_mutated = true;
                     model_update = Some((vs.model.clone(), at - vs.win_start, row));
                 }
             }
