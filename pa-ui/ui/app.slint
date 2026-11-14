@@ -293,13 +293,13 @@ export component AppWindow inherits Window {
     callback session-dropped(string, length);
     private property <string> drag-session-id: "";
     private property <string> drag-session-status: "";
-    private property <int> drag-source-index: -1;
+    private property <length> drag-source-y: -1px;
     private property <length> drag-pointer-y: 0px;
 
     function clear-session-drag() {
         root.drag-session-id = "";
         root.drag-session-status = "";
-        root.drag-source-index = -1;
+        root.drag-source-y = -1px;
     }
 
     changed setting-session-order => {
@@ -368,6 +368,11 @@ export component AppWindow inherits Window {
     in-out property <bool> fold-flip: false;
     in-out property <float> fold-mix: 0.0;
     out property <float> fold-progress: root.fold-flip ? root.fold-mix : (1.0 - root.fold-mix);
+    changed fold-progress => {
+        if root.fold-progress >= 0.9999 && root.splice-at.length > 0 {
+            root.fold-settled();
+        }
+    }
     out property <length> animated-sessions-height:
         root.splice-at.length > 0
             ? (root.prev-sessions-height + (root.sessions-height - root.prev-sessions-height) * root.fold-progress)
@@ -470,6 +475,8 @@ export component AppWindow inherits Window {
     // the window listens to this and recomposes `session-entries` from the
     // three item lists plus the fold state
     callback fold-changed();
+    callback fold-settled();
+    callback sidebar-viewport-changed(length, length);
 
     // The session search: whether it is open, the field's text, the row the
     // arrows or the pointer are on, and the rows themselves. The rows are worked
@@ -619,10 +626,19 @@ export component AppWindow inherits Window {
     out property <length> dbg-cy: transcript-list.content-y;
     out property <length> dbg-ch: transcript-list.content-height;
     out property <length> dbg-h: transcript-list.height;
+    out property <length> sidebar-cy: sidebar-list.content-y;
+    out property <length> sidebar-h: sidebar-list.height;
+    changed sidebar-cy => {
+        root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
+    }
+    changed sidebar-h => {
+        root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
+    }
     pure public function get-sidebar-cy() -> length { sidebar-list.content-y }
     public function restore-sidebar-cy(cy: length) {
         let max-scroll = max(0px, sidebar-list.content-height - sidebar-list.height);
         sidebar-list.content-y = clamp(cy, -max-scroll, 0px);
+        root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
     }
     changed dbg-cy => {
         root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
@@ -1115,13 +1131,22 @@ export component AppWindow inherits Window {
                                 && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
                                 && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
                                 && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + 32px;
-                            visible: !entry.is-header && root.row-h(k) > 0.5px
-                                && root.row-opacity(k) > 0.01;
+                            visible: entry.is-header
+                                || (root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01);
                             y: root.row-y(k) - 88px;
                             width: 100%;
                             height: 32px;
-                            opacity: root.row-fade(k);
-                            clip: true;
+                            opacity: entry.is-header ? 1.0 : root.row-fade(k);
+                            clip: !entry.is-header;
+
+                            if entry.is-header : SessionGroupHeader {
+                                width: 100%;
+                                height: 32px;
+                                label: entry.label;
+                                count: entry.count;
+                                closed: entry.folded;
+                                toggled => { root.group-toggled(entry.label); }
+                            }
 
                             if !entry.is-header : SidebarRow {
                                 width: 100%;
@@ -1132,8 +1157,8 @@ export component AppWindow inherits Window {
                                 menu-open: root.menu-id != "" && root.menu-id == entry.item.id;
                                 reorderable: root.setting-session-order == "Manual";
                                 dragging-this: root.drag-session-id == entry.item.id;
-                                drop-before: slot.drop-hit && entry.item.id != root.drag-session-id && k < root.drag-source-index;
-                                drop-after: slot.drop-hit && entry.item.id != root.drag-session-id && k > root.drag-source-index;
+                                drop-before: slot.drop-hit && entry.item.id != root.drag-session-id && entry.at < root.drag-source-y;
+                                drop-after: slot.drop-hit && entry.item.id != root.drag-session-id && entry.at > root.drag-source-y;
                                 draft <=> root.draft;
                                 picked(id) => {
                                     root.model-menu = false;
@@ -1190,7 +1215,7 @@ export component AppWindow inherits Window {
                                     root.hover-title = "";
                                     root.drag-session-id = id;
                                     root.drag-session-status = status;
-                                    root.drag-source-index = k;
+                                    root.drag-source-y = entry.at;
                                     root.drag-pointer-y = py;
                                 }
                                 drag-moved(py) => {
@@ -1209,22 +1234,6 @@ export component AppWindow inherits Window {
                                     }
                                     root.clear-session-drag();
                                 }
-                            }
-                        }
-
-                        for header[k] in root.session-entries : Rectangle {
-                            visible: header.is-header;
-                            y: root.row-y(k) - 88px;
-                            width: 100%;
-                            height: 32px;
-
-                            hdr := SessionGroupHeader {
-                                width: 100%;
-                                height: 32px;
-                                label: header.label;
-                                count: header.count;
-                                closed: header.folded;
-                                toggled => { root.group-toggled(header.label); }
                             }
                         }
                     }

@@ -2302,14 +2302,16 @@ mod status_strip_tests {
         h.ui.set_selected_id("a1".into());
         h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
 
-        let row_mid_y = |id: &str| -> f32 {
+        let entry_mid_y = |pred: &dyn Fn(&crate::SessionEntry) -> bool| -> f32 {
             let entries = h.ui.get_session_entries();
             (0..entries.row_count())
                 .filter_map(|index| entries.row_data(index))
-                .find(|entry| !entry.is_header && entry.item.id.as_str() == id)
+                .find(|entry| pred(entry))
                 .map(|entry| entry.at + 16.0)
-                .expect("row entry y")
+                .expect("entry y")
         };
+        let row_mid_y = |id: &str| entry_mid_y(&|entry| !entry.is_header && entry.item.id.as_str() == id);
+        let header_mid_y = |label: &str| entry_mid_y(&|entry| entry.is_header && entry.label.as_str() == label);
 
         h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
         h.ui.set_done_folded(true);
@@ -2330,7 +2332,7 @@ mod status_strip_tests {
         h.ui.invoke_search_closed();
 
         h.ui.invoke_session_dropped("a2".into(), row_mid_y("i2"));
-        h.ui.invoke_session_dropped("i1".into(), row_mid_y("d1"));
+        h.ui.invoke_session_dropped("i1".into(), header_mid_y("Done"));
         assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
 
         let disk = crate::settings::Settings::load_from(&settings_path);
@@ -2578,6 +2580,15 @@ mod status_strip_tests {
         failed_async_bash_completion_after_idle_renders_with_subsequent_turn();
         appending_rows_beyond_window_keeps_virtual_model_incremental();
         wrapped_rows_preserve_follow_bottom_across_scroll_range_shrink();
+        replacing_large_sheet_only_converts_mounted_window_rows();
+        merging_and_prepending_outside_mounted_window_does_not_convert_offscreen_rows();
+        toggling_offscreen_row_updates_row_without_eager_conversion_until_scrolled_into_view();
+        scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights();
+        multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy();
+        crate::sessions::virtual_sidebar_tests::run_all();
+        tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn();
+        multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation();
+        real_window_layout_and_scroll_remain_gap_free_with_tighter_window();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -5080,5 +5091,455 @@ fn main() {}
         let _ = h.ui.hide();
         appearance.set_smooth_scroll(prev_smooth);
         assert!(verified.get(), "shrink-clamp verification timer must run");
+    }
+
+    fn lazy_markdown_rows(count: usize, prefix: &str) -> Vec<crate::transcript::Row> {
+        let messages: Vec<serde_json::Value> = (0..count)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("{prefix}-{i}"),
+                    "role": if i % 2 == 0 { "user" } else { "assistant" },
+                    "content": [{
+                        "type": "text",
+                        "text": format!("**{prefix} {i}** with `inline_{i}` and [link](https://example.com/{i})")
+                    }]
+                })
+            })
+            .collect();
+        crate::transcript::build(&messages, count).0
+    }
+
+    fn lazy_cell_rows(count: usize, prefix: &str) -> Vec<crate::transcript::Row> {
+        (0..count)
+            .map(|i| crate::transcript::Row {
+                kind: crate::transcript::KIND_CELL,
+                id: format!("call-{prefix}-{i}"),
+                title: format!("bash #{i}"),
+                meta: String::new(),
+                body: String::new(),
+                code: format!("echo step_{i}"),
+                output: format!("output line {i}"),
+                has_code: true,
+                has_output: true,
+                has_body: false,
+                expanded: false,
+                failed: false,
+                reason: String::new(),
+                image: String::new(),
+                message: format!("{prefix}-{i}"),
+                elapsed: String::new(),
+                timestamp: String::new(),
+            })
+            .collect()
+    }
+
+    fn replacing_large_sheet_only_converts_mounted_window_rows() {
+        let h = Harness::new();
+        let model = h.ui.get_transcript();
+        let rows = lazy_markdown_rows(320, "msg");
+        assert!(rows.len() >= 320);
+
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.replace(rows.clone());
+        let conversions_bottom = crate::sheet::conversion_count();
+
+        assert_eq!(conversions_bottom, crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+        let win_start = h.ui.get_window_start() as usize;
+        assert_eq!(win_start, rows.len() - crate::sheet::MAX_MOUNTED_ROWS);
+
+        let last_mounted = slint::Model::row_data(&model, crate::sheet::MAX_MOUNTED_ROWS - 1)
+            .expect("last mounted");
+        let expected_last = crate::sheet::to_slint(rows.last().expect("last row"));
+        assert_eq!(last_mounted.body, expected_last.body);
+        assert_eq!(last_mounted.kind, expected_last.kind);
+
+        h.ui.set_follow_bottom(false);
+        h.ui.invoke_viewport_scrolled(0.0, 800.0);
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.replace(rows.clone());
+        let conversions_top = crate::sheet::conversion_count();
+
+        assert_eq!(conversions_top, crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(h.ui.get_window_start(), 0);
+        let first_mounted = slint::Model::row_data(&model, 0).expect("first mounted");
+        let expected_first = crate::sheet::to_slint(&rows[0]);
+        assert_eq!(first_mounted.body, expected_first.body);
+    }
+
+    fn merging_and_prepending_outside_mounted_window_does_not_convert_offscreen_rows() {
+        let h = Harness::new();
+        let model = h.ui.get_transcript();
+        let rows = lazy_markdown_rows(320, "live");
+        h.ui.set_follow_bottom(false);
+        h.tick.sheet.replace(rows.clone());
+        assert_eq!(h.ui.get_window_start(), 0);
+
+        let mut offscreen_edit = rows[319].clone();
+        offscreen_edit.body = "offscreen **updated**".to_string();
+        let appended = lazy_markdown_rows(1, "tail-new");
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.merge(vec![offscreen_edit, appended[0].clone()]);
+        assert_eq!(crate::sheet::conversion_count(), 0);
+
+        let mut mounted_edit = rows[5].clone();
+        mounted_edit.body = "mounted **updated**".to_string();
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.merge(vec![mounted_edit.clone()]);
+        assert_eq!(crate::sheet::conversion_count(), 1);
+        let updated_trow = slint::Model::row_data(&model, 5).expect("updated mounted row");
+        assert_eq!(updated_trow.body, crate::sheet::to_slint(&mounted_edit).body);
+
+        let older = lazy_markdown_rows(60, "old");
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.prepend(older.clone());
+        assert_eq!(crate::sheet::conversion_count(), 0);
+        assert_eq!(h.ui.get_window_start() as usize, older.len());
+        let expected_top_pad: f32 = older.iter().map(crate::sheet::estimate_row_height).sum();
+        assert!((h.ui.get_top_pad() - expected_top_pad).abs() < 1.0);
+
+        h.ui.set_follow_bottom(true);
+        h.tick.sheet.replace(rows);
+        let streaming_next = lazy_markdown_rows(1, "stream-next");
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.merge(streaming_next);
+        assert_eq!(crate::sheet::conversion_count(), 1);
+    }
+
+    fn toggling_offscreen_row_updates_row_without_eager_conversion_until_scrolled_into_view() {
+        let h = Harness::new();
+        let model = h.ui.get_transcript();
+        let rows = lazy_cell_rows(320, "cell");
+        h.tick.sheet.replace(rows);
+        let offscreen_idx = 10usize;
+        assert!(offscreen_idx < h.ui.get_window_start() as usize);
+
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.toggle(offscreen_idx);
+        assert_eq!(crate::sheet::conversion_count(), 0);
+        assert!(h.tick.sheet.rows()[offscreen_idx].expanded);
+
+        let mounted_idx = 319usize;
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.toggle(mounted_idx);
+        assert_eq!(crate::sheet::conversion_count(), 1);
+        assert!(h.tick.sheet.rows()[mounted_idx].expanded);
+        let mounted_trow =
+            slint::Model::row_data(&model, mounted_idx - h.ui.get_window_start() as usize)
+                .expect("mounted toggled row");
+        assert!(mounted_trow.expanded);
+
+        h.ui.set_follow_bottom(false);
+        crate::sheet::reset_conversion_count();
+        h.ui.invoke_viewport_scrolled(0.0, 800.0);
+        let scrolled_conversions = crate::sheet::conversion_count();
+        assert!(scrolled_conversions > 0 && scrolled_conversions <= crate::sheet::MAX_MOUNTED_ROWS);
+
+        let win_start = h.ui.get_window_start() as usize;
+        assert!(
+            offscreen_idx >= win_start
+                && offscreen_idx < win_start + slint::Model::row_count(&model)
+        );
+        let revealed =
+            slint::Model::row_data(&model, offscreen_idx - win_start).expect("revealed row");
+        assert!(revealed.expanded);
+        let expected = crate::sheet::to_slint(&h.tick.sheet.rows()[offscreen_idx]);
+        assert_eq!(revealed.code, expected.code);
+        assert_eq!(revealed.output, expected.output);
+    }
+
+    fn scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights() {
+        let h = Harness::new();
+        let model = h.ui.get_transcript();
+        let mut rows = lazy_markdown_rows(320, "scroll");
+        for (i, r) in rows.iter_mut().enumerate() {
+            if i % 5 == 0 {
+                r.kind = crate::transcript::KIND_QUOTE;
+            }
+        }
+        let expected_total_height: f32 = rows.iter().map(crate::sheet::estimate_row_height).sum();
+        let row_heights: Vec<f32> = rows.iter().map(crate::sheet::estimate_row_height).collect();
+
+        h.tick.sheet.replace(rows.clone());
+        let win_start_bottom = h.ui.get_window_start() as usize;
+        let mounted_bottom_h: f32 = row_heights[win_start_bottom..].iter().sum();
+        assert!(
+            (h.ui.get_top_pad() + mounted_bottom_h + h.ui.get_bottom_pad() - expected_total_height)
+                .abs()
+                < 1.0
+        );
+
+        h.ui.set_follow_bottom(false);
+        let slight_up_scroll = -(h.ui.get_top_pad() + 300.0);
+        crate::sheet::reset_conversion_count();
+        h.ui.invoke_viewport_scrolled(slight_up_scroll, 800.0);
+        let slide_conversions = crate::sheet::conversion_count();
+        let win_start_slide = h.ui.get_window_start() as usize;
+        assert!(win_start_slide < win_start_bottom);
+        assert!(slide_conversions > 0 && slide_conversions < crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(slide_conversions, win_start_bottom - win_start_slide);
+
+        crate::sheet::reset_conversion_count();
+        h.ui.invoke_viewport_scrolled(0.0, 800.0);
+        let top_conversions = crate::sheet::conversion_count();
+        assert!(top_conversions > 0 && top_conversions <= crate::sheet::MAX_MOUNTED_ROWS);
+        assert_eq!(h.ui.get_window_start(), 0);
+        assert!((h.ui.get_top_pad() - 0.0).abs() < 0.5);
+
+        let mounted_top_count = slint::Model::row_count(&model);
+        for (i, row) in rows.iter().enumerate().take(mounted_top_count) {
+            let actual = slint::Model::row_data(&model, i).expect("top mounted row");
+            let expected = crate::sheet::to_slint(row);
+            assert_eq!(actual.kind, expected.kind);
+            assert_eq!(actual.title, expected.title);
+            assert_eq!(actual.body, expected.body);
+        }
+
+        let mid_scroll = -(expected_total_height * 0.5);
+        crate::sheet::reset_conversion_count();
+        h.ui.invoke_viewport_scrolled(mid_scroll, 800.0);
+        let mid_conversions = crate::sheet::conversion_count();
+        assert!(mid_conversions > 0 && mid_conversions <= crate::sheet::MAX_MOUNTED_ROWS);
+
+        let mid_start = h.ui.get_window_start() as usize;
+        let mid_count = slint::Model::row_count(&model);
+        assert!(mid_start > 0 && mid_start + mid_count < rows.len());
+        let mounted_mid_h: f32 = row_heights[mid_start..mid_start + mid_count].iter().sum();
+        assert!(
+            (h.ui.get_top_pad() + mounted_mid_h + h.ui.get_bottom_pad() - expected_total_height)
+                .abs()
+                < 1.0
+        );
+        for k in 0..mid_count {
+            let actual = slint::Model::row_data(&model, k).expect("mid mounted row");
+            let expected = crate::sheet::to_slint(&rows[mid_start + k]);
+            assert_eq!(actual.kind, expected.kind);
+            assert_eq!(actual.body, expected.body);
+        }
+    }
+
+    fn multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy() {
+        let h = Harness::new();
+        let rows = lazy_markdown_rows(220, "m");
+        h.tick.sheet.replace(rows.clone());
+        h.ui.set_follow_bottom(true);
+        h.ui.set_scrollbar_dragging(false);
+        h.ui.invoke_viewport_scrolled(-100000.0, 800.0);
+
+        let before_start = h.ui.get_window_start();
+        let model = h.ui.get_transcript();
+        let mounted_first_body = slint::Model::row_data(&model, 0).unwrap().body.clone();
+
+        let mut row0 = rows[0].clone();
+        row0.body = "updated m0".to_string();
+        let mut row0b = rows[0].clone();
+        row0b.id = "extra-0b".to_string();
+        row0b.body = "extra m0 row".to_string();
+        let mut row5 = rows[5].clone();
+        row5.body = "updated m5".to_string();
+
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.merge(vec![row0, row0b, row5]);
+
+        assert_eq!(crate::sheet::conversion_count(), 0);
+        assert_eq!(h.ui.get_window_start(), before_start + 1);
+        assert_eq!(slint::Model::row_data(&model, 0).unwrap().body, mounted_first_body);
+    }
+
+    fn tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn() {
+        const { assert!(crate::sheet::MAX_MOUNTED_ROWS <= 40); }
+        const { assert!(crate::sheet::OVERSCAN_ROWS <= 10); }
+        let h = Harness::new();
+        let model = h.ui.get_transcript();
+        let mut rows = lazy_cell_rows(320, "compact");
+        h.ui.set_follow_bottom(true);
+        h.tick.sheet.replace(rows.clone());
+        assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+        assert!(slint::Model::row_count(&model) <= 40);
+
+        for step in 0..12 {
+            let next = lazy_cell_rows(1, &format!("live-turn-{step}"));
+            rows.extend(next.clone());
+            h.tick.sheet.merge(next);
+            assert!(slint::Model::row_count(&model) <= 45);
+        }
+
+        h.ui.set_follow_bottom(false);
+        let row_h = crate::sheet::estimate_row_height(&rows[0]);
+        assert_eq!(row_h, 28.0);
+        for first_vis in [0usize, 80, 150, 240, 290] {
+            let scroll_top = first_vis as f32 * row_h + 1.0;
+            let viewport_h = 1000.0;
+            h.ui.invoke_viewport_scrolled(-scroll_top, viewport_h);
+            let win_start = h.ui.get_window_start() as usize;
+            let mounted = slint::Model::row_count(&model);
+            let win_end = win_start + mounted;
+            assert!(mounted <= 40);
+            let last_vis = (((scroll_top + viewport_h) / row_h).floor() as usize).min(rows.len() - 1);
+            assert!(win_start <= first_vis);
+            assert!(win_end > last_vis);
+        }
+
+        let mut scroll_y = -(rows.len() as f32 * row_h - 800.0);
+        while scroll_y < 0.0 {
+            scroll_y = (scroll_y + 180.0).min(0.0);
+            h.ui.invoke_viewport_scrolled(scroll_y, 800.0);
+            let win_start = h.ui.get_window_start() as usize;
+            let mounted = slint::Model::row_count(&model);
+            let win_end = win_start + mounted;
+            assert!(mounted <= 40);
+            let top_vis = ((-scroll_y) / row_h).floor() as usize;
+            let bot_vis = (((-scroll_y + 800.0) / row_h).floor() as usize).min(rows.len() - 1);
+            assert!(win_start <= top_vis);
+            assert!(win_end > bot_vis);
+        }
+    }
+
+    fn multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation() {
+        let h = Harness::new();
+        h.ui.window().set_size(slint::PhysicalSize::new(1200, 800));
+        let appearance = crate::Appearance::get(&h.ui);
+        let prev_smooth = appearance.get_smooth_scroll();
+        appearance.set_smooth_scroll(false);
+        h.ui.set_follow_bottom(false);
+        h.ui.show().expect("show window");
+
+        let rows = lazy_markdown_rows(320, "meas");
+        let row_heights: Vec<f32> = rows.iter().map(crate::sheet::estimate_row_height).collect();
+        h.tick.sheet.replace(rows.clone());
+
+        let verified = Rc::new(std::cell::Cell::new(false));
+        let verified_c = verified.clone();
+        let ui_w = h.ui.as_weak();
+        let total_rows = rows.len();
+        slint::Timer::single_shot(Duration::from_millis(40), move || {
+            let Some(ui) = ui_w.upgrade() else { return };
+            let scroll_top: f32 = row_heights[..160].iter().sum();
+            ui.invoke_set_scroll_y(-scroll_top);
+            let ui_w2 = ui.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(40), move || {
+                let Some(ui) = ui_w2.upgrade() else { return };
+                ui.invoke_viewport_scrolled(ui.get_dbg_cy(), ui.get_dbg_h());
+                let ui_w3 = ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(20), move || {
+                    let Some(ui) = ui_w3.upgrade() else { return };
+                    let model = ui.get_transcript();
+                    let win_start = ui.get_window_start() as usize;
+                    let win_end = win_start + slint::Model::row_count(&model);
+                    assert!(win_start >= 10 && win_end + 10 <= total_rows);
+
+                    let initial_top = ui.get_top_pad();
+                    let initial_bottom = ui.get_bottom_pad();
+                    let initial_cy = ui.get_dbg_cy();
+
+                    crate::sheet::reset_spacer_write_count();
+                    crate::sheet::reset_scroll_compensation_count();
+
+                    assert!(win_start >= 30);
+                    let mut top_delta = 0.0f32;
+                    for (idx, &h) in row_heights
+                        .iter()
+                        .enumerate()
+                        .take(win_start - 17)
+                        .skip(win_start - 25)
+                    {
+                        top_delta += 15.0;
+                        ui.invoke_row_measured(idx as i32, h + 15.0);
+                    }
+                    let mut bottom_delta = 0.0f32;
+                    for (idx, &h) in row_heights.iter().enumerate().skip(win_end).take(8) {
+                        bottom_delta += 18.0;
+                        ui.invoke_row_measured(idx as i32, h + 18.0);
+                    }
+
+                    assert_eq!(crate::sheet::spacer_write_count(), 0);
+                    assert_eq!(crate::sheet::scroll_compensation_count(), 0);
+                    let exp_top = initial_top + top_delta;
+                    let exp_bottom = initial_bottom + bottom_delta;
+                    let exp_cy = initial_cy - top_delta;
+                    let ui_w4 = ui.as_weak();
+                    let verified_c2 = verified_c.clone();
+                    slint::Timer::single_shot(Duration::from_millis(40), move || {
+                        let Some(ui) = ui_w4.upgrade() else { return };
+                        assert!(
+                            crate::sheet::spacer_write_count() <= 2,
+                            "expected coalesced spacer writes <= 2, got {}",
+                            crate::sheet::spacer_write_count()
+                        );
+                        assert_eq!(crate::sheet::scroll_compensation_count(), 1);
+                        assert!((ui.get_top_pad() - exp_top).abs() < 1.0);
+                        assert!((ui.get_bottom_pad() - exp_bottom).abs() < 1.0);
+                        assert!((ui.get_dbg_cy() - exp_cy).abs() < 1.5);
+                        verified_c2.set(true);
+                        let _ = slint::quit_event_loop();
+                    });
+                });
+            });
+        });
+        slint::run_event_loop().expect("event loop");
+        let _ = h.ui.hide();
+        appearance.set_smooth_scroll(prev_smooth);
+        assert!(verified.get());
+    }
+
+    fn real_window_layout_and_scroll_remain_gap_free_with_tighter_window() {
+        let h = Harness::new();
+        h.ui.window().set_size(slint::PhysicalSize::new(1200, 800));
+        let appearance = crate::Appearance::get(&h.ui);
+        let prev_smooth = appearance.get_smooth_scroll();
+        appearance.set_smooth_scroll(false);
+        h.ui.set_follow_bottom(true);
+        h.ui.show().expect("show window");
+
+        let rows = lazy_markdown_rows(320, "real");
+        h.tick.sheet.replace(rows.clone());
+        crate::sheet::force_scroll_to_end(&h.ui);
+
+        let verified = Rc::new(std::cell::Cell::new(false));
+        let verified_c = verified.clone();
+        let ui_w = h.ui.as_weak();
+        let sheet_c = h.tick.sheet.clone();
+        slint::Timer::single_shot(Duration::from_millis(40), move || {
+            let Some(ui) = ui_w.upgrade() else { return };
+            let model = ui.get_transcript();
+            assert!(slint::Model::row_count(&model) <= 40);
+            ui.invoke_scroll_to_end();
+            assert!(ui.get_follow_bottom());
+            assert!(ui.get_from_bottom() <= 1.0);
+
+            ui.invoke_reader_moved_up();
+            ui.invoke_set_scroll_y(-ui.get_scroll_range() * 0.4);
+            let ui_w2 = ui.as_weak();
+            let sheet_c2 = sheet_c.clone();
+            let verified_c2 = verified_c.clone();
+            slint::Timer::single_shot(Duration::from_millis(40), move || {
+                let Some(ui) = ui_w2.upgrade() else { return };
+                let model = ui.get_transcript();
+                assert!(slint::Model::row_count(&model) <= 40);
+                let win_start = ui.get_window_start() as usize;
+                assert!(win_start > 0);
+                assert!(ui.get_top_pad() > 0.0);
+                assert!(ui.get_bottom_pad() > 0.0);
+
+                ui.invoke_force_scroll_to_end();
+                ui.invoke_scroll_to_end();
+                sheet_c2.replace(lazy_markdown_rows(3, "short"));
+                let ui_w3 = ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(40), move || {
+                    let Some(ui) = ui_w3.upgrade() else { return };
+                    ui.invoke_scroll_to_end();
+                    assert!(ui.get_follow_bottom());
+                    assert_eq!(ui.get_window_start(), 0);
+                    assert!(ui.get_top_pad() <= 0.5);
+                    assert!(ui.get_bottom_pad() <= 0.5);
+                    verified_c2.set(true);
+                    let _ = slint::quit_event_loop();
+                });
+            });
+        });
+        slint::run_event_loop().expect("event loop");
+        let _ = h.ui.hide();
+        appearance.set_smooth_scroll(prev_smooth);
+        assert!(verified.get());
     }
 }

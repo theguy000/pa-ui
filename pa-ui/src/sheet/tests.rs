@@ -10,13 +10,13 @@ use std::rc::Rc;
 struct Recording(Rc<RefCell<Vec<Order>>>);
 
 impl Redraw for Recording {
-    fn reset(&mut self, rows: Vec<TRow>) {
+    fn reset(&mut self, rows: &[Row]) {
         self.0.borrow_mut().push(Order::Reset { rows: rows.len() });
     }
-    fn set(&mut self, at: usize, _row: TRow) {
+    fn set(&mut self, at: usize, _row: &Row) {
         self.0.borrow_mut().push(Order::Set { at });
     }
-    fn insert(&mut self, at: usize, _row: TRow) {
+    fn insert(&mut self, at: usize, _row: &Row) {
         self.0.borrow_mut().push(Order::Insert { at });
     }
     fn remove(&mut self, at: usize) {
