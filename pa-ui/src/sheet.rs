@@ -404,50 +404,46 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
 
         let patch = if !need_shift {
             ModelPatch::None
-        } else if !force
-            && !dirty
-            && old_end > old_start
-            && old_end <= total
-            && vs.model.row_count() == (old_end - old_start)
-            && target_start < old_start
-            && target_end > old_start
-            && target_end <= old_end
-            && (old_start - target_start) <= 16
-        {
-            let remove_end = old_end - target_end;
-            let prepend_rows = vs.materialize_range(target_start..old_start);
-            vs.win_start = target_start;
-            vs.win_end = target_end;
-            vs.evict_outside_window();
-            ModelPatch::SlideUp {
-                remove_end,
-                prepend_rows,
-            }
-        } else if !force
-            && !dirty
-            && old_end > old_start
-            && old_end <= total
-            && vs.model.row_count() == (old_end - old_start)
-            && target_start >= old_start
-            && target_start < old_end
-            && target_end > old_end
-            && (target_end - old_end) <= 16
-        {
-            let remove_start = target_start - old_start;
-            let append_rows = vs.materialize_range(old_end..target_end);
-            vs.win_start = target_start;
-            vs.win_end = target_end;
-            vs.evict_outside_window();
-            ModelPatch::SlideDown {
-                remove_start,
-                append_rows,
-            }
         } else {
+            let p = if !force
+                && !dirty
+                && old_end > old_start
+                && old_end <= total
+                && vs.model.row_count() == (old_end - old_start)
+                && target_start < old_start
+                && target_end > old_start
+                && target_end <= old_end
+                && (old_start - target_start) <= 16
+            {
+                let remove_end = old_end - target_end;
+                let prepend_rows = vs.materialize_range(target_start..old_start);
+                ModelPatch::SlideUp {
+                    remove_end,
+                    prepend_rows,
+                }
+            } else if !force
+                && !dirty
+                && old_end > old_start
+                && old_end <= total
+                && vs.model.row_count() == (old_end - old_start)
+                && target_start >= old_start
+                && target_start < old_end
+                && target_end > old_end
+                && (target_end - old_end) <= 16
+            {
+                let remove_start = target_start - old_start;
+                let append_rows = vs.materialize_range(old_end..target_end);
+                ModelPatch::SlideDown {
+                    remove_start,
+                    append_rows,
+                }
+            } else {
+                ModelPatch::Full(vs.materialize_range(target_start..target_end))
+            };
             vs.win_start = target_start;
             vs.win_end = target_end;
-            let slice = vs.materialize_range(target_start..target_end);
             vs.evict_outside_window();
-            ModelPatch::Full(slice)
+            p
         };
 
         let (top, bottom, wstart) = vs.compute_spacers();
@@ -1267,7 +1263,10 @@ impl Redraw for SharedVirtualAdapter {
             let pos = at.min(vs.all_rows.len());
             vs.all_rows.insert(pos, row.clone());
             vs.cached.insert(pos, None);
-            if vs.win_end <= vs.win_start || pos < vs.win_end {
+            if vs.win_end > vs.win_start && pos < vs.win_start {
+                vs.win_start += 1;
+                vs.win_end += 1;
+            } else if vs.win_end <= vs.win_start || pos < vs.win_end {
                 vs.content_dirty = true;
             }
         }
@@ -1277,7 +1276,10 @@ impl Redraw for SharedVirtualAdapter {
             if at < vs.all_rows.len() {
                 vs.all_rows.remove(at);
                 vs.cached.remove(at);
-                if at < vs.win_end {
+                if vs.win_end > vs.win_start && at < vs.win_start {
+                    vs.win_start -= 1;
+                    vs.win_end -= 1;
+                } else if at < vs.win_end {
                     vs.content_dirty = true;
                 }
             }

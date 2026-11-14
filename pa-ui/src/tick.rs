@@ -2582,6 +2582,7 @@ mod status_strip_tests {
         merging_and_prepending_outside_mounted_window_does_not_convert_offscreen_rows();
         toggling_offscreen_row_updates_row_without_eager_conversion_until_scrolled_into_view();
         scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights();
+        multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -5309,5 +5310,33 @@ fn main() {}
             assert_eq!(actual.kind, expected.kind);
             assert_eq!(actual.body, expected.body);
         }
+    }
+
+    fn multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy() {
+        let h = Harness::new();
+        let rows = lazy_markdown_rows(220, "m");
+        h.tick.sheet.replace(rows.clone());
+        h.ui.set_follow_bottom(true);
+        h.ui.set_scrollbar_dragging(false);
+        h.ui.invoke_viewport_scrolled(-100000.0, 800.0);
+
+        let before_start = h.ui.get_window_start();
+        let model = h.ui.get_transcript();
+        let mounted_first_body = slint::Model::row_data(&model, 0).unwrap().body.clone();
+
+        let mut row0 = rows[0].clone();
+        row0.body = "updated m0".to_string();
+        let mut row0b = rows[0].clone();
+        row0b.id = "extra-0b".to_string();
+        row0b.body = "extra m0 row".to_string();
+        let mut row5 = rows[5].clone();
+        row5.body = "updated m5".to_string();
+
+        crate::sheet::reset_conversion_count();
+        h.tick.sheet.merge(vec![row0, row0b, row5]);
+
+        assert_eq!(crate::sheet::conversion_count(), 0);
+        assert_eq!(h.ui.get_window_start(), before_start + 1);
+        assert_eq!(slint::Model::row_data(&model, 0).unwrap().body, mounted_first_body);
     }
 }
