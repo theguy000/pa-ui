@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::transcript::{self, Row};
 
-pub enum Part {
+enum Part {
     Thinking(String),
     Text(String),
     Tool {
@@ -35,7 +35,7 @@ pub struct Live {
     /// which message these rows are: the store's copy of it replaces them
     pub message: String,
     pub timestamp: String,
-    pub parts: Vec<Part>,
+    parts: Vec<Part>,
     /// One entry per part. A text part keeps the blocks that can no longer
     /// change, so a delta parses its own paragraph instead of the whole answer.
     cache: RefCell<Vec<PartCache>>,
@@ -153,24 +153,7 @@ impl Live {
             match part {
                 Part::Thinking(text) => out.extend(self.text_rows(index, PartKind::Thinking, text)),
                 Part::Text(text) => out.extend(self.text_rows(index, PartKind::Text, text)),
-                Part::Tool {
-                    id,
-                    args,
-                    output,
-                    failed,
-                    bash,
-                    duration,
-                } => {
-                    let mut row = transcript::tool_cell(id, args);
-                    if let Some(output) = output {
-                        transcript::finish_cell(&mut row, output, *failed);
-                    }
-                    if let Some(info) = bash {
-                        let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
-                        transcript::apply_header(&mut row, code, Some(info), *duration);
-                    }
-                    out.push(row);
-                }
+                Part::Tool { .. } => out.extend(tool_row(part)),
             }
         }
         for row in &mut out {
@@ -217,6 +200,29 @@ impl Live {
     }
 }
 
+fn tool_row(part: &Part) -> Option<Row> {
+    let Part::Tool {
+        id,
+        args,
+        output,
+        failed,
+        bash,
+        duration,
+    } = part
+    else {
+        return None;
+    };
+    let mut row = transcript::tool_cell(id, args);
+    if let Some(output) = output {
+        transcript::finish_cell(&mut row, output, *failed);
+    }
+    if let Some(info) = bash {
+        let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
+        transcript::apply_header(&mut row, code, Some(info), *duration);
+    }
+    Some(row)
+}
+
 /// The last position at which a new block starts in the transcript builder's
 /// terms: a fence opener or closer, a quote's first line, a table's header, or
 /// the blank line that ends a quote or a table. Prose is one block from one of
@@ -234,14 +240,14 @@ fn stable_boundary(text: &str, from: usize) -> Option<usize> {
         let line = &text[cursor..end];
         let trimmed = line.trim();
         if in_fence {
-            if trimmed.starts_with("```") {
+            if transcript::is_fence(line) {
                 in_fence = false;
                 boundary = Some(end);
             }
-        } else if trimmed.starts_with("```") {
+        } else if transcript::is_fence(line) {
             boundary = Some(cursor);
             in_fence = true;
-        } else if trimmed.starts_with('>') {
+        } else if transcript::is_quote(line) {
             if !previous_quote {
                 boundary = Some(cursor);
             }
@@ -258,7 +264,7 @@ fn stable_boundary(text: &str, from: usize) -> Option<usize> {
         } else if in_table {
             in_table = false;
         }
-        previous_quote = !trimmed.is_empty() && trimmed.starts_with('>');
+        previous_quote = transcript::is_quote(line);
         cursor = end;
     }
     boundary
@@ -280,12 +286,12 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(crate) fn reset_parsed_bytes() {
+fn reset_parsed_bytes() {
     PARSED_BYTES.with(|bytes| bytes.set(0));
 }
 
 #[cfg(test)]
-pub(crate) fn parsed_bytes() -> usize {
+fn parsed_bytes() -> usize {
     PARSED_BYTES.with(std::cell::Cell::get)
 }
 
@@ -317,6 +323,9 @@ mod tests {
             "- one\n\n- two\n\n- three\n\nafter the list".into(),
             "- one\n- two\n\nafter the list".into(),
             "> quoted\n> more\n\nafter\n\n> second quote".into(),
+            "> quoted\nlazy continuation\n\nnext paragraph".into(),
+            "> quoted\n\n| a | b |\n| --- | --- |\n| 1 | 2 |".into(),
+            "> quoted\n\nafter the quote".into(),
             "| a | b |\n| --- | --- |\n| 1 | 2 |\n\nafter the table".into(),
             "# Head\n\nbody\n\n## Sub\n\nmore body".into(),
             "before\n\n```rust\nfn a() {}\n\nstill inside the fence".into(),
@@ -334,7 +343,7 @@ mod tests {
             match part {
                 Part::Thinking(text) => out.extend(block_rows("thinking", text)),
                 Part::Text(text) => out.extend(block_rows("text", text)),
-                Part::Tool { .. } => {}
+                Part::Tool { .. } => out.extend(tool_row(part)),
             }
         }
         for row in &mut out {
@@ -408,6 +417,9 @@ mod tests {
         live.push_thinking("first thought\n\nsecond thought");
         let first = live.rows();
         live.push_text("answer");
+        live.start_tool("call-1", serde_json::json!({"code": "cargo test"}));
+        live.finish_tool("call-1", "ok".into(), false, None, Some(12));
+        live.push_text("after the tool");
         live.push_thinking(" and more");
         let rows = live.rows();
         assert_eq!(rows, rows_full(&live));

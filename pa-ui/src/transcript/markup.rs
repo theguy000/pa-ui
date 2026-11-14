@@ -489,6 +489,16 @@ pub(crate) fn quote_body(line: &str) -> Option<&str> {
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
+/// Whether the line opens or closes a fenced block.
+pub(crate) fn is_fence(line: &str) -> bool {
+    line.trim_start().starts_with("```")
+}
+
+/// Whether the line is a quote line, lazy continuation aside.
+pub(crate) fn is_quote(line: &str) -> bool {
+    quote_body(line).is_some()
+}
+
 
 /// A message's markdown, in the renderer's own markup: a heading becomes a bold
 /// line in the heading's ink, a rule becomes a blank line, a quote becomes a
@@ -692,6 +702,11 @@ pub(crate) fn split_table_row(line: &str) -> Vec<String> {
 }
 
 
+/// Whether a line starts a table: a pipe row over a delimiter row.
+pub(crate) fn starts_table(line: &str, next: &str) -> bool {
+    line.contains('|') && is_delimiter_row(next)
+}
+
 /// The `|---|:--:|` row that turns the line above it into a table header.
 pub(crate) fn is_delimiter_row(line: &str) -> bool {
     let trimmed = line.trim();
@@ -824,7 +839,7 @@ pub(crate) fn flush_prose(prose: &mut Vec<String>, out: &mut Vec<Block>) {
 fn starts_other_block(line: &str) -> bool {
     let trimmed = line.trim_start();
     if trimmed.starts_with('#')
-        || trimmed.starts_with("```")
+        || is_fence(line)
         || trimmed.starts_with("- ")
         || trimmed.starts_with("* ")
         || trimmed.starts_with("+ ")
@@ -882,7 +897,9 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
                 }
                 if !lazy
                     || starts_other_block(next)
-                    || (next.contains('|') && lines.get(index + 1).is_some_and(|row| is_delimiter_row(row)))
+                    || lines
+                        .get(index + 1)
+                        .is_some_and(|row| starts_table(next, row))
                 {
                     break;
                 }
@@ -897,7 +914,7 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
             }
             continue;
         }
-        if index + 1 < lines.len() && super::starts_table(line, lines[index + 1]) {
+        if index + 1 < lines.len() && starts_table(line, lines[index + 1]) {
             flush_prose(&mut prose, &mut out);
             let mut raw: Vec<&str> = vec![line, lines[index + 1]];
             index += 2;

@@ -359,9 +359,9 @@ mod lag_probe {
         Some((utime + stime) as f64 * 10.0)
     }
 
-    /// A deterministic transcript: prose, a fence, a table, a quote, thinking
-    /// and a tool cell, repeated so the Sheet has real work to do.
-    fn messages(count: usize) -> Vec<serde_json::Value> {
+    /// A deterministic transcript: one Turn per iteration, carrying prose, a
+    /// fence, a table, a quote, thinking and a tool cell.
+    fn turns(count: usize) -> Vec<serde_json::Value> {
         use serde_json::json;
         let mut out = Vec::new();
         for index in 0..count {
@@ -384,7 +384,7 @@ mod lag_probe {
                 "content": [{"type": "toolCall", "id": format!("call-{index}"), "name": "bash", "arguments": {"code": "cargo test -p pa-ui"}}]
             }));
             out.push(json!({
-                "role": "tool",
+                "role": "toolResult",
                 "timestamp": index * 4 + 3,
                 "toolCallId": format!("call-{index}"),
                 "content": [{"type": "text", "text": "316 passed; 0 failed; 4 ignored"}]
@@ -394,8 +394,8 @@ mod lag_probe {
     }
 
     fn rows(count: usize) -> Vec<transcript::Row> {
-        let messages = messages(count);
-        transcript::build(&messages, messages.len()).0
+        let turns = turns(count);
+        transcript::build(&turns, turns.len()).0
     }
 
     fn sessions(done: usize) -> Vec<SessionRow> {
@@ -432,7 +432,7 @@ mod lag_probe {
     }
 
     struct Case {
-        messages: usize,
+        turns: usize,
         sidebar: bool,
         busy: bool,
         driver: Driver,
@@ -457,8 +457,8 @@ mod lag_probe {
         if case.sidebar {
             sidebar.apply_roster(&ui, sessions(90));
         }
-        if case.messages > 0 {
-            sheet.replace(rows(case.messages));
+        if case.turns > 0 {
+            sheet.replace(rows(case.turns));
             sheet::force_scroll_to_end(&ui);
         }
 
@@ -496,7 +496,7 @@ mod lag_probe {
                     let started = Instant::now();
                     let n = ticks.get();
                     ticks.set(n + 1);
-                    if n % 4 == 0 {
+                    if n.is_multiple_of(4) {
                         ui.invoke_page_scroll(-1);
                     } else {
                         ui.invoke_step_scroll(-1);
@@ -516,10 +516,16 @@ mod lag_probe {
                 let sheet = sheet.clone();
                 let mut live = Live::new("live-probe".into());
                 live.set_timestamp("18:58".into());
-                for index in 0..25 {
-                    live.push_text("The store is the authority and the events are advisory, so a poll reconciles rather than trusts. ");
+                for index in 0..24 {
+                    for _ in 0..8 {
+                        live.push_text(
+                            "The store is the authority and the events are advisory, \
+                             so a poll reconciles rather than trusts. ",
+                        );
+                    }
+                    live.push_text("\n\n");
                     if index % 6 == 5 {
-                        live.push_text("\n\n```rust\nfn step(x: u32) -> u32 { x + 1 }\n```\n\n");
+                        live.push_text("```rust\nfn step(x: u32) -> u32 { x + 1 }\n```\n\n");
                     }
                 }
                 sheet.answer_began("live-probe");
@@ -529,7 +535,7 @@ mod lag_probe {
                     let Some(ui) = weak.upgrade() else { return };
                     let started = Instant::now();
                     ticks.set(ticks.get() + 1);
-                    live.borrow_mut().push_text("more streamed token text ");
+                    live.borrow_mut().push_text("more streamed token txt");
                     sheet.merge(live.borrow().rows());
                     sheet::scroll_if_parked(&ui);
                     let took = started.elapsed().as_secs_f64() * 1000.0;
@@ -594,38 +600,38 @@ mod lag_probe {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window; run alone with --ignored --nocapture"]
     fn settled_idle() {
         run(
             "settled_idle",
-            Case { messages: 20, sidebar: true, busy: false, driver: Driver::None },
+            Case { turns: 20, sidebar: true, busy: false, driver: Driver::None },
         );
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window; run alone with --ignored --nocapture"]
     fn spinner() {
         run(
             "spinner",
-            Case { messages: 20, sidebar: true, busy: true, driver: Driver::None },
+            Case { turns: 20, sidebar: true, busy: true, driver: Driver::None },
         );
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window; run alone with --ignored --nocapture"]
     fn scroll_across_pages() {
         run(
             "scroll_across_pages",
-            Case { messages: 40, sidebar: true, busy: false, driver: Driver::Scroll },
+            Case { turns: 40, sidebar: true, busy: false, driver: Driver::Scroll },
         );
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window; run alone with --ignored --nocapture"]
     fn stream_delta() {
         run(
             "stream_delta",
-            Case { messages: 20, sidebar: true, busy: true, driver: Driver::Stream },
+            Case { turns: 20, sidebar: true, busy: true, driver: Driver::Stream },
         );
     }
 }

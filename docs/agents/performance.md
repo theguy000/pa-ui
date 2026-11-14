@@ -6,7 +6,7 @@ stays timing-free.
 
 ## Running a probe
 
-On a machine with a display (the CI runner uses Xvfb):
+On a machine with a display (the bench runner uses Xvfb):
 
 ```sh
 SLINT_DEBUG_PERFORMANCE=refresh_lazy,console \
@@ -17,8 +17,8 @@ The probe prints one line: wall time, process CPU as a percentage of one core,
 driver ticks, the worst callback time, and how many transcript and sidebar rows
 are mounted. Slint's performance log prints the frame rate.
 
-`scroll_across_pages` reads a deterministic 40-message transcript and scrolls up
-across the paging threshold. `stream_delta` appends a 23-byte delta every 30 ms
+`scroll_across_pages` reads a deterministic 40-Turn transcript (160 messages) and
+scrolls up across the paging threshold. `stream_delta` appends a 23-byte delta every 30 ms
 to a 20 KB answer. `spinner` and `settled_idle` are the two ends of the busy
 window.
 

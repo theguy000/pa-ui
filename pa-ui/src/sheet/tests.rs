@@ -163,7 +163,7 @@ fn a_prepended_page_survives_a_later_merge() {
 }
 
 #[test]
-fn a_prepended_page_reports_the_height_the_reader_is_moved_by() {
+fn a_prepended_page_reports_the_estimated_height_the_reader_is_moved_by() {
     let (sheet, _) = sheet();
     sheet.replace(vec![row("m2", transcript::KIND_CODE, "rust", "", "second")]);
     let page = vec![
