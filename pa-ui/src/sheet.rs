@@ -5,6 +5,21 @@ use crate::*;
 use std::cell::Ref;
 
 #[cfg(test)]
+thread_local! {
+    static CONVERSION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_conversion_count() {
+    CONVERSION_COUNT.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn conversion_count() -> usize {
+    CONVERSION_COUNT.with(|c| c.get())
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Order {
     Reset { rows: usize },
@@ -14,9 +29,9 @@ pub(crate) enum Order {
 }
 
 pub(crate) trait Redraw {
-    fn reset(&mut self, rows: Vec<TRow>);
-    fn set(&mut self, at: usize, row: TRow);
-    fn insert(&mut self, at: usize, row: TRow);
+    fn reset(&mut self, rows: &[Row]);
+    fn set(&mut self, at: usize, row: &Row);
+    fn insert(&mut self, at: usize, row: &Row);
     fn remove(&mut self, at: usize);
 }
 
@@ -105,7 +120,7 @@ pub(crate) fn scroll_to_end_when_ready(ui: &slint::Weak<AppWindow>) {
 }
 
 /// Accurate height estimator matched to `TranscriptRow` in `app.slint`.
-fn estimate_row_height(row: &Row) -> f32 {
+pub(crate) fn estimate_row_height(row: &Row) -> f32 {
     match row.kind {
         0 => {
             let lines = row
@@ -212,7 +227,8 @@ enum ModelPatch {
 struct VirtualSlintRows {
     model: Rc<VecModel<TRow>>,
     ui: Option<slint::Weak<AppWindow>>,
-    all_rows: Vec<TRow>,
+    all_rows: Vec<Row>,
+    cached: Vec<Option<TRow>>,
     heights: Vec<f32>,
     measured: Vec<bool>,
     win_start: usize,
@@ -229,6 +245,7 @@ impl VirtualSlintRows {
             model,
             ui: None,
             all_rows: Vec::new(),
+            cached: Vec::new(),
             heights: Vec::new(),
             measured: Vec::new(),
             win_start: 0,
@@ -237,6 +254,29 @@ impl VirtualSlintRows {
             last_viewport_h: 800.0,
             in_slint_call: false,
             content_dirty: false,
+        }
+    }
+
+    fn materialize_range(&mut self, range: std::ops::Range<usize>) -> Vec<TRow> {
+        let mut out = Vec::with_capacity(range.len());
+        for i in range {
+            let trow = if let Some(cached) = &self.cached[i] {
+                cached.clone()
+            } else {
+                let converted = to_slint(&self.all_rows[i]);
+                self.cached[i] = Some(converted.clone());
+                converted
+            };
+            out.push(trow);
+        }
+        out
+    }
+
+    fn evict_outside_window(&mut self) {
+        for (i, slot) in self.cached.iter_mut().enumerate() {
+            if i < self.win_start || i >= self.win_end {
+                *slot = None;
+            }
         }
     }
 
@@ -280,7 +320,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         if vs.ui.is_none() {
             vs.win_start = 0;
             vs.win_end = total;
-            let all = vs.all_rows.clone();
+            let all = vs.materialize_range(0..total);
             let m = vs.model.clone();
             drop(vs);
             m.set_vec(all);
@@ -375,9 +415,10 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             && (old_start - target_start) <= 16
         {
             let remove_end = old_end - target_end;
-            let prepend_rows = vs.all_rows[target_start..old_start].to_vec();
+            let prepend_rows = vs.materialize_range(target_start..old_start);
             vs.win_start = target_start;
             vs.win_end = target_end;
+            vs.evict_outside_window();
             ModelPatch::SlideUp {
                 remove_end,
                 prepend_rows,
@@ -393,9 +434,10 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             && (target_end - old_end) <= 16
         {
             let remove_start = target_start - old_start;
-            let append_rows = vs.all_rows[old_end..target_end].to_vec();
+            let append_rows = vs.materialize_range(old_end..target_end);
             vs.win_start = target_start;
             vs.win_end = target_end;
+            vs.evict_outside_window();
             ModelPatch::SlideDown {
                 remove_start,
                 append_rows,
@@ -403,7 +445,9 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         } else {
             vs.win_start = target_start;
             vs.win_end = target_end;
-            ModelPatch::Full(vs.all_rows[vs.win_start..vs.win_end].to_vec())
+            let slice = vs.materialize_range(target_start..target_end);
+            vs.evict_outside_window();
+            ModelPatch::Full(slice)
         };
 
         let (top, bottom, wstart) = vs.compute_spacers();
@@ -880,9 +924,8 @@ impl Sheet {
                     vs.measured = vec![false; rows.len()];
                 }
             }
-            let trows: Vec<TRow> = rows.iter().map(to_slint).collect();
+            inner.drawn.reset(&rows);
             inner.rows = rows;
-            inner.drawn.reset(trows);
             inner.virtual_state.clone()
         };
         if let Some(vs) = vstate {
@@ -1006,7 +1049,6 @@ impl Sheet {
             let mut added_px = 0.0f32;
             let mut new_rows = Vec::with_capacity(total);
             let mut new_heights = Vec::with_capacity(total);
-            let mut new_trows = Vec::with_capacity(total);
             let mut at = 0usize;
             for (key, range) in fresh {
                 let len = range.len();
@@ -1015,27 +1057,27 @@ impl Sheet {
                     added_px += est;
                     new_rows.push(row.clone());
                     new_heights.push(est);
-                    new_trows.push(to_slint(row));
                     at += 1;
                 }
                 inner.index.insert(key, at - len..at);
             }
             inner.last_prepend_px = added_px;
-            inner.rows.splice(0..0, new_rows);
+            inner.rows.splice(0..0, new_rows.iter().cloned());
 
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     vs.heights.splice(0..0, new_heights);
                     vs.measured.splice(0..0, std::iter::repeat_n(false, total));
-                    vs.all_rows.splice(0..0, new_trows);
+                    vs.all_rows.splice(0..0, new_rows);
+                    vs.cached.splice(0..0, std::iter::repeat_n(None, total));
                     vs.win_start += total;
                     vs.win_end += total;
                     vs.last_scroll_y -= added_px;
                 }
                 Some(vs_rc.clone())
             } else {
-                for (i, trow) in new_trows.into_iter().enumerate() {
-                    inner.drawn.insert(i, trow);
+                for (i, row) in new_rows.iter().enumerate() {
+                    inner.drawn.insert(i, row);
                 }
                 None
             }
@@ -1074,7 +1116,7 @@ impl Sheet {
             let Some(row) = inner.rows.get_mut(at) else { return };
             row.expanded = !row.expanded;
             let est = estimate_row_height(row);
-            let drawn = to_slint(row);
+            let updated = row.clone();
             if let Some(vs_rc) = &inner.virtual_state {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     if at < vs.heights.len() {
@@ -1083,7 +1125,7 @@ impl Sheet {
                     }
                 }
             }
-            inner.drawn.set(at, drawn);
+            inner.drawn.set(at, &updated);
             inner.virtual_state.clone()
         };
         if let Some(vs) = vstate {
@@ -1118,6 +1160,8 @@ impl Sheet {
                 if let Ok(mut vs) = vs_rc.try_borrow_mut() {
                     let r_end = from.min(vs.all_rows.len());
                     vs.all_rows.drain(0..r_end);
+                    let c_end = from.min(vs.cached.len());
+                    vs.cached.drain(0..c_end);
                     let vh_end = from.min(vs.heights.len());
                     vs.heights.drain(0..vh_end);
                     let vm_end = from.min(vs.measured.len());
@@ -1191,21 +1235,26 @@ impl Sheet {
 struct SharedVirtualAdapter(Rc<RefCell<VirtualSlintRows>>);
 
 impl Redraw for SharedVirtualAdapter {
-    fn reset(&mut self, rows: Vec<TRow>) {
+    fn reset(&mut self, rows: &[Row]) {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
-            vs.all_rows = rows;
+            vs.all_rows = rows.to_vec();
+            vs.cached = vec![None; rows.len()];
             vs.content_dirty = true;
             vs.win_start = 0;
             vs.win_end = 0;
         }
     }
-    fn set(&mut self, at: usize, row: TRow) {
+    fn set(&mut self, at: usize, row: &Row) {
         let mut model_update = None;
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             if at < vs.all_rows.len() {
                 vs.all_rows[at] = row.clone();
                 if at >= vs.win_start && at < vs.win_end {
-                    model_update = Some((vs.model.clone(), at - vs.win_start, row));
+                    let trow = to_slint(row);
+                    vs.cached[at] = Some(trow.clone());
+                    model_update = Some((vs.model.clone(), at - vs.win_start, trow));
+                } else {
+                    vs.cached[at] = None;
                 }
             }
         }
@@ -1213,10 +1262,11 @@ impl Redraw for SharedVirtualAdapter {
             model.set_row_data(idx, r);
         }
     }
-    fn insert(&mut self, at: usize, row: TRow) {
+    fn insert(&mut self, at: usize, row: &Row) {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             let pos = at.min(vs.all_rows.len());
-            vs.all_rows.insert(pos, row);
+            vs.all_rows.insert(pos, row.clone());
+            vs.cached.insert(pos, None);
             if vs.win_end <= vs.win_start || pos < vs.win_end {
                 vs.content_dirty = true;
             }
@@ -1226,7 +1276,10 @@ impl Redraw for SharedVirtualAdapter {
         if let Ok(mut vs) = self.0.try_borrow_mut() {
             if at < vs.all_rows.len() {
                 vs.all_rows.remove(at);
-                vs.content_dirty = true;
+                vs.cached.remove(at);
+                if at < vs.win_end {
+                    vs.content_dirty = true;
+                }
             }
         }
     }
@@ -1250,7 +1303,7 @@ impl Inner {
                     vs.measured.insert(at + offset, false);
                 }
             }
-            self.drawn.insert(at + offset, to_slint(row));
+            self.drawn.insert(at + offset, row);
         }
     }
 
@@ -1354,7 +1407,7 @@ impl Inner {
                     }
                 }
             }
-            self.drawn.set(at, to_slint(row));
+            self.drawn.set(at, row);
         }
         if adjusted.len() > had {
             let at = start + had;
@@ -1440,6 +1493,8 @@ fn row_identity(row: &Row) -> String {
 }
 
 pub(crate) fn to_slint(row: &Row) -> TRow {
+    #[cfg(test)]
+    CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
     TRow {
         kind: row.kind,
         title: transcript::plain(&row.title).into(),
