@@ -897,7 +897,7 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
             }
             continue;
         }
-        if trimmed.contains('|') && index + 1 < lines.len() && is_delimiter_row(lines[index + 1]) {
+        if index + 1 < lines.len() && super::starts_table(line, lines[index + 1]) {
             flush_prose(&mut prose, &mut out);
             let mut raw: Vec<&str> = vec![line, lines[index + 1]];
             index += 2;

@@ -177,10 +177,18 @@ impl Live {
         if part.kind != kind || text.len() < part.parsed_len {
             *part = PartCache { kind, ..PartCache::default() };
         }
+        let unchanged = part.parsed_len == text.len() && part.kind == kind;
+        if unchanged {
+            let mut out = Vec::with_capacity(part.stable_rows.len() + part.tail_rows.len());
+            out.extend(part.stable_rows.iter().cloned());
+            out.extend(part.tail_rows.iter().cloned());
+            return out;
+        }
         if let Some(boundary) = stable_boundary(text, part.stable_len) {
             if boundary > part.stable_len {
-                part.stable_rows
-                    .extend(block_rows(kind_name, &text[part.stable_len..boundary]));
+                let chunk = &text[part.stable_len..boundary];
+                let chunk = chunk.strip_suffix('\n').unwrap_or(chunk);
+                part.stable_rows.extend(block_rows(kind_name, chunk));
                 part.stable_len = boundary;
             }
         }
@@ -193,77 +201,61 @@ impl Live {
     }
 }
 
-/// The last line break after which a block is certainly finished: a blank line
-/// outside a fence, not followed by a list item, an indented line or a rule,
-/// and not preceded by a list item (a loose list can span blank lines).
+/// The last position at which a new block starts in the transcript builder's
+/// terms: a fence opener or closer, a quote's first line, a table's header, or
+/// the blank line that ends a quote or a table. Prose is one block from one of
+/// those to the next, so a blank line between paragraphs is not a boundary.
 fn stable_boundary(text: &str, from: usize) -> Option<usize> {
     let mut in_fence = false;
+    let mut in_table = false;
+    let mut previous_quote = false;
     let mut cursor = from.min(text.len());
     let mut boundary = None;
-    let mut previous: Option<&str> = None;
     while cursor < text.len() {
         let end = text[cursor..]
             .find('\n')
             .map_or(text.len(), |offset| cursor + offset + 1);
         let line = &text[cursor..end];
         let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            previous = Some(trimmed);
-        } else if trimmed.is_empty() {
-            if !in_fence {
-                let next = next_nonempty_line(text, end);
-                if next.is_some_and(|next| !joins_block(previous, next)) {
-                    boundary = Some(end);
-                }
+        if in_fence {
+            if trimmed.starts_with("```") {
+                in_fence = false;
+                boundary = Some(end);
             }
-        } else {
-            previous = Some(trimmed);
+        } else if trimmed.starts_with("```") {
+            boundary = Some(cursor);
+            in_fence = true;
+        } else if trimmed.starts_with('>') {
+            if !previous_quote {
+                boundary = Some(cursor);
+            }
+        } else if trimmed.is_empty() {
+            if previous_quote || in_table {
+                boundary = Some(cursor);
+            }
+            in_table = false;
+        } else if transcript::starts_table(line, next_line(text, end).unwrap_or_default()) {
+            if !in_table {
+                boundary = Some(cursor);
+            }
+            in_table = true;
+        } else if in_table {
+            in_table = false;
         }
+        previous_quote = !trimmed.is_empty() && trimmed.starts_with('>');
         cursor = end;
     }
     boundary
 }
 
-fn next_nonempty_line(text: &str, from: usize) -> Option<&str> {
-    let mut cursor = from.min(text.len());
-    while cursor < text.len() {
-        let end = text[cursor..]
-            .find('\n')
-            .map_or(text.len(), |offset| cursor + offset + 1);
-        let line = text[cursor..end].trim();
-        if !line.is_empty() {
-            return Some(line);
-        }
-        cursor = end;
+fn next_line(text: &str, from: usize) -> Option<&str> {
+    if from >= text.len() {
+        return None;
     }
-    None
-}
-
-/// Whether a blank line here is inside a construct: the next line continues the
-/// previous block, or the previous line could still absorb it.
-fn joins_block(previous: Option<&str>, next: &str) -> bool {
-    let starts_list = |line: &str| {
-        line.starts_with("- ")
-            || line.starts_with("* ")
-            || line.starts_with("+ ")
-            || line.starts_with('>')
-            || {
-                let digits = line.chars().take_while(char::is_ascii_digit).count();
-                digits > 0 && line[digits..].starts_with(". ")
-            }
-    };
-    let next_indented = next.starts_with(' ') || next.starts_with('\t');
-    let next_is_rule = next.len() >= 3
-        && next
-            .chars()
-            .all(|ch| matches!(ch, '-' | '*' | '_' | '=' | ' '));
-    next_indented
-        || next_is_rule
-        || next.starts_with('#')
-        || next.starts_with("```")
-        || starts_list(next)
-        || previous.is_some_and(starts_list)
+    let end = text[from..]
+        .find('\n')
+        .map_or(text.len(), |offset| from + offset);
+    Some(&text[from..end])
 }
 
 #[cfg(test)]
@@ -365,10 +357,17 @@ mod tests {
     fn a_delta_parses_only_the_trailing_block() {
         let mut body = String::new();
         for index in 0..40 {
+            if index > 0 {
+                body.push_str("\n\n");
+            }
             body.push_str(&format!(
-                "Paragraph {index}: the store is the authority and the events are advisory, so a poll reconciles rather than trusts.\n\n"
+                "Paragraph {index}: the store is the authority and the events are advisory, so a poll reconciles rather than trusts."
             ));
+            if index % 5 == 4 {
+                body.push_str("\n\n```rust\nfn step() {}\n```");
+            }
         }
+        body.push_str("\n\nFinal paragraph that keeps streaming");
         let mut live = Live::new("m".into());
         live.push_text(&body);
         let before = live.rows();

@@ -522,6 +522,11 @@ pub(crate) fn stamp_rows(rows: &mut [Row], stamp: &str) {
 }
 
 /// Build the transcript rows for the newest `limit` messages.
+/// Whether a line starts a table: a pipe row over a delimiter row.
+pub(crate) fn starts_table(line: &str, next: &str) -> bool {
+    line.contains('|') && markup::is_delimiter_row(next)
+}
+
 pub fn build(messages: &[Value], limit: usize) -> (Vec<Row>, usize) {
     // The theme the window is drawn in, read once here rather than carried
     // through the worker, the live turn and every cell. It is one value for the
