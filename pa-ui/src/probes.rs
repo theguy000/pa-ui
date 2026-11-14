@@ -619,10 +619,47 @@ mod lag_probe {
 
     #[test]
     #[ignore = "opens a window; run alone with --ignored --nocapture"]
-    fn scroll_across_pages() {
+    fn scroll_to_top() {
         run(
-            "scroll_across_pages",
+            "scroll_to_top",
             Case { turns: 40, sidebar: true, busy: false, driver: Driver::Scroll },
+        );
+    }
+
+    /// A Page arriving above the window, measured without a Store: the merge
+    /// itself, its row conversions, and the offset it reports.
+    #[test]
+    #[ignore = "measures a merge; run alone with --ignored --nocapture"]
+    fn page_merge() {
+        let ui = AppWindow::new().expect("window");
+        ui.window().set_size(slint::PhysicalSize::new(1200, 830));
+        let (resolved, _) = theme::select(None);
+        theme::apply(&ui, &resolved);
+        let (job_tx, _job_rx) = unbounded::<Job>();
+        let (sheet, model) = Sheet::new();
+        let sheet = Rc::new(sheet);
+        sheet.bind_ui(&ui);
+        ui.set_transcript(model);
+        let _sidebar = Sidebar::new(&ui, &job_tx);
+        sheet.replace(rows(20));
+        sheet::force_scroll_to_end(&ui);
+        sheet::reset_conversion_count();
+
+        let mut page: Vec<transcript::Row> = rows(20)
+            .into_iter()
+            .map(|mut row| {
+                row.message = format!("older-{}", row.message);
+                row
+            })
+            .collect();
+        page.truncate(80);
+        let started = Instant::now();
+        let (added, _more) = sheet.complete_older_page(page, false, "cursor".into(), false);
+        let took = started.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "[lag] page_merge             rows={} added={added:.0}px took={took:.1}ms conv={}",
+            ui.get_transcript().row_count(),
+            sheet::conversion_count(),
         );
     }
 

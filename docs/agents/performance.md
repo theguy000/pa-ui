@@ -10,15 +10,17 @@ On a machine with a display (the bench runner uses Xvfb):
 
 ```sh
 SLINT_DEBUG_PERFORMANCE=refresh_lazy,console \
-  cargo test --profile fast -p pa-ui -- --ignored --exact probes::lag_probe::scroll_across_pages --nocapture
+  cargo test --profile fast -p pa-ui -- --ignored --exact probes::lag_probe::scroll_to_top --nocapture
 ```
 
 The probe prints one line: wall time, process CPU as a percentage of one core,
 driver ticks, the worst callback time, and how many transcript and sidebar rows
 are mounted. Slint's performance log prints the frame rate.
 
-`scroll_across_pages` reads a deterministic 40-Turn transcript (160 messages) and
-scrolls up across the paging threshold. `stream_delta` appends a 23-byte delta every 30 ms
+`scroll_to_top` reads a deterministic 40-Turn transcript (160 messages) and
+scrolls from the newest Row to the top; it does not fetch a Page (there is no
+Store behind the probe). `page_merge` measures the merge of an 80-Row Page into
+a mounted window directly. `stream_delta` appends a 23-byte delta every 30 ms
 to a 20 KB answer. `spinner` and `settled_idle` are the two ends of the busy
 window.
 
