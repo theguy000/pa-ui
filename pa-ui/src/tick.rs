@@ -2302,22 +2302,16 @@ mod status_strip_tests {
         h.ui.set_selected_id("a1".into());
         h.ui.invoke_setting_chosen("session-order".into(), "Manual".into());
 
-        let row_mid_y = |id: &str| -> f32 {
+        let entry_mid_y = |pred: &dyn Fn(&crate::SessionEntry) -> bool| -> f32 {
             let entries = h.ui.get_session_entries();
             (0..entries.row_count())
                 .filter_map(|index| entries.row_data(index))
-                .find(|entry| !entry.is_header && entry.item.id.as_str() == id)
+                .find(|entry| pred(entry))
                 .map(|entry| entry.at + 16.0)
-                .expect("row entry y")
+                .expect("entry y")
         };
-        let header_mid_y = |label: &str| -> f32 {
-            let entries = h.ui.get_session_entries();
-            (0..entries.row_count())
-                .filter_map(|index| entries.row_data(index))
-                .find(|entry| entry.is_header && entry.label.as_str() == label)
-                .map(|entry| entry.at + 16.0)
-                .expect("header entry y")
-        };
+        let row_mid_y = |id: &str| entry_mid_y(&|entry| !entry.is_header && entry.item.id.as_str() == id);
+        let header_mid_y = |label: &str| entry_mid_y(&|entry| entry.is_header && entry.label.as_str() == label);
 
         h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
         h.ui.set_done_folded(true);

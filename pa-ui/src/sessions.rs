@@ -572,7 +572,7 @@ pub(crate) fn groups_of(
     )
 }
 
-const DEFAULT_VIEWPORT_HEIGHT: f32 = 732.0;
+const INITIAL_VIEWPORT_HEIGHT: f32 = 732.0;
 const OVERSCAN_ROWS: usize = 6;
 
 #[cfg(test)]
@@ -582,7 +582,6 @@ pub(crate) enum SidebarModelOp {
     Set { at: usize },
     Insert { at: usize },
     Remove { at: usize },
-    Push,
 }
 
 fn lcs_matches(old: &[SessionEntry], new: &[SessionEntry]) -> Vec<(usize, usize)> {
@@ -851,7 +850,7 @@ fn open_search_with_order(
     ui.set_search_focus_tick(ui.get_search_focus_tick() + 1);
 }
 
-struct SidebarWindow {
+struct SidebarViewport {
     groups: (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>),
     all_entries: Vec<SessionEntry>,
     all_from_y: Vec<f32>,
@@ -870,7 +869,7 @@ struct SidebarWindow {
     last_ops: Vec<SidebarModelOp>,
 }
 
-impl SidebarWindow {
+impl SidebarViewport {
     fn new() -> Self {
         Self {
             groups: (Vec::new(), Vec::new(), Vec::new()),
@@ -880,7 +879,7 @@ impl SidebarWindow {
             mounted_from_y: Vec::new(),
             row_height: ROW_HEIGHT as f32,
             scroll_y: 0.0,
-            viewport_h: 0.0,
+            viewport_h: INITIAL_VIEWPORT_HEIGHT,
             animating_fold: None,
             animating_splice: false,
             fold_generation: 0,
@@ -892,13 +891,9 @@ impl SidebarWindow {
         }
     }
 
-    fn visible_slice(&self, include_splice: bool) -> (Vec<SessionEntry>, Vec<f32>) {
+    fn visible_window(&self, include_splice: bool) -> (Vec<SessionEntry>, Vec<f32>) {
         let rh = self.row_height.max(1.0);
-        let effective_vh = if self.viewport_h > 1.0 {
-            self.viewport_h
-        } else {
-            DEFAULT_VIEWPORT_HEIGHT
-        };
+        let effective_vh = self.viewport_h;
         let scroll_top = (-self.scroll_y).max(0.0);
         let overscan = OVERSCAN_ROWS as f32 * rh;
         let win_top = (COLUMN_TOP as f32 + scroll_top - overscan).max(COLUMN_TOP as f32);
@@ -917,7 +912,11 @@ impl SidebarWindow {
             } else {
                 rh
             };
-            let fy = self.all_from_y.get(i).copied().unwrap_or(entry.at);
+            let fy = if include_splice && i < self.all_from_y.len() {
+                self.all_from_y[i]
+            } else {
+                entry.at
+            };
             let (y_min, y_max) = if animating_group {
                 (entry.target - 18.0, entry.target + h)
             } else if include_splice {
@@ -949,7 +948,6 @@ enum PatchStep {
     Set { at: usize, entry: SessionEntry },
     Keep,
     Insert { at: usize, entry: SessionEntry },
-    Push(SessionEntry),
 }
 
 fn plan_entries_patch(old: &[SessionEntry], new: &[SessionEntry]) -> EntriesPatch {
@@ -970,7 +968,6 @@ fn plan_entries_patch(old: &[SessionEntry], new: &[SessionEntry]) -> EntriesPatc
     let removes: Vec<usize> = (0..old.len()).rev().filter(|&i| !keep_old[i]).collect();
     let mut steps = Vec::with_capacity(new.len());
     let mut mi = 0usize;
-    let mut simulated_len = matches.len();
     for (ni, new_entry) in new.iter().enumerate() {
         if mi < matches.len() && matches[mi].1 == ni {
             let oi = matches[mi].0;
@@ -983,15 +980,11 @@ fn plan_entries_patch(old: &[SessionEntry], new: &[SessionEntry]) -> EntriesPatc
                 steps.push(PatchStep::Keep);
             }
             mi += 1;
-        } else if ni == simulated_len {
-            steps.push(PatchStep::Push(new_entry.clone()));
-            simulated_len += 1;
         } else {
             steps.push(PatchStep::Insert {
                 at: ni,
                 entry: new_entry.clone(),
             });
-            simulated_len += 1;
         }
     }
     EntriesPatch::Diff { removes, steps }
@@ -1002,20 +995,20 @@ fn plan_entries_patch(old: &[SessionEntry], new: &[SessionEntry]) -> EntriesPatc
 pub(crate) struct Sidebar {
     pub cache: Rc<RefCell<Vec<SessionRow>>>,
     pub selected_uuid: RefCell<Option<String>>,
-    window: Rc<RefCell<SidebarWindow>>,
+    viewport: Rc<RefCell<SidebarViewport>>,
     settings: Rc<crate::settings::SettingsStore>,
     catalog_ready: std::cell::Cell<bool>,
 }
 
 impl Sidebar {
     pub fn new(ui: &AppWindow, job_tx: &Sender<Job>) -> Rc<Self> {
-        let win = SidebarWindow::new();
-        ui.set_session_entries(ModelRc::from(win.entries_model.clone()));
-        ui.set_splice_at(ModelRc::from(win.splice_model.clone()));
+        let vp = SidebarViewport::new();
+        ui.set_session_entries(ModelRc::from(vp.entries_model.clone()));
+        ui.set_splice_at(ModelRc::from(vp.splice_model.clone()));
         let sidebar = Rc::new(Self {
             cache: Rc::new(RefCell::new(Vec::new())),
             selected_uuid: RefCell::new(None),
-            window: Rc::new(RefCell::new(win)),
+            viewport: Rc::new(RefCell::new(vp)),
             settings: crate::settings::SettingsStore::new(crate::settings::default_settings_path()),
             catalog_ready: std::cell::Cell::new(false),
         });
@@ -1087,33 +1080,13 @@ impl Sidebar {
 
     fn sync_mounted_window(&self) {
         let (patch, new_from_y, splice_changed, entries_model, splice_model) = {
-            let mut w = self.window.borrow_mut();
+            let mut w = self.viewport.borrow_mut();
             let include_splice = w.animating_splice;
-            let (new_entries, new_from_y) = w.visible_slice(include_splice);
+            let (new_entries, new_from_y) = w.visible_window(include_splice);
             let patch = plan_entries_patch(&w.mounted_entries, &new_entries);
             let splice_changed = w.mounted_from_y != new_from_y;
             if matches!(patch, EntriesPatch::None) && !splice_changed {
                 return;
-            }
-            #[cfg(test)]
-            match &patch {
-                EntriesPatch::None => {}
-                EntriesPatch::Reset(_) => w.last_ops = vec![SidebarModelOp::Reset],
-                EntriesPatch::Diff { removes, steps } => {
-                    let mut ops = Vec::new();
-                    for &at in removes {
-                        ops.push(SidebarModelOp::Remove { at });
-                    }
-                    for step in steps {
-                        match step {
-                            PatchStep::Set { at, .. } => ops.push(SidebarModelOp::Set { at: *at }),
-                            PatchStep::Insert { at, .. } => ops.push(SidebarModelOp::Insert { at: *at }),
-                            PatchStep::Push(_) => ops.push(SidebarModelOp::Push),
-                            PatchStep::Keep => {}
-                        }
-                    }
-                    w.last_ops = ops;
-                }
             }
             w.mounted_entries = new_entries;
             w.mounted_from_y = new_from_y.clone();
@@ -1134,30 +1107,47 @@ impl Sidebar {
             splice_model.set_vec(new_from_y);
         }
 
+        #[cfg(test)]
+        let mut recorded_ops = Vec::new();
         match patch {
             EntriesPatch::None => {}
             EntriesPatch::Reset(entries) => {
+                #[cfg(test)]
+                recorded_ops.push(SidebarModelOp::Reset);
                 entries_model.set_vec(entries);
             }
             EntriesPatch::Diff { removes, steps } => {
                 for at in removes {
+                    #[cfg(test)]
+                    recorded_ops.push(SidebarModelOp::Remove { at });
                     entries_model.remove(at);
                 }
                 for step in steps {
                     match step {
-                        PatchStep::Set { at, entry } => entries_model.set_row_data(at, entry),
-                        PatchStep::Insert { at, entry } => entries_model.insert(at, entry),
-                        PatchStep::Push(entry) => entries_model.push(entry),
+                        PatchStep::Set { at, entry } => {
+                            #[cfg(test)]
+                            recorded_ops.push(SidebarModelOp::Set { at });
+                            entries_model.set_row_data(at, entry);
+                        }
+                        PatchStep::Insert { at, entry } => {
+                            #[cfg(test)]
+                            recorded_ops.push(SidebarModelOp::Insert { at });
+                            entries_model.insert(at, entry);
+                        }
                         PatchStep::Keep => {}
                     }
                 }
             }
         }
+        #[cfg(test)]
+        if !recorded_ops.is_empty() {
+            self.viewport.borrow_mut().last_ops = recorded_ops;
+        }
     }
 
     fn settle_fold(&self, expected_gen: Option<u64>) {
         {
-            let mut w = self.window.borrow_mut();
+            let mut w = self.viewport.borrow_mut();
             if expected_gen.is_some_and(|g| g != w.fold_generation) {
                 return;
             }
@@ -1189,7 +1179,7 @@ impl Sidebar {
         let start_anim = !previous_empty && fold_duration > 0 && (is_fold_toggle || is_group_move);
 
         {
-            let mut w = self.window.borrow_mut();
+            let mut w = self.viewport.borrow_mut();
             w.all_entries = column.entries;
             w.all_from_y = column.from_y;
             w.row_height = row_h;
@@ -1220,8 +1210,11 @@ impl Sidebar {
                     },
                 );
                 w.fold_timer = Some(timer);
-            } else if !is_fold_toggle && w.animating_fold.is_none() {
+            } else if !is_fold_toggle {
+                w.animating_fold = None;
                 w.animating_splice = false;
+                w.fold_timer = None;
+                w.fold_generation = w.fold_generation.wrapping_add(1);
             }
         }
 
@@ -1234,11 +1227,11 @@ impl Sidebar {
         ui.set_sessions_height(column.height);
         ui.set_fold_index(fold_index);
         ui.set_fold_open(fold_open);
-        ui.invoke_restore_sidebar_cy(saved_cy);
         self.sync_mounted_window();
         if start_anim {
             ui.invoke_trigger_list_anim();
         }
+        ui.invoke_restore_sidebar_cy(saved_cy);
     }
 
     fn apply_items(
@@ -1249,7 +1242,7 @@ impl Sidebar {
         selected: i32,
     ) -> Option<SessionItem> {
         let (active, idle, done) = session_groups(&items);
-        let prev = self.window.borrow().groups.clone();
+        let prev = self.viewport.borrow().groups.clone();
         let active_changed = active != prev.0;
         let idle_changed = idle != prev.1;
         let done_changed = done != prev.2;
@@ -1268,7 +1261,7 @@ impl Sidebar {
         if col.changed() {
             self.apply_column(ui, col, selected, false, false);
         }
-        self.window.borrow_mut().groups = (active.clone(), idle.clone(), done.clone());
+        self.viewport.borrow_mut().groups = (active.clone(), idle.clone(), done.clone());
         if active_changed {
             ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
         }
@@ -1534,7 +1527,7 @@ impl Sidebar {
                     return;
                 };
                 let (active, idle, done) = {
-                    let w = sidebar.window.borrow();
+                    let w = sidebar.viewport.borrow();
                     if w.groups.0.is_empty() && w.groups.1.is_empty() && w.groups.2.is_empty() {
                         groups_of(
                             &ui.get_active_items(),
@@ -1567,7 +1560,7 @@ impl Sidebar {
             let sidebar = self.clone();
             ui.on_sidebar_viewport_changed(move |cy, vh| {
                 let changed = {
-                    let Ok(mut w) = sidebar.window.try_borrow_mut() else {
+                    let Ok(mut w) = sidebar.viewport.try_borrow_mut() else {
                         return;
                     };
                     let mut moved = (w.scroll_y - cy).abs() > 0.5;
@@ -1772,7 +1765,7 @@ impl Sidebar {
                     return;
                 }
                 let target = {
-                    let w = sidebar.window.borrow();
+                    let w = sidebar.viewport.borrow();
                     drop_target_at(&w.all_entries, row_height_for(&ui), target_y)
                 };
                 let Some(target) = target else {
@@ -1993,7 +1986,11 @@ pub(crate) mod virtual_sidebar_tests {
         assert!(crate::Appearance::get(&ui).get_fold_duration() > 0);
 
         ui.show().expect("show window");
+        ui.invoke_restore_sidebar_cy(-600.0);
+        let cy_before_fold = ui.invoke_get_sidebar_cy();
+        assert_eq!(cy_before_fold, -600.0);
         ui.invoke_group_toggled("Done".into());
+        assert_eq!(ui.invoke_get_sidebar_cy(), -600.0);
         assert!(
             ui.get_session_entries().row_count() <= 64,
             "mounted count must remain bounded during fold animation"
@@ -2042,9 +2039,10 @@ pub(crate) mod virtual_sidebar_tests {
         assert_eq!(d080.at, expected_d080_at);
         assert_eq!(ui.invoke_row_y(0), mounted_list[0].at);
         assert_eq!(ui.get_selected_id().as_str(), "d-080");
+        assert!(!d080.item.full.is_empty());
 
         ui.invoke_restore_sidebar_cy(-3328.0);
-        let scroll_ops = sidebar.window.borrow().last_ops.clone();
+        let scroll_ops = sidebar.viewport.borrow().last_ops.clone();
         assert!(!scroll_ops.is_empty());
         assert!(
             !scroll_ops.contains(&SidebarModelOp::Reset),
@@ -2084,7 +2082,7 @@ pub(crate) mod virtual_sidebar_tests {
         rows[1].name = "Renamed active session".to_string();
         sidebar.apply_roster(&ui, rows.clone());
 
-        let rename_ops = sidebar.window.borrow().last_ops.clone();
+        let rename_ops = sidebar.viewport.borrow().last_ops.clone();
         assert_eq!(rename_ops, vec![SidebarModelOp::Set { at: 2 }]);
 
         let updated = (0..model_before.row_count())
@@ -2106,7 +2104,7 @@ pub(crate) mod virtual_sidebar_tests {
         );
         sidebar.apply_roster(&ui, rows);
 
-        let insert_ops = sidebar.window.borrow().last_ops.clone();
+        let insert_ops = sidebar.viewport.borrow().last_ops.clone();
         assert!(!insert_ops.is_empty());
         assert!(!insert_ops.contains(&SidebarModelOp::Reset), "routine insert must patch incrementally: {insert_ops:?}");
 
