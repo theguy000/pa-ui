@@ -30,7 +30,7 @@ frames only.
 `Cargo.toml` sets `opt-level = 2` for `[profile.dev.package."*"]`. Slint's layout
 and renderer are dependencies, and unoptimized they made a `cargo run` window
 3-9x more expensive than the same code in `--profile fast`: scrolling cost 119.6%
-of a core instead of 18.8%, and a streamed delta cost 22 ms instead of 2.4 ms.
+of a core instead of 18.8%, and a streamed delta cost 22 ms instead of about 2 ms.
 
 The trade-off: the first build after a dependency change is slower, and
 backtraces inside dependencies have less usable line information. Workspace
