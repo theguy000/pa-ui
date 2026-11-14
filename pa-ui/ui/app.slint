@@ -695,8 +695,8 @@ export component AppWindow inherits Window {
             transcript-list.content-y = -root.scroll-range;
             root.seen-content-y = transcript-list.content-y;
             root.programmatic-scroll = false;
-        } else if (root.follow-bottom && transcript-list.content-y > root.seen-content-y) {
-            root.seen-content-y = transcript-list.content-y;
+        } else if (root.follow-bottom && root.seen-content-y < -root.scroll-range) {
+            root.seen-content-y = -root.scroll-range;
         }
         root.prev-scroll-range = root.scroll-range;
     }

@@ -324,8 +324,8 @@ mod transcript_scroll_contract {
         let app = include_str!("../ui/app.slint");
         let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
         assert!(
-            compact.contains("elseif(root.follow-bottom&&transcript-list.content-y>root.seen-content-y){root.seen-content-y=transcript-list.content-y;}"),
-            "changed scroll-range must sync seen-content-y when Slint clamps content-y upward"
+            compact.contains("elseif(root.follow-bottom&&root.seen-content-y<-root.scroll-range){root.seen-content-y=-root.scroll-range;}"),
+            "changed scroll-range must clamp seen-content-y to -scroll-range when scroll-range shrinks"
         );
     }
 }
