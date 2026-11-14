@@ -4,10 +4,11 @@
 //! that whole range from the parts accumulated so far. Nothing is patched in
 //! place and nothing is reconciled by id: there is exactly one representation of
 //! the open message, so a second copy cannot exist to fall out of step with the
-//! first. The rebuild stays cheap because a text part keeps the blocks whose
-//! boundaries are final: a delta re-parses its own paragraph, not the answer. This is the shape the TUI uses - a single `streaming_index`, replaced
+//! first. This is the shape the TUI uses - a single `streaming_index`, replaced
 //! wholesale on each frame - and it is the only arrangement that has survived
-//! contact with this wire.
+//! contact with this wire. The rebuild stays cheap because a text part keeps the
+//! blocks whose boundaries are final: a delta re-parses its own paragraph, not
+//! the answer.
 
 use std::cell::RefCell;
 
@@ -40,12 +41,27 @@ pub struct Live {
     cache: RefCell<Vec<PartCache>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    Text,
+    Thinking,
+}
+
+impl PartKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Thinking => "thinking",
+        }
+    }
+}
+
 /// The parsed side of one text part. `stable_rows` covers `text[..stable_len]`,
 /// whose block boundaries are final; `tail_rows` covers the rest and is replaced
 /// on every read.
 #[derive(Default)]
 struct PartCache {
-    kind: u8,
+    kind: Option<PartKind>,
     parsed_len: usize,
     stable_len: usize,
     stable_rows: Vec<Row>,
@@ -135,8 +151,8 @@ impl Live {
         let mut out: Vec<Row> = Vec::new();
         for (index, part) in self.parts.iter().enumerate() {
             match part {
-                Part::Thinking(text) => out.extend(self.text_rows(index, 2, "thinking", text)),
-                Part::Text(text) => out.extend(self.text_rows(index, 1, "text", text)),
+                Part::Thinking(text) => out.extend(self.text_rows(index, PartKind::Thinking, text)),
+                Part::Text(text) => out.extend(self.text_rows(index, PartKind::Text, text)),
                 Part::Tool {
                     id,
                     args,
@@ -166,18 +182,18 @@ impl Live {
 
     /// A text part's rows: the blocks whose boundaries are final stay parsed,
     /// and only the trailing unfinished block is built again. The returned rows
-    /// are exactly a full parse of `text` - the boundary rule keeps a list or a
-    /// fence from being cut in half.
-    fn text_rows(&self, index: usize, kind: u8, kind_name: &str, text: &str) -> Vec<Row> {
+    /// are exactly a full parse of `text` - a split only lands where a fence,
+    /// quote or table begins or ends.
+    fn text_rows(&self, index: usize, kind: PartKind, text: &str) -> Vec<Row> {
         let mut cache = self.cache.borrow_mut();
         if cache.len() <= index {
             cache.resize_with(index + 1, PartCache::default);
         }
         let part = &mut cache[index];
-        if part.kind != kind || text.len() < part.parsed_len {
-            *part = PartCache { kind, ..PartCache::default() };
+        if part.kind != Some(kind) || text.len() < part.parsed_len {
+            *part = PartCache { kind: Some(kind), ..PartCache::default() };
         }
-        let unchanged = part.parsed_len == text.len() && part.kind == kind;
+        let unchanged = part.parsed_len == text.len();
         if unchanged {
             let mut out = Vec::with_capacity(part.stable_rows.len() + part.tail_rows.len());
             out.extend(part.stable_rows.iter().cloned());
@@ -188,11 +204,11 @@ impl Live {
             if boundary > part.stable_len {
                 let chunk = &text[part.stable_len..boundary];
                 let chunk = chunk.strip_suffix('\n').unwrap_or(chunk);
-                part.stable_rows.extend(block_rows(kind_name, chunk));
+                part.stable_rows.extend(block_rows(kind.name(), chunk));
                 part.stable_len = boundary;
             }
         }
-        part.tail_rows = block_rows(kind_name, &text[part.stable_len..]);
+        part.tail_rows = block_rows(kind.name(), &text[part.stable_len..]);
         part.parsed_len = text.len();
         let mut out = Vec::with_capacity(part.stable_rows.len() + part.tail_rows.len());
         out.extend(part.stable_rows.iter().cloned());
