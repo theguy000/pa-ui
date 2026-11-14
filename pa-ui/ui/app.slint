@@ -626,12 +626,12 @@ export component AppWindow inherits Window {
     out property <length> dbg-cy: transcript-list.content-y;
     out property <length> dbg-ch: transcript-list.content-height;
     out property <length> dbg-h: transcript-list.height;
-    out property <length> dbg-sidebar-cy: sidebar-list.content-y;
-    out property <length> dbg-sidebar-h: sidebar-list.height;
-    changed dbg-sidebar-cy => {
+    out property <length> sidebar-cy: sidebar-list.content-y;
+    out property <length> sidebar-h: sidebar-list.height;
+    changed sidebar-cy => {
         root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
     }
-    changed dbg-sidebar-h => {
+    changed sidebar-h => {
         root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
     }
     pure public function get-sidebar-cy() -> length { sidebar-list.content-y }
@@ -1116,9 +1116,6 @@ export component AppWindow inherits Window {
                     content-height: max(0px, root.animated-sessions-height - 88px);
                     interactive: true;
                     mouse-drag-pan-enabled: root.setting-session-order != "Manual";
-                    flicked => {
-                        root.sidebar-viewport-changed(sidebar-list.content-y, sidebar-list.height);
-                    }
 
                     sidebar-content := Rectangle {
                         x: 0px;

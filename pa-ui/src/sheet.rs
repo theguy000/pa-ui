@@ -357,11 +357,24 @@ fn center_window(anchor: usize, slack: usize, total: usize) -> (usize, usize) {
     (e.saturating_sub(MAX_MOUNTED_ROWS), e)
 }
 
+fn schedule_flush_timer(vstate: &Rc<RefCell<VirtualSlintRows>>, vs: &mut VirtualSlintRows) {
+    if vs.flush_scheduled || vs.ui.is_none() {
+        return;
+    }
+    if let Some(timer) = &vs.flush_timer {
+        let weak = Rc::downgrade(vstate);
+        vs.flush_scheduled = true;
+        timer.start(slint::TimerMode::SingleShot, Duration::ZERO, move || {
+            if let Some(vstate) = weak.upgrade() {
+                flush_pending_spacers(&vstate);
+            }
+        });
+    }
+}
+
 fn flush_pending_spacers(vstate: &Rc<RefCell<VirtualSlintRows>>) {
     let action = {
-        let Ok(mut vs) = vstate.try_borrow_mut() else {
-            return;
-        };
+        let mut vs = vstate.borrow_mut();
         vs.flush_scheduled = false;
         if !vs.spacers_dirty && vs.pending_scroll_delta.abs() <= 0.0 {
             return;
@@ -619,11 +632,13 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             updated_scroll_y = Some(ui.get_dbg_cy());
         }
     }
-    if let Ok(mut vs) = vstate.try_borrow_mut() {
-        if let Some(cy) = updated_scroll_y {
-            vs.last_scroll_y = cy;
-        }
-        vs.in_slint_call = false;
+    let mut vs = vstate.borrow_mut();
+    if let Some(cy) = updated_scroll_y {
+        vs.last_scroll_y = cy;
+    }
+    vs.in_slint_call = false;
+    if vs.spacers_dirty || vs.pending_scroll_delta.abs() > 0.0 {
+        schedule_flush_timer(vstate, &mut vs);
     }
 }
 
@@ -941,50 +956,30 @@ impl Sheet {
         if height <= 1.0 {
             return;
         }
-        let schedule_flush = {
-            let Ok(mut vs) = self.vstate.try_borrow_mut() else {
-                return;
-            };
-            if at >= vs.heights.len() {
-                return;
-            }
-            let old = vs.heights[at];
-            let was_measured = vs.measured[at];
-            let delta = height - old;
-            vs.heights[at] = height;
-            vs.measured[at] = true;
-            if delta.abs() <= 0.5 {
-                false
-            } else {
-                let row_bottom_before: f32 = vs.heights[..at].iter().sum::<f32>() + old;
-                let scroll_top = (-vs.last_scroll_y).max(0.0);
-                let compensate_scroll = !was_measured && row_bottom_before <= scroll_top + 4.0;
-                if compensate_scroll {
-                    vs.last_scroll_y -= delta;
-                    vs.pending_scroll_delta += delta;
-                }
-                let affects_spacers = at < vs.win_start || at >= vs.win_end || compensate_scroll;
-                if affects_spacers {
-                    vs.spacers_dirty = true;
-                }
-                if affects_spacers && !vs.in_slint_call && !vs.flush_scheduled && vs.ui.is_some() {
-                    vs.flush_scheduled = true;
-                    true
-                } else {
-                    false
-                }
-            }
-        };
-        if schedule_flush {
-            let weak = Rc::downgrade(&self.vstate);
-            if let Ok(vs) = self.vstate.try_borrow() {
-                if let Some(timer) = &vs.flush_timer {
-                    timer.start(slint::TimerMode::SingleShot, Duration::ZERO, move || {
-                        if let Some(vstate) = weak.upgrade() {
-                            flush_pending_spacers(&vstate);
-                        }
-                    });
-                }
+        let mut vs = self.vstate.borrow_mut();
+        if at >= vs.heights.len() {
+            return;
+        }
+        let old = vs.heights[at];
+        let was_measured = vs.measured[at];
+        let delta = height - old;
+        vs.heights[at] = height;
+        vs.measured[at] = true;
+        if delta.abs() <= 0.5 {
+            return;
+        }
+        let row_bottom_before: f32 = vs.heights[..at].iter().sum::<f32>() + old;
+        let scroll_top = (-vs.last_scroll_y).max(0.0);
+        let compensate_scroll = !was_measured && row_bottom_before <= scroll_top + 4.0;
+        if compensate_scroll {
+            vs.last_scroll_y -= delta;
+            vs.pending_scroll_delta += delta;
+        }
+        let affects_spacers = at < vs.win_start || at >= vs.win_end || compensate_scroll;
+        if affects_spacers {
+            vs.spacers_dirty = true;
+            if !vs.in_slint_call {
+                schedule_flush_timer(&self.vstate, &mut vs);
             }
         }
     }

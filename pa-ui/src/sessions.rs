@@ -1099,11 +1099,7 @@ impl Sidebar {
             )
         };
 
-        if new_from_y.is_empty() {
-            if splice_model.row_count() > 0 {
-                splice_model.set_vec(Vec::new());
-            }
-        } else if splice_changed {
+        if splice_changed || (new_from_y.is_empty() && splice_model.row_count() > 0) {
             splice_model.set_vec(new_from_y);
         }
 
@@ -1162,6 +1158,13 @@ impl Sidebar {
         self.sync_mounted_window();
     }
 
+    fn clear_fold_animation(w: &mut SidebarViewport) {
+        w.animating_fold = None;
+        w.animating_splice = false;
+        w.fold_timer = None;
+        w.fold_generation = w.fold_generation.wrapping_add(1);
+    }
+
     fn apply_column(
         self: &Rc<Self>,
         ui: &AppWindow,
@@ -1173,7 +1176,7 @@ impl Sidebar {
         let previous_empty = column.previous.is_empty();
         let fold_duration = ui.global::<crate::Appearance>().get_fold_duration();
         let row_h = row_height_for(ui);
-        let vh = ui.get_dbg_sidebar_h();
+        let vh = ui.get_sidebar_h();
         let saved_cy = ui.invoke_get_sidebar_cy();
         let is_group_move = fold_index == -2;
         let start_anim = !previous_empty && fold_duration > 0 && (is_fold_toggle || is_group_move);
@@ -1186,12 +1189,7 @@ impl Sidebar {
             if vh > 1.0 {
                 w.viewport_h = vh;
             }
-            if is_fold_toggle && fold_duration <= 0 {
-                w.animating_fold = None;
-                w.animating_splice = false;
-                w.fold_timer = None;
-                w.fold_generation = w.fold_generation.wrapping_add(1);
-            } else if start_anim {
+            if start_anim {
                 w.fold_generation = w.fold_generation.wrapping_add(1);
                 if is_fold_toggle {
                     w.animating_fold = Some(fold_index as usize);
@@ -1202,7 +1200,7 @@ impl Sidebar {
                 let gen = w.fold_generation;
                 timer.start(
                     slint::TimerMode::SingleShot,
-                    std::time::Duration::from_millis(fold_duration as u64 + 32),
+                    std::time::Duration::from_millis(fold_duration as u64 + 150),
                     move || {
                         if let Some(sb) = sb_w.upgrade() {
                             sb.settle_fold(Some(gen));
@@ -1210,11 +1208,8 @@ impl Sidebar {
                     },
                 );
                 w.fold_timer = Some(timer);
-            } else if !is_fold_toggle {
-                w.animating_fold = None;
-                w.animating_splice = false;
-                w.fold_timer = None;
-                w.fold_generation = w.fold_generation.wrapping_add(1);
+            } else {
+                Self::clear_fold_animation(&mut w);
             }
         }
 
@@ -1560,9 +1555,7 @@ impl Sidebar {
             let sidebar = self.clone();
             ui.on_sidebar_viewport_changed(move |cy, vh| {
                 let changed = {
-                    let Ok(mut w) = sidebar.viewport.try_borrow_mut() else {
-                        return;
-                    };
+                    let mut w = sidebar.viewport.borrow_mut();
                     let mut moved = (w.scroll_y - cy).abs() > 0.5;
                     w.scroll_y = cy;
                     if vh > 1.0 && (w.viewport_h - vh).abs() > 0.5 {
