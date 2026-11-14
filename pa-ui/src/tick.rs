@@ -2583,7 +2583,7 @@ mod status_strip_tests {
         toggling_offscreen_row_updates_row_without_eager_conversion_until_scrolled_into_view();
         scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights();
         multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy();
-        tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_stream();
+        tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn();
         multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation();
         real_window_layout_and_scroll_remain_gap_free_with_tighter_window();
         let _ = std::fs::remove_file(&settings_path);
@@ -5343,7 +5343,7 @@ fn main() {}
         assert_eq!(slint::Model::row_data(&model, 0).unwrap().body, mounted_first_body);
     }
 
-    fn tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_stream() {
+    fn tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn() {
         const { assert!(crate::sheet::MAX_MOUNTED_ROWS <= 40); }
         const { assert!(crate::sheet::OVERSCAN_ROWS <= 10); }
         let h = Harness::new();
@@ -5355,7 +5355,7 @@ fn main() {}
         assert!(slint::Model::row_count(&model) <= 40);
 
         for step in 0..12 {
-            let next = lazy_cell_rows(1, &format!("stream-{step}"));
+            let next = lazy_cell_rows(1, &format!("live-turn-{step}"));
             rows.extend(next.clone());
             h.tick.sheet.merge(next);
             assert!(slint::Model::row_count(&model) <= 45);
@@ -5405,84 +5405,75 @@ fn main() {}
         let row_heights: Vec<f32> = rows.iter().map(crate::sheet::estimate_row_height).collect();
         h.tick.sheet.replace(rows.clone());
 
-        let step = Rc::new(std::cell::Cell::new(0usize));
         let verified = Rc::new(std::cell::Cell::new(false));
-        let expected = Rc::new(std::cell::Cell::new((0.0f32, 0.0f32, 0.0f32)));
-        let step_c = step.clone();
         let verified_c = verified.clone();
-        let expected_c = expected.clone();
         let ui_w = h.ui.as_weak();
         let total_rows = rows.len();
-        let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+        slint::Timer::single_shot(Duration::from_millis(40), move || {
             let Some(ui) = ui_w.upgrade() else { return };
-            let n = step_c.get() + 1;
-            step_c.set(n);
-            if n == 2 {
-                let scroll_top: f32 = row_heights[..160].iter().sum();
-                ui.invoke_set_scroll_y(-scroll_top);
-            } else if n == 4 {
+            let scroll_top: f32 = row_heights[..160].iter().sum();
+            ui.invoke_set_scroll_y(-scroll_top);
+            let ui_w2 = ui.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(40), move || {
+                let Some(ui) = ui_w2.upgrade() else { return };
                 ui.invoke_viewport_scrolled(ui.get_dbg_cy(), ui.get_dbg_h());
-            } else if n == 5 {
-                let model = ui.get_transcript();
-                let win_start = ui.get_window_start() as usize;
-                let win_end = win_start + slint::Model::row_count(&model);
-                assert!(win_start >= 10 && win_end + 10 <= total_rows);
+                let ui_w3 = ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(20), move || {
+                    let Some(ui) = ui_w3.upgrade() else { return };
+                    let model = ui.get_transcript();
+                    let win_start = ui.get_window_start() as usize;
+                    let win_end = win_start + slint::Model::row_count(&model);
+                    assert!(win_start >= 10 && win_end + 10 <= total_rows);
 
-                let initial_top = ui.get_top_pad();
-                let initial_bottom = ui.get_bottom_pad();
-                let initial_cy = ui.get_dbg_cy();
+                    let initial_top = ui.get_top_pad();
+                    let initial_bottom = ui.get_bottom_pad();
+                    let initial_cy = ui.get_dbg_cy();
 
-                crate::sheet::reset_spacer_write_count();
-                crate::sheet::reset_scroll_compensation_count();
+                    crate::sheet::reset_spacer_write_count();
+                    crate::sheet::reset_scroll_compensation_count();
 
-                assert!(win_start >= 30);
-                let mut top_delta = 0.0f32;
-                for (idx, &h) in row_heights
-                    .iter()
-                    .enumerate()
-                    .take(win_start - 17)
-                    .skip(win_start - 25)
-                {
-                    top_delta += 15.0;
-                    ui.invoke_row_measured(idx as i32, h + 15.0);
-                }
-                let mut bottom_delta = 0.0f32;
-                for (idx, &h) in row_heights.iter().enumerate().skip(win_end).take(8) {
-                    bottom_delta += 18.0;
-                    ui.invoke_row_measured(idx as i32, h + 18.0);
-                }
+                    assert!(win_start >= 30);
+                    let mut top_delta = 0.0f32;
+                    for (idx, &h) in row_heights
+                        .iter()
+                        .enumerate()
+                        .take(win_start - 17)
+                        .skip(win_start - 25)
+                    {
+                        top_delta += 15.0;
+                        ui.invoke_row_measured(idx as i32, h + 15.0);
+                    }
+                    let mut bottom_delta = 0.0f32;
+                    for (idx, &h) in row_heights.iter().enumerate().skip(win_end).take(8) {
+                        bottom_delta += 18.0;
+                        ui.invoke_row_measured(idx as i32, h + 18.0);
+                    }
 
-                assert_eq!(crate::sheet::spacer_write_count(), 0);
-                assert_eq!(crate::sheet::scroll_compensation_count(), 0);
-                expected_c.set((
-                    initial_top + top_delta,
-                    initial_bottom + bottom_delta,
-                    initial_cy - top_delta,
-                ));
-            } else if n == 7 {
-                let (exp_top, exp_bottom, exp_cy) = expected_c.get();
-                assert!(
-                    crate::sheet::spacer_write_count() <= 2,
-                    "expected coalesced spacer writes <= 2, got {}",
-                    crate::sheet::spacer_write_count()
-                );
-                assert_eq!(crate::sheet::scroll_compensation_count(), 1);
-                assert!(
-                    (ui.get_top_pad() - exp_top).abs() < 1.0,
-                    "top_pad={}, exp_top={}, win_start={}",
-                    ui.get_top_pad(),
-                    exp_top,
-                    ui.get_window_start()
-                );
-                assert!((ui.get_bottom_pad() - exp_bottom).abs() < 1.0);
-                assert!((ui.get_dbg_cy() - exp_cy).abs() < 1.5);
-                verified_c.set(true);
-                let _ = slint::quit_event_loop();
-            }
+                    assert_eq!(crate::sheet::spacer_write_count(), 0);
+                    assert_eq!(crate::sheet::scroll_compensation_count(), 0);
+                    let exp_top = initial_top + top_delta;
+                    let exp_bottom = initial_bottom + bottom_delta;
+                    let exp_cy = initial_cy - top_delta;
+                    let ui_w4 = ui.as_weak();
+                    let verified_c2 = verified_c.clone();
+                    slint::Timer::single_shot(Duration::from_millis(40), move || {
+                        let Some(ui) = ui_w4.upgrade() else { return };
+                        assert!(
+                            crate::sheet::spacer_write_count() <= 2,
+                            "expected coalesced spacer writes <= 2, got {}",
+                            crate::sheet::spacer_write_count()
+                        );
+                        assert_eq!(crate::sheet::scroll_compensation_count(), 1);
+                        assert!((ui.get_top_pad() - exp_top).abs() < 1.0);
+                        assert!((ui.get_bottom_pad() - exp_bottom).abs() < 1.0);
+                        assert!((ui.get_dbg_cy() - exp_cy).abs() < 1.5);
+                        verified_c2.set(true);
+                        let _ = slint::quit_event_loop();
+                    });
+                });
+            });
         });
         slint::run_event_loop().expect("event loop");
-        drop(timer);
         let _ = h.ui.hide();
         appearance.set_smooth_scroll(prev_smooth);
         assert!(verified.get());
@@ -5501,27 +5492,26 @@ fn main() {}
         h.tick.sheet.replace(rows.clone());
         crate::sheet::force_scroll_to_end(&h.ui);
 
-        let step = Rc::new(std::cell::Cell::new(0usize));
         let verified = Rc::new(std::cell::Cell::new(false));
-        let step_c = step.clone();
         let verified_c = verified.clone();
         let ui_w = h.ui.as_weak();
         let sheet_c = h.tick.sheet.clone();
-        let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+        slint::Timer::single_shot(Duration::from_millis(40), move || {
             let Some(ui) = ui_w.upgrade() else { return };
-            let n = step_c.get() + 1;
-            step_c.set(n);
             let model = ui.get_transcript();
-            if n == 2 {
-                assert!(slint::Model::row_count(&model) <= 40);
-                ui.invoke_scroll_to_end();
-                assert!(ui.get_follow_bottom());
-                assert!(ui.get_from_bottom() <= 1.0);
+            assert!(slint::Model::row_count(&model) <= 40);
+            ui.invoke_scroll_to_end();
+            assert!(ui.get_follow_bottom());
+            assert!(ui.get_from_bottom() <= 1.0);
 
-                ui.invoke_reader_moved_up();
-                ui.invoke_set_scroll_y(-ui.get_scroll_range() * 0.4);
-            } else if n == 4 {
+            ui.invoke_reader_moved_up();
+            ui.invoke_set_scroll_y(-ui.get_scroll_range() * 0.4);
+            let ui_w2 = ui.as_weak();
+            let sheet_c2 = sheet_c.clone();
+            let verified_c2 = verified_c.clone();
+            slint::Timer::single_shot(Duration::from_millis(40), move || {
+                let Some(ui) = ui_w2.upgrade() else { return };
+                let model = ui.get_transcript();
                 assert!(slint::Model::row_count(&model) <= 40);
                 let win_start = ui.get_window_start() as usize;
                 assert!(win_start > 0);
@@ -5530,20 +5520,21 @@ fn main() {}
 
                 ui.invoke_force_scroll_to_end();
                 ui.invoke_scroll_to_end();
-                let short_rows = lazy_markdown_rows(3, "short");
-                sheet_c.replace(short_rows);
-            } else if n == 6 {
-                ui.invoke_scroll_to_end();
-                assert!(ui.get_follow_bottom());
-                assert_eq!(ui.get_window_start(), 0);
-                assert!(ui.get_top_pad() <= 0.5);
-                assert!(ui.get_bottom_pad() <= 0.5);
-                verified_c.set(true);
-                let _ = slint::quit_event_loop();
-            }
+                sheet_c2.replace(lazy_markdown_rows(3, "short"));
+                let ui_w3 = ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(40), move || {
+                    let Some(ui) = ui_w3.upgrade() else { return };
+                    ui.invoke_scroll_to_end();
+                    assert!(ui.get_follow_bottom());
+                    assert_eq!(ui.get_window_start(), 0);
+                    assert!(ui.get_top_pad() <= 0.5);
+                    assert!(ui.get_bottom_pad() <= 0.5);
+                    verified_c2.set(true);
+                    let _ = slint::quit_event_loop();
+                });
+            });
         });
         slint::run_event_loop().expect("event loop");
-        drop(timer);
         let _ = h.ui.hide();
         appearance.set_smooth_scroll(prev_smooth);
         assert!(verified.get());

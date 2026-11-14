@@ -341,8 +341,24 @@ fn sync_ui_spacers(ui: &AppWindow, top: f32, bottom: f32, wstart: i32) {
     }
 }
 
+enum SpacerFlush {
+    ApplyUpdate,
+    Sync {
+        ui: Option<slint::Weak<AppWindow>>,
+        top: f32,
+        bottom: f32,
+        wstart: i32,
+    },
+}
+
+fn center_window(anchor: usize, slack: usize, total: usize) -> (usize, usize) {
+    let s = anchor.saturating_sub(slack / 2);
+    let e = (s + MAX_MOUNTED_ROWS).min(total);
+    (e.saturating_sub(MAX_MOUNTED_ROWS), e)
+}
+
 fn flush_pending_spacers(vstate: &Rc<RefCell<VirtualSlintRows>>) {
-    let (ui_weak, top, bottom, wstart, has_scroll_delta) = {
+    let action = {
         let Ok(mut vs) = vstate.try_borrow_mut() else {
             return;
         };
@@ -351,17 +367,25 @@ fn flush_pending_spacers(vstate: &Rc<RefCell<VirtualSlintRows>>) {
             return;
         }
         if vs.pending_scroll_delta.abs() > 0.0 {
-            (vs.ui.clone(), 0.0, 0.0, 0, true)
+            SpacerFlush::ApplyUpdate
         } else {
             vs.spacers_dirty = false;
-            let (t, b, w) = vs.compute_spacers();
-            (vs.ui.clone(), t, b, w, false)
+            let (top, bottom, wstart) = vs.compute_spacers();
+            SpacerFlush::Sync {
+                ui: vs.ui.clone(),
+                top,
+                bottom,
+                wstart,
+            }
         }
     };
-    if has_scroll_delta {
-        apply_virtual_update(vstate, false);
-    } else if let Some(ui) = ui_weak.and_then(|w| w.upgrade()) {
-        sync_ui_spacers(&ui, top, bottom, wstart);
+    match action {
+        SpacerFlush::ApplyUpdate => apply_virtual_update(vstate, false),
+        SpacerFlush::Sync { ui, top, bottom, wstart } => {
+            if let Some(ui) = ui.and_then(|w| w.upgrade()) {
+                sync_ui_spacers(&ui, top, bottom, wstart);
+            }
+        }
     }
 }
 
@@ -457,21 +481,13 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             let end = (last_vis + 1 + OVERSCAN_ROWS).min(total);
             let span = end.saturating_sub(start);
             if span < MAX_MOUNTED_ROWS {
-                let extra = MAX_MOUNTED_ROWS - span;
-                let s = start.saturating_sub(extra / 2);
-                let e = (s + MAX_MOUNTED_ROWS).min(total);
-                let s = e.saturating_sub(MAX_MOUNTED_ROWS);
-                (s, e)
+                center_window(start, MAX_MOUNTED_ROWS - span, total)
             } else {
                 let vis_count = last_vis + 1 - first_vis;
                 if vis_count >= MAX_MOUNTED_ROWS {
                     (first_vis, (first_vis + MAX_MOUNTED_ROWS).min(total))
                 } else {
-                    let slack = MAX_MOUNTED_ROWS - vis_count;
-                    let s = first_vis.saturating_sub(slack / 2);
-                    let e = (s + MAX_MOUNTED_ROWS).min(total);
-                    let s = e.saturating_sub(MAX_MOUNTED_ROWS);
-                    (s, e)
+                    center_window(first_vis, MAX_MOUNTED_ROWS - vis_count, total)
                 }
             }
         };
@@ -585,7 +601,7 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
     }
 
-    let (ui_weak2, top2, bottom2, wstart2, scroll_delta) = {
+    let (ui_weak, top, bottom, wstart, scroll_delta) = {
         let Ok(mut vs) = vstate.try_borrow_mut() else { return };
         vs.clear_pending_flush();
         let scroll_delta = std::mem::take(&mut vs.pending_scroll_delta);
@@ -593,8 +609,8 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         (vs.ui.clone(), t, b, w, scroll_delta)
     };
     let mut updated_scroll_y = None;
-    if let Some(ui) = ui_weak2.and_then(|w| w.upgrade()) {
-        sync_ui_spacers(&ui, top2, bottom2, wstart2);
+    if let Some(ui) = ui_weak.and_then(|w| w.upgrade()) {
+        sync_ui_spacers(&ui, top, bottom, wstart);
         if scroll_delta.abs() > 0.0 && !ui.get_follow_bottom() && !ui.get_scrollbar_dragging() {
             let cur_y = prev_cy.unwrap_or_else(|| ui.get_dbg_cy());
             #[cfg(test)]
