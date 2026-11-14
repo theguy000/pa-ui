@@ -295,4 +295,34 @@ mod activity_chip_contract {
             "changed scroll-range must only clamp small UI chrome shrinks, not large layout re-measure drops"
         );
     }
+
+    #[test]
+    fn wrapped_transcript_text_binds_explicit_width_from_root() {
+        let transcript = include_str!("../ui/transcript.slint");
+        let compact: String = transcript.chars().filter(|ch| !ch.is_whitespace()).collect();
+        for needle in [
+            "agent-text:=StyledText{width:root.width-48px;",
+            "quote-text:=StyledText{x:12px;y:0px;width:root.width-60px;",
+            "custom-text:=StyledText{width:root.width-48px-Appearance.expanded-pad-x*2;",
+            "error-line:=StyledText{x:94px;y:4px;width:root.width-118px;",
+            "code-text:=StyledText{x:12px;",
+            "width:root.width-72px;",
+            "table-text:=StyledText{width:root.width-48px;",
+        ] {
+            assert!(
+                compact.contains(needle),
+                "transcript.slint must bind explicit root-based width so Flickable content-height matches layout height: missing {needle}"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_scroll_range_syncs_seen_content_y_when_clamped_upward() {
+        let app = include_str!("../ui/app.slint");
+        let compact: String = app.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            compact.contains("elseif(root.follow-bottom&&transcript-list.content-y>root.seen-content-y){root.seen-content-y=transcript-list.content-y;}"),
+            "changed scroll-range must sync seen-content-y when Slint clamps content-y upward"
+        );
+    }
 }

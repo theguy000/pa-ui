@@ -2577,6 +2577,7 @@ mod status_strip_tests {
         sequence_gap_triggers_tail_refresh_while_contiguous_sequence_does_not();
         failed_async_bash_completion_after_idle_renders_with_subsequent_turn();
         appending_rows_beyond_window_keeps_virtual_model_incremental();
+        wrapped_rows_preserve_follow_bottom_across_scroll_range_shrink();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -5007,5 +5008,31 @@ fn main() {}
         h.tick.sheet.merge(six_more);
         assert_eq!(h.ui.get_window_start() as usize, 86 - crate::sheet::MAX_MOUNTED_ROWS);
         assert_eq!(slint::Model::row_count(&model), crate::sheet::MAX_MOUNTED_ROWS);
+    }
+
+    fn wrapped_rows_preserve_follow_bottom_across_scroll_range_shrink() {
+        let h = Harness::new();
+        h.ui.set_follow_bottom(true);
+        let long_msg = serde_json::json!({
+            "id": "m_long",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "Long wrapped line ".repeat(40) }]
+        });
+        let rows = crate::transcript::build(std::slice::from_ref(&long_msg), 1).0;
+        h.tick.sheet.replace(rows);
+        h.ui.invoke_scroll_to_end();
+        assert!(h.ui.get_follow_bottom());
+
+        // Replacing with a short row shrinks scroll-range by >120px without losing follow_bottom.
+        let short_msg = serde_json::json!({
+            "id": "m_short",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "short" }]
+        });
+        let short_rows = crate::transcript::build(std::slice::from_ref(&short_msg), 1).0;
+        h.tick.sheet.replace(short_rows);
+        h.ui.invoke_scroll_to_end();
+        assert!(h.ui.get_follow_bottom());
+        assert!(!h.ui.get_reader_scrolled());
     }
 }
