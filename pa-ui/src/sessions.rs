@@ -312,15 +312,14 @@ pub(crate) fn apply_manual_move(
     Some(out)
 }
 
-fn drop_target_at(ui: &AppWindow, target_y: f32) -> Option<String> {
-    let entries = ui.get_session_entries();
-    (0..entries.row_count())
-        .filter_map(|index| entries.row_data(index))
+fn drop_target_at(entries: &[SessionEntry], row_height: f32, target_y: f32) -> Option<String> {
+    entries
+        .iter()
         .find(|entry| {
             !entry.is_header
                 && !entry.folded
                 && target_y >= entry.at
-                && target_y < entry.at + ROW_HEIGHT as f32
+                && target_y < entry.at + row_height
         })
         .map(|entry| entry.item.id.to_string())
 }
@@ -573,27 +572,49 @@ pub(crate) fn groups_of(
     )
 }
 
-pub(crate) fn apply(ui: &AppWindow, column: Column, fold_index: i32, fold_open: bool) {
-    if column.previous.is_empty() {
-        ui.set_session_entries(slint::ModelRc::from(std::rc::Rc::new(
-            slint::VecModel::from(column.entries),
-        )));
-        ui.set_sessions_height(column.height);
-        return;
+const DEFAULT_VIEWPORT_HEIGHT: f32 = 732.0;
+const OVERSCAN_ROWS: usize = 6;
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarModelOp {
+    Reset,
+    Set { at: usize },
+    Insert { at: usize },
+    Remove { at: usize },
+    Push,
+}
+
+fn lcs_matches(old: &[SessionEntry], new: &[SessionEntry]) -> Vec<(usize, usize)> {
+    let old_keys: Vec<String> = old.iter().map(entry_key).collect();
+    let new_keys: Vec<String> = new.iter().map(entry_key).collect();
+    let m = old_keys.len();
+    let n = new_keys.len();
+    let mut dp = vec![0u16; (m + 1) * (n + 1)];
+    let stride = n + 1;
+    for i in (0..m).rev() {
+        for j in (0..n).rev() {
+            dp[i * stride + j] = if old_keys[i] == new_keys[j] {
+                1 + dp[(i + 1) * stride + (j + 1)]
+            } else {
+                dp[(i + 1) * stride + j].max(dp[i * stride + (j + 1)])
+            };
+        }
     }
-    let saved_cy = ui.invoke_get_sidebar_cy();
-    ui.set_prev_sessions_height(column.was_height);
-    ui.set_sessions_height(column.height);
-    ui.set_fold_index(fold_index);
-    ui.set_fold_open(fold_open);
-    ui.set_session_entries(slint::ModelRc::from(std::rc::Rc::new(
-        slint::VecModel::from(column.entries),
-    )));
-    ui.set_splice_at(slint::ModelRc::from(std::rc::Rc::new(
-        slint::VecModel::from(column.from_y),
-    )));
-    ui.invoke_trigger_list_anim();
-    ui.invoke_restore_sidebar_cy(saved_cy);
+    let mut out = Vec::with_capacity(dp[0] as usize);
+    let (mut i, mut j) = (0, 0);
+    while i < m && j < n {
+        if old_keys[i] == new_keys[j] {
+            out.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -830,22 +851,171 @@ fn open_search_with_order(
     ui.set_search_focus_tick(ui.get_search_focus_tick() + 1);
 }
 
+struct SidebarWindow {
+    groups: (Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>),
+    all_entries: Vec<SessionEntry>,
+    all_from_y: Vec<f32>,
+    mounted_entries: Vec<SessionEntry>,
+    mounted_from_y: Vec<f32>,
+    row_height: f32,
+    scroll_y: f32,
+    viewport_h: f32,
+    animating_fold: Option<usize>,
+    animating_splice: bool,
+    fold_generation: u64,
+    fold_timer: Option<slint::Timer>,
+    entries_model: Rc<VecModel<SessionEntry>>,
+    splice_model: Rc<VecModel<f32>>,
+    #[cfg(test)]
+    last_ops: Vec<SidebarModelOp>,
+}
+
+impl SidebarWindow {
+    fn new() -> Self {
+        Self {
+            groups: (Vec::new(), Vec::new(), Vec::new()),
+            all_entries: Vec::new(),
+            all_from_y: Vec::new(),
+            mounted_entries: Vec::new(),
+            mounted_from_y: Vec::new(),
+            row_height: ROW_HEIGHT as f32,
+            scroll_y: 0.0,
+            viewport_h: 0.0,
+            animating_fold: None,
+            animating_splice: false,
+            fold_generation: 0,
+            fold_timer: None,
+            entries_model: Rc::new(VecModel::default()),
+            splice_model: Rc::new(VecModel::default()),
+            #[cfg(test)]
+            last_ops: Vec::new(),
+        }
+    }
+
+    fn visible_slice(&self, include_splice: bool) -> (Vec<SessionEntry>, Vec<f32>) {
+        let rh = self.row_height.max(1.0);
+        let effective_vh = if self.viewport_h > 1.0 {
+            self.viewport_h
+        } else {
+            DEFAULT_VIEWPORT_HEIGHT
+        };
+        let scroll_top = (-self.scroll_y).max(0.0);
+        let overscan = OVERSCAN_ROWS as f32 * rh;
+        let win_top = (COLUMN_TOP as f32 + scroll_top - overscan).max(COLUMN_TOP as f32);
+        let win_bottom = COLUMN_TOP as f32 + scroll_top + effective_vh + overscan;
+
+        let mut entries = Vec::new();
+        let mut from_y = Vec::new();
+        for (i, entry) in self.all_entries.iter().enumerate() {
+            let animating_group =
+                !entry.is_header && self.animating_fold == Some(entry.seam as usize);
+            if !entry.is_header && entry.folded && !animating_group {
+                continue;
+            }
+            let h = if entry.is_header {
+                HEADER_HEIGHT as f32
+            } else {
+                rh
+            };
+            let fy = self.all_from_y.get(i).copied().unwrap_or(entry.at);
+            let (y_min, y_max) = if animating_group {
+                (entry.target - 18.0, entry.target + h)
+            } else if include_splice {
+                (entry.at.min(fy), entry.at.max(fy) + h)
+            } else {
+                (entry.at, entry.at + h)
+            };
+            if y_max >= win_top && y_min <= win_bottom {
+                entries.push(entry.clone());
+                if include_splice {
+                    from_y.push(fy);
+                }
+            }
+        }
+        (entries, from_y)
+    }
+}
+
+enum EntriesPatch {
+    None,
+    Reset(Vec<SessionEntry>),
+    Diff {
+        removes: Vec<usize>,
+        steps: Vec<PatchStep>,
+    },
+}
+
+enum PatchStep {
+    Set { at: usize, entry: SessionEntry },
+    Keep,
+    Insert { at: usize, entry: SessionEntry },
+    Push(SessionEntry),
+}
+
+fn plan_entries_patch(old: &[SessionEntry], new: &[SessionEntry]) -> EntriesPatch {
+    if old == new {
+        return EntriesPatch::None;
+    }
+    if old.is_empty() || new.is_empty() {
+        return EntriesPatch::Reset(new.to_vec());
+    }
+    let matches = lcs_matches(old, new);
+    if matches.is_empty() || matches.len() * 4 < new.len() {
+        return EntriesPatch::Reset(new.to_vec());
+    }
+    let mut keep_old = vec![false; old.len()];
+    for &(oi, _) in &matches {
+        keep_old[oi] = true;
+    }
+    let removes: Vec<usize> = (0..old.len()).rev().filter(|&i| !keep_old[i]).collect();
+    let mut steps = Vec::with_capacity(new.len());
+    let mut mi = 0usize;
+    let mut simulated_len = matches.len();
+    for (ni, new_entry) in new.iter().enumerate() {
+        if mi < matches.len() && matches[mi].1 == ni {
+            let oi = matches[mi].0;
+            if old[oi] != *new_entry {
+                steps.push(PatchStep::Set {
+                    at: ni,
+                    entry: new_entry.clone(),
+                });
+            } else {
+                steps.push(PatchStep::Keep);
+            }
+            mi += 1;
+        } else if ni == simulated_len {
+            steps.push(PatchStep::Push(new_entry.clone()));
+            simulated_len += 1;
+        } else {
+            steps.push(PatchStep::Insert {
+                at: ni,
+                entry: new_entry.clone(),
+            });
+            simulated_len += 1;
+        }
+    }
+    EntriesPatch::Diff { removes, steps }
+}
+
 /// Stateful Sidebar module owning the session roster, fold state, UUID rebinding,
 /// context menu confirmation, and search popup.
 pub(crate) struct Sidebar {
     pub cache: Rc<RefCell<Vec<SessionRow>>>,
     pub selected_uuid: RefCell<Option<String>>,
-    groups: Rc<RefCell<(Vec<SessionItem>, Vec<SessionItem>, Vec<SessionItem>)>>,
+    window: Rc<RefCell<SidebarWindow>>,
     settings: Rc<crate::settings::SettingsStore>,
     catalog_ready: std::cell::Cell<bool>,
 }
 
 impl Sidebar {
     pub fn new(ui: &AppWindow, job_tx: &Sender<Job>) -> Rc<Self> {
+        let win = SidebarWindow::new();
+        ui.set_session_entries(ModelRc::from(win.entries_model.clone()));
+        ui.set_splice_at(ModelRc::from(win.splice_model.clone()));
         let sidebar = Rc::new(Self {
             cache: Rc::new(RefCell::new(Vec::new())),
             selected_uuid: RefCell::new(None),
-            groups: Rc::new(RefCell::new((Vec::new(), Vec::new(), Vec::new()))),
+            window: Rc::new(RefCell::new(win)),
             settings: crate::settings::SettingsStore::new(crate::settings::default_settings_path()),
             catalog_ready: std::cell::Cell::new(false),
         });
@@ -915,15 +1085,171 @@ impl Sidebar {
         open_search_with_order(ui, &self.cache.borrow(), self.order(), &manual);
     }
 
+    fn sync_mounted_window(&self) {
+        let (patch, new_from_y, splice_changed, entries_model, splice_model) = {
+            let mut w = self.window.borrow_mut();
+            let include_splice = w.animating_splice;
+            let (new_entries, new_from_y) = w.visible_slice(include_splice);
+            let patch = plan_entries_patch(&w.mounted_entries, &new_entries);
+            let splice_changed = w.mounted_from_y != new_from_y;
+            if matches!(patch, EntriesPatch::None) && !splice_changed {
+                return;
+            }
+            #[cfg(test)]
+            match &patch {
+                EntriesPatch::None => {}
+                EntriesPatch::Reset(_) => w.last_ops = vec![SidebarModelOp::Reset],
+                EntriesPatch::Diff { removes, steps } => {
+                    let mut ops = Vec::new();
+                    for &at in removes {
+                        ops.push(SidebarModelOp::Remove { at });
+                    }
+                    for step in steps {
+                        match step {
+                            PatchStep::Set { at, .. } => ops.push(SidebarModelOp::Set { at: *at }),
+                            PatchStep::Insert { at, .. } => ops.push(SidebarModelOp::Insert { at: *at }),
+                            PatchStep::Push(_) => ops.push(SidebarModelOp::Push),
+                            PatchStep::Keep => {}
+                        }
+                    }
+                    w.last_ops = ops;
+                }
+            }
+            w.mounted_entries = new_entries;
+            w.mounted_from_y = new_from_y.clone();
+            (
+                patch,
+                new_from_y,
+                splice_changed,
+                w.entries_model.clone(),
+                w.splice_model.clone(),
+            )
+        };
+
+        if new_from_y.is_empty() {
+            if splice_model.row_count() > 0 {
+                splice_model.set_vec(Vec::new());
+            }
+        } else if splice_changed {
+            splice_model.set_vec(new_from_y);
+        }
+
+        match patch {
+            EntriesPatch::None => {}
+            EntriesPatch::Reset(entries) => {
+                entries_model.set_vec(entries);
+            }
+            EntriesPatch::Diff { removes, steps } => {
+                for at in removes {
+                    entries_model.remove(at);
+                }
+                for step in steps {
+                    match step {
+                        PatchStep::Set { at, entry } => entries_model.set_row_data(at, entry),
+                        PatchStep::Insert { at, entry } => entries_model.insert(at, entry),
+                        PatchStep::Push(entry) => entries_model.push(entry),
+                        PatchStep::Keep => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn settle_fold(&self, expected_gen: Option<u64>) {
+        {
+            let mut w = self.window.borrow_mut();
+            if expected_gen.is_some_and(|g| g != w.fold_generation) {
+                return;
+            }
+            if !w.animating_splice && w.animating_fold.is_none() && w.splice_model.row_count() == 0 {
+                return;
+            }
+            w.animating_fold = None;
+            w.animating_splice = false;
+            w.fold_timer = None;
+            w.all_from_y.clear();
+        }
+        self.sync_mounted_window();
+    }
+
+    fn apply_column(
+        self: &Rc<Self>,
+        ui: &AppWindow,
+        column: Column,
+        fold_index: i32,
+        fold_open: bool,
+        is_fold_toggle: bool,
+    ) {
+        let previous_empty = column.previous.is_empty();
+        let fold_duration = ui.global::<crate::Appearance>().get_fold_duration();
+        let row_h = row_height_for(ui);
+        let vh = ui.get_dbg_sidebar_h();
+        let saved_cy = ui.invoke_get_sidebar_cy();
+        let is_group_move = fold_index == -2;
+        let start_anim = !previous_empty && fold_duration > 0 && (is_fold_toggle || is_group_move);
+
+        {
+            let mut w = self.window.borrow_mut();
+            w.all_entries = column.entries;
+            w.all_from_y = column.from_y;
+            w.row_height = row_h;
+            if vh > 1.0 {
+                w.viewport_h = vh;
+            }
+            if is_fold_toggle && fold_duration <= 0 {
+                w.animating_fold = None;
+                w.animating_splice = false;
+                w.fold_timer = None;
+                w.fold_generation = w.fold_generation.wrapping_add(1);
+            } else if start_anim {
+                w.fold_generation = w.fold_generation.wrapping_add(1);
+                if is_fold_toggle {
+                    w.animating_fold = Some(fold_index as usize);
+                }
+                w.animating_splice = true;
+                let timer = slint::Timer::default();
+                let sb_w = Rc::downgrade(self);
+                let gen = w.fold_generation;
+                timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_millis(fold_duration as u64 + 32),
+                    move || {
+                        if let Some(sb) = sb_w.upgrade() {
+                            sb.settle_fold(Some(gen));
+                        }
+                    },
+                );
+                w.fold_timer = Some(timer);
+            } else if !is_fold_toggle && w.animating_fold.is_none() {
+                w.animating_splice = false;
+            }
+        }
+
+        if previous_empty {
+            ui.set_sessions_height(column.height);
+            self.sync_mounted_window();
+            return;
+        }
+        ui.set_prev_sessions_height(column.was_height);
+        ui.set_sessions_height(column.height);
+        ui.set_fold_index(fold_index);
+        ui.set_fold_open(fold_open);
+        ui.invoke_restore_sidebar_cy(saved_cy);
+        self.sync_mounted_window();
+        if start_anim {
+            ui.invoke_trigger_list_anim();
+        }
+    }
+
     fn apply_items(
-        &self,
+        self: &Rc<Self>,
         ui: &AppWindow,
         items: Vec<SessionItem>,
         folded: [bool; 3],
         selected: i32,
     ) -> Option<SessionItem> {
         let (active, idle, done) = session_groups(&items);
-        let prev = self.groups.borrow().clone();
+        let prev = self.window.borrow().groups.clone();
         let active_changed = active != prev.0;
         let idle_changed = idle != prev.1;
         let done_changed = done != prev.2;
@@ -940,9 +1266,9 @@ impl Sidebar {
             selected
         };
         if col.changed() {
-            apply(ui, col, selected, false);
+            self.apply_column(ui, col, selected, false, false);
         }
-        *self.groups.borrow_mut() = (active.clone(), idle.clone(), done.clone());
+        self.window.borrow_mut().groups = (active.clone(), idle.clone(), done.clone());
         if active_changed {
             ui.set_active_items(ModelRc::from(Rc::new(VecModel::from(active))));
         }
@@ -959,7 +1285,7 @@ impl Sidebar {
         first
     }
 
-    fn project_roster(&self, ui: &AppWindow, rows: &[SessionRow]) -> Option<SessionItem> {
+    fn project_roster(self: &Rc<Self>, ui: &AppWindow, rows: &[SessionRow]) -> Option<SessionItem> {
         let order = self.order();
         let manual = self.settings.state.borrow().manual_session_order.clone();
         let items = session_items_with_order(rows, order, &manual);
@@ -971,7 +1297,7 @@ impl Sidebar {
         self.apply_items(ui, items, folded, -1)
     }
 
-    pub fn seed(&self, ui: &AppWindow, rows: Vec<SessionRow>) {
+    pub fn seed(self: &Rc<Self>, ui: &AppWindow, rows: Vec<SessionRow>) {
         let manual = self.settings.state.borrow().manual_session_order.clone();
         let items = session_items_with_order(&rows, self.order(), &manual);
         self.apply_items(ui, items, [false, false, false], 0);
@@ -979,7 +1305,7 @@ impl Sidebar {
     }
 
     /// Returns `Some(rebound_id)` if the active selection was re-keyed by the daemon.
-    pub fn apply_roster(&self, ui: &AppWindow, rows: Vec<SessionRow>) -> Option<String> {
+    pub fn apply_roster(self: &Rc<Self>, ui: &AppWindow, rows: Vec<SessionRow>) -> Option<String> {
         let selected = ui.get_selected_id().to_string();
         let selected_uuid = self.selected_uuid.borrow().clone();
         let rows: Vec<SessionRow> = rows
@@ -1190,7 +1516,7 @@ impl Sidebar {
 
         {
             let window = ui.as_weak();
-            let groups = self.groups.clone();
+            let sidebar = self.clone();
             let before: Rc<RefCell<[bool; 3]>> = Rc::new(RefCell::new([
                 ui.get_active_folded(),
                 ui.get_idle_folded(),
@@ -1207,17 +1533,18 @@ impl Sidebar {
                 let Some(index) = (0..3).find(|index| now[*index] != was[*index]) else {
                     return;
                 };
-                let held = groups.borrow();
-                let (active, idle, done) = if held.0.is_empty() && held.1.is_empty() && held.2.is_empty() {
-                    groups_of(
-                        &ui.get_active_items(),
-                        &ui.get_idle_items(),
-                        &ui.get_done_items(),
-                    )
-                } else {
-                    held.clone()
+                let (active, idle, done) = {
+                    let w = sidebar.window.borrow();
+                    if w.groups.0.is_empty() && w.groups.1.is_empty() && w.groups.2.is_empty() {
+                        groups_of(
+                            &ui.get_active_items(),
+                            &ui.get_idle_items(),
+                            &ui.get_done_items(),
+                        )
+                    } else {
+                        w.groups.clone()
+                    }
                 };
-                drop(held);
                 let col = column_at(
                     (&active, &idle, &done),
                     now,
@@ -1225,7 +1552,35 @@ impl Sidebar {
                     was,
                     row_height_for(&ui),
                 );
-                apply(&ui, col, index as i32, !now[index]);
+                sidebar.apply_column(&ui, col, index as i32, !now[index], true);
+            });
+        }
+
+        {
+            let sidebar = self.clone();
+            ui.on_fold_settled(move || {
+                sidebar.settle_fold(None);
+            });
+        }
+
+        {
+            let sidebar = self.clone();
+            ui.on_sidebar_viewport_changed(move |cy, vh| {
+                let changed = {
+                    let Ok(mut w) = sidebar.window.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut moved = (w.scroll_y - cy).abs() > 0.5;
+                    w.scroll_y = cy;
+                    if vh > 1.0 && (w.viewport_h - vh).abs() > 0.5 {
+                        w.viewport_h = vh;
+                        moved = true;
+                    }
+                    moved
+                };
+                if changed {
+                    sidebar.sync_mounted_window();
+                }
             });
         }
 
@@ -1329,7 +1684,7 @@ impl Sidebar {
                                 folded,
                                 row_height_for(&ui),
                             );
-                            apply(&ui, col, -1, false);
+                            sidebar.apply_column(&ui, col, -1, false, false);
                         }
                         if let Err(error) = store.persist() {
                             eprintln!("[settings] {error}");
@@ -1416,7 +1771,11 @@ impl Sidebar {
                 if sidebar.order() != SessionOrder::Manual {
                     return;
                 }
-                let Some(target) = drop_target_at(&ui, target_y) else {
+                let target = {
+                    let w = sidebar.window.borrow();
+                    drop_target_at(&w.all_entries, row_height_for(&ui), target_y)
+                };
+                let Some(target) = target else {
                     return;
                 };
                 let rows = sidebar.cache.borrow();
@@ -1512,5 +1871,257 @@ impl Sidebar {
                 ui.invoke_focus_composer();
             });
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod virtual_sidebar_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_roster(active: usize, idle: usize, done: usize) -> Vec<SessionRow> {
+        let mut rows = Vec::with_capacity(active + idle + done);
+        let mut sec = 59u32;
+        let mut min = 59u32;
+        let mut hour = 23u32;
+        let mut next_stamp = || {
+            let s = format!("2026-11-10T{hour:02}:{min:02}:{sec:02}Z");
+            if sec > 0 {
+                sec -= 1;
+            } else {
+                sec = 59;
+                if min > 0 {
+                    min -= 1;
+                } else {
+                    min = 59;
+                    hour = hour.saturating_sub(1);
+                }
+            }
+            s
+        };
+        for i in 0..active {
+            rows.push(SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": format!("a-{i:03}"),
+                "sessionId": format!("ua-{i:03}"),
+                "firstMessage": format!("Active session {i:03}"),
+                "workerState": "ready",
+                "activity": "working",
+                "lastActivityAt": next_stamp(),
+            })));
+        }
+        for i in 0..idle {
+            rows.push(SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": format!("i-{i:03}"),
+                "sessionId": format!("ui-{i:03}"),
+                "firstMessage": format!("Idle session {i:03}"),
+                "workerState": "ready",
+                "activity": "idle",
+                "lastActivityAt": next_stamp(),
+            })));
+        }
+        for i in 0..done {
+            rows.push(SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": format!("d-{i:03}"),
+                "sessionId": format!("ud-{i:03}"),
+                "firstMessage": format!("Done session {i:03}"),
+                "lifecycle": "archived",
+                "lastActivityAt": next_stamp(),
+            })));
+        }
+        rows
+    }
+
+    fn setup_window() -> (AppWindow, Rc<Sidebar>, crossbeam_channel::Receiver<Job>, std::path::PathBuf) {
+        let path = std::env::var("PA_SETTINGS_FILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::env::temp_dir().join(format!("pa-ui-sidebar-vtest-{}.json", std::process::id()))
+            });
+        let _ = std::fs::remove_file(&path);
+        let ui = AppWindow::new().expect("window");
+        let (job_tx, job_rx) = crossbeam_channel::unbounded::<Job>();
+        let sidebar = Sidebar::new(&ui, &job_tx);
+        (ui, sidebar, job_rx, path)
+    }
+
+    fn seeded_large_roster_bounds_mounted_session_entries_to_viewport_and_overscan() {
+        let (ui, sidebar, _jobs, path) = setup_window();
+        let rows = make_roster(10, 20, 125);
+        sidebar.seed(&ui, rows);
+
+        let entries = ui.get_session_entries();
+        let mounted = entries.row_count();
+        assert!(mounted > 0 && mounted <= 64, "expected bounded mounted entries, got {mounted}");
+
+        let expected_h = (COLUMN_TOP + 3 * HEADER_HEIGHT + 155 * ROW_HEIGHT) as f32;
+        assert_eq!(ui.get_sessions_height(), expected_h);
+
+        let mounted_list: Vec<SessionEntry> = (0..mounted).filter_map(|i| entries.row_data(i)).collect();
+        assert!(mounted_list.iter().any(|e| e.is_header && e.label == "Active"));
+        assert!(mounted_list.iter().any(|e| !e.is_header && e.item.id == "a-000"));
+        assert!(!mounted_list.iter().any(|e| !e.is_header && e.item.id == "d-124"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn collapsing_a_group_omits_folded_rows_from_mounted_slice_once_animation_completes() {
+        let (ui, sidebar, _jobs, path) = setup_window();
+        let rows = make_roster(5, 5, 145);
+        sidebar.seed(&ui, rows);
+
+        let done_count_mounted = || {
+            let entries = ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|i| entries.row_data(i))
+                .filter(|e| !e.is_header && e.seam == 2)
+                .count()
+        };
+        assert!(done_count_mounted() > 0, "Done rows should start visible in viewport");
+        assert!(ui.get_session_entries().row_count() <= 64);
+
+        ui.invoke_setting_toggled("reduce-motion".into());
+        ui.invoke_group_toggled("Done".into());
+        assert_eq!(done_count_mounted(), 0, "instant collapse must omit folded Done rows immediately");
+        assert!(
+            (0..ui.get_session_entries().row_count())
+                .filter_map(|i| ui.get_session_entries().row_data(i))
+                .any(|e| e.is_header && e.label == "Done")
+        );
+
+        ui.invoke_group_toggled("Done".into());
+        assert!(done_count_mounted() > 0);
+        ui.invoke_setting_toggled("reduce-motion".into());
+        assert!(crate::Appearance::get(&ui).get_fold_duration() > 0);
+
+        ui.show().expect("show window");
+        ui.invoke_group_toggled("Done".into());
+        assert!(
+            ui.get_session_entries().row_count() <= 64,
+            "mounted count must remain bounded during fold animation"
+        );
+
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::SingleShot, Duration::from_millis(320), || {
+            let _ = slint::quit_event_loop();
+        });
+        slint::run_event_loop().expect("event loop");
+        drop(timer);
+        let _ = ui.hide();
+
+        assert_eq!(
+            done_count_mounted(),
+            0,
+            "completed fold animation must omit folded Done rows from mounted slice"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn scrolling_updates_mounted_slice_while_preserving_height_selection_menu_and_reorder_coordinates() {
+        let (ui, sidebar, _jobs, path) = setup_window();
+        let rows = make_roster(10, 20, 125);
+        sidebar.apply_roster(&ui, rows);
+        ui.invoke_setting_chosen("session-order".into(), "Manual".into());
+
+        let expected_h = (COLUMN_TOP + 3 * HEADER_HEIGHT + 155 * ROW_HEIGHT) as f32;
+        assert_eq!(ui.get_sessions_height(), expected_h);
+
+        ui.set_selected_id("d-080".into());
+        ui.invoke_restore_sidebar_cy(-3200.0);
+
+        assert_eq!(ui.get_sessions_height(), expected_h);
+        let entries = ui.get_session_entries();
+        let mounted = entries.row_count();
+        assert!(mounted > 0 && mounted <= 64, "mounted slice must stay bounded after scroll: {mounted}");
+
+        let mounted_list: Vec<SessionEntry> = (0..mounted).filter_map(|i| entries.row_data(i)).collect();
+        assert!(!mounted_list.iter().any(|e| !e.is_header && e.item.id == "a-000"));
+        let d080 = mounted_list
+            .iter()
+            .find(|e| !e.is_header && e.item.id == "d-080")
+            .expect("d-080 should be mounted near scroll offset -3200");
+        let expected_d080_at = (COLUMN_TOP + 3 * HEADER_HEIGHT + (10 + 20 + 80) * ROW_HEIGHT) as f32;
+        assert_eq!(d080.at, expected_d080_at);
+        assert_eq!(ui.invoke_row_y(0), mounted_list[0].at);
+        assert_eq!(ui.get_selected_id().as_str(), "d-080");
+
+        ui.invoke_restore_sidebar_cy(-3328.0);
+        let scroll_ops = sidebar.window.borrow().last_ops.clone();
+        assert!(!scroll_ops.is_empty());
+        assert!(
+            !scroll_ops.contains(&SidebarModelOp::Reset),
+            "smooth scroll must patch mounted slice incrementally: {scroll_ops:?}"
+        );
+
+        ui.set_menu_id("d-080".into());
+        ui.invoke_session_menu_opened("d-080".into());
+        assert!(ui.get_menu_items().row_count() >= 3);
+
+        let d082_at = mounted_list
+            .iter()
+            .find(|e| !e.is_header && e.item.id == "d-082")
+            .map(|e| e.at)
+            .expect("d-082 mounted");
+        ui.invoke_session_dropped("d-080".into(), d082_at + 16.0);
+        let after_entries = ui.get_session_entries();
+        let moved_at = (0..after_entries.row_count())
+            .filter_map(|i| after_entries.row_data(i))
+            .find(|e| !e.is_header && e.item.id == "d-080")
+            .map(|e| e.at)
+            .expect("d-080 still mounted after manual drop");
+        assert_eq!(moved_at, d082_at);
+        assert_eq!(ui.get_sessions_height(), expected_h);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn routine_roster_updates_patch_mounted_vecmodel_incrementally_without_swapping_modelrc() {
+        let (ui, sidebar, _jobs, path) = setup_window();
+        let mut rows = make_roster(10, 20, 125);
+        sidebar.apply_roster(&ui, rows.clone());
+
+        let model_before = ui.get_session_entries();
+        let count_before = model_before.row_count();
+        assert!(count_before > 0);
+
+        rows[1].name = "Renamed active session".to_string();
+        sidebar.apply_roster(&ui, rows.clone());
+
+        let rename_ops = sidebar.window.borrow().last_ops.clone();
+        assert_eq!(rename_ops, vec![SidebarModelOp::Set { at: 2 }]);
+
+        let updated = (0..model_before.row_count())
+            .filter_map(|i| model_before.row_data(i))
+            .find(|e| !e.is_header && e.item.id == "a-001")
+            .expect("a-001 still in mounted model_before without swapping ModelRc");
+        assert_eq!(updated.item.name.as_str(), "Renamed active session");
+
+        rows.insert(
+            0,
+            SessionRow::from_value(&serde_json::json!({
+                "activeSessionId": "a-new",
+                "sessionId": "ua-new",
+                "firstMessage": "Brand new active",
+                "workerState": "ready",
+                "activity": "working",
+                "lastActivityAt": "2026-11-11T00:00:00Z",
+            })),
+        );
+        sidebar.apply_roster(&ui, rows);
+
+        let insert_ops = sidebar.window.borrow().last_ops.clone();
+        assert!(!insert_ops.is_empty());
+        assert!(!insert_ops.contains(&SidebarModelOp::Reset), "routine insert must patch incrementally: {insert_ops:?}");
+
+        let has_new = (0..model_before.row_count())
+            .filter_map(|i| model_before.row_data(i))
+            .any(|e| !e.is_header && e.item.id == "a-new");
+        assert!(has_new, "same ModelRc must be patched incrementally with inserted row");
+        assert!(model_before.row_count() <= 64);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    pub(crate) fn run_all() {
+        seeded_large_roster_bounds_mounted_session_entries_to_viewport_and_overscan();
+        collapsing_a_group_omits_folded_rows_from_mounted_slice_once_animation_completes();
+        scrolling_updates_mounted_slice_while_preserving_height_selection_menu_and_reorder_coordinates();
+        routine_roster_updates_patch_mounted_vecmodel_incrementally_without_swapping_modelrc();
     }
 }

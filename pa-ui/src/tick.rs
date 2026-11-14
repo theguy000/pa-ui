@@ -2310,6 +2310,14 @@ mod status_strip_tests {
                 .map(|entry| entry.at + 16.0)
                 .expect("row entry y")
         };
+        let header_mid_y = |label: &str| -> f32 {
+            let entries = h.ui.get_session_entries();
+            (0..entries.row_count())
+                .filter_map(|index| entries.row_data(index))
+                .find(|entry| entry.is_header && entry.label.as_str() == label)
+                .map(|entry| entry.at + 16.0)
+                .expect("header entry y")
+        };
 
         h.ui.invoke_session_dropped("d2".into(), row_mid_y("d1"));
         h.ui.set_done_folded(true);
@@ -2330,7 +2338,7 @@ mod status_strip_tests {
         h.ui.invoke_search_closed();
 
         h.ui.invoke_session_dropped("a2".into(), row_mid_y("i2"));
-        h.ui.invoke_session_dropped("i1".into(), row_mid_y("d1"));
+        h.ui.invoke_session_dropped("i1".into(), header_mid_y("Done"));
         assert_eq!(ids_of(h.ui.get_sessions()), ["a2", "a1", "i2", "i1", "d2", "d1"]);
 
         let disk = crate::settings::Settings::load_from(&settings_path);
@@ -2578,6 +2586,7 @@ mod status_strip_tests {
         failed_async_bash_completion_after_idle_renders_with_subsequent_turn();
         appending_rows_beyond_window_keeps_virtual_model_incremental();
         wrapped_rows_preserve_follow_bottom_across_scroll_range_shrink();
+        crate::sessions::virtual_sidebar_tests::run_all();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
