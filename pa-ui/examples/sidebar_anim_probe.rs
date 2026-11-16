@@ -19,7 +19,36 @@ use std::rc::Rc;
 use std::time::Duration;
 
 const TOP: f32 = 88.0;
+const HEADER: f32 = 26.0;
 const ROW: f32 = 32.0;
+const GROUP_PAD: f32 = 4.0;
+const GROUP_GAP: f32 = 10.0;
+const GROUP_BODY_GAP: f32 = 2.0;
+
+fn group_boxes(count: usize, done_folded: bool) -> Vec<SidebarGroupBox> {
+    let mut out = Vec::with_capacity(3);
+    let mut at = TOP;
+    for (index, rows, folded) in [
+        (0usize, 0usize, false),
+        (1, 0usize, false),
+        (2, count, done_folded),
+    ] {
+        let box_h = if !folded && rows > 0 {
+            GROUP_PAD + HEADER + GROUP_BODY_GAP + rows as f32 * ROW + GROUP_PAD
+        } else {
+            GROUP_PAD + HEADER + GROUP_PAD
+        };
+        out.push(SidebarGroupBox {
+            at,
+            height: box_h,
+            empty: rows == 0,
+        });
+        if index < 2 {
+            at += box_h + GROUP_GAP;
+        }
+    }
+    out
+}
 
 fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
     let mut out = Vec::with_capacity(count + 3);
@@ -29,7 +58,8 @@ fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
         (1, "Idle", 0usize, false),
         (2, "Done", count, done_folded),
     ] {
-        let header_at = at;
+        let box_at = at;
+        let header_at = box_at + GROUP_PAD;
         out.push(SessionEntry {
             is_header: true,
             label: label.into(),
@@ -40,9 +70,8 @@ fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
             target: header_at,
             seam: index,
         });
-        at += ROW;
         for number in 0..rows {
-            let target = header_at + ROW + number as f32 * ROW;
+            let target = header_at + HEADER + GROUP_BODY_GAP + number as f32 * ROW;
             out.push(SessionEntry {
                 is_header: false,
                 label: "".into(),
@@ -63,8 +92,13 @@ fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
                 seam: index,
             });
         }
-        if !folded {
-            at += rows as f32 * ROW;
+        let box_h = if !folded && rows > 0 {
+            GROUP_PAD + HEADER + GROUP_BODY_GAP + rows as f32 * ROW + GROUP_PAD
+        } else {
+            GROUP_PAD + HEADER + GROUP_PAD
+        };
+        if index < 2 {
+            at = box_at + box_h + GROUP_GAP;
         }
     }
     out
@@ -74,7 +108,11 @@ fn height(entries: &[SessionEntry]) -> f32 {
     entries
         .iter()
         .filter(|entry| entry.is_header || !entry.folded)
-        .map(|entry| entry.at + ROW)
+        .map(|entry| {
+            entry.at
+                + if entry.is_header { HEADER } else { ROW }
+                + GROUP_PAD
+        })
         .fold(TOP, f32::max)
 }
 
@@ -98,6 +136,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let folded = Rc::new(std::cell::Cell::new(false));
     let previous = Rc::new(RefCell::new(entries(count, false)));
+    let initial_boxes = group_boxes(count, false);
+    let prev_boxes = Rc::new(RefCell::new(initial_boxes.clone()));
     let done_items = previous
         .borrow()
         .iter()
@@ -105,6 +145,10 @@ fn main() -> Result<(), slint::PlatformError> {
         .map(|entry| entry.item.clone())
         .collect::<Vec<_>>();
     ui.set_done_items(ModelRc::from(Rc::new(VecModel::from(done_items))));
+    ui.set_prev_group_boxes(ModelRc::from(Rc::new(VecModel::from(
+        initial_boxes.clone(),
+    ))));
+    ui.set_group_boxes(ModelRc::from(Rc::new(VecModel::from(initial_boxes))));
     ui.set_session_entries(ModelRc::from(Rc::new(VecModel::from(
         previous.borrow().clone(),
     ))));
@@ -119,23 +163,29 @@ fn main() -> Result<(), slint::PlatformError> {
     let timer_stop = timer.clone();
     let folded_timer = folded.clone();
     let previous_timer = previous.clone();
+    let prev_boxes_timer = prev_boxes.clone();
     timer.start(
         TimerMode::Repeated,
         Duration::from_millis(toggle_ms),
         move || {
             let Some(ui) = weak.upgrade() else { return };
             let was = previous_timer.borrow().clone();
+            let was_boxes = prev_boxes_timer.borrow().clone();
             let now_folded = !folded_timer.get();
             let next = entries(count, now_folded);
+            let next_boxes = group_boxes(count, now_folded);
             let from = was.iter().map(|entry| entry.at).collect::<Vec<f32>>();
             ui.set_prev_sessions_height(height(&was));
             ui.set_sessions_height(height(&next));
             ui.set_fold_index(2);
             ui.set_fold_open(!now_folded);
+            ui.set_prev_group_boxes(ModelRc::from(Rc::new(VecModel::from(was_boxes))));
+            ui.set_group_boxes(ModelRc::from(Rc::new(VecModel::from(next_boxes.clone()))));
             ui.set_session_entries(ModelRc::from(Rc::new(VecModel::from(next.clone()))));
             ui.set_splice_at(ModelRc::from(Rc::new(VecModel::from(from))));
             ui.invoke_trigger_list_anim();
             *previous_timer.borrow_mut() = next;
+            *prev_boxes_timer.borrow_mut() = next_boxes;
             folded_timer.set(now_folded);
         },
     );

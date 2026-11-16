@@ -39,15 +39,19 @@ const ON_WINDOW: &[Role] = &[];
 const ON_FOLD_HOVER: &[Role] = &[Role::TitleBarFoldFillHover];
 const ON_CLOSE_HOVER: &[Role] = &[Role::TitleBarCloseFillHover];
 const ON_SIDEBAR: &[Role] = &[Role::SidebarSurface];
-const ON_SIDEBAR_ROW: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFill];
-const ON_SIDEBAR_ROW_HOVER: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillHover];
-const ON_SIDEBAR_ROW_SELECTED: &[Role] = &[Role::SidebarSurface, Role::SidebarRowFillSelected];
+const ON_SIDEBAR_GROUP: &[Role] = &[Role::SidebarSurface, Role::SidebarGroupSurface];
+const ON_SIDEBAR_ROW: &[Role] =
+    &[Role::SidebarSurface, Role::SidebarGroupSurface, Role::SidebarRowFill];
+const ON_SIDEBAR_ROW_HOVER: &[Role] =
+    &[Role::SidebarSurface, Role::SidebarGroupSurface, Role::SidebarRowFillHover];
+const ON_SIDEBAR_ROW_SELECTED: &[Role] =
+    &[Role::SidebarSurface, Role::SidebarGroupSurface, Role::SidebarRowFillSelected];
 // The sidebar's controls, and the fields they paint: a quiet chip that only has
 // a field under the pointer, the button that carries New Session, the chip a row
 // offers to rename it, and the pill the folded column shows.
 const ON_QUIET_CONTROL: &[Role] = &[Role::ButtonQuietFillHover];
-const ON_PRIMARY_CONTROL: &[Role] = &[Role::ButtonPrimaryFill];
-const ON_PRIMARY_CONTROL_HOVER: &[Role] = &[Role::ButtonPrimaryFillHover];
+const ON_NEW_SESSION: &[Role] = &[Role::SidebarSurface, Role::SidebarNewSessionFill];
+const ON_NEW_SESSION_HOVER: &[Role] = &[Role::SidebarSurface, Role::SidebarNewSessionFillHover];
 const ON_RENAME_CHIP_HOVER: &[Role] = &[Role::SidebarRowRenameFillHover];
 const ON_OPEN_TIP: &[Role] = &[Role::SidebarOpenTipFill];
 const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
@@ -172,12 +176,8 @@ const PAIRS: &[Pair] = &[
         what: "a session's name while it is renamed",
         floor: BODY,
     },
-    // A group's header is a label over the names under it, so it is read as body
-    // text too, under the pointer as well as at rest. Its caret is a mark, and it
-    // only appears while the pointer is on its header, so it is read on the
-    // header's hover fill.
     Pair {
-        ink: Mark { role: Role::SidebarGroupInk, on: ON_SIDEBAR_ROW },
+        ink: Mark { role: Role::SidebarGroupInk, on: ON_SIDEBAR_GROUP },
         what: "a group's word at rest",
         floor: BODY,
     },
@@ -187,8 +187,23 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarGroupCaret, on: ON_SIDEBAR_ROW_HOVER },
-        what: "a group's caret while the pointer is on its header",
+        ink: Mark { role: Role::SidebarGroupCaret, on: ON_SIDEBAR_GROUP },
+        what: "a group's caret at rest",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::SidebarGroupEmptyInk, on: ON_SIDEBAR },
+        what: "an empty group's header",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TagWorking, on: ON_SIDEBAR_GROUP },
+        what: "the working tag inside a group",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TagIdle, on: ON_SIDEBAR_GROUP },
+        what: "the idle tag inside a group",
         floor: MARK,
     },
     // The column's controls draw a mark and nothing else, so the mark is read on
@@ -248,22 +263,22 @@ const PAIRS: &[Pair] = &[
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionMark, on: ON_PRIMARY_CONTROL },
+        ink: Mark { role: Role::SidebarNewSessionMark, on: ON_NEW_SESSION },
         what: "the pen on New Session at rest",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionMarkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        ink: Mark { role: Role::SidebarNewSessionMarkHover, on: ON_NEW_SESSION_HOVER },
         what: "the pen on New Session under the pointer",
         floor: MARK,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionInk, on: ON_PRIMARY_CONTROL },
+        ink: Mark { role: Role::SidebarNewSessionInk, on: ON_NEW_SESSION },
         what: "the words on New Session at rest",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_PRIMARY_CONTROL_HOVER },
+        ink: Mark { role: Role::SidebarNewSessionInkHover, on: ON_NEW_SESSION_HOVER },
         what: "the words on New Session under the pointer",
         floor: BODY,
     },
