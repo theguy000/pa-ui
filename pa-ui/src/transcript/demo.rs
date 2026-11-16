@@ -6,16 +6,16 @@ use super::*;
 pub fn demo_rows() -> Vec<Row> {
     let theme = crate::theme::current();
     let mut ok = Row::new(KIND_CELL);
-    ok.title = "python · print(1 + 1)".to_string();
-    ok.meta = "1 line".to_string();
+    ok.verb = "python".to_string();
+    ok.title = "print(1 + 1)".to_string();
     ok.code = highlight_python("print(1 + 1)", &theme);
     ok.output = plain_markup("2");
     ok.has_code = true;
     ok.has_output = true;
 
     let mut failed = Row::new(KIND_CELL);
-    failed.title = "python · rows = [r for r in data]".to_string();
-    failed.meta = "2 lines".to_string();
+    failed.verb = "python".to_string();
+    failed.title = "rows = [r for r in data]".to_string();
     failed.code = highlight_python("rows = [r for r in data]\nprint(rows[3][\"name\"])\n", &theme);
     failed.output = plain_markup(
         "Traceback (most recent call last):\n  File \"<cell-9>\", line 2, in <module>\n    print(rows[3][\"name\"])\n          ~~~~^^^\nKeyError: 'name'",
@@ -23,7 +23,6 @@ pub fn demo_rows() -> Vec<Row> {
     failed.has_code = true;
     failed.has_output = true;
     failed.failed = true;
-    failed.reason = "KeyError: 'name'".to_string();
     vec![ok, failed]
 }
 

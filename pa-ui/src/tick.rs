@@ -5114,6 +5114,7 @@ fn main() {}
             .map(|i| crate::transcript::Row {
                 kind: crate::transcript::KIND_CELL,
                 id: format!("call-{prefix}-{i}"),
+                verb: "bash".to_string(),
                 title: format!("bash #{i}"),
                 meta: String::new(),
                 body: String::new(),
@@ -5124,7 +5125,6 @@ fn main() {}
                 has_body: false,
                 expanded: false,
                 failed: false,
-                reason: String::new(),
                 image: String::new(),
                 message: format!("{prefix}-{i}"),
                 elapsed: String::new(),
@@ -5366,7 +5366,7 @@ fn main() {}
 
         h.ui.set_follow_bottom(false);
         let row_h = crate::sheet::estimate_row_height(&rows[0]);
-        assert_eq!(row_h, 28.0);
+        assert_eq!(row_h, 38.0);
         for first_vis in [0usize, 80, 150, 240, 290] {
             let scroll_top = first_vis as f32 * row_h + 1.0;
             let viewport_h = 1000.0;

@@ -7,6 +7,7 @@
 // Geometry and theme notes live in pa-ui/design/README.md.
 // Material Symbols (filled) is Apache-2.0; Lucide is ISC.
 
+import { Appearance } from "types.slint";
 import { Theme } from "theme.slint";
 
 // window chrome
@@ -377,17 +378,131 @@ export component IconToTop inherits Path {
     fill: transparent;
 }
 
-// The alert inside the badge a failed cell carries.
-export component IconAlert inherits Path {
-    in property <color> tint: Theme.transcript-cell-badge-mark;
-    width: 16px;
-    height: 16px;
-    viewbox-width: 14;
-    viewbox-height: 14;
-    commands: "M 7 3.5 L 7 8.0 M 7 9.5 L 7 10.5";
+// Lucide v0.525.0 `code-xml` (`</>`), 24x24, 1.75 stroke.
+export component IconToolPython inherits Rectangle {
+    in property <color> tint: Theme.transcript-cell-verb-ink;
+    width: 14px;
+    height: 14px;
+    background: transparent;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: tint;
+        stroke-width: 1.75px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: "m6 8-4 4 4 4";
+    }
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: tint;
+        stroke-width: 1.75px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: "m14.5 4-5 16";
+    }
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: tint;
+        stroke-width: 1.75px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: "m18 16 4-4-4-4";
+    }
+}
+
+// Lucide v0.525.0 `terminal` (`>_`), 24x24, 1.75 stroke.
+export component IconToolBash inherits Rectangle {
+    in property <color> tint: Theme.transcript-cell-verb-ink;
+    width: 14px;
+    height: 14px;
+    background: transparent;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: tint;
+        stroke-width: 1.75px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: "m4 17 6-6-6-6";
+    }
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: tint;
+        stroke-width: 1.75px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: "M12 19h8";
+    }
+}
+
+export component IconThinking inherits Path {
+    in property <color> tint: Theme.transcript-thinking-label-ink;
+    width: 14px;
+    height: 14px;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
+    stroke: tint;
+    stroke-width: 1.65px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "M3.5 13.5c1.5-4.5 3.6-4.5 4.6 0s2.7 4.5 4.1 0 2.7-4.5 4.1 0c1 3 2.5 3.2 4.2.5";
+}
+
+// Lucide v0.525.0 `chevron-right`, rotates 90deg when open.
+export component IconChevronRight inherits Path {
+    in property <bool> open: false;
+    in property <color> tint: Theme.transcript-caret-mark;
+    width: 12px;
+    height: 12px;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: transparent;
     stroke: tint;
     stroke-width: 2px;
-    fill: transparent;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    commands: "m9 18 6-6-6-6";
+    transform-rotation: open ? 90deg : 0deg;
+    animate transform-rotation {
+        duration: Appearance.reduce-motion ? 0ms : Appearance.fold-caret-duration;
+        easing: ease-in-out;
+    }
 }
 
 // The warning mark used by the generic Sheet error row. Its triangle is the

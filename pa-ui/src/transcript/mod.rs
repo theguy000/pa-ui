@@ -71,6 +71,7 @@ pub struct Row {
     /// Tool-call id for cell rows: the live event path and the store path both
     /// build a row for the same call, and this is how they are told apart.
     pub id: String,
+    pub verb: String,
     pub title: String,
     pub meta: String,
     pub body: String,
@@ -83,7 +84,6 @@ pub struct Row {
     pub has_body: bool,
     pub expanded: bool,
     pub failed: bool,
-    pub reason: String,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
     /// which message this row belongs to: the daemon's id when it has one,
@@ -123,6 +123,7 @@ impl Row {
         Self {
             kind,
             id: String::new(),
+            verb: String::new(),
             title: String::new(),
             meta: String::new(),
             body: String::new(),
@@ -133,7 +134,6 @@ impl Row {
             has_body: false,
             expanded: false,
             failed: false,
-            reason: String::new(),
             image: String::new(),
             elapsed: String::new(),
             timestamp: String::new(),
@@ -468,8 +468,8 @@ fn build_message(
                     continue;
                 }
                 let mut row = Row::new(KIND_THINKING);
+                row.title = "Thinking".to_string();
                 row.body = plain_markup(text);
-                row.meta = format!("{} lines", text.lines().count());
                 rows.push(row);
             }
             "toolCall" => {
@@ -486,10 +486,7 @@ fn build_message(
                     row.output = plain_markup(output);
                     row.has_output = !output.trim().is_empty();
                     row.failed = *failed;
-                    row.reason = failure_reason(output, *failed);
                 }
-                let lines = code.lines().count();
-                row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
                 let info = bashes.get(&row.id).cloned();
                 let taken = durations.get(&row.id).copied();
                 apply_header(&mut row, code, info.as_ref(), taken);
