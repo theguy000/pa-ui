@@ -232,6 +232,7 @@ export component TranscriptRow inherits VerticalLayout {
     spacing: 0px;
 
     in property <TRow> data;
+    in property <int> working-elapsed-ms: 0;
     property <bool> is-summary: data.kind == 10;
     callback toggle();
     callback copy() -> bool;
@@ -351,12 +352,14 @@ export component TranscriptRow inherits VerticalLayout {
                     IconThinking {
                         x: 0px;
                         y: (parent.height - self.height) / 2;
-                        tint: Theme.transcript-thinking-label-ink;
+                        running: data.running;
+                        phase-ms: root.working-elapsed-ms;
+                        tint: data.running ? Theme.transcript-working-ink : Theme.transcript-thinking-label-ink;
                     }
                 }
                 Text {
-                    text: data.title != "" ? data.title : "Thinking";
-                    color: Theme.transcript-thinking-label-ink;
+                    text: data.title != "" ? data.title : (data.running ? "Thinking\u{2026}" : "Thinking");
+                    color: data.running ? Theme.transcript-thinking-label-ink-working : Theme.transcript-thinking-label-ink;
                     font-size: Appearance.label-size;
                     vertical-alignment: center;
                 }
@@ -431,18 +434,25 @@ export component TranscriptRow inherits VerticalLayout {
 
         Rectangle {
             width: root.width - 48px;
-            background: Theme.transcript-cell-fill;
-            border-color: Theme.transcript-cell-edge;
+            background: data.running ? Theme.transcript-cell-fill-working : Theme.transcript-cell-fill;
+            border-color: data.running ? Theme.transcript-cell-edge-working : Theme.transcript-cell-edge;
             border-width: 1px;
             border-radius: 8px;
             clip: true;
+
+            animate background, border-color {
+                duration: Appearance.reduce-motion ? 0ms : 140ms;
+                easing: ease;
+            }
 
             VerticalLayout {
                 spacing: 0px;
 
                 Rectangle {
                     height: 30px;
-                    background: cell-touch.has-hover ? Theme.transcript-cell-fill-hover : transparent;
+                    background: cell-touch.has-hover
+                        ? (data.running ? Theme.transcript-cell-fill-working-hover : Theme.transcript-cell-fill-hover)
+                        : transparent;
 
                     cell-touch := TouchArea {
                         x: 0;
@@ -464,18 +474,25 @@ export component TranscriptRow inherits VerticalLayout {
                             if data.verb == "bash" : IconToolBash {
                                 x: 0px;
                                 y: (parent.height - self.height) / 2;
-                                tint: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                                running: data.running;
+                                phase-ms: root.working-elapsed-ms;
+                                tint: data.running ? Theme.transcript-working-ink
+                                    : (data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink);
                             }
                             if data.verb != "bash" : IconToolPython {
                                 x: 0px;
                                 y: (parent.height - self.height) / 2;
-                                tint: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                                running: data.running;
+                                phase-ms: root.working-elapsed-ms;
+                                tint: data.running ? Theme.transcript-working-ink
+                                    : (data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink);
                             }
                         }
 
                         if data.verb != "" : Text {
                             text: data.verb;
-                            color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                            color: data.running ? Theme.transcript-cell-verb-ink-working
+                                : (data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink);
                             font-size: Appearance.label-size;
                             font-weight: 500;
                             vertical-alignment: center;
@@ -483,7 +500,8 @@ export component TranscriptRow inherits VerticalLayout {
 
                         Text {
                             text: data.title;
-                            color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
+                            color: data.running ? Theme.transcript-cell-title-ink-working
+                                : (data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink);
                             font-family: Appearance.code-font;
                             font-size: Appearance.label-size;
                             vertical-alignment: center;
@@ -491,14 +509,21 @@ export component TranscriptRow inherits VerticalLayout {
                             horizontal-stretch: 1;
                         }
 
-                        if data.failed : Text {
+                        if data.running : Text {
+                            text: "running";
+                            color: Theme.transcript-cell-meta-ink-working;
+                            font-size: Appearance.meta-size;
+                            vertical-alignment: center;
+                        }
+
+                        if !data.running && data.failed : Text {
                             text: "failed";
                             color: Theme.transcript-cell-ink-failed;
                             font-size: Appearance.meta-size;
                             vertical-alignment: center;
                         }
 
-                        if data.elapsed != "" : Text {
+                        if !data.running && data.elapsed != "" : Text {
                             text: data.elapsed;
                             color: Theme.transcript-cell-meta-ink;
                             font-size: Appearance.meta-size;

@@ -601,6 +601,15 @@ fn the_new_and_updated_transcript_roles_follow_the_palette() {
         Role::TranscriptCellCopyEdgeHover,
         Role::TranscriptCellCopyInk,
         Role::TranscriptCellCopyInkHover,
+        Role::TranscriptWorkingInk,
+        Role::TranscriptWorkingInkDim,
+        Role::TranscriptCellFillWorking,
+        Role::TranscriptCellFillWorkingHover,
+        Role::TranscriptCellEdgeWorking,
+        Role::TranscriptCellVerbInkWorking,
+        Role::TranscriptCellTitleInkWorking,
+        Role::TranscriptCellMetaInkWorking,
+        Role::TranscriptThinkingLabelInkWorking,
     ] {
         assert_ne!(
             light_theme.get(role),
@@ -615,6 +624,7 @@ fn the_new_and_updated_transcript_roles_follow_the_palette() {
             f.what.contains("cell's")
                 || f.what.contains("failed cell")
                 || f.what.contains("expanded cell")
+                || f.what.contains("thinking row's")
                 || f.what == "the label a thinking row carries"
         })
         .collect();
@@ -638,6 +648,27 @@ fn a_theme_that_paints_a_failed_cell_like_a_quiet_one_is_reported() {
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
 
     assert_eq!(named, ["a failed cell's name and a quiet cell's name"]);
+}
+
+#[test]
+fn a_theme_that_paints_a_running_cell_like_a_quiet_one_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "transcript-cell-fill-working": "#141512",
+                        "transcript-cell-verb-ink-working": "#868780" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+
+    assert_eq!(
+        named,
+        [
+            "a running cell's field and a quiet cell's field",
+            "a running cell's verb and a quiet cell's verb",
+        ]
+    );
 }
 
 /// A file that names the transcript's colours repaints the transcript and moves
@@ -678,6 +709,15 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-cell-edge-expanded": "#3a2a52",
                "transcript-thinking-edge-expanded": "#33254a",
                "transcript-cell-ink-failed": "#ff9f8f",
+               "transcript-working-ink": "#f2cc60",
+               "transcript-working-ink-dim": "#594b22",
+               "transcript-cell-fill-working": "#282218",
+               "transcript-cell-fill-working-hover": "#332b1e",
+               "transcript-cell-edge-working": "#52442a",
+               "transcript-cell-verb-ink-working": "#c9ae65",
+               "transcript-cell-title-ink-working": "#f5f0ff",
+               "transcript-cell-meta-ink-working": "#d4ba72",
+               "transcript-thinking-label-ink-working": "#e8d699",
                "transcript-row-fill-expanded": "#140f1c",
                "transcript-thinking-fill": "#1c1526",
                "transcript-thinking-fill-hover": "#251c33",

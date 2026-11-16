@@ -59,6 +59,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         has_body: false,
         expanded: false,
         failed: false,
+        running: false,
         image: String::new(),
         message: message.to_string(),
         elapsed: String::new(),
@@ -368,6 +369,7 @@ fn to_slint_copies_row_fields_and_timestamp() {
     let mut r = row("m1", transcript::KIND_CELL, "ls -la", "id1", "");
     r.verb = "bash".to_string();
     r.failed = true;
+    r.running = true;
     r.elapsed = "2s".to_string();
     r.timestamp = "18:25".to_string();
     let trow = to_slint(&r);
@@ -375,8 +377,32 @@ fn to_slint_copies_row_fields_and_timestamp() {
     assert_eq!(trow.verb.as_str(), "bash");
     assert_eq!(trow.title.as_str(), "ls -la");
     assert!(trow.failed);
+    assert!(trow.running);
     assert_eq!(trow.elapsed.as_str(), "2s");
     assert_eq!(trow.timestamp.as_str(), "18:25");
+
+    r.running = false;
+    assert!(!to_slint(&r).running);
+}
+
+#[test]
+fn answer_ended_settles_running_cells_and_trailing_thinking() {
+    let (sheet, _) = sheet();
+    let mut think = row("m1", transcript::KIND_THINKING, "Thinking\u{2026}", "", "hmm");
+    think.running = true;
+    let mut cell = row("m1", transcript::KIND_CELL, "print(1)", "c1", "");
+    cell.verb = "python".to_string();
+    cell.running = true;
+
+    sheet.answer_began("m1");
+    sheet.merge(vec![think, cell]);
+    assert!(sheet.rows()[0].running);
+    assert!(sheet.rows()[1].running);
+
+    sheet.answer_ended();
+    assert!(!sheet.rows()[0].running);
+    assert_eq!(sheet.rows()[0].title, "Thinking");
+    assert!(!sheet.rows()[1].running);
 }
 
 #[test]

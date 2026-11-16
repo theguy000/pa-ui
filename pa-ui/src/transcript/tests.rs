@@ -72,6 +72,42 @@ mod build_tests {
         assert_eq!(rows[0].kind, KIND_THINKING);
         assert_eq!(rows[0].title, "Thinking");
         assert!(rows[0].meta.is_empty());
+        assert!(!rows[0].running);
+    }
+
+    #[test]
+    fn store_rows_without_duration_are_never_running() {
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "call_no_dur",
+                    "name": "python_repl",
+                    "arguments": {"code": "print(1)"}
+                }]
+            }),
+            json!({
+                "role": "toolResult",
+                "toolCallId": "call_no_dur",
+                "toolName": "python_repl",
+                "content": [{"text": "1"}]
+            }),
+            json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "call_unfinished_in_store",
+                    "name": "python_repl",
+                    "arguments": {"code": "print(2)"}
+                }]
+            }),
+        ];
+        let rows = build(&messages, 300).0;
+        assert_eq!(rows.len(), 2);
+        assert!(!rows[0].running);
+        assert!(rows[0].elapsed.is_empty());
+        assert!(!rows[1].running);
     }
 
     #[test]

@@ -2590,6 +2590,7 @@ mod status_strip_tests {
         tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn();
         multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation();
         real_window_layout_and_scroll_remain_gap_free_with_tighter_window();
+        live_active_state_drives_and_clears_has_running_row();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -5127,6 +5128,7 @@ fn main() {}
                 has_body: false,
                 expanded: false,
                 failed: false,
+                running: false,
                 image: String::new(),
                 message: format!("{prefix}-{i}"),
                 elapsed: String::new(),
@@ -5543,5 +5545,91 @@ fn main() {}
         let _ = h.ui.hide();
         appearance.set_smooth_scroll(prev_smooth);
         assert!(verified.get());
+    }
+
+    fn live_active_state_drives_and_clears_has_running_row() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        assert!(!h.ui.get_has_running_row());
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": { "id": "m_live", "role": "assistant", "content": [] }
+            }),
+            sequence: Some(1),
+        });
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "thinking_delta", "delta": "checking" },
+                "message": { "id": "m_live", "role": "assistant" }
+            }),
+            sequence: Some(2),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+        let model = h.ui.get_transcript();
+        let first = slint::Model::row_data(&model, 0).expect("thinking row");
+        assert!(first.running);
+        assert_eq!(first.title.as_str(), "Thinking\u{2026}");
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": "c_live",
+                "args": { "code": "print(1)" }
+            }),
+            sequence: Some(3),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+        let thinking = slint::Model::row_data(&model, 0).expect("settled thinking");
+        let cell = slint::Model::row_data(&model, 1).expect("running cell");
+        assert!(!thinking.running);
+        assert_eq!(thinking.title.as_str(), "Thinking");
+        assert!(cell.running);
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_end",
+                "toolCallId": "c_live",
+                "isError": false,
+                "result": { "content": [{ "text": "1" }] }
+            }),
+            sequence: Some(4),
+        });
+        h.run();
+        assert!(!h.ui.get_has_running_row());
+        let settled_cell = slint::Model::row_data(&model, 1).expect("settled cell");
+        assert!(!settled_cell.running);
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "thinking_delta", "delta": "wrapping up" },
+                "message": { "id": "m_live", "role": "assistant" }
+            }),
+            sequence: Some(5),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({ "type": "turn_end" }),
+            sequence: Some(6),
+        });
+        h.run();
+        assert!(!h.ui.get_has_running_row());
+        let last = slint::Model::row_data(&model, slint::Model::row_count(&model) - 1)
+            .expect("settled trailing thinking");
+        assert!(!last.running);
+        assert_eq!(last.title.as_str(), "Thinking");
     }
 }

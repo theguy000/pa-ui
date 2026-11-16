@@ -456,6 +456,9 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             }
             if let Some(ui) = u.and_then(|w| w.upgrade()) {
                 sync_ui_spacers(&ui, 0.0, 0.0, 0);
+                if ui.get_has_running_row() {
+                    ui.set_has_running_row(false);
+                }
             }
             if let Ok(mut vs) = vstate.try_borrow_mut() {
                 vs.in_slint_call = false;
@@ -645,16 +648,22 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
     }
 
-    let (ui_weak, top, bottom, wstart, scroll_delta) = {
+    let (ui_weak, top, bottom, wstart, scroll_delta, has_running) = {
         let Ok(mut vs) = vstate.try_borrow_mut() else { return };
         vs.clear_pending_flush();
         let scroll_delta = std::mem::take(&mut vs.pending_scroll_delta);
         let (t, b, w) = vs.compute_spacers();
-        (vs.ui.clone(), t, b, w, scroll_delta)
+        let end = vs.win_end.min(vs.all_rows.len());
+        let start = vs.win_start.min(end);
+        let has_running = vs.all_rows[start..end].iter().any(|row| row.running);
+        (vs.ui.clone(), t, b, w, scroll_delta, has_running)
     };
     let mut updated_scroll_y = None;
     if let Some(ui) = ui_weak.and_then(|w| w.upgrade()) {
         sync_ui_spacers(&ui, top, bottom, wstart);
+        if ui.get_has_running_row() != has_running {
+            ui.set_has_running_row(has_running);
+        }
         if scroll_delta.abs() > 0.0 && !ui.get_follow_bottom() && !ui.get_scrollbar_dragging() {
             let cur_y = prev_cy.unwrap_or_else(|| ui.get_dbg_cy());
             #[cfg(test)]
@@ -1257,9 +1266,30 @@ impl Sheet {
     }
 
     pub fn answer_ended(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.open = None;
-        inner.after_open_end = None;
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            inner.open = None;
+            inner.after_open_end = None;
+            let mut settled = false;
+            let len = inner.rows.len();
+            for at in 0..len {
+                if inner.rows[at].running {
+                    inner.rows[at].running = false;
+                    if inner.rows[at].kind == transcript::KIND_THINKING
+                        && inner.rows[at].title == "Thinking\u{2026}"
+                    {
+                        inner.rows[at].title = "Thinking".to_string();
+                    }
+                    let updated = inner.rows[at].clone();
+                    inner.drawn.set(at, &updated);
+                    settled = true;
+                }
+            }
+            settled.then(|| inner.virtual_state.clone()).flatten()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
     }
 
     pub fn toggle(&self, at: usize) {
@@ -1679,6 +1709,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         has_body: row.has_body,
         expanded: row.expanded,
         failed: row.failed,
+        running: row.running,
         image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
         timestamp: row.timestamp.clone().into(),

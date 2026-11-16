@@ -581,6 +581,20 @@ export component AppWindow inherits Window {
     in property <string> busy-label: "";
     in property <string> busy-elapsed: "";
     in property <string> spinner-frame: "\u{280b}";
+    in property <bool> has-running-row: false;
+    out property <int> working-elapsed-ms: 0;
+    changed has-running-row => {
+        if !self.has-running-row {
+            self.working-elapsed-ms = 0;
+        }
+    }
+    working-anim := Timer {
+        interval: 33ms;
+        running: root.has-running-row && !Appearance.reduce-motion;
+        triggered => {
+            root.working-elapsed-ms = Math.mod(root.working-elapsed-ms + 33, 139200);
+        }
+    }
 
     callback send-requested(string);
     // the command menu: what is typed after the slash, moving the highlight, and
@@ -1384,6 +1398,7 @@ export component AppWindow inherits Window {
                                 for item[i] in root.transcript : TranscriptRow {
                                     width: transcript-list.width;
                                     data: item;
+                                    working-elapsed-ms: root.working-elapsed-ms;
                                     init => {
                                         root.row-measured(root.window-start + i, self.height);
                                     }

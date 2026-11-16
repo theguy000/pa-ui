@@ -58,6 +58,9 @@ const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
 const ON_MESSAGE: &[Role] = &[Role::TranscriptSurface, Role::TranscriptMessageFill];
 const ON_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFill];
 const ON_CELL_HOVER: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillHover];
+const ON_WORKING_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillWorking];
+const ON_WORKING_CELL_HOVER: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptCellFillWorkingHover];
 const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
 const ON_CELL_COPY: &[Role] =
     &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded, Role::TranscriptCellCopyFill];
@@ -405,6 +408,51 @@ const PAIRS: &[Pair] = &[
     Pair {
         ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_CELL_HOVER },
         what: "a failed cell's words under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptWorkingInk, on: ON_WORKING_CELL },
+        what: "a running cell's icon",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's verb",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's verb under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's name",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's name under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellMetaInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's status",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellMetaInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's status under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptWorkingInk, on: ON_TRANSCRIPT },
+        what: "an active thinking row's squiggle",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptThinkingLabelInkWorking, on: ON_TRANSCRIPT },
+        what: "an active thinking row's label",
         floor: BODY,
     },
     // The chip that walks the reader back to the newest row floats over the sheet
@@ -823,6 +871,30 @@ const TELLINGS: &[Telling] = &[
         a: Mark { role: Role::TranscriptCellInkFailed, on: ON_CELL },
         b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
         what: "a failed cell's name and a quiet cell's name",
+        floor: APART,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillWorking, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFill, on: ON_TRANSCRIPT },
+        what: "a running cell's field and a quiet cell's field",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillWorkingHover, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFillHover, on: ON_TRANSCRIPT },
+        what: "a running cell's field and a quiet cell's field under the pointer",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptWorkingInk, on: ON_WORKING_CELL },
+        b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        what: "a running cell's icon and a quiet cell's name",
+        floor: APART,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL },
+        b: Mark { role: Role::TranscriptCellVerbInk, on: ON_CELL },
+        what: "a running cell's verb and a quiet cell's verb",
         floor: APART,
     },
     // The composer's one control does two opposite jobs. The arrow that becomes a
