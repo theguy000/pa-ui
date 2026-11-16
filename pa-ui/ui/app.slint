@@ -1315,19 +1315,22 @@ export component AppWindow inherits Window {
                                 if (abs(delta) > 0.5px) {
                                     root.live-vel = clamp(delta, -220px, 220px);
                                 }
-                                if (delta > 0.5px && root.from-bottom > 2px) {
+                                if (root.follow-bottom) {
+                                    // At the floor a wheel gesture has nowhere to go
+                                    // but up, and the animation has not moved the
+                                    // offset yet when this callback runs. Unlatch
+                                    // here, or the follow timer drags the first
+                                    // notch back down.
+                                    root.reader-moved-up();
+                                } else if (delta > 0.5px && root.from-bottom > 2px) {
                                     root.reader-moved-up();
                                 } else if (delta < -0.5px && root.from-bottom <= 12px && root.bottom-pad <= 1px) {
                                     root.reader-reached-floor();
                                 }
-                                // Smoothly boost wheel impulses into inertial coasting
-                                if (Appearance.smooth-scroll && !root.scrollbar-dragging && abs(delta) >= 20px && abs(delta) <= 300px) {
-                                    root.programmatic-scroll = true;
-                                    transcript-list.content-y = root.seen-content-y + delta * 0.45;
-                                    root.programmatic-scroll = false;
-                                    root.flick-vel = clamp(root.flick-vel + delta * 0.32, -240px, 240px);
-                                    root.live-vel = root.flick-vel;
-                                }
+                                // The Flickable runs the wheel animation itself;
+                                // a second producer of content-y here only makes
+                                // the two curves fight.
+                                root.flick-vel = 0px;
                                 root.seen-content-y = transcript-list.content-y;
                                 root.viewport-scrolled(transcript-list.content-y, transcript-list.height);
                             }
