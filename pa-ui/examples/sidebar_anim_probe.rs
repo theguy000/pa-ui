@@ -63,6 +63,7 @@ fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
         out.push(SessionEntry {
             is_header: true,
             label: label.into(),
+            count: rows as i32,
             folded,
             item: SessionItem::default(),
             at: header_at,
