@@ -837,10 +837,11 @@ fn push_heading_line(raw: &str, theme: &Resolved, out: &mut String) {
                 if l_start > 0 {
                     push_heading_chunk(&slice[..l_start], theme, out);
                 }
-                open_font(theme, Role::TranscriptHeadingInk, out);
-                out.push_str("**");
-                out.push_str(&slice[l_start..l_end]);
-                out.push_str("**</font>");
+                // A label carrying an inline-code `<font>` cannot stay a link:
+                // Slint reads that `</font>` as closing the heading's own tag.
+                // The label's words stay; the destination is dropped.
+                let label = &slice[l_start + 1..l_start + slice[l_start..l_end].find("](").unwrap_or(l_end - l_start - 1)];
+                push_heading_plain_with_fonts(label, theme, out);
                 pos += l_end;
                 continue;
             }
@@ -859,6 +860,27 @@ fn push_heading_line(raw: &str, theme: &Resolved, out: &mut String) {
         };
         let tag_end = tag_start + end_rel + "</font>".len();
         out.push_str(&highlighted[tag_start..tag_end]);
+        pos = tag_end;
+    }
+}
+
+fn push_heading_plain_with_fonts(slice: &str, theme: &Resolved, out: &mut String) {
+    let mut pos = 0;
+    while pos < slice.len() {
+        let Some(f_rel) = slice[pos..].find("<font ") else {
+            push_heading_chunk(&slice[pos..], theme, out);
+            break;
+        };
+        if f_rel > 0 {
+            push_heading_chunk(&slice[pos..pos + f_rel], theme, out);
+        }
+        let tag_start = pos + f_rel;
+        let Some(end_rel) = slice[tag_start..].find("</font>") else {
+            push_heading_chunk(&slice[tag_start..], theme, out);
+            break;
+        };
+        let tag_end = tag_start + end_rel + "</font>".len();
+        out.push_str(&slice[tag_start..tag_end]);
         pos = tag_end;
     }
 }
