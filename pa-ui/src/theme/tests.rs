@@ -800,7 +800,7 @@ fn sidebar_enclosure_and_new_session_roles_resolve_across_palettes() {
         (Role::SidebarGroupSurface, Rgba::hex("#151613")),
         (Role::SidebarGroupEdge, Rgba::hex("#e7e5df0e")),
         (Role::SidebarGroupEmptyEdge, Rgba::hex("#e7e5df0b")),
-        (Role::SidebarGroupEmptyInk, Rgba::hex("#6a6b64")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#7e7f78")),
         (Role::SidebarNewSessionFill, Rgba::hex("#e7e5df0c")),
         (Role::SidebarNewSessionFillHover, Rgba::hex("#e7e5df14")),
         (Role::SidebarNewSessionEdge, Rgba::hex("#e7e5df13")),
@@ -809,7 +809,7 @@ fn sidebar_enclosure_and_new_session_roles_resolve_across_palettes() {
         (Role::SidebarGroupSurface, Rgba::hex("#161616")),
         (Role::SidebarGroupEdge, Rgba::hex("#e5e5e50e")),
         (Role::SidebarGroupEmptyEdge, Rgba::hex("#e5e5e50b")),
-        (Role::SidebarGroupEmptyInk, Rgba::hex("#6a6a6a")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#7f7f7f")),
         (Role::SidebarNewSessionFill, Rgba::hex("#e5e5e50c")),
         (Role::SidebarNewSessionFillHover, Rgba::hex("#e5e5e514")),
         (Role::SidebarNewSessionEdge, Rgba::hex("#e5e5e513")),
@@ -818,7 +818,7 @@ fn sidebar_enclosure_and_new_session_roles_resolve_across_palettes() {
         (Role::SidebarGroupSurface, Rgba::hex("#1e1f2b")),
         (Role::SidebarGroupEdge, Rgba::hex("#c0caf50e")),
         (Role::SidebarGroupEmptyEdge, Rgba::hex("#c0caf50b")),
-        (Role::SidebarGroupEmptyInk, Rgba::hex("#4f556f")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#5c6280")),
         (Role::SidebarNewSessionFill, Rgba::hex("#c0caf50c")),
         (Role::SidebarNewSessionFillHover, Rgba::hex("#c0caf514")),
         (Role::SidebarNewSessionEdge, Rgba::hex("#c0caf513")),
@@ -1216,6 +1216,19 @@ fn a_theme_that_paints_the_strips_tags_into_the_strip_is_reported() {
     )
     .expect("a theme that loads");
 
+    let shipped = Resolved::shipped();
+    for role in [
+        Role::SidebarGroupSurface,
+        Role::SidebarGroupEdge,
+        Role::SidebarGroupEmptyEdge,
+        Role::SidebarGroupEmptyInk,
+        Role::SidebarNewSessionFill,
+        Role::SidebarNewSessionFillHover,
+        Role::SidebarNewSessionEdge,
+    ] {
+        assert_ne!(theme.get(role), shipped.get(role), "light {}", role.name());
+    }
+
     let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
     named.sort_unstable();
 
@@ -1304,7 +1317,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a cell's name at rest",
             "a cell's name under the pointer",
             "a command's name",
-            "a group's caret while the pointer is on its header",
+            "a group's caret at rest",
             "a group's word at rest",
             "a ledger value",
             "a link in prose",

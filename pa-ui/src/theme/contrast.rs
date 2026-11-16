@@ -188,13 +188,13 @@ const PAIRS: &[Pair] = &[
     },
     Pair {
         ink: Mark { role: Role::SidebarGroupCaret, on: ON_SIDEBAR_GROUP },
-        what: "a group's caret while the pointer is on its header",
+        what: "a group's caret at rest",
         floor: MARK,
     },
     Pair {
         ink: Mark { role: Role::SidebarGroupEmptyInk, on: ON_SIDEBAR },
         what: "an empty group's header",
-        floor: MARK,
+        floor: BODY,
     },
     Pair {
         ink: Mark { role: Role::TagWorking, on: ON_SIDEBAR_GROUP },

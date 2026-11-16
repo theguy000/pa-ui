@@ -232,9 +232,13 @@ pub(crate) enum Role {
     /// picked name's value: it is read against the row's own field and not the
     /// picked fill, so a light sidebar has to move the two apart.
     SidebarNameInkEditing,
+    /// Fill behind a populated sidebar group enclosure.
     SidebarGroupSurface,
+    /// Hairline border around a populated sidebar group enclosure.
     SidebarGroupEdge,
+    /// Hairline border around an empty sidebar group enclosure.
     SidebarGroupEmptyEdge,
+    /// Label, count, and caret ink on an empty sidebar group header.
     SidebarGroupEmptyInk,
     /// A group header on the column: the word over the active, idle and done
     /// rows, and the count beside it. Quiet, because it is a label over names
@@ -297,13 +301,13 @@ pub(crate) enum Role {
     /// menu. Its own role although it ships the pencil's ink: it is a second
     /// control on the same row, and a theme may want it quieter than the pencil.
     SidebarRowMenuMark,
-    /// The tick a done row wears before its name, and the one the done group's
-    /// header carries: done is green, the one tag with a mark rather than a tint
-    /// on the row. It ships the idle tag's value on purpose, both saying the same
-    /// thing about a session that is not between turns.
+    /// Default tint on `IconDoneTick`; ships the idle tag hue.
     SidebarRowDoneMark,
+    /// Resting fill of the sidebar's New Session pill button.
     SidebarNewSessionFill,
+    /// Fill of the sidebar's New Session pill button under the pointer.
     SidebarNewSessionFillHover,
+    /// Hairline border around the sidebar's New Session pill button.
     SidebarNewSessionEdge,
     /// The label on the column's New Session button at rest. The button carries a
     /// field of its own, so its words are read on that field rather than on the
@@ -1292,7 +1296,7 @@ impl Role {
             Role::SidebarGroupEdge => Derivation::Veil(Palette::Ink, 0x0e),
             Role::SidebarGroupEmptyEdge => Derivation::Veil(Palette::Ink, 0x0b),
             Role::SidebarGroupEmptyInk => {
-                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.56)
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.69)
             }
             Role::SidebarGroupInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)

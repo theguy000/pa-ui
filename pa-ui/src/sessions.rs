@@ -374,6 +374,14 @@ pub(crate) fn session_entries(
     )
 }
 
+pub(crate) fn group_box_height(folded: bool, row_count: usize, row_height: f32) -> f32 {
+    if !folded && row_count > 0 {
+        (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP) as f32 + row_count as f32 * row_height
+    } else {
+        (2 * GROUP_PAD + HEADER_HEIGHT) as f32
+    }
+}
+
 pub(crate) fn group_boxes_at(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -384,19 +392,10 @@ pub(crate) fn group_boxes_at(
     let mut boxes = Vec::with_capacity(3);
     let mut at: f32 = COLUMN_TOP as f32;
     for (index, rows) in [(0usize, active), (1, idle), (2, done)] {
-        let box_h = if !folded[index] && !rows.is_empty() {
-            GROUP_PAD as f32
-                + HEADER_HEIGHT as f32
-                + GROUP_BODY_GAP as f32
-                + rows.len() as f32 * row_height
-                + GROUP_PAD as f32
-        } else {
-            (GROUP_PAD + HEADER_HEIGHT + GROUP_PAD) as f32
-        };
+        let box_h = group_box_height(folded[index], rows.len(), row_height);
         boxes.push(SidebarGroupBox {
             at,
             height: box_h,
-            count: rows.len() as i32,
             empty: rows.is_empty(),
         });
         if index < 2 {
@@ -451,15 +450,7 @@ pub(crate) fn session_entries_at(
                 seam: index,
             });
         }
-        let box_h = if !folded && !rows.is_empty() {
-            GROUP_PAD as f32
-                + HEADER_HEIGHT as f32
-                + GROUP_BODY_GAP as f32
-                + rows.len() as f32 * row_height
-                + GROUP_PAD as f32
-        } else {
-            (GROUP_PAD + HEADER_HEIGHT + GROUP_PAD) as f32
-        };
+        let box_h = group_box_height(folded, rows.len(), row_height);
         if index < 2 {
             at = box_at + box_h + GROUP_GAP as f32;
         }
@@ -2014,17 +2005,17 @@ pub(crate) mod virtual_sidebar_tests {
         let boxes = ui.get_group_boxes();
         assert_eq!(boxes.row_count(), 3);
         assert_eq!(ui.get_prev_group_boxes().row_count(), 3);
-        let box_list: Vec<SidebarGroupBox> = (0..boxes.row_count())
+        let group_boxes: Vec<SidebarGroupBox> = (0..boxes.row_count())
             .filter_map(|i| boxes.row_data(i))
             .collect();
-        assert_eq!(box_list[0].at, COLUMN_TOP as f32);
-        assert_eq!(box_list[0].count, 10);
-        assert_eq!(box_list[1].count, 20);
-        assert_eq!(box_list[2].count, 125);
-        assert!(box_list.iter().all(|b| !b.empty && b.height > 0.0));
-        assert_eq!(box_list[1].at, box_list[0].at + box_list[0].height + GROUP_GAP as f32);
-        assert_eq!(box_list[2].at, box_list[1].at + box_list[1].height + GROUP_GAP as f32);
-        assert_eq!(box_list[2].at + box_list[2].height, expected_h);
+        assert_eq!(group_boxes[0].at, COLUMN_TOP as f32);
+        assert_eq!(group_boxes[0].height, group_box_height(false, 10, ROW_HEIGHT as f32));
+        assert_eq!(group_boxes[1].height, group_box_height(false, 20, ROW_HEIGHT as f32));
+        assert_eq!(group_boxes[2].height, group_box_height(false, 125, ROW_HEIGHT as f32));
+        assert!(group_boxes.iter().all(|b| !b.empty && b.height > 0.0));
+        assert_eq!(group_boxes[1].at, group_boxes[0].at + group_boxes[0].height + GROUP_GAP as f32);
+        assert_eq!(group_boxes[2].at, group_boxes[1].at + group_boxes[1].height + GROUP_GAP as f32);
+        assert_eq!(group_boxes[2].at + group_boxes[2].height, expected_h);
 
         let mounted_list: Vec<SessionEntry> = (0..mounted).filter_map(|i| entries.row_data(i)).collect();
         assert!(mounted_list.iter().any(|e| e.is_header && e.label == "Active"));

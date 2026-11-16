@@ -205,7 +205,7 @@ fn session_entries_positions_headers_and_rows_by_fold_state() {
     }))];
 
     let body_offset = HEADER_HEIGHT + GROUP_BODY_GAP;
-    let group_chrome = 2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP;
+    let group_overhead = 2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP;
 
     let open = session_entries(&a, &i, &d, false, false, false);
     assert_eq!(open.len(), 6);
@@ -213,17 +213,17 @@ fn session_entries_positions_headers_and_rows_by_fold_state() {
     assert_eq!(open[1].at, (COLUMN_TOP + GROUP_PAD + body_offset) as f32);
     assert_eq!(
         open[2].at,
-        (COLUMN_TOP + group_chrome + ROW_HEIGHT + GROUP_GAP + GROUP_PAD) as f32
+        (COLUMN_TOP + group_overhead + ROW_HEIGHT + GROUP_GAP + GROUP_PAD) as f32
     );
     assert_eq!(open[3].at, open[2].at + body_offset as f32);
     assert_eq!(
         open[4].at,
-        (COLUMN_TOP + 2 * (group_chrome + ROW_HEIGHT + GROUP_GAP) + GROUP_PAD) as f32
+        (COLUMN_TOP + 2 * (group_overhead + ROW_HEIGHT + GROUP_GAP) + GROUP_PAD) as f32
     );
     assert_eq!(open[5].at, open[4].at + body_offset as f32);
     assert_eq!(
         entries_height(&open),
-        (COLUMN_TOP + 3 * group_chrome + 2 * GROUP_GAP + 3 * ROW_HEIGHT) as f32
+        (COLUMN_TOP + 3 * group_overhead + 2 * GROUP_GAP + 3 * ROW_HEIGHT) as f32
     );
 
     let idle_folded = session_entries(&a, &i, &d, false, true, false);
@@ -234,7 +234,7 @@ fn session_entries_positions_headers_and_rows_by_fold_state() {
     assert_eq!(idle_row.target, idle_folded[2].at + body_offset as f32);
     assert_eq!(
         idle_folded[4].at,
-        (COLUMN_TOP + group_chrome + ROW_HEIGHT + GROUP_GAP + (2 * GROUP_PAD + HEADER_HEIGHT) + GROUP_GAP + GROUP_PAD) as f32
+        (COLUMN_TOP + group_overhead + ROW_HEIGHT + GROUP_GAP + (2 * GROUP_PAD + HEADER_HEIGHT) + GROUP_GAP + GROUP_PAD) as f32
     );
     assert_eq!(idle_folded[5].at, idle_folded[4].at + body_offset as f32);
     assert_eq!(
@@ -261,24 +261,21 @@ fn group_boxes_at_computes_enclosures_for_empty_populated_and_folded_groups() {
     assert_eq!(boxes.len(), 3);
     assert_eq!(boxes[0].at, COLUMN_TOP as f32);
     assert_eq!(boxes[0].height, empty_box_h);
-    assert_eq!(boxes[0].count, 0);
-    assert!(boxes[0].empty);
+        assert!(boxes[0].empty);
 
     assert_eq!(boxes[1].at, boxes[0].at + boxes[0].height + GROUP_GAP as f32);
     assert_eq!(
         boxes[1].height,
         (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP + ROW_HEIGHT) as f32
     );
-    assert_eq!(boxes[1].count, 1);
-    assert!(!boxes[1].empty);
+        assert!(!boxes[1].empty);
 
     assert_eq!(boxes[2].at, boxes[1].at + boxes[1].height + GROUP_GAP as f32);
     assert_eq!(
         boxes[2].height,
         (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP + 85 * ROW_HEIGHT) as f32
     );
-    assert_eq!(boxes[2].count, 85);
-    assert!(!boxes[2].empty);
+        assert!(!boxes[2].empty);
 
     let entries = session_entries_at(&[], &i, &d, false, false, false, ROW_HEIGHT as f32);
     assert_eq!(
@@ -289,10 +286,9 @@ fn group_boxes_at_computes_enclosures_for_empty_populated_and_folded_groups() {
     let done_folded = group_boxes_at(&[], &i, &d, [false, false, true], ROW_HEIGHT as f32);
     assert_eq!(done_folded[2].at, boxes[2].at);
     assert_eq!(done_folded[2].height, empty_box_h);
-    assert_eq!(done_folded[2].count, 85);
-    assert!(!done_folded[2].empty);
+        assert!(!done_folded[2].empty);
 
-    let a_two = vec![i[0].clone(), i[0].clone()];
+    let a_two = [i[0].clone(), i[0].clone()];
     for rh in [28.0_f32, 32.0, 36.0] {
         for (active, idle, done) in [
             (&[][..], &[][..], &[][..]),

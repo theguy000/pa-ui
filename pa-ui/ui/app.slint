@@ -1158,22 +1158,31 @@ export component AppWindow inherits Window {
                         }
 
                         for entry[k] in root.session-entries : slot := Rectangle {
+                            property <length> raw-y: root.row-y(k);
+                            property <bool> folding-seam: !entry.is-header
+                                && root.fold-index == entry.seam
+                                && root.splice-at.length > 0
+                                && entry.seam >= 0
+                                && entry.seam < root.group-boxes.length;
+                            property <length> clip-top: folding-seam
+                                ? max(raw-y, root.group-box-at(entry.seam) + 32px)
+                                : raw-y;
+                            property <length> clip-bot: folding-seam
+                                ? min(raw-y + Appearance.session-row-height, root.group-bottom(entry.seam) - 4px)
+                                : raw-y + Appearance.session-row-height;
                             property <bool> drop-hit: root.drag-session-id != ""
                                 && !entry.is-header && !entry.folded
                                 && entry.item.status == root.drag-session-status
                                 && root.drag-pointer-y >= sidebar-list.absolute-position.y
                                 && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
-                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
-                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + Appearance.session-row-height;
+                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (raw-y - 88px)
+                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (raw-y - 88px) + Appearance.session-row-height;
                             visible: entry.is-header
-                                || (root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01);
+                                || (self.height > 0.5px && root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01);
                             x: 4px;
-                            y: root.row-y(k) - 88px;
+                            y: clip-top - 88px;
                             width: parent.width - 8px;
-                            height: entry.is-header ? 26px
-                                : (root.fold-index == entry.seam && root.splice-at.length > 0 && entry.seam >= 0 && entry.seam < root.group-boxes.length)
-                                    ? clamp(root.group-bottom(entry.seam) - (self.y + 88px), 0px, Appearance.session-row-height)
-                                    : Appearance.session-row-height;
+                            height: entry.is-header ? 26px : max(0px, clip-bot - clip-top);
                             opacity: entry.is-header ? 1.0 : root.row-fade(k);
                             clip: !entry.is-header;
 
@@ -1187,6 +1196,7 @@ export component AppWindow inherits Window {
                             }
 
                             if !entry.is-header : SidebarRow {
+                                y: parent.raw-y - parent.clip-top;
                                 width: 100%;
                                 height: Appearance.session-row-height;
                                 item: entry.item;

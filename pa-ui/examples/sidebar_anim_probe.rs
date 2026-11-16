@@ -41,7 +41,6 @@ fn group_boxes(count: usize, done_folded: bool) -> Vec<SidebarGroupBox> {
         out.push(SidebarGroupBox {
             at,
             height: box_h,
-            count: rows as i32,
             empty: rows == 0,
         });
         if index < 2 {
@@ -64,7 +63,6 @@ fn entries(count: usize, done_folded: bool) -> Vec<SessionEntry> {
         out.push(SessionEntry {
             is_header: true,
             label: label.into(),
-            count: rows as i32,
             folded,
             item: SessionItem::default(),
             at: header_at,
