@@ -56,7 +56,7 @@ pub const KIND_ERROR: i32 = 9;
 /// A fenced code block, rendered on its own surface rather than as prose.
 pub const KIND_CODE: i32 = 6;
 
-/// A GFM table, drawn with box characters in a monospace face.
+/// A GFM table, drawn as open typographic columns on the Sheet.
 pub const KIND_TABLE: i32 = 7;
 
 /// An image the user sent: drawn as a thumbnail, not as words.
@@ -453,14 +453,17 @@ fn build_message(
                         }
                         Block::Code { lang, body } => {
                             let mut row = Row::new(KIND_CODE);
+                            row.raw_code = body.clone();
                             row.code = highlight_code(&lang, &body, theme);
                             row.meta = lang;
                             row.has_code = true;
                             rows.push(row);
                         }
-                        Block::Table(rendered) => {
+                        Block::Table(table) => {
                             let mut row = Row::new(KIND_TABLE);
-                            row.body = plain_markup(&rendered);
+                            row.raw_code = table.source.clone();
+                            row.body = table.source;
+                            row.has_code = true;
                             rows.push(row);
                         }
                     }

@@ -2121,3 +2121,19 @@ fn summary_custom_and_error_rows_use_calm_cards_and_auto_sized_error_label() {
     assert!(error_block.contains("Theme.transcript-error-edge"), "Error row must use transcript-error-edge");
 }
 
+#[test]
+fn code_and_table_copy_controls_use_button_without_resting_opacity_layer() {
+    let source = include_str!("../../ui/transcript.slint");
+    for (start_needle, end_needle) in [
+        ("if data.kind == 6 :", "if data.kind == 7 :"),
+        ("if data.kind == 7 :", "if data.kind == 8 :"),
+    ] {
+        let start = source.find(start_needle).expect("row block");
+        let rest = &source[start..];
+        let end = rest.find(end_needle).expect("end of row block");
+        let block = &rest[..end];
+        assert!(block.contains("Button {"), "Copy control must use Button primitive");
+        assert!(block.contains("root.copy()"), "Copy Button must invoke root.copy()");
+        assert!(!block.contains("opacity:"), "Copy control must not keep a resting opacity layer");
+    }
+}

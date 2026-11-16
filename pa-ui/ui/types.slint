@@ -38,6 +38,15 @@ export global Appearance {
     in-out property <bool> smooth-scroll: true;
 }
 
+export struct TableCell {
+    row: int,
+    column: int,
+    text: styled-text,
+    align: int,         // 0 left, 1 right, 2 center
+    header: bool,
+    stretch: float,
+}
+
 export struct TRow {
     kind: int,          // KIND_* constants in transcript/mod.rs
     verb: string,
@@ -55,6 +64,9 @@ export struct TRow {
     image: image,
     elapsed: string,
     timestamp: string,
+    table: [TableCell],
+    table-rows: [int],
+    table-columns: [float],
 }
 
 export struct SessionItem {

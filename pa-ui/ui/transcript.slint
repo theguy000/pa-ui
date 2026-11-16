@@ -810,68 +810,255 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    // A fenced block: its own surface, mono, the language named in the corner
-    // the way a code card names it. The card and the code's own colour are
-    // roles; the syntax inside the code is still the markup builder's palette,
-    // which is the TUI's warmed to sit in this theme.
+    // A fenced block: a card with a quiet header and the code below it.
     if data.kind == 6 : VerticalLayout {
         width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.code-pad-y;
         padding-bottom: Appearance.code-pad-y;
-        Rectangle {
-            width: root.width - 48px;
-            height: code-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
-            background: Theme.transcript-code-fill;
-            border-radius: 8px;
 
-            Text {
-                x: 12px;
-                y: 9px;
-                text: data.meta;
-                color: Theme.transcript-code-label-ink;
-                font-size: Appearance.meta-size - 1px;
-                visible: data.meta != "";
+        code-card := Rectangle {
+            property <bool> copied: false;
+
+            width: root.width - 48px;
+            height: self.preferred-height;
+            background: Theme.transcript-code-fill;
+            border-color: Theme.transcript-cell-edge;
+            border-width: 1px;
+            border-radius: 8px;
+            clip: true;
+
+            code-touch := TouchArea {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 100%;
             }
-            if Appearance.show-timestamps && data.timestamp != "" : Text {
-                x: parent.width - 12px - self.preferred-width;
-                y: 9px;
-                text: data.timestamp;
-                color: Theme.transcript-cell-meta-ink;
-                font-size: Appearance.meta-size;
+
+            code-copy-timer := Timer {
+                interval: 900ms;
+                running: code-card.copied;
+                triggered => { code-card.copied = false; }
             }
-            code-text := StyledText {
-                x: 12px;
-                y: Appearance.expanded-pad-y + 2px + (data.meta != "" || (Appearance.show-timestamps && data.timestamp != "") ? 15px : 0px);
-                width: root.width - 72px;
-                text: data.code;
-                default-color: Theme.transcript-code-ink;
-                default-font-size: Appearance.code-size;
-                default-font-family: Appearance.code-font;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                HorizontalLayout {
+                    height: 28px;
+                    padding-left: 12px;
+                    padding-right: 74px;
+                    spacing: 8px;
+
+                    if data.meta != "" : Text {
+                        text: data.meta;
+                        color: Theme.transcript-code-label-ink;
+                        font-size: Appearance.meta-size;
+                        vertical-alignment: center;
+                    }
+
+                    if Appearance.show-timestamps && data.timestamp != "" : Text {
+                        text: data.timestamp;
+                        color: Theme.transcript-cell-meta-ink;
+                        font-size: Appearance.meta-size;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: Appearance.code-pad-y;
+                    padding-bottom: Appearance.code-pad-y;
+
+                    code-text := StyledText {
+                        width: root.width - 72px;
+                        text: data.code;
+                        default-color: Theme.transcript-code-ink;
+                        default-font-size: Appearance.code-size;
+                        default-font-family: Appearance.code-font;
+                    }
+                }
+            }
+
+            code-copy-btn := Button {
+                property <bool> revealed: code-touch.has-hover || self.on || code-card.copied;
+
+                x: parent.width - 10px - self.width;
+                y: 4px;
+                width: 56px;
+                height: 20px;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: revealed
+                    ? (self.on ? Theme.transcript-cell-copy-edge-hover : Theme.transcript-cell-copy-edge)
+                    : transparent;
+                fill: revealed ? Theme.transcript-cell-copy-fill : transparent;
+                fill-hover: Theme.transcript-cell-copy-fill-hover;
+                fade: Appearance.reduce-motion ? 0ms : 100ms;
+                described: code-card.copied ? "Copied" : "Copy code";
+                clicked => {
+                    if root.copy() {
+                        code-card.copied = true;
+                        code-copy-timer.restart();
+                    }
+                }
+
+                Text {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    text: code-card.copied ? "Copied" : "Copy";
+                    color: revealed
+                        ? (code-copy-btn.on ? Theme.transcript-cell-copy-ink-hover : Theme.transcript-cell-copy-ink)
+                        : transparent;
+                    font-size: Appearance.meta-size;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    animate color { duration: Appearance.reduce-motion ? 0ms : 100ms; }
+                }
             }
         }
     }
 
-    // A table, box-drawn as text: it stays copyable and needs no cell model.
+    // A table: proportional columns on the Sheet, no box and no vertical rules.
     if data.kind == 7 : VerticalLayout {
         width: root.width;
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.code-pad-y;
         padding-bottom: Appearance.code-pad-y;
-        spacing: 2px;
-        if Appearance.show-timestamps && data.timestamp != "" : Text {
-            text: data.timestamp;
-            color: Theme.transcript-cell-meta-ink;
-            font-size: Appearance.meta-size;
-        }
-        table-text := StyledText {
+
+        table-card := Rectangle {
+            property <bool> copied: false;
+
             width: root.width - 48px;
-            text: data.body;
-            default-color: Theme.transcript-table-ink;
-            default-font-size: Appearance.cell-output-size;
-            default-font-family: Appearance.code-font;
+            height: self.preferred-height;
+
+            table-touch := TouchArea {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 100%;
+            }
+
+            table-copy-timer := Timer {
+                interval: 900ms;
+                running: table-card.copied;
+                triggered => { table-card.copied = false; }
+            }
+
+            VerticalLayout {
+                spacing: 0px;
+                padding-right: 70px;
+
+                HorizontalLayout {
+                    height: 28px;
+                    spacing: 0px;
+                    alignment: center;
+
+                    for cell in data.table : Rectangle {
+                        horizontal-stretch: cell.header ? cell.stretch : 0.0;
+
+                        if cell.header : HorizontalLayout {
+                            padding-left: cell.column == 0 ? 0px : 8px;
+                            padding-right: 8px;
+
+                            StyledText {
+                                horizontal-stretch: 1.0;
+                                text: cell.text;
+                                default-color: Theme.transcript-prose-ink;
+                                default-font-size: Appearance.cell-output-size;
+                                horizontal-alignment: cell.align == 1 ? right
+                                    : cell.align == 2 ? center : left;
+                                link-color: Theme.transcript-link-ink;
+                                link-clicked(link) => { root.open-link(link); }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.transcript-quote-edge;
+                }
+
+                for row-index in data.table-rows : VerticalLayout {
+                    spacing: 0px;
+
+                    HorizontalLayout {
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 0px;
+
+                        for cell in data.table : Rectangle {
+                            horizontal-stretch: cell.row == row-index ? cell.stretch : 0.0;
+
+                            if cell.row == row-index : HorizontalLayout {
+                                padding-left: cell.column == 0 ? 0px : 8px;
+                                padding-right: 8px;
+
+                                StyledText {
+                                    horizontal-stretch: 1.0;
+                                    text: cell.text;
+                                    default-color: Theme.transcript-prose-ink;
+                                    default-font-size: Appearance.cell-output-size;
+                                    horizontal-alignment: cell.align == 1 ? right
+                                        : cell.align == 2 ? center : left;
+                                    link-color: Theme.transcript-link-ink;
+                                    link-clicked(link) => { root.open-link(link); }
+                                }
+                            }
+                        }
+                    }
+
+                    if row-index < data.table-rows.length - 1 : Rectangle {
+                        height: 1px;
+                        background: Theme.transcript-cell-rule;
+                    }
+                }
+            }
+
+            table-copy-btn := Button {
+                property <bool> revealed: table-touch.has-hover || self.on || table-card.copied;
+
+                x: parent.width - 10px - self.width;
+                y: 4px;
+                width: 56px;
+                height: 20px;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: revealed
+                    ? (self.on ? Theme.transcript-cell-copy-edge-hover : Theme.transcript-cell-copy-edge)
+                    : transparent;
+                fill: revealed ? Theme.transcript-cell-copy-fill : transparent;
+                fill-hover: Theme.transcript-cell-copy-fill-hover;
+                fade: Appearance.reduce-motion ? 0ms : 100ms;
+                described: table-card.copied ? "Copied" : "Copy table";
+                clicked => {
+                    if root.copy() {
+                        table-card.copied = true;
+                        table-copy-timer.restart();
+                    }
+                }
+
+                Text {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    text: table-card.copied ? "Copied" : "Copy";
+                    color: revealed
+                        ? (table-copy-btn.on ? Theme.transcript-cell-copy-ink-hover : Theme.transcript-cell-copy-ink)
+                        : transparent;
+                    font-size: Appearance.meta-size;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    animate color { duration: Appearance.reduce-motion ? 0ms : 100ms; }
+                }
+            }
         }
     }
     // an image the user sent: the picture itself, thumbnailed, on the same edge

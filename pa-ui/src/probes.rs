@@ -308,9 +308,9 @@ mod transcript_scroll_contract {
             "quote-text:=StyledText{x:12px;y:0px;width:root.width-60px;",
             "custom-text:=StyledText{width:max(0px,root.width-48px-44px);",
             "error-line:=StyledText{width:max(0px,root.width-102px-error-label.preferred-width);",
-            "code-text:=StyledText{x:12px;",
-            "width:root.width-72px;",
-            "table-text:=StyledText{width:root.width-48px;",
+            "code-text:=StyledText{width:root.width-72px;",
+            "ifcell.header:HorizontalLayout{",
+            "ifcell.row==row-index:HorizontalLayout{",
         ] {
             assert!(
                 compact.contains(needle),

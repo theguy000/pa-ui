@@ -885,8 +885,7 @@ fn push_heading_plain_with_fonts(slice: &str, theme: &Resolved, out: &mut String
     }
 }
 
-fn wrap_line_emphasis(line: &str) -> String {
-    let mut out = String::with_capacity(line.len() + 16);
+fn wrap_line_with(line: &str, marker: &str, out: &mut String) {
     let mut pos = 0;
     while pos < line.len() {
         let next_open = line[pos..].find("<font ");
@@ -898,21 +897,26 @@ fn wrap_line_emphasis(line: &str) -> String {
             (None, None) => None,
         };
         let Some(rel) = next_tag else {
-            push_wrapped_chunk(&line[pos..], "*", false, &mut out);
+            push_wrapped_chunk(&line[pos..], marker, false, out);
             break;
         };
         if rel > 0 {
-            push_wrapped_chunk(&line[pos..pos + rel], "*", false, &mut out);
+            push_wrapped_chunk(&line[pos..pos + rel], marker, false, out);
         }
         let tag_start = pos + rel;
         let Some(gt_rel) = line[tag_start..].find('>') else {
-            push_wrapped_chunk(&line[tag_start..], "*", false, &mut out);
+            push_wrapped_chunk(&line[tag_start..], marker, false, out);
             break;
         };
         let tag_end = tag_start + gt_rel + 1;
         out.push_str(&line[tag_start..tag_end]);
         pos = tag_end;
     }
+}
+
+fn wrap_line_emphasis(line: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 16);
+    wrap_line_with(line, "*", &mut out);
     out
 }
 /// Inline code, as a colour rather than a box.
@@ -1001,7 +1005,88 @@ pub(crate) enum Block {
     Prose(String),
     Quote(String),
     Code { lang: String, body: String },
-    Table(String),
+    Table(Table),
+}
+
+/// A GFM pipe table kept as its source and its cells, so the Sheet can draw
+/// columns instead of an ASCII cage and Copy can return the markdown.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Table {
+    pub source: String,
+    pub header: Vec<String>,
+    pub aligns: Vec<u8>,
+    pub rows: Vec<Vec<String>>,
+}
+
+impl Table {
+    pub(crate) fn stretches(&self) -> Vec<f32> {
+        (0..self.header.len())
+            .map(|column| {
+                let widest = self
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(column))
+                    .chain(std::iter::once(&self.header[column]))
+                    .map(|cell| cell.chars().count())
+                    .max()
+                    .unwrap_or(1);
+                (widest as f32 / 16.0).clamp(0.4, 3.0)
+            })
+            .collect()
+    }
+
+    pub(crate) fn cells(&self, theme: &Resolved) -> Vec<TableCellData> {
+        let stretches = self.stretches();
+        let mut cells = Vec::new();
+        for (column, source) in self.header.iter().enumerate() {
+            cells.push(TableCellData {
+                row: -1,
+                column: column as i32,
+                text: table_cell_markup(source, true, theme),
+                align: self.aligns[column],
+                header: true,
+                stretch: stretches[column],
+            });
+        }
+        for (row, sources) in self.rows.iter().enumerate() {
+            for (column, source) in sources.iter().enumerate() {
+                cells.push(TableCellData {
+                    row: row as i32,
+                    column: column as i32,
+                    text: table_cell_markup(source, false, theme),
+                    align: self.aligns[column],
+                    header: false,
+                    stretch: stretches[column],
+                });
+            }
+        }
+        cells
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TableCellData {
+    pub row: i32,
+    pub column: i32,
+    pub text: String,
+    pub align: u8,
+    pub header: bool,
+    pub stretch: f32,
+}
+
+fn table_cell_markup(source: &str, header: bool, theme: &Resolved) -> String {
+    let markup = markdown_markup(source, theme);
+    if !header {
+        return markup;
+    }
+    let mut out = String::new();
+    for (index, line) in markup.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        wrap_line_with(&strip_strong_markers(line), "**", &mut out);
+    }
+    out
 }
 
 
@@ -1072,21 +1157,7 @@ pub(crate) fn table_alignment(cell: &str) -> u8 {
 }
 
 
-pub(crate) fn truncate_to(text: &str, width: usize) -> String {
-    let count = text.chars().count();
-    if count <= width {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
-
-
-/// Draw a pipe table the way the TUI does: a header band, a rule, the rows, and
-/// a box around the whole thing. It is text, not a widget, so it stays copyable
-/// and needs no per-cell model.
-pub(crate) fn render_table(raw: &[&str]) -> Option<String> {
+pub(crate) fn parse_table(raw: &[&str]) -> Option<Table> {
     if raw.len() < 2 {
         return None;
     }
@@ -1103,61 +1174,18 @@ pub(crate) fn render_table(raw: &[&str]) -> Option<String> {
         cells.truncate(columns);
         rows.push(cells);
     }
-    let mut widths: Vec<usize> = (0..columns)
-        .map(|column| {
-            rows.iter()
-                .map(|row| row[column].chars().count())
-                .chain(std::iter::once(header[column].chars().count()))
-                .max()
-                .unwrap_or(3)
-                .max(3)
-        })
-        .collect();
-    // a table wider than the pane would wrap and lose its shape: give up the
-    // widest column first, and elide whatever no longer fits
-    let total = |widths: &[usize]| widths.iter().sum::<usize>() + 3 * columns + 1;
-    while total(&widths) > 92 {
-        let Some((widest, _)) = widths
-            .iter()
-            .enumerate()
-            .filter(|(_, width)| **width > 3)
-            .max_by_key(|(_, width)| **width)
-        else {
-            break;
-        };
-        widths[widest] -= 1;
-    }
-    let pad = |text: &str, width: usize, align: u8| {
-        let text = truncate_to(text, width);
-        let fill = width.saturating_sub(text.chars().count());
-        match align {
-            1 => format!("{}{}", " ".repeat(fill), text),
-            2 => {
-                let left = fill / 2;
-                format!("{}{}{}", " ".repeat(left), text, " ".repeat(fill - left))
-            }
-            _ => format!("{}{}", text, " ".repeat(fill)),
-        }
-    };
-    let rule = |left: &str, mid: &str, right: &str| {
-        let parts: Vec<String> = widths.iter().map(|width| "─".repeat(width + 2)).collect();
-        format!("{left}{}{right}", parts.join(mid))
-    };
-    let mut out: Vec<String> = Vec::new();
-    out.push(rule("┌", "┬", "┐"));
-    let head: Vec<String> = (0..columns)
-        .map(|column| pad(&header[column], widths[column], aligns[column]))
-        .collect();
-    out.push(format!("│ {} │", head.join(" │ ")));
-    out.push(rule("├", "┼", "┤"));
-    for row in &rows {
-        let cells: Vec<String> = (0..columns)
-            .map(|column| pad(&row[column], widths[column], aligns[column]))
-            .collect();
-        out.push(format!("│ {} │", cells.join(" │ ")));
-    }
-    out.push(rule("└", "┴", "┘"));
-    Some(out.join("\n"))
+    Some(Table {
+        source: raw.join("\n"),
+        header,
+        aligns,
+        rows,
+    })
+}
+
+
+pub(crate) fn table_from_source(source: &str) -> Option<Table> {
+    let lines: Vec<&str> = source.lines().collect();
+    parse_table(&lines)
 }
 
 
@@ -1256,8 +1284,8 @@ pub(crate) fn split_blocks(text: &str) -> Vec<Block> {
                 raw.push(lines[index]);
                 index += 1;
             }
-            match render_table(&raw) {
-                Some(rendered) => out.push(Block::Table(rendered)),
+            match parse_table(&raw) {
+                Some(table) => out.push(Block::Table(table)),
                 // not a table after all: show the source, never swallow it
                 None => prose.extend(raw.iter().map(|line| (*line).to_string())),
             }

@@ -605,6 +605,74 @@ fn summary_and_custom_message_height_estimates_reflect_30px_card_and_expanded_we
 }
 
 #[test]
+fn copy_cell_returns_raw_source_for_code_and_table_rows() {
+    let (sheet, _) = sheet();
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let copied_ref = copied.clone();
+    sheet.set_clipboard_for_test(Rc::new(move |text| {
+        copied_ref.borrow_mut().push(text.to_string());
+        Ok(())
+    }));
+
+    let table = "| a | b |\n|---|--:|\n| 1 | 2 |";
+    let text = format!("```python\nprint(1)\n```\n\n{table}");
+    let messages = vec![serde_json::json!({
+        "id": "m1",
+        "role": "assistant",
+        "content": [{ "type": "text", "text": text }]
+    })];
+    let (rows, _) = transcript::build(&messages, 10);
+    assert_eq!(rows[0].kind, transcript::KIND_CODE);
+    assert_eq!(rows[1].kind, transcript::KIND_TABLE);
+
+    sheet.replace(rows);
+    assert!(sheet.copy_cell(0));
+    assert!(sheet.copy_cell(1));
+    assert_eq!(
+        *copied.borrow(),
+        vec!["print(1)".to_string(), table.to_string()]
+    );
+}
+
+#[test]
+fn code_and_table_height_estimates_are_explicit_and_grow_with_content() {
+    let mut code = row("m1", transcript::KIND_CODE, "", "", "");
+    code.raw_code = "x".to_string();
+    code.has_code = true;
+    let short_code = estimate_row_height(&code);
+    assert!(short_code > 28.0);
+
+    code.raw_code = "x\n".repeat(12);
+    assert!(estimate_row_height(&code) > short_code);
+
+    let table = "| name | score |\n|---|---:|\n| a | 1 |";
+    let mut row = row("m2", transcript::KIND_TABLE, "", "", table);
+    row.raw_code = table.to_string();
+    row.has_code = true;
+    let short_table = estimate_row_height(&row);
+    assert!(short_table > 28.0);
+
+    row.raw_code = format!("{table}\n| some much longer cell | 200 |");
+    assert!(estimate_row_height(&row) > short_table);
+}
+
+#[test]
+fn to_slint_carries_table_cells_rows_and_column_stretch() {
+    use slint::Model;
+
+    let mut row = row("m1", transcript::KIND_TABLE, "", "", "");
+    row.raw_code = "| name | score |\n|---|--:|\n| a | 1 |".to_string();
+    row.has_code = true;
+
+    let trow = to_slint(&row);
+    assert_eq!(trow.table.row_count(), 4);
+    assert_eq!(trow.table_rows.row_count(), 1);
+    assert_eq!(trow.table_columns.row_count(), 2);
+    assert!(trow.table.row_data(0).expect("header cell").header);
+    assert_eq!(trow.table.row_data(1).expect("right cell").align, 1);
+}
+
+#[test]
 fn error_height_estimate_reflects_inline_card_and_wrapping() {
     let short = row("m1", transcript::KIND_ERROR, "Error:", "", "Request failed");
     let single_line = estimate_row_height(&short);
