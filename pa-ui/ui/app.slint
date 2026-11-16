@@ -1,6 +1,5 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
-import { MarqueeText } from "marquee-text.slint";
 import { IconChevronDown, IconCross, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
 import { Appearance, EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
@@ -21,11 +20,6 @@ import { Theme } from "theme.slint";
 export { Appearance, Theme, Type }
 
 export component AppWindow inherits Window {
-    // the failure reason of a cell, drawn here so no row can paint over it
-    in-out property <bool> reason-open;
-    in-out property <length> reason-x;
-    in-out property <length> reason-y;
-    in-out property <string> reason-text;
     title: "Prime Agent Desktop";
 
     // the custom title bar, driven from src/titlebar.rs
@@ -1352,15 +1346,6 @@ export component AppWindow inherits Window {
                                         root.model-menu = false;
                                         root.toggle-row(root.window-start + i);
                                     }
-                                    reason-hover(reason, x, y) => {
-                                        root.reason-text = reason;
-                                        root.reason-x = x;
-                                        root.reason-y = y;
-                                        root.reason-open = true;
-                                    }
-                                    reason-leave => {
-                                        root.reason-open = false;
-                                    }
                                 }
                                 Rectangle {
                                     width: 1px;
@@ -2134,41 +2119,6 @@ export component AppWindow inherits Window {
             }
         }
     }
-
-    // Drawn at the window root: inside the row it was covered by whichever row came
-    // next. The cap is on the width, not `max-width` - this popup is out of every
-    // layout, so the constraint is not applied. One line, because the interesting
-    // end of an exception is its tail; the rest travels in MarqueeText.
-    // Hidden rather than destroyed: a marquee created already past its end has
-    // nothing to animate from.
-    Rectangle {
-        visible: root.reason-open;
-        x: min(root.reason-x, root.width - self.width - 12px);
-        y: root.reason-y + 4px;
-        width: min(reason-text.preferred-width + 20px, 440px);
-        height: reason-text.height + 16px;
-        background: Theme.transcript-cell-fill-failed;
-        border-color: Theme.transcript-reason-edge;
-        border-width: 1px;
-        border-radius: 6px;
-
-        reason-text := MarqueeText {
-            x: 10px;
-            y: 8px;
-            width: parent.width - 20px;
-            text: root.reason-text;
-            text-color: Theme.transcript-reason-ink;
-            font-size: 10px;
-            active: root.reason-open;
-            loop: true;
-        }
-    }
-
-
-
-
-
-
 
     if root.notice-open : Panel {
         x: root.width - 22px - self.width;

@@ -43,20 +43,49 @@ mod build_tests {
     }
 
     #[test]
-    fn traceback_marks_the_cell_failed_with_its_reason() {
+    fn traceback_marks_the_cell_failed_and_keeps_output_without_line_count_meta() {
         let rows = cell_and_result(
             "Traceback (most recent call last):\n  File \"<cell-3>\", line 1\n    raise KeyError\nKeyError: 'name'",
         );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].failed);
-        assert_eq!(rows[0].reason, "KeyError: 'name'");
+        assert_eq!(rows[0].verb, "python");
+        assert!(rows[0].meta.is_empty());
+        assert!(rows[0].output.contains("KeyError: 'name'"));
     }
 
     #[test]
     fn clean_output_is_not_a_failure() {
         let rows = cell_and_result("2");
         assert!(!rows[0].failed);
-        assert!(rows[0].reason.is_empty());
+        assert!(rows[0].meta.is_empty());
+    }
+
+    #[test]
+    fn thinking_row_has_calm_title_and_no_count_meta() {
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "line one\nline two\nline three"}]
+        })];
+        let rows = build(&messages, 10).0;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_THINKING);
+        assert_eq!(rows[0].title, "Thinking");
+        assert!(rows[0].meta.is_empty());
+    }
+
+    #[test]
+    fn demo_rows_have_separated_verb_and_no_line_counts() {
+        let rows = demo_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].verb, "python");
+        assert_eq!(rows[0].title, "print(1 + 1)");
+        assert!(rows[0].meta.is_empty());
+        assert!(!rows[0].failed);
+        assert_eq!(rows[1].verb, "python");
+        assert_eq!(rows[1].title, "rows = [r for r in data]");
+        assert!(rows[1].meta.is_empty());
+        assert!(rows[1].failed);
     }
 
     #[test]
@@ -274,17 +303,17 @@ mod golden_preview_tests {
         );
     }
 
-    /// The title line as it is actually built, for the shapes the corpus does
-    /// not cover: the label plus the preview text.
     #[test]
-    fn titles_are_the_label_and_the_preview() {
+    fn titles_and_verbs_are_separated() {
         let args = serde_json::json!({ "code": "cd '/repo' && npm run test -- --watch" });
         let row = crate::transcript::tool_cell("call_0_x", &args);
-        assert_eq!(row.title, "python \u{00b7} cd '/repo' && npm run test -- --watch");
+        assert_eq!(row.verb, "python");
+        assert_eq!(row.title, "cd '/repo' && npm run test -- --watch");
 
         let args = serde_json::json!({ "code": "out = '/repo/out.txt'\nout.write_text('hello')" });
         let row = crate::transcript::tool_cell("call_0_x", &args);
-        assert_eq!(row.title, "python \u{00b7} write /repo/out.txt");
+        assert_eq!(row.verb, "python");
+        assert_eq!(row.title, "write /repo/out.txt");
     }
 }
 
@@ -304,12 +333,12 @@ mod duration_tests {
     }
 
     #[test]
-    fn the_timing_trails_the_line_count() {
+    fn cell_header_omits_line_count_and_keeps_elapsed() {
         let code = "r = await sh(\"ls\")";
         let args = serde_json::json!({ "code": code });
         let mut row = tool_cell("call_0_x", &args);
         apply_header(&mut row, code, None, Some(2));
-        assert_eq!(row.meta, "1 line");
+        assert!(row.meta.is_empty());
         assert_eq!(row.elapsed, "2ms");
     }
 
@@ -328,12 +357,12 @@ mod duration_tests {
 mod header_parity_tests {
     use super::*;
 
-    fn title(code: &str, details: Option<serde_json::Value>) -> String {
+    fn header(code: &str, details: Option<serde_json::Value>) -> (String, String) {
         let args = serde_json::json!({ "code": code });
         let mut row = tool_cell("call_0_x", &args);
         let info = bash_commands(details.as_ref());
         apply_header(&mut row, code, info.as_ref(), None);
-        row.title
+        (row.verb, row.title)
     }
 
     /// `bash_dominated_cell_renders_as_bash` in the TUI's tool_card tests: bash
@@ -351,11 +380,14 @@ mod header_parity_tests {
                 "lines": 4,
             },
         });
-        assert_eq!(title(code, Some(details)), "bash \u{00b7} cargo test -p pa-tui \u{00b7} +2 more");
+        assert_eq!(
+            header(code, Some(details)),
+            ("bash".to_string(), "cargo test -p pa-tui \u{00b7} +2 more".to_string())
+        );
     }
 
     /// `bash_minority_cell_stays_python`: one bash line among four is not
-    /// dominance, so the cell keeps the python label and the python preview.
+    /// dominance, so the cell keeps the python verb and the python preview.
     #[test]
     fn a_bash_minority_cell_stays_python() {
         let code = "async def sh(cmd):\n    return await bash(cmd)\nr = await sh(\"ls\")\nprint(r.pid)";
@@ -365,22 +397,37 @@ mod header_parity_tests {
             "stdout": "0\n",
             "bashCommands": { "first": "ls", "count": 1, "lines": 1 },
         });
-        let line = title(code, Some(details));
-        assert_eq!(line, "python \u{00b7} r = await sh(\"ls\")");
-        assert!(!line.contains("bash \u{00b7}"));
+        assert_eq!(
+            header(code, Some(details)),
+            ("python".to_string(), "r = await sh(\"ls\")".to_string())
+        );
     }
 
     /// Nothing reported yet: the header still has to say something useful, and
-    /// the label comes from the code alone.
+    /// the verb comes from the code alone.
     #[test]
     fn a_running_cell_previews_its_own_code() {
-        assert_eq!(title("out = '/repo/out.txt'\nout.write_text('hi')", None), "python \u{00b7} write /repo/out.txt");
+        assert_eq!(
+            header("out = '/repo/out.txt'\nout.write_text('hi')", None),
+            ("python".to_string(), "write /repo/out.txt".to_string())
+        );
     }
 
-    /// A `%%bash` cell is bash, label and all.
+    /// A `%%bash` cell is bash, verb and all.
     #[test]
     fn a_bash_cell_magic_is_bash() {
-        assert_eq!(title("%%bash\necho in-bash-cell", None), "bash \u{00b7} echo in-bash-cell");
+        assert_eq!(
+            header("%%bash\necho in-bash-cell", None),
+            ("bash".to_string(), "echo in-bash-cell".to_string())
+        );
+    }
+
+    #[test]
+    fn a_bash_cell_running_python_uses_bash_dot_python_verb() {
+        assert_eq!(
+            header("%%bash\npython3 - << 'EOF'\nprint(1 + 1)\nEOF", None),
+            ("bash \u{00b7} python".to_string(), "print(1 + 1)".to_string())
+        );
     }
 
 }

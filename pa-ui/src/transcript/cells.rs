@@ -90,7 +90,7 @@ pub fn apply_header(
     let dominant = bash.filter(|bash| bash.lines * BASH_DOMINANCE_DIVISOR >= input_line_count(code));
     let preview = crate::preview::preview_ipython_code(code);
     let is_bash_cell = crate::preview::parse_ipython_bash_cell(code).is_some();
-    let label = if dominant.is_some() {
+    let verb = if dominant.is_some() {
         "bash"
     } else {
         match (is_bash_cell, preview.language) {
@@ -108,18 +108,16 @@ pub fn apply_header(
     } else {
         text
     };
-    let mut title = if text.is_empty() {
-        label.to_string()
-    } else {
-        format!("{label} \u{00b7} {text}")
-    };
+    let mut title = text;
     if let Some(bash) = dominant.filter(|bash| bash.count > 1) {
-        title.push_str(&format!(" \u{00b7} +{} more", bash.count - 1));
+        if title.is_empty() {
+            title = format!("+{} more", bash.count - 1);
+        } else {
+            title.push_str(&format!(" \u{00b7} +{} more", bash.count - 1));
+        }
     }
+    row.verb = verb.to_string();
     row.title = title;
-    // the TUI trails the timing after the line counts; here it gets its own
-    // column so nothing has to be separated by a dot that vanishes into the
-    // background
     row.elapsed = format_duration(duration);
 }
 
@@ -138,43 +136,14 @@ pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     apply_header(&mut row, source, None, None);
     row.code = highlight_python(code, &crate::theme::current());
     row.has_code = !code.is_empty();
-    let lines = code.lines().count();
-    row.meta = if code.is_empty() {
-        "running".to_string()
-    } else if lines == 1 {
-        "1 line".to_string()
-    } else {
-        format!("{lines} lines")
-    };
     row
 }
 
 
-/// Fill in a running cell's result, including the failure line an errored call
-/// carries so the cell can show why it failed instead of just sitting there.
 pub fn finish_cell(row: &mut Row, output: &str, failed: bool) {
     row.output = plain_markup(output);
     row.has_output = !output.trim().is_empty();
     row.failed = failed;
-    row.reason = failure_reason(output, failed);
-    if row.code.is_empty() {
-        row.meta = if failed { "failed".to_string() } else { "done".to_string() };
-    }
-}
-
-
-/// The last meaningful line of a failed output — usually the exception itself.
-pub(crate) fn failure_reason(output: &str, failed: bool) -> String {
-    if !failed {
-        return String::new();
-    }
-    let line = output
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("failed");
-    line.chars().take(160).collect()
 }
 
 

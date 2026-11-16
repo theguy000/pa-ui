@@ -3,8 +3,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Appearance, TRow, Type } from "types.slint";
-import { MarqueeText } from "marquee-text.slint";
-import { IconAlert, IconCaret, IconEdit, IconToTop, IconTrash, IconWarning } from "icons.slint";
+import { IconCaret, IconChevronRight, IconEdit, IconThinking, IconToTop, IconToolBash, IconToolPython, IconTrash, IconWarning } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Button } from "primitives.slint";
 
@@ -231,15 +230,10 @@ export component TranscriptRow inherits VerticalLayout {
     }
 
     spacing: 0px;
-    property <bool> err-hover: false;
 
     in property <TRow> data;
     property <bool> is-summary: data.kind == 10;
     callback toggle();
-    // where the failure reason should be drawn: at the window's root, not in
-    // this row, or the row beneath paints over it
-    callback reason-hover(string, length, length);
-    callback reason-leave();
 
     if data.kind == 0 : HorizontalLayout {
         alignment: end;
@@ -347,19 +341,22 @@ export component TranscriptRow inherits VerticalLayout {
             background: think-touch.has-hover ? Theme.transcript-thinking-fill-hover
                 : Theme.transcript-thinking-fill;
             HorizontalLayout {
-                padding-left: 8px;
+                padding-left: 6px;
                 padding-right: 8px;
-                spacing: 6px;
-                Text {
-                    text: "thinking";
-                    color: Theme.transcript-thinking-label-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
+                spacing: 8px;
+                Rectangle {
+                    width: 14px;
+                    height: 24px;
+                    IconThinking {
+                        x: 0px;
+                        y: (parent.height - self.height) / 2;
+                        tint: Theme.transcript-thinking-label-ink;
+                    }
                 }
                 Text {
-                    text: data.meta;
-                    color: Theme.transcript-cell-meta-ink;
-                    font-size: Appearance.meta-size;
+                    text: data.title != "" ? data.title : "Thinking";
+                    color: Theme.transcript-thinking-label-ink;
+                    font-size: Appearance.label-size;
                     vertical-alignment: center;
                 }
                 if Appearance.show-timestamps && data.timestamp != "" : Text {
@@ -370,19 +367,24 @@ export component TranscriptRow inherits VerticalLayout {
                 }
 
                 Rectangle {
-                    width: 10px;
+                    width: 12px;
                     height: 24px;
-                    IconCaret {
+                    IconChevronRight {
+                        x: 0px;
                         y: (parent.height - self.height) / 2;
-                        up: data.expanded;
+                        open: data.expanded;
                         tint: Theme.transcript-caret-mark;
                     }
                 }
             }
-            think-touch := TouchArea { clicked => { root.toggle(); } }
+            think-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle(); }
+            }
         }
 
         if data.expanded : Rectangle {
+            width: root.width - 48px;
             background: Theme.transcript-row-fill-expanded;
             border-color: Theme.transcript-thinking-edge-expanded;
             border-width: 1px;
@@ -408,6 +410,7 @@ export component TranscriptRow inherits VerticalLayout {
                     padding-top: Appearance.expanded-pad-y + 2px;
                     padding-bottom: Appearance.expanded-pad-y + 2px;
                     think-text := StyledText {
+                        width: root.width - 48px - Appearance.expanded-pad-x * 2;
                         text: data.body;
                         default-color: Theme.transcript-thinking-ink;
                         default-font-family: Appearance.code-font;
@@ -423,154 +426,144 @@ export component TranscriptRow inherits VerticalLayout {
         padding-right: 24px;
         padding-top: Appearance.cell-pad-y;
         padding-bottom: Appearance.cell-pad-y;
-        spacing: Appearance.cell-gap;
+        spacing: 0px;
 
         Rectangle {
-            height: 26px;
-            border-radius: 6px;
-            background: data.failed
-                ? (cell-hot ? Theme.transcript-cell-fill-failed-hover
-                    : Theme.transcript-cell-fill-failed)
-                : (cell-hot ? Theme.transcript-cell-fill-hover : Theme.transcript-cell-fill);
-
-            property <bool> cell-hot: cell-touch.has-hover || root.err-hover;
-
-            cell-touch := TouchArea {
-                x: 0;
-                y: 0;
-                width: 100%;
-                height: 100%;
-                clicked => { root.toggle(); }
-            }
-
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 6px;
-                spacing: 8px;
-
-                Rectangle {
-                    width: 10px;
-                    height: 26px;
-                    IconCaret {
-                        y: (parent.height - self.height) / 2;
-                        up: data.expanded;
-                        tint: Theme.transcript-caret-mark;
-                    }
-                }
-
-                Text {
-                    text: data.title;
-                    color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
-                    font-size: Appearance.label-size;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                }
-
-                Text {
-                    text: data.meta;
-                    color: Theme.transcript-cell-meta-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
-                }
-                // the separator is full white so the run reads as two parts
-                // instead of a sentence ending in a full stop
-                Text {
-                    text: "\u{00b7}";
-                    color: Theme.transcript-cell-separator-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
-                    visible: data.elapsed != "";
-                }
-                Text {
-                    text: data.elapsed;
-                    color: Theme.transcript-cell-meta-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
-                    visible: data.elapsed != "";
-                }
-                if Appearance.show-timestamps && data.timestamp != "" : Text {
-                    text: data.timestamp;
-                    color: Theme.transcript-cell-meta-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
-                }
-
-                if data.failed : Rectangle {
-                    width: 14px;
-                    height: 26px;
-                    err := Button {
-                        x: 0;
-                        y: (parent.height - self.height) / 2;
-                        width: 14px;
-                        height: 14px;
-                        border-radius: 7px;
-                        fill: Theme.transcript-cell-badge-fill;
-                        fill-hover: Theme.transcript-cell-badge-fill-hover;
-                        cursor: MouseCursor.default;
-                        fade: 0ms;
-                        described: "Why this cell failed";
-                        // The reason hangs off the badge, so the badge reports both
-                        // halves of the hover - a `move` never says the pointer
-                        // walked off - and where it sits, because the popup is
-                        // drawn at the window's root.
-                        hovered(over) => {
-                            root.err-hover = over;
-                            if over {
-                                root.reason-hover(
-                                    data.reason,
-                                    err.window-x,
-                                    err.window-y + err.height,
-                                );
-                            } else {
-                                root.reason-leave();
-                            }
-                        }
-                        // the glyph is drawn in the badge's own box: at its
-                        // default 16px it overhangs a 14px ring, and its stroke
-                        // lands a pixel right and a pixel down of the centre
-                        IconAlert {
-                            width: parent.width;
-                            height: parent.height;
-                        }
-                    }
-                }
-            }
-
-
-        }
-
-        if data.expanded : Rectangle {
-            background: Theme.transcript-row-fill-expanded;
-            border-color: Theme.transcript-cell-edge-expanded;
+            width: root.width - 48px;
+            background: Theme.transcript-cell-fill;
+            border-color: Theme.transcript-cell-edge;
             border-width: 1px;
             border-radius: 8px;
-            height: self.preferred-height;
+            clip: true;
+
             VerticalLayout {
-                width: root.width - 48px;
-                padding-left: Appearance.expanded-pad-x;
-                padding-right: Appearance.expanded-pad-x;
-                padding-top: Appearance.expanded-pad-y;
-                padding-bottom: Appearance.expanded-pad-y;
-                spacing: Appearance.expanded-gap;
-                StyledText {
-                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
-                    text: data.code;
-                    default-color: Theme.transcript-cell-code-ink;
-                    default-font-family: Appearance.code-font;
-                    default-font-size: Appearance.cell-code-size;
+                spacing: 0px;
+
+                Rectangle {
+                    height: 30px;
+                    background: cell-touch.has-hover ? Theme.transcript-cell-fill-hover : transparent;
+
+                    cell-touch := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { root.toggle(); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+
+                        Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            if data.verb == "bash" : IconToolBash {
+                                x: 0px;
+                                y: (parent.height - self.height) / 2;
+                                tint: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                            }
+                            if data.verb != "bash" : IconToolPython {
+                                x: 0px;
+                                y: (parent.height - self.height) / 2;
+                                tint: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                            }
+                        }
+
+                        if data.verb != "" : Text {
+                            text: data.verb;
+                            color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink;
+                            font-size: Appearance.label-size;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: data.title;
+                            color: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-title-ink;
+                            font-family: Appearance.code-font;
+                            font-size: Appearance.label-size;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+
+                        if data.failed : Text {
+                            text: "failed";
+                            color: Theme.transcript-cell-ink-failed;
+                            font-size: Appearance.meta-size;
+                            vertical-alignment: center;
+                        }
+
+                        if data.elapsed != "" : Text {
+                            text: data.elapsed;
+                            color: Theme.transcript-cell-meta-ink;
+                            font-size: Appearance.meta-size;
+                            vertical-alignment: center;
+                        }
+
+                        if Appearance.show-timestamps && data.timestamp != "" : Text {
+                            text: data.timestamp;
+                            color: Theme.transcript-cell-meta-ink;
+                            font-size: Appearance.meta-size;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 12px;
+                            height: 30px;
+                            IconChevronRight {
+                                x: 0px;
+                                y: (parent.height - self.height) / 2;
+                                open: data.expanded;
+                                tint: Theme.transcript-caret-mark;
+                            }
+                        }
+                    }
                 }
-                if data.has-output : Rectangle {
-                    height: 1px;
-                    background: Theme.transcript-cell-rule;
-                }
-                if data.has-output : StyledText {
-                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
-                    text: data.output;
-                    default-color: data.failed ? Theme.transcript-cell-ink-failed
-                        : Theme.transcript-cell-output-ink;
-                    default-font-family: Appearance.code-font;
-                    default-font-size: Appearance.cell-output-size;
+
+                if data.expanded : Rectangle {
+                    background: Theme.transcript-row-fill-expanded;
+                    height: self.preferred-height;
+
+                    VerticalLayout {
+                        spacing: 0px;
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.transcript-cell-rule;
+                        }
+
+                        VerticalLayout {
+                            padding-left: 32px;
+                            padding-right: 12px;
+                            padding-top: 8px;
+                            padding-bottom: 9px;
+                            spacing: 7px;
+
+                            if data.has-code : StyledText {
+                                width: root.width - 48px - 44px;
+                                text: data.code;
+                                default-color: Theme.transcript-cell-code-ink;
+                                default-font-family: Appearance.code-font;
+                                default-font-size: Appearance.cell-code-size;
+                            }
+                            if data.has-code && data.has-output : Rectangle {
+                                height: 1px;
+                                background: Theme.transcript-cell-rule;
+                            }
+                            if data.has-output : StyledText {
+                                width: root.width - 48px - 44px;
+                                text: data.output;
+                                default-color: data.failed ? Theme.transcript-cell-ink-failed
+                                    : Theme.transcript-cell-output-ink;
+                                default-font-family: Appearance.code-font;
+                                default-font-size: Appearance.cell-output-size;
+                            }
+                        }
+                    }
                 }
             }
         }

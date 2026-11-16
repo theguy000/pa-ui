@@ -221,6 +221,19 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
                 .max(1);
             (lines as f32 * 21.5) + 8.0
         }
+        transcript::KIND_CELL => {
+            if row.expanded {
+                let code_lines = row.code.lines().count().min(12);
+                let out_lines = if row.has_output {
+                    row.output.lines().count().min(12)
+                } else {
+                    0
+                };
+                38.0 + ((code_lines + out_lines) as f32 * 16.0) + 24.0
+            } else {
+                38.0
+            }
+        }
         _ => {
             if row.expanded {
                 let code_lines = row.code.lines().count().min(12);
@@ -1596,6 +1609,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
     TRow {
         kind: row.kind,
+        verb: row.verb.clone().into(),
         title: transcript::plain(&row.title).into(),
         meta: transcript::plain(&row.meta).into(),
         body: transcript::styled(&row.body),
@@ -1606,7 +1620,6 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         has_body: row.has_body,
         expanded: row.expanded,
         failed: row.failed,
-        reason: transcript::plain(&row.reason).into(),
         image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
         timestamp: row.timestamp.clone().into(),
@@ -1620,11 +1633,16 @@ pub(crate) fn dump(rows: &[Row]) {
     let dump: String = rows
         .iter()
         .map(|row| {
+            let title = if row.verb.is_empty() {
+                row.title.replace('\n', " ")
+            } else {
+                format!("{} {}", row.verb, row.title).replace('\n', " ")
+            };
             format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\n",
                 row.kind,
                 row.id,
-                row.title.replace('\n', " "),
+                title,
                 row.meta.replace('\n', " "),
                 row.elapsed.replace('\n', " "),
                 row.body.replace('\n', " ").chars().take(90).collect::<String>()

@@ -46,6 +46,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
     Row {
         kind,
         id: id.to_string(),
+        verb: String::new(),
         title: title.to_string(),
         meta: String::new(),
         body: body.to_string(),
@@ -56,7 +57,6 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         has_body: false,
         expanded: false,
         failed: false,
-        reason: String::new(),
         image: String::new(),
         message: message.to_string(),
         elapsed: String::new(),
@@ -363,12 +363,27 @@ fn a_quote_row_estimates_its_narrower_column() {
 
 #[test]
 fn to_slint_copies_row_fields_and_timestamp() {
-    let mut r = row("m1", transcript::KIND_USER, "Title", "id1", "hello");
+    let mut r = row("m1", transcript::KIND_CELL, "ls -la", "id1", "");
+    r.verb = "bash".to_string();
+    r.failed = true;
     r.elapsed = "2s".to_string();
     r.timestamp = "18:25".to_string();
     let trow = to_slint(&r);
-    assert_eq!(trow.kind, transcript::KIND_USER);
-    assert_eq!(trow.title.as_str(), "Title");
+    assert_eq!(trow.kind, transcript::KIND_CELL);
+    assert_eq!(trow.verb.as_str(), "bash");
+    assert_eq!(trow.title.as_str(), "ls -la");
+    assert!(trow.failed);
     assert_eq!(trow.elapsed.as_str(), "2s");
     assert_eq!(trow.timestamp.as_str(), "18:25");
+}
+
+#[test]
+fn cell_height_estimate_reflects_30px_card_and_expanded_well() {
+    let mut r = row("m1", transcript::KIND_CELL, "print(1)", "id1", "");
+    r.verb = "python".to_string();
+    r.code = "print(1)".to_string();
+    r.has_code = true;
+    assert_eq!(estimate_row_height(&r), 38.0);
+    r.expanded = true;
+    assert!(estimate_row_height(&r) > 38.0);
 }
