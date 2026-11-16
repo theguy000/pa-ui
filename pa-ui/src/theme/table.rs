@@ -232,6 +232,10 @@ pub(crate) enum Role {
     /// picked name's value: it is read against the row's own field and not the
     /// picked fill, so a light sidebar has to move the two apart.
     SidebarNameInkEditing,
+    SidebarGroupSurface,
+    SidebarGroupEdge,
+    SidebarGroupEmptyEdge,
+    SidebarGroupEmptyInk,
     /// A group header on the column: the word over the active, idle and done
     /// rows, and the count beside it. Quiet, because it is a label over names
     /// the reader is scanning rather than a name of its own.
@@ -298,6 +302,9 @@ pub(crate) enum Role {
     /// on the row. It ships the idle tag's value on purpose, both saying the same
     /// thing about a session that is not between turns.
     SidebarRowDoneMark,
+    SidebarNewSessionFill,
+    SidebarNewSessionFillHover,
+    SidebarNewSessionEdge,
     /// The label on the column's New Session button at rest. The button carries a
     /// field of its own, so its words are read on that field rather than on the
     /// column, and the pointer brightens them.
@@ -822,7 +829,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 202] = [
+    pub(crate) const ALL: [Role; 209] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -838,6 +845,10 @@ impl Role {
         Role::SidebarNameInk,
         Role::SidebarNameInkSelected,
         Role::SidebarNameInkEditing,
+        Role::SidebarGroupSurface,
+        Role::SidebarGroupEdge,
+        Role::SidebarGroupEmptyEdge,
+        Role::SidebarGroupEmptyInk,
         Role::SidebarGroupInk,
         Role::SidebarGroupCaret,
         Role::TagWorking,
@@ -856,6 +867,9 @@ impl Role {
         Role::SidebarRowRenameFillHover,
         Role::SidebarRowMenuMark,
         Role::SidebarRowDoneMark,
+        Role::SidebarNewSessionFill,
+        Role::SidebarNewSessionFillHover,
+        Role::SidebarNewSessionEdge,
         Role::SidebarNewSessionInk,
         Role::SidebarNewSessionInkHover,
         Role::SidebarOpenTipFill,
@@ -1045,6 +1059,10 @@ impl Role {
             Role::SidebarNameInk => "sidebar-name-ink",
             Role::SidebarNameInkSelected => "sidebar-name-ink-selected",
             Role::SidebarNameInkEditing => "sidebar-name-ink-editing",
+            Role::SidebarGroupSurface => "sidebar-group-surface",
+            Role::SidebarGroupEdge => "sidebar-group-edge",
+            Role::SidebarGroupEmptyEdge => "sidebar-group-empty-edge",
+            Role::SidebarGroupEmptyInk => "sidebar-group-empty-ink",
             Role::SidebarGroupInk => "sidebar-group-ink",
             Role::SidebarGroupCaret => "sidebar-group-caret",
             Role::TagWorking => "tag-working",
@@ -1063,6 +1081,9 @@ impl Role {
             Role::SidebarRowRenameFillHover => "sidebar-row-rename-fill-hover",
             Role::SidebarRowMenuMark => "sidebar-row-menu-mark",
             Role::SidebarRowDoneMark => "sidebar-row-done-mark",
+            Role::SidebarNewSessionFill => "sidebar-new-session-fill",
+            Role::SidebarNewSessionFillHover => "sidebar-new-session-fill-hover",
+            Role::SidebarNewSessionEdge => "sidebar-new-session-edge",
             Role::SidebarNewSessionInk => "sidebar-new-session-ink",
             Role::SidebarNewSessionInkHover => "sidebar-new-session-ink-hover",
             Role::SidebarOpenTipFill => "sidebar-open-tip-fill",
@@ -1260,17 +1281,22 @@ impl Role {
             Role::TitleBarFoldGlyphHover => Derivation::Palette(Palette::Ink),
             Role::SidebarSurface => Derivation::Palette(Palette::Background),
             Role::SidebarRowFill => Derivation::Veil(Palette::Background, 0x00),
-            Role::SidebarRowFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.033),
+            Role::SidebarRowFillHover => Derivation::Mix(Palette::Ink, Palette::Background, 0.044),
             Role::SidebarRowFillSelected => {
-                Derivation::Mix(Palette::Ink, Palette::Background, 0.057)
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.068)
             }
             Role::SidebarNameInk => Derivation::Palette(Palette::QuietInk),
             Role::SidebarNameInkSelected => Derivation::Palette(Palette::Ink),
             Role::SidebarNameInkEditing => Derivation::Palette(Palette::Ink),
-            // a group's word is read as a name is, being the label the rows
-            // under it are scanned from; its caret is a mark on the header's
-            // hover fill, drawn at the weight the row's own pencil is
-            Role::SidebarGroupInk => Derivation::Palette(Palette::QuietInk),
+            Role::SidebarGroupSurface => Derivation::Mix(Palette::Ink, Palette::Background, 0.022),
+            Role::SidebarGroupEdge => Derivation::Veil(Palette::Ink, 0x0e),
+            Role::SidebarGroupEmptyEdge => Derivation::Veil(Palette::Ink, 0x0b),
+            Role::SidebarGroupEmptyInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.56)
+            }
+            Role::SidebarGroupInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+            }
             Role::SidebarGroupCaret => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
             }
@@ -1290,6 +1316,9 @@ impl Role {
             Role::SidebarRowRenameFillHover => Derivation::Fixed(Rgba::hex("#2a2c24")),
             Role::SidebarRowMenuMark => Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673),
             Role::SidebarRowDoneMark => Derivation::Fixed(Rgba::hex("#6f9f5f")),
+            Role::SidebarNewSessionFill => Derivation::Veil(Palette::Ink, 0x0c),
+            Role::SidebarNewSessionFillHover => Derivation::Veil(Palette::Ink, 0x14),
+            Role::SidebarNewSessionEdge => Derivation::Veil(Palette::Ink, 0x13),
             Role::SidebarNewSessionInk => Derivation::Palette(Palette::Ink),
             Role::SidebarNewSessionInkHover => Derivation::Fixed(Rgba::hex("#ffffff")),
             Role::SidebarOpenTipFill => Derivation::Fixed(Rgba::hex("#e3e3e3")),
