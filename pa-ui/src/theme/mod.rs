@@ -142,6 +142,19 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptCellEdgeExpanded => global.set_transcript_cell_edge_expanded(value),
         Role::TranscriptThinkingEdgeExpanded => global.set_transcript_thinking_edge_expanded(value),
         Role::TranscriptCellInkFailed => global.set_transcript_cell_ink_failed(value),
+        Role::TranscriptWorkingInk => global.set_transcript_working_ink(value),
+        Role::TranscriptWorkingInkDim => global.set_transcript_working_ink_dim(value),
+        Role::TranscriptCellFillWorking => global.set_transcript_cell_fill_working(value),
+        Role::TranscriptCellFillWorkingHover => {
+            global.set_transcript_cell_fill_working_hover(value)
+        }
+        Role::TranscriptCellEdgeWorking => global.set_transcript_cell_edge_working(value),
+        Role::TranscriptCellVerbInkWorking => global.set_transcript_cell_verb_ink_working(value),
+        Role::TranscriptCellTitleInkWorking => global.set_transcript_cell_title_ink_working(value),
+        Role::TranscriptCellMetaInkWorking => global.set_transcript_cell_meta_ink_working(value),
+        Role::TranscriptThinkingLabelInkWorking => {
+            global.set_transcript_thinking_label_ink_working(value)
+        }
         Role::TranscriptRowFillExpanded => global.set_transcript_row_fill_expanded(value),
         Role::TranscriptThinkingFill => global.set_transcript_thinking_fill(value),
         Role::TranscriptThinkingFillHover => global.set_transcript_thinking_fill_hover(value),
