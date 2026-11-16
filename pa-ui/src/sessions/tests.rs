@@ -204,56 +204,113 @@ fn session_entries_positions_headers_and_rows_by_fold_state() {
         "activeSessionId": "d1", "sessionId": "ud1", "lifecycle": "archived"
     }))];
 
+    let body_offset = HEADER_HEIGHT + GROUP_BODY_GAP;
+    let group_chrome = 2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP;
+
     let open = session_entries(&a, &i, &d, false, false, false);
     assert_eq!(open.len(), 6);
-    assert_eq!(open[0].at, COLUMN_TOP as f32);
-    assert_eq!(open[1].at, (COLUMN_TOP + HEADER_HEIGHT) as f32);
-    assert_eq!(open[2].at, (COLUMN_TOP + HEADER_HEIGHT + ROW_HEIGHT) as f32);
+    assert_eq!(open[0].at, (COLUMN_TOP + GROUP_PAD) as f32);
+    assert_eq!(open[1].at, (COLUMN_TOP + GROUP_PAD + body_offset) as f32);
     assert_eq!(
-        open[3].at,
-        (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32
+        open[2].at,
+        (COLUMN_TOP + group_chrome + ROW_HEIGHT + GROUP_GAP + GROUP_PAD) as f32
     );
+    assert_eq!(open[3].at, open[2].at + body_offset as f32);
     assert_eq!(
         open[4].at,
-        (COLUMN_TOP + 2 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
+        (COLUMN_TOP + 2 * (group_chrome + ROW_HEIGHT + GROUP_GAP) + GROUP_PAD) as f32
     );
-    assert_eq!(
-        open[5].at,
-        (COLUMN_TOP + 3 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
-    );
+    assert_eq!(open[5].at, open[4].at + body_offset as f32);
     assert_eq!(
         entries_height(&open),
-        (COLUMN_TOP + 3 * HEADER_HEIGHT + 3 * ROW_HEIGHT) as f32
+        (COLUMN_TOP + 3 * group_chrome + 2 * GROUP_GAP + 3 * ROW_HEIGHT) as f32
     );
 
-    // Folding Idle closes its gap: its header stays, its row is drawn at the
-    // header, and the Done header takes the row's place.
     let idle_folded = session_entries(&a, &i, &d, false, true, false);
-    assert_eq!(
-        idle_folded[2].at,
-        (COLUMN_TOP + HEADER_HEIGHT + ROW_HEIGHT) as f32
-    );
+    assert_eq!(idle_folded[2].at, open[2].at);
     let idle_row = &idle_folded[3];
     assert!(idle_row.folded);
-    // A folded row is drawn at its group's header and settles nowhere: `target`
-    // is where it would sit with the group open, below the header.
     assert_eq!(idle_row.at, idle_folded[2].at);
-    assert_eq!(
-        idle_row.target,
-        (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32
-    );
+    assert_eq!(idle_row.target, idle_folded[2].at + body_offset as f32);
     assert_eq!(
         idle_folded[4].at,
-        (COLUMN_TOP + 2 * HEADER_HEIGHT + ROW_HEIGHT) as f32
+        (COLUMN_TOP + group_chrome + ROW_HEIGHT + GROUP_GAP + (2 * GROUP_PAD + HEADER_HEIGHT) + GROUP_GAP + GROUP_PAD) as f32
     );
-    assert_eq!(
-        idle_folded[5].at,
-        (COLUMN_TOP + 2 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
-    );
+    assert_eq!(idle_folded[5].at, idle_folded[4].at + body_offset as f32);
     assert_eq!(
         entries_height(&idle_folded),
-        (COLUMN_TOP + 3 * HEADER_HEIGHT + 2 * ROW_HEIGHT) as f32
+        idle_folded[5].at + (ROW_HEIGHT + GROUP_PAD) as f32
     );
+}
+
+#[test]
+fn group_boxes_at_computes_enclosures_for_empty_populated_and_folded_groups() {
+    let i = vec![resident(serde_json::json!({
+        "activeSessionId": "i1", "sessionId": "ui1", "lifecycle": "live", "activity": "idle"
+    }))];
+    let d: Vec<SessionItem> = (0..85)
+        .map(|n| {
+            saved(serde_json::json!({
+                "activeSessionId": format!("d{n}"), "sessionId": format!("ud{n}"), "lifecycle": "archived"
+            }))
+        })
+        .collect();
+
+    let empty_box_h = (2 * GROUP_PAD + HEADER_HEIGHT) as f32;
+    let boxes = group_boxes_at(&[], &i, &d, [false, false, false], ROW_HEIGHT as f32);
+    assert_eq!(boxes.len(), 3);
+    assert_eq!(boxes[0].at, COLUMN_TOP as f32);
+    assert_eq!(boxes[0].height, empty_box_h);
+    assert_eq!(boxes[0].count, 0);
+    assert!(boxes[0].empty);
+
+    assert_eq!(boxes[1].at, boxes[0].at + boxes[0].height + GROUP_GAP as f32);
+    assert_eq!(
+        boxes[1].height,
+        (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP + ROW_HEIGHT) as f32
+    );
+    assert_eq!(boxes[1].count, 1);
+    assert!(!boxes[1].empty);
+
+    assert_eq!(boxes[2].at, boxes[1].at + boxes[1].height + GROUP_GAP as f32);
+    assert_eq!(
+        boxes[2].height,
+        (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP + 85 * ROW_HEIGHT) as f32
+    );
+    assert_eq!(boxes[2].count, 85);
+    assert!(!boxes[2].empty);
+
+    let entries = session_entries_at(&[], &i, &d, false, false, false, ROW_HEIGHT as f32);
+    assert_eq!(
+        entries_height_at(&entries, ROW_HEIGHT as f32),
+        boxes[2].at + boxes[2].height
+    );
+
+    let done_folded = group_boxes_at(&[], &i, &d, [false, false, true], ROW_HEIGHT as f32);
+    assert_eq!(done_folded[2].at, boxes[2].at);
+    assert_eq!(done_folded[2].height, empty_box_h);
+    assert_eq!(done_folded[2].count, 85);
+    assert!(!done_folded[2].empty);
+
+    let a_two = vec![i[0].clone(), i[0].clone()];
+    for rh in [28.0_f32, 32.0, 36.0] {
+        for (active, idle, done) in [
+            (&[][..], &[][..], &[][..]),
+            (&[][..], &i[..], &d[..]),
+            (&a_two[..], &i[..], &d[..3]),
+        ] {
+            for mask in 0..8u8 {
+                let folded = [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0];
+                let b = group_boxes_at(active, idle, done, folded, rh);
+                let e = session_entries_at(active, idle, done, folded[0], folded[1], folded[2], rh);
+                assert_eq!(
+                    entries_height_at(&e, rh),
+                    b[2].at + b[2].height,
+                    "height mismatch for folded={folded:?} rh={rh}"
+                );
+            }
+        }
+    }
 }
 
 /// A row that changes group is the one case the fade and the slide disagree
@@ -300,11 +357,20 @@ fn a_fold_grows_the_column_by_the_group_it_closes() {
     let folded = column((&a, &i, &[]), [false, true, false], (&a, &i, &[]), [false, false, false]);
     assert_eq!(
         folded.was_height - folded.height,
-        ROW_HEIGHT as f32,
-        "closing Idle takes one row off the column"
+        (GROUP_BODY_GAP + ROW_HEIGHT) as f32,
+        "closing Idle takes its row and body gap off the column"
+    );
+    assert_eq!(folded.prev_group_boxes.len(), 3);
+    assert_eq!(folded.group_boxes.len(), 3);
+    assert_eq!(
+        folded.prev_group_boxes[2].at + folded.prev_group_boxes[2].height,
+        folded.was_height
+    );
+    assert_eq!(
+        folded.group_boxes[2].at + folded.group_boxes[2].height,
+        folded.height
     );
     assert!(folded.changed());
-    // the idle row starts where it was drawn, not at the y it now occupies
     let at = folded.entries[3].at;
     assert!(folded.from_y[3] > at);
 }
@@ -317,6 +383,8 @@ fn first_poll_and_subsequent_polls_compare_against_was_not_current() {
     // First poll: `was` is empty, so `previous` is empty and `changed()` must be true.
     let first = column((&[], &i, &[]), [false, false, false], (&[], &[], &[]), [false, false, false]);
     assert!(first.previous.is_empty());
+    assert!(first.prev_group_boxes.is_empty());
+    assert_eq!(first.group_boxes.len(), 3);
     assert!(first.changed(), "first poll must populate the sidebar");
 
     // Second poll with a new session: `was` has 1 row, `groups` has 2 rows.

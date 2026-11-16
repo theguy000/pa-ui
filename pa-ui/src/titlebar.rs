@@ -30,13 +30,13 @@ const STRIP: i32 = 48;
 
 /// Logical geometry of the two controls at the right of the sidebar's header
 /// band, inside this strip: left edge and width, from the window's left. The
-/// column is 232 wide and its band is inset 8 either side, so the 30px collapse
-/// button starts at `232 - 8 - 30`, and the 30px magnifier sits one gap to its
+/// column is 244 wide and its band is inset 10 either side, so the 30px collapse
+/// button starts at `244 - 10 - 30`, and the 30px magnifier sits one gap to its
 /// left. The band's own right edge is the span the client area has to answer
 /// for, and both buttons sit inside it. These must agree with the column in
 /// `ui/app.slint` for the same reason the right column's do.
-const SIDEBAR_BAND_RIGHT: i32 = 224;
-const SIDEBAR_CONTROLS_LEFT: i32 = 160;
+const SIDEBAR_BAND_RIGHT: i32 = 234;
+const SIDEBAR_CONTROLS_LEFT: i32 = 170;
 
 /// Attach to this process's main window. Returns false until the window exists.
 pub fn init(ui: slint::Weak<crate::AppWindow>) -> bool {
