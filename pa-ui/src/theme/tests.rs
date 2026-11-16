@@ -57,7 +57,7 @@ fn the_shipped_theme_draws_todays_sidebar() {
     // A row at rest draws no fill of its own: the column runs through it.
     assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
     assert_eq!(theme.get(Role::SidebarGroupSurface), Rgba::hex("#151613"));
-    assert_eq!(theme.get(Role::SidebarGroupEmptyInk), Rgba::hex("#6a6b64"));
+    assert_eq!(theme.get(Role::SidebarGroupEmptyInk), Rgba::hex("#7e7f78"));
     assert_eq!(theme.get(Role::SidebarGroupInk), Rgba::hex("#8b8c84"));
     assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#191a17"));
     assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1f1f1c"));
@@ -1216,19 +1216,6 @@ fn a_theme_that_paints_the_strips_tags_into_the_strip_is_reported() {
     )
     .expect("a theme that loads");
 
-    let shipped = Resolved::shipped();
-    for role in [
-        Role::SidebarGroupSurface,
-        Role::SidebarGroupEdge,
-        Role::SidebarGroupEmptyEdge,
-        Role::SidebarGroupEmptyInk,
-        Role::SidebarNewSessionFill,
-        Role::SidebarNewSessionFillHover,
-        Role::SidebarNewSessionEdge,
-    ] {
-        assert_ne!(theme.get(role), shipped.get(role), "light {}", role.name());
-    }
-
     let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
     named.sort_unstable();
 
@@ -1307,6 +1294,19 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
              "palette": { "background": "#f5f5f5", "ink": "#202020", "danger": "#7a1f18" } }"##,
     )
     .expect("a file that names only base values");
+
+    let shipped = Resolved::shipped();
+    for role in [
+        Role::SidebarGroupSurface,
+        Role::SidebarGroupEdge,
+        Role::SidebarGroupEmptyEdge,
+        Role::SidebarGroupEmptyInk,
+        Role::SidebarNewSessionFill,
+        Role::SidebarNewSessionFillHover,
+        Role::SidebarNewSessionEdge,
+    ] {
+        assert_ne!(theme.get(role), shipped.get(role), "light {}", role.name());
+    }
 
     let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
     named.sort_unstable();
