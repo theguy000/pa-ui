@@ -84,6 +84,7 @@ pub struct Row {
     pub has_body: bool,
     pub expanded: bool,
     pub failed: bool,
+    pub running: bool,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
     /// which message this row belongs to: the daemon's id when it has one,
@@ -134,6 +135,7 @@ impl Row {
             has_body: false,
             expanded: false,
             failed: false,
+            running: false,
             image: String::new(),
             elapsed: String::new(),
             timestamp: String::new(),
