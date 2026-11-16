@@ -229,20 +229,12 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
                     } else {
                         row.raw_code.as_str()
                     };
-                    source
-                        .lines()
-                        .map(|l| (l.chars().count() / 72) + 1)
-                        .sum::<usize>()
-                        .clamp(1, 16)
+                    wrapped_lines(source, 72)
                 } else {
                     0
                 };
                 let out_lines = if row.has_output {
-                    row.output
-                        .lines()
-                        .map(|l| (l.chars().count() / 84) + 1)
-                        .sum::<usize>()
-                        .clamp(1, 16)
+                    wrapped_lines(&row.output, 84)
                 } else {
                     0
                 };
@@ -1275,11 +1267,6 @@ impl Sheet {
             for at in 0..len {
                 if inner.rows[at].running {
                     inner.rows[at].running = false;
-                    if inner.rows[at].kind == transcript::KIND_THINKING
-                        && inner.rows[at].title == "Thinking\u{2026}"
-                    {
-                        inner.rows[at].title = "Thinking".to_string();
-                    }
                     let updated = inner.rows[at].clone();
                     inner.drawn.set(at, &updated);
                     settled = true;
@@ -1680,17 +1667,15 @@ fn row_identity(row: &Row) -> String {
     format!("{}#{}#{}", row.message, row.kind, row.title)
 }
 
+fn wrapped_lines(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|l| (l.chars().count() / width) + 1)
+        .sum::<usize>()
+        .clamp(1, 16)
+}
+
 fn cell_copy_text(row: &Row) -> Option<String> {
-    if row.kind != transcript::KIND_CELL {
-        return None;
-    }
-    if !row.raw_code.is_empty() {
-        Some(row.raw_code.clone())
-    } else if !row.code.is_empty() {
-        Some(row.code.clone())
-    } else {
-        None
-    }
+    (row.kind == transcript::KIND_CELL && !row.raw_code.is_empty()).then(|| row.raw_code.clone())
 }
 
 pub(crate) fn to_slint(row: &Row) -> TRow {

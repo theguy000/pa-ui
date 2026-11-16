@@ -125,7 +125,6 @@ impl Live {
                     if trailing {
                         for row in &mut rows {
                             row.running = true;
-                            row.title = "Thinking\u{2026}".to_string();
                         }
                     }
                     out.extend(rows);
@@ -146,10 +145,12 @@ impl Live {
                         row.running = true;
                     }
                     if bash.is_some() || duration.is_some() {
-                        let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
-                        let fallback = args.to_string();
-                        let source = if code.is_empty() { fallback.as_str() } else { code };
-                        transcript::apply_header(&mut row, source, bash.as_ref(), *duration);
+                        transcript::apply_header(
+                            &mut row,
+                            &transcript::tool_source(args),
+                            bash.as_ref(),
+                            *duration,
+                        );
                     }
                     out.push(row);
                 }
@@ -204,7 +205,7 @@ mod tests {
         let active = live.rows();
         assert_eq!(active.len(), 1);
         assert!(active[0].running);
-        assert_eq!(active[0].title, "Thinking\u{2026}");
+        assert_eq!(active[0].title, "Thinking");
 
         live.push_text("answer");
         let with_text = live.rows();

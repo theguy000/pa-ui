@@ -416,11 +416,17 @@ pub(crate) enum Role {
     /// The line between a cell's code and its output, so the two are not read as
     /// one script.
     TranscriptCellRule,
+    /// The fill of the copy button inside an opened cell.
     TranscriptCellCopyFill,
+    /// The fill of that copy button under the pointer.
     TranscriptCellCopyFillHover,
+    /// The edge of the copy button inside an opened cell.
     TranscriptCellCopyEdge,
+    /// The edge of that copy button under the pointer.
     TranscriptCellCopyEdgeHover,
+    /// The label inside the copy button of an opened cell.
     TranscriptCellCopyInk,
+    /// The label inside that copy button under the pointer.
     TranscriptCellCopyInkHover,
     /// The edge of the body a cell opens. It and the field under it are the only
     /// two colours an opened cell adds to the sheet.

@@ -122,6 +122,15 @@ pub fn apply_header(
 }
 
 
+#[must_use]
+pub(crate) fn tool_source(args: &Value) -> std::borrow::Cow<'_, str> {
+    match args.get("code").and_then(Value::as_str) {
+        Some(code) if !code.is_empty() => std::borrow::Cow::Borrowed(code),
+        _ => std::borrow::Cow::Owned(args.to_string()),
+    }
+}
+
+
 /// A cell row for a tool call that has just started, shaped exactly like the one
 /// the store will produce for it so the reconcile at turn end changes nothing
 /// on screen. Its code is highlighted in the theme the window is drawn in, the
@@ -131,9 +140,7 @@ pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
     let mut row = Row::new(KIND_CELL);
     row.id = call_id.to_string();
-    let fallback = args.to_string();
-    let source = if code.is_empty() { fallback.as_str() } else { code };
-    apply_header(&mut row, source, None, None);
+    apply_header(&mut row, &tool_source(args), None, None);
     row.raw_code = code.to_string();
     row.code = highlight_python(code, &crate::theme::current());
     row.has_code = !code.is_empty();

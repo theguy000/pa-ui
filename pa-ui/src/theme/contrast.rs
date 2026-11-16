@@ -411,6 +411,11 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_OPENED_ROW },
+        what: "a failed cell's output",
+        floor: BODY,
+    },
+    Pair {
         ink: Mark { role: Role::TranscriptWorkingInk, on: ON_WORKING_CELL },
         what: "a running cell's icon",
         floor: MARK,
@@ -453,6 +458,14 @@ const PAIRS: &[Pair] = &[
     Pair {
         ink: Mark { role: Role::TranscriptThinkingLabelInkWorking, on: ON_TRANSCRIPT },
         what: "an active thinking row's label",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark {
+            role: Role::TranscriptThinkingLabelInkWorking,
+            on: &[Role::TranscriptSurface, Role::TranscriptThinkingFillHover],
+        },
+        what: "an active thinking row's label under the pointer",
         floor: BODY,
     },
     // The chip that walks the reader back to the newest row floats over the sheet

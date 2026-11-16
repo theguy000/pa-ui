@@ -5574,7 +5574,7 @@ fn main() {}
         let model = h.ui.get_transcript();
         let first = slint::Model::row_data(&model, 0).expect("thinking row");
         assert!(first.running);
-        assert_eq!(first.title.as_str(), "Thinking\u{2026}");
+        assert_eq!(first.title.as_str(), "Thinking");
 
         h.send_at(1, Msg::Event {
             session: "s".to_string(),

@@ -358,7 +358,7 @@ export component TranscriptRow inherits VerticalLayout {
                     }
                 }
                 Text {
-                    text: data.title != "" ? data.title : (data.running ? "Thinking\u{2026}" : "Thinking");
+                    text: data.running ? "Thinking\u{2026}" : (data.title != "" ? data.title : "Thinking");
                     color: data.running ? Theme.transcript-thinking-label-ink-working : Theme.transcript-thinking-label-ink;
                     font-size: Appearance.label-size;
                     vertical-alignment: center;
@@ -471,7 +471,7 @@ export component TranscriptRow inherits VerticalLayout {
                         Rectangle {
                             width: 14px;
                             height: 30px;
-                            if data.verb == "bash" : IconToolBash {
+                            if data.verb.starts-with("bash") : IconToolBash {
                                 x: 0px;
                                 y: (parent.height - self.height) / 2;
                                 running: data.running;
@@ -479,7 +479,7 @@ export component TranscriptRow inherits VerticalLayout {
                                 tint: data.running ? Theme.transcript-working-ink
                                     : (data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-verb-ink);
                             }
-                            if data.verb != "bash" : IconToolPython {
+                            if !data.verb.starts-with("bash") : IconToolPython {
                                 x: 0px;
                                 y: (parent.height - self.height) / 2;
                                 running: data.running;

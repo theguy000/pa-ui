@@ -592,6 +592,7 @@ export component AppWindow inherits Window {
         interval: 33ms;
         running: root.has-running-row && !Appearance.reduce-motion;
         triggered => {
+            // 139200ms is the LCM of 1200ms, 1450ms, and 1600ms so phase wraps cleanly.
             root.working-elapsed-ms = Math.mod(root.working-elapsed-ms + 33, 139200);
         }
     }

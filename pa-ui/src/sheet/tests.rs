@@ -388,7 +388,7 @@ fn to_slint_copies_row_fields_and_timestamp() {
 #[test]
 fn answer_ended_settles_running_cells_and_trailing_thinking() {
     let (sheet, _) = sheet();
-    let mut think = row("m1", transcript::KIND_THINKING, "Thinking\u{2026}", "", "hmm");
+    let mut think = row("m1", transcript::KIND_THINKING, "Thinking", "", "hmm");
     think.running = true;
     let mut cell = row("m1", transcript::KIND_CELL, "print(1)", "c1", "");
     cell.verb = "python".to_string();
@@ -403,6 +403,34 @@ fn answer_ended_settles_running_cells_and_trailing_thinking() {
     assert!(!sheet.rows()[0].running);
     assert_eq!(sheet.rows()[0].title, "Thinking");
     assert!(!sheet.rows()[1].running);
+}
+
+#[test]
+fn expanded_trailing_thinking_persists_when_replaced_by_store_rows() {
+    let (sheet, _) = sheet();
+    let mut live = crate::live::Live::new("m-live".to_string());
+    live.push_thinking("considering options");
+    sheet.answer_began("m-live");
+    sheet.merge(live.rows());
+
+    assert!(sheet.rows()[0].running);
+    assert_eq!(sheet.rows()[0].title, "Thinking");
+
+    sheet.toggle(0);
+    assert!(sheet.rows()[0].expanded);
+
+    let store_msgs = vec![serde_json::json!({
+        "id": "m-live",
+        "role": "assistant",
+        "content": [{ "type": "thinking", "thinking": "considering options" }]
+    })];
+    let (store_rows, _) = transcript::build(&store_msgs, 10);
+    sheet.answer_ended();
+    sheet.merge(store_rows);
+
+    assert!(!sheet.rows()[0].running);
+    assert_eq!(sheet.rows()[0].title, "Thinking");
+    assert!(sheet.rows()[0].expanded);
 }
 
 #[test]
@@ -500,6 +528,25 @@ fn copy_cell_preserves_raw_code_and_invokes_clipboard_helper() {
 
     sheet.set_clipboard_for_test(Rc::new(|_| Err("unavailable".to_string())));
     assert!(!sheet.copy_cell(1));
+}
+
+#[test]
+fn copy_cell_returns_false_when_raw_code_is_empty() {
+    let (sheet, _) = sheet();
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let copied_ref = copied.clone();
+    sheet.set_clipboard_for_test(Rc::new(move |text| {
+        copied_ref.borrow_mut().push(text.to_string());
+        Ok(())
+    }));
+
+    let mut cell = row("m1", transcript::KIND_CELL, "print(1)", "c1", "");
+    cell.code = "<font color=\"#ffffff\">print(1)</font>".to_string();
+    cell.has_code = true;
+    sheet.replace(vec![cell]);
+
+    assert!(!sheet.copy_cell(0));
+    assert!(copied.borrow().is_empty());
 }
 
 pub(crate) fn copy_cell_callback_routes_from_app_window_to_clipboard() {
