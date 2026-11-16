@@ -3,7 +3,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Appearance, TRow, Type } from "types.slint";
-import { IconCaret, IconChevronRight, IconEdit, IconThinking, IconToTop, IconToolBash, IconToolPython, IconTrash, IconWarning } from "icons.slint";
+import { IconChevronRight, IconEdit, IconThinking, IconToTop, IconToolBash, IconToolPython, IconTrash, IconWarning } from "icons.slint";
 import { Theme } from "theme.slint";
 import { Button } from "primitives.slint";
 
@@ -649,119 +649,164 @@ export component TranscriptRow inherits VerticalLayout {
         }
     }
 
-    // Both are a label plus a payload; the summary title is the only styling
-    // difference.
     if data.kind == 5 || is-summary : VerticalLayout {
         padding-left: 24px;
         padding-right: 24px;
         padding-top: Appearance.cell-pad-y;
         padding-bottom: Appearance.cell-pad-y;
-        spacing: Appearance.cell-gap;
+        spacing: 0px;
 
         Rectangle {
-            height: 26px;
-            border-radius: 6px;
-            background: custom-hot ? Theme.transcript-cell-fill-hover : transparent;
+            width: root.width - 48px;
+            background: Theme.transcript-cell-fill;
+            border-color: Theme.transcript-cell-edge;
+            border-width: 1px;
+            border-radius: 8px;
+            clip: true;
 
-            property <bool> custom-hot: custom-touch.has-hover;
+            VerticalLayout {
+                spacing: 0px;
 
-            custom-touch := TouchArea {
-                x: 0;
-                y: 0;
-                width: 100%;
-                height: 100%;
-                clicked => { root.toggle(); }
-            }
+                Rectangle {
+                    height: 30px;
+                    background: (data.has-body && custom-touch.has-hover)
+                        ? Theme.transcript-cell-fill-hover
+                        : transparent;
 
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 8px;
+                    custom-touch := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        enabled: data.has-body;
+                        mouse-cursor: data.has-body ? MouseCursor.pointer : MouseCursor.default;
+                        clicked => {
+                            if data.has-body {
+                                root.toggle();
+                            }
+                        }
+                    }
 
-                if data.has-body : Rectangle {
-                    width: 10px;
-                    height: 26px;
-                    IconCaret {
-                        y: (parent.height - self.height) / 2;
-                        up: data.expanded;
-                        tint: Theme.transcript-caret-mark;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+
+                        if data.has-body : Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            IconChevronRight {
+                                x: 1px;
+                                y: (parent.height - self.height) / 2;
+                                open: data.expanded;
+                                tint: Theme.transcript-caret-mark;
+                            }
+                        }
+
+                        Text {
+                            text: data.title;
+                            color: is-summary ? Theme.transcript-heading-ink
+                                : data.failed ? Theme.transcript-cell-ink-failed
+                                : Theme.transcript-notice-ink;
+                            font-size: Appearance.label-size;
+                            font-weight: is-summary ? 600 : 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+
+                        if data.meta != "" : Text {
+                            text: data.meta;
+                            color: Theme.transcript-cell-meta-ink;
+                            font-size: Appearance.meta-size;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
-                Text {
-                    text: data.title;
-                    color: is-summary ? Theme.transcript-heading-ink
-                        : data.failed ? Theme.transcript-cell-ink-failed
-                        : Theme.transcript-notice-ink;
-                    font-size: Appearance.label-size;
-                    font-weight: is-summary ? 600 : 400;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                }
+                if data.expanded && data.has-body : Rectangle {
+                    background: Theme.transcript-row-fill-expanded;
+                    height: self.preferred-height;
 
-                if data.meta != "" : Text {
-                    text: data.meta;
-                    color: Theme.transcript-cell-meta-ink;
-                    font-size: Appearance.meta-size;
-                    vertical-alignment: center;
-                }
-            }
-        }
+                    VerticalLayout {
+                        spacing: 0px;
 
-        if data.expanded && data.has-body : Rectangle {
-            width: root.width - 48px;
-            background: Theme.transcript-row-fill-expanded;
-            border-color: Theme.transcript-cell-edge-expanded;
-            border-width: 1px;
-            border-radius: 8px;
-            height: custom-text.preferred-height + Appearance.expanded-pad-y * 2 + 4px;
-            VerticalLayout {
-                width: root.width - 48px;
-                padding-left: Appearance.expanded-pad-x;
-                padding-right: Appearance.expanded-pad-x;
-                padding-top: Appearance.expanded-pad-y;
-                padding-bottom: Appearance.expanded-pad-y;
-                custom-text := StyledText {
-                    width: root.width - 48px - Appearance.expanded-pad-x * 2;
-                    text: data.body;
-                    default-color: data.failed ? Theme.transcript-cell-ink-failed
-                        : Theme.transcript-prose-ink;
-                    default-font-size: Type.item;
-                    link-clicked(link) => { root.open-link(link); }
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.transcript-cell-rule;
+                        }
+
+                        VerticalLayout {
+                            padding-left: 32px;
+                            padding-right: 12px;
+                            padding-top: 8px;
+                            padding-bottom: 9px;
+
+                            custom-text := StyledText {
+                                width: max(0px, root.width - 48px - 44px);
+                                text: data.body;
+                                default-color: data.failed ? Theme.transcript-cell-ink-failed
+                                    : Theme.transcript-prose-ink;
+                                default-font-size: Type.item;
+                                link-color: Theme.transcript-link-ink;
+                                link-clicked(link) => { root.open-link(link); }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    // The generic error row: one line, the whole line in the failure ink. It is
-    // a transcript row, not a Status strip state and not a card. Long text wraps
-    // like prose; the Rust side has already collapsed multi-line errors to one
-    // summary line.
-    if data.kind == 9 : Rectangle {
-        height: error-line.preferred-height + 8px;
-        IconWarning {
-            x: 24px;
-            y: 7px;
-            width: 16px;
-            height: 16px;
-        }
-        Text {
-            x: 48px;
-            y: 4px;
-            width: 38px;
-            text: data.title;
-            color: Theme.transcript-error-ink;
-            font-size: Type.body;
-            font-weight: 600;
-        }
-        error-line := StyledText {
-            x: 94px;
-            y: 4px;
-            width: root.width - 118px;
-            text: data.body;
-            default-color: Theme.transcript-error-ink;
-            default-font-size: Type.body;
+    if data.kind == 9 : VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: Appearance.cell-pad-y;
+        padding-bottom: Appearance.cell-pad-y;
+
+        Rectangle {
+            width: root.width - 48px;
+            background: Theme.transcript-error-fill;
+            border-color: Theme.transcript-error-edge;
+            border-width: 1px;
+            border-radius: 8px;
+            height: self.preferred-height;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 8px;
+
+                Rectangle {
+                    width: 16px;
+                    height: 20px;
+                    IconWarning {
+                        x: 0px;
+                        y: 2px;
+                        width: 16px;
+                        height: 16px;
+                    }
+                }
+
+                error-label := Text {
+                    text: data.title;
+                    color: Theme.transcript-error-ink;
+                    font-size: Type.body;
+                    font-weight: 600;
+                    vertical-alignment: top;
+                }
+
+                error-line := StyledText {
+                    width: max(0px, root.width - 102px - error-label.preferred-width);
+                    text: data.body;
+                    default-color: Theme.transcript-error-ink;
+                    default-font-size: Type.body;
+                    link-color: Theme.transcript-link-ink;
+                    link-clicked(link) => { root.open-link(link); }
+                }
+            }
         }
     }
 

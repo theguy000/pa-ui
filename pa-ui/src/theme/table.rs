@@ -381,6 +381,10 @@ pub(crate) enum Role {
     /// than the failed Cell's ink: a Cell is one tool call, while an error row is
     /// an operation failure with no Cell behind it.
     TranscriptErrorInk,
+    /// Subtle danger-tinted fill behind a generic error row.
+    TranscriptErrorFill,
+    /// Hairline danger-tinted border around a generic error row.
+    TranscriptErrorEdge,
     /// A heading line inside prose: the one line of a message the renderer draws
     /// bold, and read a step above the prose around it because there is no size
     /// step inside one text run to say it is a heading.
@@ -851,7 +855,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 218] = [
+    pub(crate) const ALL: [Role; 220] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -912,6 +916,8 @@ impl Role {
         Role::TranscriptLinkInk,
         Role::TranscriptNoticeInk,
         Role::TranscriptErrorInk,
+        Role::TranscriptErrorFill,
+        Role::TranscriptErrorEdge,
         Role::TranscriptHeadingInk,
         Role::TranscriptInlineCodeInk,
         Role::TranscriptCaretMark,
@@ -1135,6 +1141,8 @@ impl Role {
             Role::TranscriptLinkInk => "transcript-link-ink",
             Role::TranscriptNoticeInk => "transcript-notice-ink",
             Role::TranscriptErrorInk => "transcript-error-ink",
+            Role::TranscriptErrorFill => "transcript-error-fill",
+            Role::TranscriptErrorEdge => "transcript-error-edge",
             Role::TranscriptHeadingInk => "transcript-heading-ink",
             Role::TranscriptInlineCodeInk => "transcript-inline-code-ink",
             Role::TranscriptCaretMark => "transcript-caret-mark",
@@ -1385,6 +1393,8 @@ impl Role {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
             Role::TranscriptErrorInk => Derivation::Mix(Palette::Danger, Palette::Ink, 0.5),
+            Role::TranscriptErrorFill => Derivation::Mix(Palette::Danger, Palette::Background, 0.06),
+            Role::TranscriptErrorEdge => Derivation::Mix(Palette::Danger, Palette::Background, 0.22),
             Role::TranscriptHeadingInk => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.7594)
             }

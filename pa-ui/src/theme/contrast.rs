@@ -56,6 +56,7 @@ const ON_RENAME_CHIP_HOVER: &[Role] = &[Role::SidebarRowRenameFillHover];
 const ON_OPEN_TIP: &[Role] = &[Role::SidebarOpenTipFill];
 const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
 const ON_MESSAGE: &[Role] = &[Role::TranscriptSurface, Role::TranscriptMessageFill];
+const ON_ERROR: &[Role] = &[Role::TranscriptSurface, Role::TranscriptErrorFill];
 const ON_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFill];
 const ON_CELL_HOVER: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillHover];
 const ON_WORKING_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillWorking];
@@ -341,7 +342,7 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptErrorInk, on: ON_TRANSCRIPT },
+        ink: Mark { role: Role::TranscriptErrorInk, on: ON_ERROR },
         what: "the words of an error row",
         floor: BODY,
     },

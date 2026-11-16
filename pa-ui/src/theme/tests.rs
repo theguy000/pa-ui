@@ -688,6 +688,8 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-link-ink": "#c9a7ff",
                "transcript-notice-ink": "#8a7fa0",
                "transcript-error-ink": "#ff9f8f",
+               "transcript-error-fill": "#2d1a1c",
+               "transcript-error-edge": "#59282c",
                "transcript-heading-ink": "#d8ccee",
                "transcript-inline-code-ink": "#e0b6ff",
                "transcript-caret-mark": "#a99bc4",
@@ -2053,5 +2055,69 @@ fn expanded_cell_copy_button_uses_primitive_without_resting_opacity_layer() {
         !cell_block.contains("opacity:"),
         "Cell block must not use resting opacity: 0 offscreen layers"
     );
+}
+
+#[test]
+fn error_card_roles_follow_danger_and_background_and_clear_contrast() {
+    let shipped = Resolved::shipped();
+    let mono = resolve("mono").expect("the bundled mono theme");
+    let light = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "palette": { "background": "#f5f5f5", "ink": "#202020", "danger": "#7a1f18" } }"##,
+    )
+    .expect("a light palette theme");
+
+    for role in [Role::TranscriptErrorFill, Role::TranscriptErrorEdge] {
+        assert_ne!(light.get(role), shipped.get(role), "{} must follow palette", role.name());
+    }
+
+    for theme in [&shipped, &mono, &light] {
+        let error_findings: Vec<_> = contrast(theme)
+            .into_iter()
+            .filter(|f| f.what == "the words of an error row")
+            .collect();
+        assert!(error_findings.is_empty(), "{error_findings:?}");
+    }
+}
+
+#[test]
+fn a_theme_that_buries_error_row_ink_on_error_fill_is_reported() {
+    let shipped = Resolved::shipped();
+    let fill = shipped.get(Role::TranscriptErrorFill).text();
+    let theme = from_text(
+        "mine.json",
+        &format!(
+            r##"{{ "name": "mine", "version": 1,
+                 "roles": {{ "transcript-error-ink": "{fill}" }} }}"##
+        ),
+    )
+    .expect("a theme that loads");
+
+    let findings = contrast(&theme);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].what, "the words of an error row");
+}
+
+#[test]
+fn summary_custom_and_error_rows_use_calm_cards_and_auto_sized_error_label() {
+    let source = include_str!("../../ui/transcript.slint");
+    assert!(!source.contains("IconCaret"), "transcript.slint must not use or import IconCaret");
+
+    let summary_start = source.find("if data.kind == 5 || is-summary :").expect("summary/custom block");
+    let error_start = source[summary_start..].find("if data.kind == 9 :").expect("error block") + summary_start;
+    let code_start = source[error_start..].find("if data.kind == 6 :").expect("code block") + error_start;
+
+    let summary_block = &source[summary_start..error_start];
+    assert!(summary_block.contains("IconChevronRight"), "Summary/Custom must use IconChevronRight");
+    assert!(summary_block.contains("link-color: Theme.transcript-link-ink"), "Summary/Custom body must wire link-color");
+    assert!(summary_block.contains("enabled: data.has-body"), "Summary/Custom touch target must gate on has-body");
+    assert!(summary_block.contains("padding-left: 32px"), "Summary/Custom body well must align under title");
+
+    let error_block = &source[error_start..code_start];
+    assert!(error_block.contains("HorizontalLayout"), "Error row must use auto-sized HorizontalLayout");
+    assert!(!error_block.contains("width: 38px"), "Error row must not clip Error: at fixed 38px");
+    assert!(error_block.contains("Theme.transcript-error-fill"), "Error row must use transcript-error-fill");
+    assert!(error_block.contains("Theme.transcript-error-edge"), "Error row must use transcript-error-edge");
 }
 
