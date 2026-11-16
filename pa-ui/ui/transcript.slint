@@ -551,10 +551,7 @@ export component TranscriptRow inherits VerticalLayout {
                 }
 
                 if data.expanded : well := Rectangle {
-                    property <bool> copy-hot: false;
                     property <bool> copied: false;
-                    property <bool> show-copy: data.has-code
-                        && (cell-touch.has-hover || well-touch.has-hover || well.copy-hot || well.copied);
 
                     background: Theme.transcript-row-fill-expanded;
                     height: self.preferred-height;
@@ -609,20 +606,22 @@ export component TranscriptRow inherits VerticalLayout {
                         }
                     }
 
-                    copy-btn := Button {
+                    if data.has-code : copy-btn := Button {
+                        property <bool> revealed: cell-touch.has-hover || well-touch.has-hover || self.on || well.copied;
+
                         x: parent.width - 10px - self.width;
                         y: 7px;
-                        width: copy-label.preferred-width + 14px;
+                        width: 56px;
                         height: 20px;
                         border-radius: 5px;
                         border-width: 1px;
-                        border-color: copy-btn.on ? Theme.transcript-cell-copy-edge-hover
-                            : Theme.transcript-cell-copy-edge;
-                        fill: Theme.transcript-cell-copy-fill;
+                        border-color: revealed
+                            ? (self.on ? Theme.transcript-cell-copy-edge-hover : Theme.transcript-cell-copy-edge)
+                            : transparent;
+                        fill: revealed ? Theme.transcript-cell-copy-fill : transparent;
                         fill-hover: Theme.transcript-cell-copy-fill-hover;
-                        visible: well.show-copy;
+                        fade: Appearance.reduce-motion ? 0ms : 100ms;
                         described: well.copied ? "Copied" : "Copy cell code";
-                        hovered(hot) => { well.copy-hot = hot && self.visible; }
                         clicked => {
                             if root.copy() {
                                 well.copied = true;
@@ -630,17 +629,19 @@ export component TranscriptRow inherits VerticalLayout {
                             }
                         }
 
-                        copy-label := Text {
+                        Text {
                             x: 0;
                             y: 0;
                             width: parent.width;
                             height: parent.height;
                             text: well.copied ? "Copied" : "Copy";
-                            color: copy-btn.on ? Theme.transcript-cell-copy-ink-hover
-                                : Theme.transcript-cell-copy-ink;
+                            color: revealed
+                                ? (copy-btn.on ? Theme.transcript-cell-copy-ink-hover : Theme.transcript-cell-copy-ink)
+                                : transparent;
                             font-size: Appearance.meta-size;
                             horizontal-alignment: center;
                             vertical-alignment: center;
+                            animate color { duration: Appearance.reduce-motion ? 0ms : 100ms; }
                         }
                     }
                 }
