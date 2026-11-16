@@ -8,6 +8,7 @@ pub fn demo_rows() -> Vec<Row> {
     let mut ok = Row::new(KIND_CELL);
     ok.verb = "python".to_string();
     ok.title = "print(1 + 1)".to_string();
+    ok.raw_code = "print(1 + 1)".to_string();
     ok.code = highlight_python("print(1 + 1)", &theme);
     ok.output = plain_markup("2");
     ok.has_code = true;
@@ -16,6 +17,7 @@ pub fn demo_rows() -> Vec<Row> {
     let mut failed = Row::new(KIND_CELL);
     failed.verb = "python".to_string();
     failed.title = "rows = [r for r in data]".to_string();
+    failed.raw_code = "rows = [r for r in data]\nprint(rows[3][\"name\"])\n".to_string();
     failed.code = highlight_python("rows = [r for r in data]\nprint(rows[3][\"name\"])\n", &theme);
     failed.output = plain_markup(
         "Traceback (most recent call last):\n  File \"<cell-9>\", line 2, in <module>\n    print(rows[3][\"name\"])\n          ~~~~^^^\nKeyError: 'name'",

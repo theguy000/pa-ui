@@ -134,6 +134,7 @@ pub fn tool_cell(call_id: &str, args: &Value) -> Row {
     let fallback = args.to_string();
     let source = if code.is_empty() { fallback.as_str() } else { code };
     apply_header(&mut row, source, None, None);
+    row.raw_code = code.to_string();
     row.code = highlight_python(code, &crate::theme::current());
     row.has_code = !code.is_empty();
     row

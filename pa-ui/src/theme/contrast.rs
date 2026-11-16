@@ -62,6 +62,10 @@ const ON_WORKING_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCell
 const ON_WORKING_CELL_HOVER: &[Role] =
     &[Role::TranscriptSurface, Role::TranscriptCellFillWorkingHover];
 const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
+const ON_CELL_COPY: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded, Role::TranscriptCellCopyFill];
+const ON_CELL_COPY_HOVER: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded, Role::TranscriptCellCopyFillHover];
 const ON_CODE_CARD: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCodeFill];
 const ON_JUMP: &[Role] = &[Role::TranscriptSurface, Role::TranscriptJumpFill];
 // The composer's own fields: the box the reader writes in, the chip that names
@@ -384,6 +388,16 @@ const PAIRS: &[Pair] = &[
     Pair {
         ink: Mark { role: Role::TranscriptCellOutputInk, on: ON_OPENED_ROW },
         what: "what a cell printed",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellCopyInk, on: ON_CELL_COPY },
+        what: "the copy button on an expanded cell",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellCopyInkHover, on: ON_CELL_COPY_HOVER },
+        what: "the copy button on an expanded cell, under the pointer",
         floor: BODY,
     },
     Pair {

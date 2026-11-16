@@ -416,6 +416,12 @@ pub(crate) enum Role {
     /// The line between a cell's code and its output, so the two are not read as
     /// one script.
     TranscriptCellRule,
+    TranscriptCellCopyFill,
+    TranscriptCellCopyFillHover,
+    TranscriptCellCopyEdge,
+    TranscriptCellCopyEdgeHover,
+    TranscriptCellCopyInk,
+    TranscriptCellCopyInkHover,
     /// The edge of the body a cell opens. It and the field under it are the only
     /// two colours an opened cell adds to the sheet.
     TranscriptCellEdgeExpanded,
@@ -839,7 +845,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 212] = [
+    pub(crate) const ALL: [Role; 218] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -912,6 +918,12 @@ impl Role {
         Role::TranscriptCellCodeInk,
         Role::TranscriptCellOutputInk,
         Role::TranscriptCellRule,
+        Role::TranscriptCellCopyFill,
+        Role::TranscriptCellCopyFillHover,
+        Role::TranscriptCellCopyEdge,
+        Role::TranscriptCellCopyEdgeHover,
+        Role::TranscriptCellCopyInk,
+        Role::TranscriptCellCopyInkHover,
         Role::TranscriptCellEdgeExpanded,
         Role::TranscriptThinkingEdgeExpanded,
         Role::TranscriptCellInkFailed,
@@ -1129,6 +1141,12 @@ impl Role {
             Role::TranscriptCellCodeInk => "transcript-cell-code-ink",
             Role::TranscriptCellOutputInk => "transcript-cell-output-ink",
             Role::TranscriptCellRule => "transcript-cell-rule",
+            Role::TranscriptCellCopyFill => "transcript-cell-copy-fill",
+            Role::TranscriptCellCopyFillHover => "transcript-cell-copy-fill-hover",
+            Role::TranscriptCellCopyEdge => "transcript-cell-copy-edge",
+            Role::TranscriptCellCopyEdgeHover => "transcript-cell-copy-edge-hover",
+            Role::TranscriptCellCopyInk => "transcript-cell-copy-ink",
+            Role::TranscriptCellCopyInkHover => "transcript-cell-copy-ink-hover",
             Role::TranscriptCellEdgeExpanded => "transcript-cell-edge-expanded",
             Role::TranscriptThinkingEdgeExpanded => "transcript-thinking-edge-expanded",
             Role::TranscriptCellInkFailed => "transcript-cell-ink-failed",
@@ -1385,6 +1403,22 @@ impl Role {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7987)
             }
             Role::TranscriptCellRule => Derivation::Mix(Palette::Ink, Palette::Background, 0.066),
+            Role::TranscriptCellCopyFill => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0235)
+            }
+            Role::TranscriptCellCopyFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0519)
+            }
+            Role::TranscriptCellCopyEdge => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.098)
+            }
+            Role::TranscriptCellCopyEdgeHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1698)
+            }
+            Role::TranscriptCellCopyInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.65)
+            }
+            Role::TranscriptCellCopyInkHover => Derivation::Palette(Palette::Ink),
             Role::TranscriptCellEdgeExpanded => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
             }

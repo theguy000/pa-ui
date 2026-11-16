@@ -305,6 +305,12 @@ fn the_shipped_theme_draws_todays_transcript() {
     assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4b4c47"));
     assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d3d1cb"));
     assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909189"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyFill), Rgba::hex("#151613"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyFillHover), Rgba::hex("#1b1c19"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyEdge), Rgba::hex("#252622"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyEdgeHover), Rgba::hex("#353531"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyInk), Rgba::hex("#9c9b96"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyInkHover), Rgba::hex("#e7e5df"));
 
     // And the two panels a row opens, which sit below the field they open on.
     assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#0f100d"));
@@ -589,6 +595,12 @@ fn the_new_and_updated_transcript_roles_follow_the_palette() {
         Role::TranscriptCellTitleInk,
         Role::TranscriptCellInkFailed,
         Role::TranscriptThinkingLabelInk,
+        Role::TranscriptCellCopyFill,
+        Role::TranscriptCellCopyFillHover,
+        Role::TranscriptCellCopyEdge,
+        Role::TranscriptCellCopyEdgeHover,
+        Role::TranscriptCellCopyInk,
+        Role::TranscriptCellCopyInkHover,
         Role::TranscriptWorkingInk,
         Role::TranscriptWorkingInkDim,
         Role::TranscriptCellFillWorking,
@@ -611,6 +623,7 @@ fn the_new_and_updated_transcript_roles_follow_the_palette() {
         .filter(|f| {
             f.what.contains("cell's")
                 || f.what.contains("failed cell")
+                || f.what.contains("expanded cell")
                 || f.what.contains("thinking row's")
                 || f.what == "the label a thinking row carries"
         })
@@ -687,6 +700,12 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-cell-code-ink": "#eee6ff",
                "transcript-cell-output-ink": "#b9a9d6",
                "transcript-cell-rule": "#3a2a52",
+               "transcript-cell-copy-fill": "#241a33",
+               "transcript-cell-copy-fill-hover": "#2f2242",
+               "transcript-cell-copy-edge": "#3a2a52",
+               "transcript-cell-copy-edge-hover": "#4a3a63",
+               "transcript-cell-copy-ink": "#b9a9d6",
+               "transcript-cell-copy-ink-hover": "#eee6ff",
                "transcript-cell-edge-expanded": "#3a2a52",
                "transcript-thinking-edge-expanded": "#33254a",
                "transcript-cell-ink-failed": "#ff9f8f",
@@ -2012,5 +2031,27 @@ fn a_declaration_is_read_past_its_comment_and_its_qualifier() {
                   }\n";
 
     assert_eq!(declared_roles(source), ["a-b", "c-d", "e-f"]);
+}
+
+#[test]
+fn expanded_cell_copy_button_uses_primitive_without_resting_opacity_layer() {
+    let source = include_str!("../../ui/transcript.slint");
+    let cell_start = source.find("if data.kind == 3 :").expect("cell row block");
+    let cell_end = source[cell_start..]
+        .find("if data.kind == 5 || is-summary :")
+        .expect("end of cell row block");
+    let cell_block = &source[cell_start..cell_start + cell_end];
+    assert!(
+        cell_block.contains("copy-btn := Button {") || cell_block.contains("Button {"),
+        "expanded Cell Copy control must use Button primitive"
+    );
+    assert!(
+        cell_block.contains("root.copy()"),
+        "expanded Cell Copy Button must invoke root.copy()"
+    );
+    assert!(
+        !cell_block.contains("opacity:"),
+        "Cell block must not use resting opacity: 0 offscreen layers"
+    );
 }
 
