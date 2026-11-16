@@ -75,6 +75,7 @@ pub struct Row {
     pub title: String,
     pub meta: String,
     pub body: String,
+    pub raw_code: String,
     pub code: String,
     pub output: String,
     pub has_code: bool,
@@ -127,6 +128,7 @@ impl Row {
             title: String::new(),
             meta: String::new(),
             body: String::new(),
+            raw_code: String::new(),
             code: String::new(),
             output: String::new(),
             has_code: false,
@@ -480,6 +482,7 @@ fn build_message(
                     .unwrap_or_default();
                 let mut row = Row::new(KIND_CELL);
                 row.id = id.to_string();
+                row.raw_code = code.to_string();
                 row.code = highlight_python(code, theme);
                 row.has_code = !code.is_empty();
                 if let Some((output, failed)) = outputs.get(id) {

@@ -2586,6 +2586,7 @@ mod status_strip_tests {
         scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights();
         multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy();
         crate::sessions::virtual_sidebar_tests::run_all();
+        crate::sheet::tests::copy_cell_callback_routes_from_app_window_to_clipboard();
         tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn();
         multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation();
         real_window_layout_and_scroll_remain_gap_free_with_tighter_window();
@@ -5118,6 +5119,7 @@ fn main() {}
                 title: format!("bash #{i}"),
                 meta: String::new(),
                 body: String::new(),
+                raw_code: format!("echo step_{i}"),
                 code: format!("echo step_{i}"),
                 output: format!("output line {i}"),
                 has_code: true,

@@ -38,6 +38,7 @@ fn sheet() -> (Sheet, Rc<RefCell<Vec<Order>>>) {
         }),
         vstate: Rc::new(RefCell::new(VirtualSlintRows::new(Rc::new(slint::VecModel::default())))),
         paging: RefCell::new(Paging::new(2)),
+        clipboard: RefCell::new(Rc::new(crate::sessions::copy_to_clipboard)),
     };
     (sheet, orders)
 }
@@ -50,6 +51,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         title: title.to_string(),
         meta: String::new(),
         body: body.to_string(),
+        raw_code: String::new(),
         code: String::new(),
         output: String::new(),
         has_code: false,
@@ -381,9 +383,123 @@ fn to_slint_copies_row_fields_and_timestamp() {
 fn cell_height_estimate_reflects_30px_card_and_expanded_well() {
     let mut r = row("m1", transcript::KIND_CELL, "print(1)", "id1", "");
     r.verb = "python".to_string();
+    r.raw_code = "print(1)".to_string();
     r.code = "print(1)".to_string();
     r.has_code = true;
     assert_eq!(estimate_row_height(&r), 38.0);
+
     r.expanded = true;
-    assert!(estimate_row_height(&r) > 38.0);
+    let code_only = estimate_row_height(&r);
+    assert_eq!(code_only, 72.5);
+
+    r.output = "1".to_string();
+    r.has_output = true;
+    let code_and_output = estimate_row_height(&r);
+    assert_eq!(code_and_output, 103.0);
+
+    r.has_output = false;
+    r.raw_code = "x".repeat(160);
+    assert!(estimate_row_height(&r) > code_only);
+}
+
+#[test]
+fn expanded_cell_persists_across_live_updates_and_store_reconcile() {
+    let (sheet, _) = sheet();
+    let mut live = crate::live::Live::new("m-live".to_string());
+    live.start_tool("call-1", serde_json::json!({ "code": "echo hi" }));
+    sheet.answer_began("m-live");
+    sheet.merge(live.rows());
+
+    sheet.toggle(0);
+    assert!(sheet.rows()[0].expanded);
+
+    live.finish_tool("call-1", "hi
+".to_string(), false, None, Some(12));
+    sheet.merge(live.rows());
+    assert!(sheet.rows()[0].expanded);
+    assert!(sheet.rows()[0].has_output);
+
+    let store_msg = serde_json::json!([
+        {
+            "id": "m-live",
+            "role": "assistant",
+            "content": [{ "type": "toolCall", "id": "call-1", "arguments": { "code": "echo hi" } }]
+        },
+        {
+            "role": "toolResult",
+            "toolCallId": "call-1",
+            "content": [{ "type": "text", "text": "hi
+" }],
+            "details": { "durationMs": 12 }
+        }
+    ]);
+    let (store_rows, _) = transcript::build(&serde_json::from_value::<Vec<serde_json::Value>>(store_msg).unwrap(), 10);
+    sheet.answer_ended();
+    sheet.merge(store_rows);
+
+    assert!(sheet.rows()[0].expanded);
+    assert_eq!(sheet.rows()[0].elapsed, "12ms");
+}
+
+#[test]
+fn copy_cell_preserves_raw_code_and_invokes_clipboard_helper() {
+    let (sheet, _) = sheet();
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let copied_ref = copied.clone();
+    sheet.set_clipboard_for_test(Rc::new(move |text| {
+        copied_ref.borrow_mut().push(text.to_string());
+        Ok(())
+    }));
+
+    let raw = "x = \"a_b\"\nprint(x) # <tag> & 'ok'";
+    let msgs = vec![serde_json::json!({
+        "id": "m1",
+        "role": "assistant",
+        "content": [
+            { "type": "text", "text": "prose" },
+            { "type": "toolCall", "id": "call-1", "arguments": { "code": raw } }
+        ]
+    })];
+    let (rows, _) = transcript::build(&msgs, 10);
+    assert!(rows[1].code.contains("<font"));
+    assert_eq!(rows[1].raw_code, raw);
+
+    sheet.replace(rows);
+    assert!(!sheet.copy_cell(0));
+    assert!(!sheet.copy_cell(99));
+    assert!(copied.borrow().is_empty());
+
+    assert!(sheet.copy_cell(1));
+    assert_eq!(*copied.borrow(), vec![raw.to_string()]);
+
+    sheet.set_clipboard_for_test(Rc::new(|_| Err("unavailable".to_string())));
+    assert!(!sheet.copy_cell(1));
+}
+
+pub(crate) fn copy_cell_callback_routes_from_app_window_to_clipboard() {
+    let ui = AppWindow::new().expect("app window");
+    let (sheet, model) = Sheet::new();
+    let sheet = Rc::new(sheet);
+    sheet.bind_ui(&ui);
+    ui.set_transcript(model);
+
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let copied_ref = copied.clone();
+    sheet.set_clipboard_for_test(Rc::new(move |text| {
+        copied_ref.borrow_mut().push(text.to_string());
+        Ok(())
+    }));
+
+    let msgs = vec![serde_json::json!({
+        "id": "m1",
+        "role": "assistant",
+        "content": [{ "type": "toolCall", "id": "call-1", "arguments": { "code": "%%bash
+cargo test -p pa-ui" } }]
+    })];
+    let (rows, _) = transcript::build(&msgs, 10);
+    sheet.replace(rows);
+
+    assert!(ui.invoke_copy_cell(0));
+    assert_eq!(*copied.borrow(), vec!["%%bash
+cargo test -p pa-ui".to_string()]);
 }

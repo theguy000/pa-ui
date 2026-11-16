@@ -612,6 +612,7 @@ export component AppWindow inherits Window {
     // A session row's menu, taken: the row's id and the action's key.
     callback session-menu-picked(string, string);
     callback toggle-row(int);
+    callback copy-cell(int) -> bool;
     callback queue-act(string, int, string);
     callback queue-clear();
     callback new-chat();
@@ -1392,6 +1393,9 @@ export component AppWindow inherits Window {
                                     toggle => {
                                         root.model-menu = false;
                                         root.toggle-row(root.window-start + i);
+                                    }
+                                    copy => {
+                                        root.copy-cell(root.window-start + i)
                                     }
                                 }
                                 Rectangle {

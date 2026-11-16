@@ -223,13 +223,31 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
         }
         transcript::KIND_CELL => {
             if row.expanded {
-                let code_lines = row.code.lines().count().min(12);
-                let out_lines = if row.has_output {
-                    row.output.lines().count().min(12)
+                let code_lines = if row.has_code {
+                    let source = if row.raw_code.is_empty() {
+                        row.code.as_str()
+                    } else {
+                        row.raw_code.as_str()
+                    };
+                    source
+                        .lines()
+                        .map(|l| (l.chars().count() / 72) + 1)
+                        .sum::<usize>()
+                        .clamp(1, 16)
                 } else {
                     0
                 };
-                38.0 + ((code_lines + out_lines) as f32 * 16.0) + 24.0
+                let out_lines = if row.has_output {
+                    row.output
+                        .lines()
+                        .map(|l| (l.chars().count() / 84) + 1)
+                        .sum::<usize>()
+                        .clamp(1, 16)
+                } else {
+                    0
+                };
+                let rule = if row.has_code && row.has_output { 15.0 } else { 0.0 };
+                38.0 + 18.0 + (code_lines as f32 * 16.5) + rule + (out_lines as f32 * 15.5)
             } else {
                 38.0
             }
@@ -698,10 +716,13 @@ impl Paging {
     }
 }
 
+type ClipboardFn = Rc<dyn Fn(&str) -> Result<(), String>>;
+
 pub(crate) struct Sheet {
     inner: RefCell<Inner>,
     vstate: Rc<RefCell<VirtualSlintRows>>,
     paging: RefCell<Paging>,
+    clipboard: RefCell<ClipboardFn>,
 }
 
 struct Inner {
@@ -742,6 +763,7 @@ impl Sheet {
             }),
             vstate,
             paging: RefCell::new(Paging::new(history_rows)),
+            clipboard: RefCell::new(Rc::new(crate::sessions::copy_to_clipboard)),
         };
         (sheet, ModelRc::from(model))
     }
@@ -767,6 +789,30 @@ impl Sheet {
         ui.on_toggle_row(move |index| {
             sheet_toggle.toggle(index as usize);
         });
+        let sheet_copy = self.clone();
+        ui.on_copy_cell(move |index| {
+            usize::try_from(index).is_ok_and(|at| sheet_copy.copy_cell(at))
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_clipboard_for_test(&self, clipboard: ClipboardFn) {
+        *self.clipboard.borrow_mut() = clipboard;
+    }
+
+    pub fn copy_cell(&self, at: usize) -> bool {
+        let text = {
+            let inner = self.inner.borrow();
+            let Some(row) = inner.rows.get(at) else {
+                return false;
+            };
+            cell_copy_text(row)
+        };
+        let Some(text) = text else {
+            return false;
+        };
+        let copy = self.clipboard.borrow().clone();
+        copy(&text).is_ok()
     }
 
     pub fn reset_paging(&self, ui: &AppWindow) {
@@ -1604,6 +1650,19 @@ fn row_identity(row: &Row) -> String {
     format!("{}#{}#{}", row.message, row.kind, row.title)
 }
 
+fn cell_copy_text(row: &Row) -> Option<String> {
+    if row.kind != transcript::KIND_CELL {
+        return None;
+    }
+    if !row.raw_code.is_empty() {
+        Some(row.raw_code.clone())
+    } else if !row.code.is_empty() {
+        Some(row.code.clone())
+    } else {
+        None
+    }
+}
+
 pub(crate) fn to_slint(row: &Row) -> TRow {
     #[cfg(test)]
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
@@ -1670,4 +1729,4 @@ pub(crate) fn trace(what: &str, rows: &[Row]) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

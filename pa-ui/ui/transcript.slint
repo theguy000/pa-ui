@@ -234,6 +234,7 @@ export component TranscriptRow inherits VerticalLayout {
     in property <TRow> data;
     property <bool> is-summary: data.kind == 10;
     callback toggle();
+    callback copy() -> bool;
 
     if data.kind == 0 : HorizontalLayout {
         alignment: end;
@@ -524,9 +525,27 @@ export component TranscriptRow inherits VerticalLayout {
                     }
                 }
 
-                if data.expanded : Rectangle {
+                if data.expanded : well := Rectangle {
+                    property <bool> copy-hot: false;
+                    property <bool> copied: false;
+                    property <bool> show-copy: data.has-code
+                        && (cell-touch.has-hover || well-touch.has-hover || well.copy-hot || well.copied);
+
                     background: Theme.transcript-row-fill-expanded;
                     height: self.preferred-height;
+
+                    copy-timer := Timer {
+                        interval: 900ms;
+                        running: well.copied;
+                        triggered => { well.copied = false; }
+                    }
+
+                    well-touch := TouchArea {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                    }
 
                     VerticalLayout {
                         spacing: 0px;
@@ -544,7 +563,7 @@ export component TranscriptRow inherits VerticalLayout {
                             spacing: 7px;
 
                             if data.has-code : StyledText {
-                                width: root.width - 48px - 44px;
+                                width: max(0px, root.width - 48px - 96px);
                                 text: data.code;
                                 default-color: Theme.transcript-cell-code-ink;
                                 default-font-family: Appearance.code-font;
@@ -555,13 +574,48 @@ export component TranscriptRow inherits VerticalLayout {
                                 background: Theme.transcript-cell-rule;
                             }
                             if data.has-output : StyledText {
-                                width: root.width - 48px - 44px;
+                                width: max(0px, root.width - 48px - 44px);
                                 text: data.output;
                                 default-color: data.failed ? Theme.transcript-cell-ink-failed
                                     : Theme.transcript-cell-output-ink;
                                 default-font-family: Appearance.code-font;
                                 default-font-size: Appearance.cell-output-size;
                             }
+                        }
+                    }
+
+                    copy-btn := Button {
+                        x: parent.width - 10px - self.width;
+                        y: 7px;
+                        width: copy-label.preferred-width + 14px;
+                        height: 20px;
+                        border-radius: 5px;
+                        border-width: 1px;
+                        border-color: copy-btn.on ? Theme.transcript-cell-copy-edge-hover
+                            : Theme.transcript-cell-copy-edge;
+                        fill: Theme.transcript-cell-copy-fill;
+                        fill-hover: Theme.transcript-cell-copy-fill-hover;
+                        visible: well.show-copy;
+                        described: well.copied ? "Copied" : "Copy cell code";
+                        hovered(hot) => { well.copy-hot = hot && self.visible; }
+                        clicked => {
+                            if root.copy() {
+                                well.copied = true;
+                                copy-timer.restart();
+                            }
+                        }
+
+                        copy-label := Text {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: parent.height;
+                            text: well.copied ? "Copied" : "Copy";
+                            color: copy-btn.on ? Theme.transcript-cell-copy-ink-hover
+                                : Theme.transcript-cell-copy-ink;
+                            font-size: Appearance.meta-size;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                 }
