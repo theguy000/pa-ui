@@ -210,30 +210,26 @@ mod strong_tests {
     }
 
     #[test]
-    fn tables_pad_columns_and_honour_right_alignment() {
-        let table = render_table(&["| model | cost |", "|:--|--:|", "| a | $1.50 |", "| longer | $2 |"])
-            .expect("a valid table");
-        let lines: Vec<&str> = table.lines().collect();
-        assert_eq!(lines.len(), 6, "top, header, rule, two rows, bottom");
-        assert!(lines[0].starts_with('\u{250c}') && lines[0].ends_with('\u{2510}'));
-        assert!(lines[1].contains("\u{2502} model"));
-        // right aligned: the shorter price keeps its padding on the left
-        assert!(lines[4].contains("  $2 \u{2502}"), "{:?}", lines[4]);
-        assert!(lines.iter().all(|line| line.chars().count() == lines[0].chars().count()));
+    fn a_table_keeps_its_columns_alignment_and_stretch() {
+        let table = table_from_source(
+            "| model | cost | note |\n|:--|--:|:-:|\n| a-very-long-model-name | $1.50 | x |\n| longer | $2 | y |",
+        )
+        .expect("a valid table");
+        assert_eq!(table.header, ["model", "cost", "note"]);
+        assert_eq!(table.aligns, [0, 1, 2]);
+        assert_eq!(table.rows.len(), 2);
+        let stretches = table.stretches();
+        assert_eq!(stretches.len(), 3);
+        assert!(stretches.iter().all(|stretch| (0.4..=3.0).contains(stretch)));
+        assert!(stretches[0] > stretches[2], "a long column outgrows a short one");
     }
 
     #[test]
-    fn a_wide_table_gives_up_width_instead_of_wrapping() {
-        let wide = "x".repeat(60);
-        let table = render_table(&[
-            &format!("| {wide} | {wide} | {wide} |"),
-            "|---|---|---|",
-            &format!("| {wide} | {wide} | {wide} |"),
-        ])
-        .expect("a valid table");
-        let width = table.lines().next().map_or(0, |line| line.chars().count());
-        assert!(width <= 92, "table stayed {width} wide");
-        assert!(table.contains('\u{2026}'), "overflow elides, it does not wrap");
+    fn a_wide_table_caps_column_stretch() {
+        let wide = "x".repeat(200);
+        let table = table_from_source(&format!("| {wide} |\n|---|\n| {wide} |"))
+            .expect("a valid table");
+        assert_eq!(table.stretches(), [3.0]);
     }
 
     #[test]
@@ -261,6 +257,60 @@ mod strong_tests {
             markdown_markup("# Title", &crate::theme::Resolved::shipped()),
             "<font color=\"#b3b2ad\">**Title**</font>"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+    use crate::theme::Resolved;
+    use serde_json::json;
+
+    const SOURCE: &str = "| name | `code` | score |\n|:--|:-:|--:|\n| **a** | `x()` | 12 |\n| b | plain | 3 |";
+
+    fn built(source: &str) -> Row {
+        let messages = vec![json!({
+            "id": "m1",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": source }]
+        })];
+        build(&messages, 10).0.remove(0)
+    }
+
+    #[test]
+    fn a_table_row_carries_structured_cells_alignments_and_inline_markup() {
+        let row = built(SOURCE);
+        assert_eq!(row.kind, KIND_TABLE);
+        assert_eq!(row.raw_code, SOURCE);
+        assert!(row.has_code);
+
+        let table = table_from_source(&row.raw_code).expect("a parsed table");
+        let cells = table.cells(&Resolved::shipped());
+        assert_eq!(cells.len(), 9);
+        let header: Vec<&TableCellData> = cells.iter().filter(|cell| cell.header).collect();
+        assert_eq!(header.len(), 3);
+        assert!(header.iter().all(|cell| cell.row == -1));
+        assert_eq!(header.iter().map(|cell| cell.align).collect::<Vec<_>>(), [0, 2, 1]);
+        assert_eq!(cells[0].text, "**name**");
+        assert_eq!(cells[4].row, 0);
+        assert_eq!(cells[4].column, 1);
+        assert!(cells[1].text.contains("<font"), "code in a header carries its font");
+        assert!(cells[4].text.contains("<font"), "code in a body cell carries its font");
+        assert!(cells[3].text.contains("**a**"), "bold inside a cell survives");
+        for cell in &cells {
+            assert!(slint::StyledText::from_markdown(&cell.text).is_ok(), "{}", cell.text);
+        }
+    }
+
+    #[test]
+    fn a_code_row_carries_its_raw_source() {
+        let row = built("```python\ndef f():\n    return 1\n```");
+        assert_eq!(row.kind, KIND_CODE);
+        assert_eq!(row.raw_code, "def f():\n    return 1");
+        assert_eq!(row.meta, "python");
+        assert!(row.has_code);
+        assert!(row.code.contains("<font"));
     }
 }
 

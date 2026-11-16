@@ -220,6 +220,18 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
             (lines as f32 * 21.5) + 24.0
         }
         transcript::KIND_IMAGE => 162.0,
+        transcript::KIND_CODE => {
+            let source = if row.raw_code.is_empty() {
+                transcript::plain(&row.code)
+            } else {
+                row.raw_code.clone()
+            };
+            48.0 + (text_lines(&source, 72) as f32 * 16.5)
+        }
+        transcript::KIND_TABLE => match transcript::table_from_source(&row.raw_code) {
+            Some(table) => table_height(&table),
+            None => 28.0,
+        },
         transcript::KIND_CELL => {
             if row.expanded {
                 let code_lines = if row.has_code {
@@ -1673,13 +1685,78 @@ fn wrapped_lines(text: &str, width: usize) -> usize {
         .clamp(1, 16)
 }
 
+fn text_lines(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|l| (l.chars().count() / width) + 1)
+        .sum::<usize>()
+        .max(1)
+}
+
+fn table_height(table: &transcript::Table) -> f32 {
+    let stretches = table.stretches();
+    let total = stretches.iter().sum::<f32>().max(0.1);
+    let mut height = 28.0 + 1.0;
+    for (index, cells) in table.rows.iter().enumerate() {
+        let lines = cells
+            .iter()
+            .zip(&stretches)
+            .map(|(cell, stretch)| {
+                let width = (76.0 * stretch / total).max(6.0);
+                (cell.chars().count() as f32 / width).ceil().max(1.0)
+            })
+            .fold(1.0f32, f32::max);
+        height += 12.0 + lines * 16.0;
+        if index + 1 < table.rows.len() {
+            height += 1.0;
+        }
+    }
+    height + 10.0
+}
+
 fn cell_copy_text(row: &Row) -> Option<String> {
-    (row.kind == transcript::KIND_CELL && !row.raw_code.is_empty()).then(|| row.raw_code.clone())
+    if !matches!(
+        row.kind,
+        transcript::KIND_CELL | transcript::KIND_CODE | transcript::KIND_TABLE
+    ) || row.raw_code.is_empty()
+    {
+        return None;
+    }
+    Some(row.raw_code.clone())
+}
+
+fn table_models(source: &str) -> (ModelRc<TableCell>, ModelRc<i32>, ModelRc<f32>) {
+    let Some(table) = transcript::table_from_source(source) else {
+        return (ModelRc::default(), ModelRc::default(), ModelRc::default());
+    };
+    let theme = theme::current();
+    let cells: Vec<TableCell> = table
+        .cells(&theme)
+        .into_iter()
+        .map(|cell| TableCell {
+            row: cell.row,
+            column: cell.column,
+            text: transcript::styled(&cell.text),
+            align: i32::from(cell.align),
+            header: cell.header,
+            stretch: cell.stretch,
+        })
+        .collect();
+    let rows: Vec<i32> = (0..table.rows.len() as i32).collect();
+    (
+        ModelRc::from(Rc::new(VecModel::from(cells))),
+        ModelRc::from(Rc::new(VecModel::from(rows))),
+        ModelRc::from(Rc::new(VecModel::from(table.stretches()))),
+    )
 }
 
 pub(crate) fn to_slint(row: &Row) -> TRow {
     #[cfg(test)]
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
+    let (table, table_rows, table_columns) = if row.kind == transcript::KIND_TABLE {
+        table_models(&row.raw_code)
+    } else {
+        (ModelRc::default(), ModelRc::default(), ModelRc::default())
+    };
     TRow {
         kind: row.kind,
         verb: row.verb.clone().into(),
@@ -1697,6 +1774,9 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
         timestamp: row.timestamp.clone().into(),
+        table,
+        table_rows,
+        table_columns,
     }
 }
 
