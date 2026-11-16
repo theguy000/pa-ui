@@ -716,10 +716,10 @@ mod markup_tests {
         assert!(!rendered.contains('\u{a0}'), "got {rendered}");
         assert!(drawn.starts_with("\u{200b}    indented"), "got {drawn:?}");
         let marked = markdown_markup("    - indented", &shipped());
-        assert!(marked.starts_with("\u{200b}    - indented"), "got {marked:?}");
+        assert!(marked.starts_with("\u{200b}    \u{25e6} indented"), "got {marked:?}");
         assert_eq!(marked.matches('\u{200b}').count(), 1, "got {marked:?}");
         let unindented = markdown_markup("- item", &shipped());
-        assert!(unindented.starts_with("\u{200b}- item"), "got {unindented:?}");
+        assert!(unindented.starts_with("\u{2022} item"), "got {unindented:?}");
     }
 
     #[test]
@@ -744,8 +744,8 @@ mod markup_tests {
         assert!(indented.contains("**\u{200b}  two"), "got {indented:?}");
         let bold = crate::transcript::highlight_inline_code("**```\none\n  two\n```", &shipped());
         let second = bold.lines().nth(1).expect("second code line");
-        assert!(second.starts_with("\u{200b}<font"), "got {second:?}");
-        assert!(second.contains(">  two"), "got {second:?}");
+        assert!(second.starts_with("<font"), "got {second:?}");
+        assert!(second.contains("**\u{200b}  two**"), "got {second:?}");
     }
 
     #[test]
@@ -813,7 +813,8 @@ mod markup_tests {
         assert_eq!(collapsed.matches("\u{200b}").count(), 1, "got {collapsed:?}");
 
         let with_rule = markdown_markup("Before\n\n---\n\nAfter", &shipped());
-        assert_eq!(with_rule.matches("\u{200b}").count(), 1, "got {with_rule:?}");
+        assert_eq!(with_rule.matches("\u{200b}").count(), 2, "got {with_rule:?}");
+        assert!(with_rule.contains("\u{2500}\u{2500}\u{2500}"), "got {with_rule:?}");
         StyledText::from_markdown(&with_rule).expect("rule spacing parses");
 
         let trailing = markdown_markup("First\n\n", &shipped());
@@ -843,6 +844,146 @@ mod markup_tests {
         assert!(multi.contains("**code2**") && multi.contains("**end**"), "got {multi:?}");
         let heading = markdown_markup("# **bold\nnext", &theme);
         assert!(!heading.ends_with("**next**"), "heading leaked bold: {heading:?}");
+    }
+
+    #[test]
+    fn headings_mixing_bold_italic_code_and_links_parse_at_every_prefix() {
+        let theme = shipped();
+        let samples = [
+            "### 2. Implemented on `perf/smooth-transcript` only — **not in `main`**",
+            "## **bold `code`**, *italic*, [link `x`](https://example.com) and trailing *",
+            "# *foo *bar* and `code` and **not**",
+            "### Title with trailing space ",
+            "#### [see docs](https://example.com/a*b**c) and **bold**",
+        ];
+        for sample in samples {
+            for (idx, _) in sample.char_indices() {
+                let prefix = &sample[..idx];
+                let drawn = markdown_markup(prefix, &theme);
+                StyledText::from_markdown(&drawn).unwrap_or_else(|e| {
+                    panic!("heading prefix {prefix:?} failed: {e}\n---\n{drawn}")
+                });
+                for line in drawn.lines() {
+                    assert_eq!(
+                        line.matches("<font").count(),
+                        line.matches("</font>").count(),
+                        "unbalanced font tags on {line:?} for prefix {prefix:?}"
+                    );
+                }
+            }
+            let drawn = markdown_markup(sample, &theme);
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("full heading {sample:?} failed: {e}\n---\n{drawn}"));
+        }
+        assert!(markdown_markup("#", &theme).is_empty());
+        assert!(markdown_markup("###   ", &theme).is_empty());
+    }
+
+    #[test]
+    fn quote_markup_isolates_font_and_emphasis_across_prefixes() {
+        let theme = shipped();
+        let samples = [
+            "one **two**, *three*, `four`, and [five](https://example.com)",
+            "*unclosed and `code` and **bold** and trailing *",
+            "> nested **bold** and *italic `code`*",
+            "# heading in quote with `code` and **bold**",
+            "- bullet\n  - nested with `code`\n---\n*foo *bar*",
+            "hello ",
+        ];
+        for sample in samples {
+            for (idx, _) in sample.char_indices() {
+                let prefix = &sample[..idx];
+                let drawn = quote_markup(prefix, &theme);
+                StyledText::from_markdown(&drawn).unwrap_or_else(|e| {
+                    panic!("quote prefix {prefix:?} failed: {e}\n---\n{drawn}")
+                });
+            }
+            let drawn = quote_markup(sample, &theme);
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("full quote {sample:?} failed: {e}\n---\n{drawn}"));
+        }
+    }
+
+    #[test]
+    fn prose_with_nested_bold_and_inline_code_parses() {
+        let theme = shipped();
+        let samples = [
+            "**outer **inner `code`** outer**",
+            "**a `b` **c `d`**",
+            "**bold * `code`",
+            "*italic **bold `code`***",
+            "***bold italic `code`***",
+            "**bold `code` and **nested `more`** end**",
+        ];
+        for sample in samples {
+            for (idx, _) in sample.char_indices() {
+                let prefix = &sample[..idx];
+                let drawn = markdown_markup(prefix, &theme);
+                StyledText::from_markdown(&drawn).unwrap_or_else(|e| {
+                    panic!("prose prefix {prefix:?} failed: {e}\n---\n{drawn}")
+                });
+            }
+            let drawn = markdown_markup(sample, &theme);
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("full prose {sample:?} failed: {e}\n---\n{drawn}"));
+        }
+    }
+
+    #[test]
+    fn unordered_lists_and_horizontal_rules_render_cleanly() {
+        let theme = shipped();
+        for (input, expected_prefix) in [
+            ("- top", "\u{2022} top"),
+            ("* top", "\u{2022} top"),
+            ("+ top", "\u{2022} top"),
+            ("  - nested", "\u{200b}  \u{25e6} nested"),
+            ("    * nested", "\u{200b}    \u{25e6} nested"),
+            ("\t+ nested", "\u{200b}    \u{25e6} nested"),
+            ("- [ ] task", "\u{2022} [ ] task"),
+        ] {
+            let drawn = markdown_markup(input, &theme);
+            assert!(drawn.starts_with(expected_prefix), "{input:?} -> {drawn:?}");
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("list {input:?} failed: {e}\n---\n{drawn}"));
+        }
+        let italic = markdown_markup("*italic*", &theme);
+        assert!(!italic.contains('\u{2022}'), "got {italic:?}");
+
+        let rule_color = theme.get(crate::theme::Role::TranscriptQuoteEdge).text();
+        let expected_rule = format!("<font color=\"{rule_color}\">\u{2500}\u{2500}\u{2500}</font>");
+        for rule in ["---", "***", "___", "* * *", "- - -"] {
+            let drawn = markdown_markup(rule, &theme);
+            assert_eq!(drawn, expected_rule, "rule {rule:?}");
+            StyledText::from_markdown(&drawn)
+                .unwrap_or_else(|e| panic!("rule {rule:?} failed: {e}\n---\n{drawn}"));
+        }
+        assert_eq!(markdown_markup("--", &theme), "\u{200b}--");
+
+        let crash_rendered = format!(
+            "{:?}",
+            styled(&markdown_markup(
+                "### 2. Implemented on `perf/smooth-transcript` only — **not in `main`**",
+                &theme
+            ))
+        );
+        assert!(
+            crash_rendered.contains("2. Implemented on perf/smooth-transcript only — not in main"),
+            "unexpected rendered text: {crash_rendered}"
+        );
+        assert!(!crash_rendered.contains("**"), "stray bold markers: {crash_rendered}");
+
+        let italic_heading = format!("{:?}", styled(&markdown_markup("# *italic*", &theme)));
+        assert!(italic_heading.contains("Strong") && italic_heading.contains("Emphasis"), "{italic_heading}");
+        assert!(!italic_heading.contains('*'), "{italic_heading}");
+
+        for sample in [
+            "[link `code` here](https://example.com)",
+            "### [link `code` here](https://example.com)",
+            "```\none\n  two\n```",
+        ] {
+            styled(&markdown_markup(sample, &theme));
+            styled(&quote_markup(sample, &theme));
+        }
     }
 }
 

@@ -265,12 +265,26 @@ pub(crate) fn balance_strong(text: &str) -> String {
             out.push_str(tail);
             continue;
         }
+        if mid.contains("<font ") {
+            open_depth = balance_prose_with_fonts(mid, open_depth, &mut out);
+            if is_heading_line {
+                open_depth = 0;
+            }
+            out.push_str(tail);
+            continue;
+        }
         let mid_start = out.len();
         if open_depth > 0 {
             let ws = mid.len() - mid.trim_start().len();
             out.push_str(&mid[..ws]);
-            for _ in 0..open_depth {
+            for idx in 0..open_depth {
+                if idx > 0 {
+                    out.push('\u{200b}');
+                }
                 out.push_str("**");
+            }
+            if mid[ws..].starts_with('*') {
+                out.push('\u{200b}');
             }
             out.push_str(&mid[ws..]);
         } else {
@@ -401,6 +415,9 @@ fn close_strong_before_trailing_ws_before(
             if out[line_start..].ends_with('\u{200b}') {
                 out.pop();
             }
+            if out[line_start..].ends_with('*') && !out[line_start..].ends_with("\\*") {
+                out.push('\u{200b}');
+            }
             out.push_str("**");
         }
         count -= 1;
@@ -423,8 +440,14 @@ fn push_prose_chunk(chunk: &str, line_start: usize, open_depth: &mut usize, out:
     if need_opener {
         let ws = chunk.len() - chunk.trim_start().len();
         out.push_str(&chunk[..ws]);
-        for _ in 0..*open_depth {
+        for idx in 0..*open_depth {
+            if idx > 0 {
+                out.push('\u{200b}');
+            }
             out.push_str("**");
+        }
+        if chunk[ws..].starts_with('*') {
+            out.push('\u{200b}');
         }
         out.push_str(&chunk[ws..]);
     } else {
@@ -491,7 +514,7 @@ pub(crate) fn quote_body(line: &str) -> Option<&str> {
 
 
 /// A message's markdown, in the renderer's own markup: a heading becomes a bold
-/// line in the heading's ink, a rule becomes a blank line, a quote becomes a
+/// line in the heading's ink, a rule becomes a muted divider, a quote becomes a
 /// bar and quote ink, and a backticked word becomes the inline code's ink instead
 /// of the renderer's cramped box. Everything the renderer cannot parse is taken
 /// out on the way.
@@ -504,24 +527,26 @@ pub fn markdown_markup(text: &str, theme: &Resolved) -> String {
         }
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
-            // headings carry their own ink, the way the TUI colours mdHeading,
-            // and bold, because there is no size step inside one text run
-            let body = escape_html(&autolink_markup(
-                trimmed.trim_start_matches('#').trim_start(),
-            ));
-            open_font(theme, Role::TranscriptHeadingInk, &mut out);
-            out.push_str("**");
-            out.push_str(&body);
-            out.push_str("**</font>");
-        } else if trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-' || ch == '*' || ch == '_' || ch == ' ') {
-            // horizontal rule: nothing to draw
+            let body = trimmed.trim_start_matches('#').trim_start().trim_end();
+            if !body.is_empty() {
+                push_heading_line(body, theme, &mut out);
+            }
+        } else if is_horizontal_rule(trimmed) {
+            open_font(theme, Role::TranscriptQuoteEdge, &mut out);
+            out.push_str("\u{2500}\u{2500}\u{2500}</font>");
         } else if let Some(rest) = quote_body(line) {
             open_font(theme, Role::TranscriptQuoteEdge, &mut out);
-            out.push('│');
-            out.push_str("</font> ");
-            open_font(theme, Role::TranscriptQuoteInk, &mut out);
-            out.push_str(&escape_html(&autolink_markup(rest)));
+            out.push('\u{2502}');
             out.push_str("</font>");
+            if !rest.trim().is_empty() {
+                out.push(' ');
+                open_font(theme, Role::TranscriptQuoteInk, &mut out);
+                out.push_str(&escape_html(&autolink_markup(rest)));
+                out.push_str("</font>");
+            }
+        } else if let Some((bullet, body)) = unordered_list_item(line) {
+            out.push_str(&bullet);
+            out.push_str(&escape_html(&autolink_markup(body)));
         } else {
             out.push_str(&escape_html(&autolink_markup(line)));
         }
@@ -541,14 +566,333 @@ pub fn quote_markup(text: &str, theme: &Resolved) -> String {
             if line.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}').is_empty() {
                 line.to_string()
             } else {
-                format!("*{line}*")
+                wrap_line_emphasis(line)
             }
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
+fn is_horizontal_rule(trimmed: &str) -> bool {
+    let mut marker = None;
+    let mut count = 0usize;
+    for ch in trimmed.chars() {
+        if ch == ' ' || ch == '\t' {
+            continue;
+        }
+        if !matches!(ch, '-' | '*' | '_') || marker.is_some_and(|m| m != ch) {
+            return false;
+        }
+        marker = Some(ch);
+        count += 1;
+    }
+    count >= 3
+}
 
+fn unordered_list_item(line: &str) -> Option<(String, &str)> {
+    let mut indent = 0usize;
+    let mut byte_idx = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => {
+                indent += 1;
+                byte_idx += 1;
+            }
+            '\t' => {
+                indent += 4;
+                byte_idx += 1;
+            }
+            _ => break,
+        }
+    }
+    let rest = &line[byte_idx..];
+    let body = rest
+        .strip_prefix("- ")
+        .or_else(|| rest.strip_prefix("* "))
+        .or_else(|| rest.strip_prefix("+ "))?;
+    let bullet = if indent == 0 {
+        "\u{2022} ".to_string()
+    } else {
+        format!("{}\u{25e6} ", " ".repeat(indent))
+    };
+    Some((bullet, body))
+}
+
+fn link_dest_end(s: &str, start: usize) -> Option<usize> {
+    if !s[start..].starts_with("](") {
+        return None;
+    }
+    let mut depth = 1usize;
+    let mut pos = start + 2;
+    while pos < s.len() {
+        let ch = s[pos..].chars().next()?;
+        pos += ch.len_utf8();
+        match ch {
+            '\\' => {
+                if let Some(esc) = s[pos..].chars().next() {
+                    pos += esc.len_utf8();
+                }
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_strong_markers(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut pos = 0;
+    while pos < s.len() {
+        if let Some(end) = link_dest_end(s, pos) {
+            out.push_str(&s[pos..end]);
+            pos = end;
+            continue;
+        }
+        let ch = s[pos..].chars().next().unwrap_or(' ');
+        if ch == '\\' {
+            out.push(ch);
+            pos += 1;
+            if let Some(esc) = s[pos..].chars().next() {
+                out.push(esc);
+                pos += esc.len_utf8();
+            }
+            continue;
+        }
+        if s[pos..].starts_with("**") {
+            pos += 2;
+            continue;
+        }
+        out.push(ch);
+        pos += ch.len_utf8();
+    }
+    out
+}
+
+fn sanitize_emphasis_stars(s: &str) -> String {
+    struct Star {
+        pos: usize,
+        left: bool,
+        right: bool,
+        paired: bool,
+    }
+    let mut stars: Vec<Star> = Vec::new();
+    let mut pos = 0;
+    let mut prev = ' ';
+    while pos < s.len() {
+        if let Some(end) = link_dest_end(s, pos) {
+            prev = ')';
+            pos = end;
+            continue;
+        }
+        let ch = s[pos..].chars().next().unwrap_or(' ');
+        if ch == '\\' {
+            pos += 1;
+            if let Some(esc) = s[pos..].chars().next() {
+                prev = esc;
+                pos += esc.len_utf8();
+            } else {
+                prev = '\\';
+            }
+            continue;
+        }
+        if ch == '*' {
+            let run = s[pos..].bytes().take_while(|&b| b == b'*').count();
+            let after_pos = pos + run;
+            let after = s[after_pos..].chars().next().unwrap_or(' ');
+            if run % 2 == 1 {
+                let after_ws = after.is_whitespace();
+                let before_ws = prev.is_whitespace();
+                let after_p = after.is_ascii_punctuation();
+                let before_p = prev.is_ascii_punctuation();
+                let left = !after_ws && (!after_p || before_ws || before_p);
+                let right = !before_ws && (!before_p || after_ws || after_p);
+                let star_pos = if right && !left { pos + run - 1 } else { pos };
+                stars.push(Star {
+                    pos: star_pos,
+                    left,
+                    right,
+                    paired: false,
+                });
+            }
+            prev = '*';
+            pos = after_pos;
+            continue;
+        }
+        prev = ch;
+        pos += ch.len_utf8();
+    }
+    let mut open: Vec<usize> = Vec::new();
+    for idx in 0..stars.len() {
+        if stars[idx].right && !open.is_empty() {
+            let opener = open.pop().expect("non-empty stack");
+            stars[opener].paired = true;
+            stars[idx].paired = true;
+        } else if stars[idx].left {
+            open.push(idx);
+        }
+    }
+    let unpaired: Vec<usize> = stars
+        .into_iter()
+        .filter(|star| !star.paired)
+        .map(|star| star.pos)
+        .collect();
+    if unpaired.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + unpaired.len());
+    let mut cursor = 0;
+    for star_pos in unpaired {
+        out.push_str(&s[cursor..star_pos]);
+        out.push('\\');
+        out.push('*');
+        cursor = star_pos + 1;
+    }
+    out.push_str(&s[cursor..]);
+    out
+}
+
+fn push_wrapped_chunk(chunk: &str, marker: &str, strip_bold: bool, out: &mut String) {
+    let lead = chunk.len() - chunk.trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}').len();
+    let trail_start = chunk.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}').len();
+    if lead >= trail_start {
+        out.push_str(chunk);
+        return;
+    }
+    let inner = &chunk[lead..trail_start];
+    let cleaned = if strip_bold {
+        sanitize_emphasis_stars(&strip_strong_markers(inner))
+    } else {
+        sanitize_emphasis_stars(inner)
+    };
+    if cleaned.is_empty() {
+        out.push_str(&chunk[..lead]);
+        out.push_str(&chunk[trail_start..]);
+        return;
+    }
+    out.push_str(&chunk[..lead]);
+    out.push_str(marker);
+    if cleaned.starts_with('*') {
+        out.push('\u{200b}');
+    }
+    out.push_str(&cleaned);
+    if cleaned.ends_with('*') {
+        out.push('\u{200b}');
+    }
+    out.push_str(marker);
+    out.push_str(&chunk[trail_start..]);
+}
+
+fn push_heading_chunk(chunk: &str, theme: &Resolved, out: &mut String) {
+    let stripped = strip_strong_markers(chunk);
+    let lead = stripped.len()
+        - stripped
+            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}')
+            .len();
+    let trail_start = stripped
+        .trim_end_matches(|ch: char| ch.is_whitespace() || ch == '\u{200b}')
+        .len();
+    if lead >= trail_start {
+        out.push_str(&stripped);
+        return;
+    }
+    out.push_str(&stripped[..lead]);
+    open_font(theme, Role::TranscriptHeadingInk, out);
+    push_wrapped_chunk(&stripped[lead..trail_start], "**", false, out);
+    out.push_str("</font>");
+    out.push_str(&stripped[trail_start..]);
+}
+
+fn next_markdown_link(s: &str) -> Option<(usize, usize)> {
+    let mut pos = 0;
+    while let Some(open_rel) = s[pos..].find('[') {
+        let open = pos + open_rel;
+        if let Some(close_br_rel) = s[open..].find("](") {
+            let close_br = open + close_br_rel;
+            if let Some(end) = link_dest_end(s, close_br) {
+                return Some((open, end));
+            }
+        }
+        pos = open + 1;
+    }
+    None
+}
+
+fn push_heading_line(raw: &str, theme: &Resolved, out: &mut String) {
+    let highlighted = highlight_inline_code(&escape_html(&autolink_markup(raw)), theme);
+    let mut pos = 0;
+    while pos < highlighted.len() {
+        let slice = &highlighted[pos..];
+        let font_rel = slice.find("<font ");
+        let link_with_font = next_markdown_link(slice)
+            .filter(|&(l_start, l_end)| slice[l_start..l_end].contains("<font "));
+        if let Some((l_start, l_end)) = link_with_font {
+            if font_rel.is_none_or(|f| l_start <= f) {
+                if l_start > 0 {
+                    push_heading_chunk(&slice[..l_start], theme, out);
+                }
+                open_font(theme, Role::TranscriptHeadingInk, out);
+                out.push_str("**");
+                out.push_str(&slice[l_start..l_end]);
+                out.push_str("**</font>");
+                pos += l_end;
+                continue;
+            }
+        }
+        let Some(f_rel) = font_rel else {
+            push_heading_chunk(slice, theme, out);
+            break;
+        };
+        if f_rel > 0 {
+            push_heading_chunk(&slice[..f_rel], theme, out);
+        }
+        let tag_start = pos + f_rel;
+        let Some(end_rel) = highlighted[tag_start..].find("</font>") else {
+            push_heading_chunk(&highlighted[tag_start..], theme, out);
+            break;
+        };
+        let tag_end = tag_start + end_rel + "</font>".len();
+        out.push_str(&highlighted[tag_start..tag_end]);
+        pos = tag_end;
+    }
+}
+
+fn wrap_line_emphasis(line: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 16);
+    let mut pos = 0;
+    while pos < line.len() {
+        let next_open = line[pos..].find("<font ");
+        let next_close = line[pos..].find("</font>");
+        let next_tag = match (next_open, next_close) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        let Some(rel) = next_tag else {
+            push_wrapped_chunk(&line[pos..], "*", false, &mut out);
+            break;
+        };
+        if rel > 0 {
+            push_wrapped_chunk(&line[pos..pos + rel], "*", false, &mut out);
+        }
+        let tag_start = pos + rel;
+        let Some(gt_rel) = line[tag_start..].find('>') else {
+            push_wrapped_chunk(&line[tag_start..], "*", false, &mut out);
+            break;
+        };
+        let tag_end = tag_start + gt_rel + 1;
+        out.push_str(&line[tag_start..tag_end]);
+        pos = tag_end;
+    }
+    out
+}
 /// Inline code, as a colour rather than a box.
 ///
 /// The renderer's own treatment is a rectangle that hugs the glyphs with no
@@ -603,15 +947,6 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
         }
         chars = probe;
         if !body.trim().is_empty() {
-            // A fresh span carries its weight inside the colour tag: at the
-            // start of a line Slint reads `**<font>` as literal markers, while
-            // `<font>**...**` parses. A span already inside bold only needs a
-            // zero-width separator so the opening markers parse there.
-            let line_start = out.rfind('\n').map_or(0, |p| p + 1);
-            let bold_already = unclosed_strong_depth_before(&out[line_start..], '<') > 0;
-            if bold_already && out.ends_with("**") {
-                out.push('\u{200b}');
-            }
             for (index, line) in body.trim().split('\n').enumerate() {
                 if index > 0 {
                     out.push('\n');
@@ -619,24 +954,16 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
                 if line.trim().is_empty() {
                     continue;
                 }
-                if index > 0 && bold_already {
-                    out.push('\u{200b}');
-                }
                 open_font(theme, Role::TranscriptInlineCodeInk, &mut out);
-                if !bold_already {
-                    out.push_str("**");
-                }
-                if index > 0
-                    && !bold_already
-                    && (line.starts_with(' ') || line.starts_with('\t'))
-                {
+                out.push_str("**");
+                if line.starts_with(' ') || line.starts_with('\t') {
                     out.push('\u{200b}');
                 }
                 escape_code_span(line, &mut out);
-                if !bold_already {
-                    out.push_str("**");
+                if line.ends_with(' ') || line.ends_with('\t') {
+                    out.push('\u{200b}');
                 }
-                out.push_str("</font>");
+                out.push_str("**</font>");
             }
         } else {
             out.push_str(&ticks);
@@ -646,7 +973,6 @@ pub(crate) fn highlight_inline_code(text: &str, theme: &Resolved) -> String {
     }
     out
 }
-
 
 /// One piece of a message: prose, a quote, a fenced block, or a table.
 pub(crate) enum Block {
@@ -831,7 +1157,7 @@ fn starts_other_block(line: &str) -> bool {
     {
         return true;
     }
-    if trimmed.len() >= 3 && trimmed.chars().all(|ch| matches!(ch, '-' | '*' | '_' | ' ')) {
+    if is_horizontal_rule(trimmed) {
         return true;
     }
     let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
