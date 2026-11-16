@@ -58,19 +58,16 @@ const ON_TRANSCRIPT: &[Role] = &[Role::TranscriptSurface];
 const ON_MESSAGE: &[Role] = &[Role::TranscriptSurface, Role::TranscriptMessageFill];
 const ON_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFill];
 const ON_CELL_HOVER: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillHover];
-const ON_FAILED_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillFailed];
-const ON_FAILED_CELL_HOVER: &[Role] =
-    &[Role::TranscriptSurface, Role::TranscriptCellFillFailedHover];
+const ON_WORKING_CELL: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCellFillWorking];
+const ON_WORKING_CELL_HOVER: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptCellFillWorkingHover];
 const ON_OPENED_ROW: &[Role] = &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded];
+const ON_CELL_COPY: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded, Role::TranscriptCellCopyFill];
+const ON_CELL_COPY_HOVER: &[Role] =
+    &[Role::TranscriptSurface, Role::TranscriptRowFillExpanded, Role::TranscriptCellCopyFillHover];
 const ON_CODE_CARD: &[Role] = &[Role::TranscriptSurface, Role::TranscriptCodeFill];
-// The chip that walks back to the newest row, and the badge a failed cell
-// carries: a mark drawn on a fill that is itself laid on a field.
 const ON_JUMP: &[Role] = &[Role::TranscriptSurface, Role::TranscriptJumpFill];
-const ON_BADGE: &[Role] = &[
-    Role::TranscriptSurface,
-    Role::TranscriptCellFillFailed,
-    Role::TranscriptCellBadgeFill,
-];
 // The composer's own fields: the box the reader writes in, the chip that names
 // the model, and the card the context ring opens.
 const ON_COMPOSER: &[Role] = &[Role::ComposerSurface];
@@ -354,6 +351,16 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInk, on: ON_CELL },
+        what: "a cell's verb at rest",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInk, on: ON_CELL_HOVER },
+        what: "a cell's verb under the pointer",
+        floor: BODY,
+    },
+    Pair {
         ink: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
         what: "a cell's name at rest",
         floor: BODY,
@@ -363,9 +370,6 @@ const PAIRS: &[Pair] = &[
         what: "a cell's name under the pointer",
         floor: BODY,
     },
-    // The caret beside that name is the whole of what says the row opens, so it is
-    // read on the cell — and, in a thinking row, on the sheet the row runs across,
-    // because a resting thinking row draws no fill of its own.
     Pair {
         ink: Mark { role: Role::TranscriptCaretMark, on: ON_CELL },
         what: "the caret on a cell",
@@ -387,33 +391,82 @@ const PAIRS: &[Pair] = &[
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellSeparatorInk, on: ON_CELL },
-        what: "the dot that parts a cell's meta from its elapsed time",
-        floor: MARK,
+        ink: Mark { role: Role::TranscriptCellCopyInk, on: ON_CELL_COPY },
+        what: "the copy button on an expanded cell",
+        floor: BODY,
     },
-    // A failure is read in the same two states as a quiet cell, and its field is
-    // the one a theme is most likely to leave behind.
     Pair {
-        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
+        ink: Mark { role: Role::TranscriptCellCopyInkHover, on: ON_CELL_COPY_HOVER },
+        what: "the copy button on an expanded cell, under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_CELL },
         what: "a failed cell's words",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL_HOVER },
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_CELL_HOVER },
         what: "a failed cell's words under the pointer",
         floor: BODY,
     },
     Pair {
-        ink: Mark { role: Role::TranscriptReasonInk, on: ON_FAILED_CELL },
-        what: "the reason a failed cell opens",
+        ink: Mark { role: Role::TranscriptCellInkFailed, on: ON_OPENED_ROW },
+        what: "a failed cell's output",
         floor: BODY,
     },
-    // The badge is opened for what the alert inside it says, and the alert is a
-    // mark on the badge's own red rather than on the cell's field.
     Pair {
-        ink: Mark { role: Role::TranscriptCellBadgeMark, on: ON_BADGE },
-        what: "the alert inside a failed cell's badge",
+        ink: Mark { role: Role::TranscriptWorkingInk, on: ON_WORKING_CELL },
+        what: "a running cell's icon",
         floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's verb",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's verb under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's name",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellTitleInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's name under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellMetaInkWorking, on: ON_WORKING_CELL },
+        what: "a running cell's status",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptCellMetaInkWorking, on: ON_WORKING_CELL_HOVER },
+        what: "a running cell's status under the pointer",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptWorkingInk, on: ON_TRANSCRIPT },
+        what: "an active thinking row's squiggle",
+        floor: MARK,
+    },
+    Pair {
+        ink: Mark { role: Role::TranscriptThinkingLabelInkWorking, on: ON_TRANSCRIPT },
+        what: "an active thinking row's label",
+        floor: BODY,
+    },
+    Pair {
+        ink: Mark {
+            role: Role::TranscriptThinkingLabelInkWorking,
+            on: &[Role::TranscriptSurface, Role::TranscriptThinkingFillHover],
+        },
+        what: "an active thinking row's label under the pointer",
+        floor: BODY,
     },
     // The chip that walks the reader back to the newest row floats over the sheet
     // on a fill of its own; the chevron is the whole of what says it goes down.
@@ -827,26 +880,34 @@ const TELLINGS: &[Telling] = &[
         what: "the parked tag and the idle tag",
         floor: APART,
     },
-    // A cell that failed says so twice: its field is warmed and its name is
-    // written in the failure's red. Both are measured in each state the row is
-    // read in, because a theme that greys one and leaves the other is one
-    // careless role away from a transcript where nothing says which cell failed.
     Telling {
-        a: Mark { role: Role::TranscriptCellFillFailed, on: ON_TRANSCRIPT },
-        b: Mark { role: Role::TranscriptCellFill, on: ON_TRANSCRIPT },
-        what: "a failed cell's field and a quiet cell's field",
-        floor: APART_TINT,
-    },
-    Telling {
-        a: Mark { role: Role::TranscriptCellFillFailedHover, on: ON_TRANSCRIPT },
-        b: Mark { role: Role::TranscriptCellFillHover, on: ON_TRANSCRIPT },
-        what: "a failed cell's field and a quiet cell's field under the pointer",
-        floor: APART_TINT,
-    },
-    Telling {
-        a: Mark { role: Role::TranscriptCellInkFailed, on: ON_FAILED_CELL },
+        a: Mark { role: Role::TranscriptCellInkFailed, on: ON_CELL },
         b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
         what: "a failed cell's name and a quiet cell's name",
+        floor: APART,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillWorking, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFill, on: ON_TRANSCRIPT },
+        what: "a running cell's field and a quiet cell's field",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellFillWorkingHover, on: ON_TRANSCRIPT },
+        b: Mark { role: Role::TranscriptCellFillHover, on: ON_TRANSCRIPT },
+        what: "a running cell's field and a quiet cell's field under the pointer",
+        floor: APART_TINT,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptWorkingInk, on: ON_WORKING_CELL },
+        b: Mark { role: Role::TranscriptCellTitleInk, on: ON_CELL },
+        what: "a running cell's icon and a quiet cell's name",
+        floor: APART,
+    },
+    Telling {
+        a: Mark { role: Role::TranscriptCellVerbInkWorking, on: ON_WORKING_CELL },
+        b: Mark { role: Role::TranscriptCellVerbInk, on: ON_CELL },
+        what: "a running cell's verb and a quiet cell's verb",
         floor: APART,
     },
     // The composer's one control does two opposite jobs. The arrow that becomes a

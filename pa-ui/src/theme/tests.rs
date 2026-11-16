@@ -106,11 +106,10 @@ fn the_shipped_theme_draws_todays_glyphs() {
     assert_eq!(theme.get(Role::SidebarRowRenameMark), Rgba::hex("#8b8c84"));
 
     // The transcript: the caret on a row that opens — a thinking row and a cell
-    // draw the same shape — the chevron on the chip that walks back to the
-    // newest row, and the alert inside a failed cell's badge.
+    // draw the same shape — and the chevron on the chip that walks back to the
+    // newest row.
     assert_eq!(theme.get(Role::TranscriptCaretMark), Rgba::hex("#7c7b77"));
     assert_eq!(theme.get(Role::TranscriptJumpMark), Rgba::hex("#a5a49e"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeMark), Rgba::hex("#f3ded8"));
 
     // The panels the caret and the tick are drawn in: the model menu's own
     // caret, its tick beside the running model, and the tick the ladder draws
@@ -179,13 +178,7 @@ fn a_theme_that_moves_the_inks_repaints_the_glyphs_and_the_mark() {
         assert_ne!(theme.get(role), shipped.get(role), "{} did not follow", role.name());
     }
 
-    // Three glyphs are the exception every part with a hue has: the alert inside
-    // a failed cell's badge and the two ticks that mark what is running are drawn
-    // in colours no palette word describes, so they stay values a theme names
-    // outright rather than being mixed out of the ink. The check measures each of
-    // them where it is drawn.
-    for role in [Role::TranscriptCellBadgeMark, Role::ModelMenuCheckMark, Role::EffortLadderCheckMark]
-    {
+    for role in [Role::ModelMenuCheckMark, Role::EffortLadderCheckMark] {
         assert_eq!(theme.get(role), shipped.get(role), "{} is not made of the inks", role.name());
     }
 }
@@ -306,11 +299,18 @@ fn the_shipped_theme_draws_todays_transcript() {
     // A cell in each state it is drawn in.
     assert_eq!(theme.get(Role::TranscriptCellFill), Rgba::hex("#141512"));
     assert_eq!(theme.get(Role::TranscriptCellFillHover), Rgba::hex("#181916"));
-    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#8b8c84"));
+    assert_eq!(theme.get(Role::TranscriptCellEdge), Rgba::hex("#1e1f1c"));
+    assert_eq!(theme.get(Role::TranscriptCellVerbInk), Rgba::hex("#868780"));
+    assert_eq!(theme.get(Role::TranscriptCellTitleInk), Rgba::hex("#c0bfb9"));
     assert_eq!(theme.get(Role::TranscriptCellMetaInk), Rgba::hex("#4b4c47"));
-    assert_eq!(theme.get(Role::TranscriptCellSeparatorInk), Rgba::hex("#ffffff"));
     assert_eq!(theme.get(Role::TranscriptCellCodeInk), Rgba::hex("#d3d1cb"));
     assert_eq!(theme.get(Role::TranscriptCellOutputInk), Rgba::hex("#909189"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyFill), Rgba::hex("#151613"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyFillHover), Rgba::hex("#1b1c19"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyEdge), Rgba::hex("#252622"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyEdgeHover), Rgba::hex("#353531"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyInk), Rgba::hex("#9c9b96"));
+    assert_eq!(theme.get(Role::TranscriptCellCopyInkHover), Rgba::hex("#e7e5df"));
 
     // And the two panels a row opens, which sit below the field they open on.
     assert_eq!(theme.get(Role::TranscriptRowFillExpanded), Rgba::hex("#0f100d"));
@@ -321,7 +321,7 @@ fn the_shipped_theme_draws_todays_transcript() {
     // A thinking row: it draws no fill of its own until the pointer arrives.
     assert_eq!(theme.get(Role::TranscriptThinkingFill).a, 0, "a resting thinking row is not a fill");
     assert_eq!(theme.get(Role::TranscriptThinkingFillHover), Rgba::hex("#1a1b18"));
-    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#6b6c65"));
+    assert_eq!(theme.get(Role::TranscriptThinkingLabelInk), Rgba::hex("#7f8079"));
     assert_eq!(theme.get(Role::TranscriptThinkingInk), Rgba::hex("#7f8079"));
 
     // A fenced block, the table's text, and the field behind a picture.
@@ -340,20 +340,11 @@ fn the_shipped_theme_draws_todays_transcript() {
     assert_eq!(theme.get(Role::TranscriptJumpEdge), Rgba::hex("#363632"));
 }
 
-/// What a failure is drawn in: a warmed red the palette has no word for, and the
-/// fields it is read on. The reason the badge opens is drawn in the failed
-/// cell's own field, so it adds only its edge and its ink.
 #[test]
 fn the_shipped_theme_draws_todays_failure() {
     let theme = Resolved::shipped();
 
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
-    assert_eq!(theme.get(Role::TranscriptCellFillFailedHover), Rgba::hex("#241713"));
-    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeFill), Rgba::hex("#6b342b"));
-    assert_eq!(theme.get(Role::TranscriptCellBadgeFillHover), Rgba::hex("#8d4235"));
-    assert_eq!(theme.get(Role::TranscriptReasonEdge), Rgba::hex("#6b342b"));
-    assert_eq!(theme.get(Role::TranscriptReasonInk), Rgba::hex("#e0b6ad"));
+    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#d6887e"));
 }
 
 /// The composer as the window drew it before there was a theme: the values read
@@ -587,40 +578,97 @@ fn a_theme_that_moves_the_base_values_moves_the_transcript_with_them() {
     }
 }
 
-/// The failure keeps the colours it is drawn in, because the palette has no word
-/// for them: a theme that wants a failed cell to read on its own field has to
-/// name the roles, and the check tells it which when it does not.
 #[test]
-fn the_theme_that_names_only_base_values_leaves_the_failure_where_it_was() {
-    let theme = from_text(
+fn the_new_and_updated_transcript_roles_follow_the_palette() {
+    let shipped = Resolved::shipped();
+    let light_theme = from_text(
         "mine.json",
         r##"{ "name": "mine", "version": 1,
-             "palette": { "background": "#f5f5f5", "ink": "#202020", "danger": "#7a1f18" } }"##,
+             "palette": { "background": "#f5f5f5", "ink": "#202020",
+                          "quiet-ink": "#3a3a3a", "danger": "#7a1f18" } }"##,
     )
     .expect("a file that names only base values");
 
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), Rgba::hex("#1d1412"));
-    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#c98a7f"));
+    for role in [
+        Role::TranscriptCellEdge,
+        Role::TranscriptCellVerbInk,
+        Role::TranscriptCellTitleInk,
+        Role::TranscriptCellInkFailed,
+        Role::TranscriptThinkingLabelInk,
+        Role::TranscriptCellCopyFill,
+        Role::TranscriptCellCopyFillHover,
+        Role::TranscriptCellCopyEdge,
+        Role::TranscriptCellCopyEdgeHover,
+        Role::TranscriptCellCopyInk,
+        Role::TranscriptCellCopyInkHover,
+        Role::TranscriptWorkingInk,
+        Role::TranscriptWorkingInkDim,
+        Role::TranscriptCellFillWorking,
+        Role::TranscriptCellFillWorkingHover,
+        Role::TranscriptCellEdgeWorking,
+        Role::TranscriptCellVerbInkWorking,
+        Role::TranscriptCellTitleInkWorking,
+        Role::TranscriptCellMetaInkWorking,
+        Role::TranscriptThinkingLabelInkWorking,
+    ] {
+        assert_ne!(
+            light_theme.get(role),
+            shipped.get(role),
+            "{} must derive from palette",
+            role.name()
+        );
+    }
+    let cell_findings: Vec<_> = contrast(&light_theme)
+        .into_iter()
+        .filter(|f| {
+            f.what.contains("cell's")
+                || f.what.contains("failed cell")
+                || f.what.contains("expanded cell")
+                || f.what.contains("thinking row's")
+                || f.what == "the label a thinking row carries"
+        })
+        .collect();
+    assert!(cell_findings.is_empty(), "light theme cell/thinking findings: {cell_findings:?}");
+    let cell_clashes: Vec<_> = separation(&light_theme)
+        .into_iter()
+        .filter(|c| c.what.contains("cell"))
+        .collect();
+    assert!(cell_clashes.is_empty(), "light theme cell clashes: {cell_clashes:?}");
 }
 
-/// A failed cell is distinguishable because of its field's tint and the red its
-/// name is written in. A theme that paints both like a quiet cell has taken the
-/// failure away, and is told which of the two it lost.
 #[test]
 fn a_theme_that_paints_a_failed_cell_like_a_quiet_one_is_reported() {
     let theme = from_text(
         "mine.json",
         r##"{ "name": "mine", "version": 1,
-             "roles": { "transcript-cell-fill-failed": "#151515",
-                        "transcript-cell-ink-failed": "#8b8b8b" } }"##,
+             "roles": { "transcript-cell-ink-failed": "#c0bfb9" } }"##,
     )
     .expect("a theme that loads");
 
     let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
 
-    assert_eq!(named.len(), 2, "{named:?}");
-    assert!(named.contains(&"a failed cell's field and a quiet cell's field"), "{named:?}");
-    assert!(named.contains(&"a failed cell's name and a quiet cell's name"), "{named:?}");
+    assert_eq!(named, ["a failed cell's name and a quiet cell's name"]);
+}
+
+#[test]
+fn a_theme_that_paints_a_running_cell_like_a_quiet_one_is_reported() {
+    let theme = from_text(
+        "mine.json",
+        r##"{ "name": "mine", "version": 1,
+             "roles": { "transcript-cell-fill-working": "#141512",
+                        "transcript-cell-verb-ink-working": "#868780" } }"##,
+    )
+    .expect("a theme that loads");
+
+    let named: Vec<&str> = separation(&theme).iter().map(|clash| clash.what).collect();
+
+    assert_eq!(
+        named,
+        [
+            "a running cell's field and a quiet cell's field",
+            "a running cell's verb and a quiet cell's verb",
+        ]
+    );
 }
 
 /// A file that names the transcript's colours repaints the transcript and moves
@@ -645,22 +693,31 @@ fn a_theme_that_names_the_transcript_roles_moves_only_those() {
                "transcript-caret-mark": "#a99bc4",
                "transcript-cell-fill": "#241a33",
                "transcript-cell-fill-hover": "#2f2242",
+               "transcript-cell-edge": "#3a2a52",
+               "transcript-cell-verb-ink": "#a89cc0",
                "transcript-cell-title-ink": "#cfc0e8",
                "transcript-cell-meta-ink": "#8a7fa0",
-               "transcript-cell-separator-ink": "#ffe9f4",
                "transcript-cell-code-ink": "#eee6ff",
                "transcript-cell-output-ink": "#b9a9d6",
                "transcript-cell-rule": "#3a2a52",
+               "transcript-cell-copy-fill": "#241a33",
+               "transcript-cell-copy-fill-hover": "#2f2242",
+               "transcript-cell-copy-edge": "#3a2a52",
+               "transcript-cell-copy-edge-hover": "#4a3a63",
+               "transcript-cell-copy-ink": "#b9a9d6",
+               "transcript-cell-copy-ink-hover": "#eee6ff",
                "transcript-cell-edge-expanded": "#3a2a52",
                "transcript-thinking-edge-expanded": "#33254a",
-               "transcript-cell-fill-failed": "#3d1f24",
-               "transcript-cell-fill-failed-hover": "#4a262c",
                "transcript-cell-ink-failed": "#ff9f8f",
-               "transcript-cell-badge-fill": "#8a3428",
-               "transcript-cell-badge-fill-hover": "#a5402f",
-               "transcript-cell-badge-mark": "#ffe9e2",
-               "transcript-reason-edge": "#8a3428",
-               "transcript-reason-ink": "#ffd0c4",
+               "transcript-working-ink": "#f2cc60",
+               "transcript-working-ink-dim": "#594b22",
+               "transcript-cell-fill-working": "#282218",
+               "transcript-cell-fill-working-hover": "#332b1e",
+               "transcript-cell-edge-working": "#52442a",
+               "transcript-cell-verb-ink-working": "#c9ae65",
+               "transcript-cell-title-ink-working": "#f5f0ff",
+               "transcript-cell-meta-ink-working": "#d4ba72",
+               "transcript-thinking-label-ink-working": "#e8d699",
                "transcript-row-fill-expanded": "#140f1c",
                "transcript-thinking-fill": "#1c1526",
                "transcript-thinking-fill-hover": "#251c33",
@@ -1314,8 +1371,8 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     assert_eq!(
         named,
         [
-            "a cell's name at rest",
-            "a cell's name under the pointer",
+            "a cell's verb at rest",
+            "a cell's verb under the pointer",
             "a command's name",
             "a group's caret at rest",
             "a group's word at rest",
@@ -1344,7 +1401,6 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the caret in front of a provider's name",
             "the caret on the composer's chip",
             "the command a draft starts with",
-            "the dot that parts a cell's meta from its elapsed time",
             "the fold mark at rest",
             "the idle tag inside a group",
             "the label a thinking row carries",
@@ -1538,7 +1594,7 @@ fn the_monochrome_theme_reproduces_the_monochrome_work() {
         assert_eq!(theme.get(role), shipped.get(role), "{} keeps its hue", role.name());
     }
     assert_eq!(theme.get(Role::ButtonDangerFill), shipped.get(Role::ButtonDangerFill));
-    assert_eq!(theme.get(Role::TranscriptCellFillFailed), shipped.get(Role::TranscriptCellFillFailed));
+    assert_eq!(theme.get(Role::TranscriptCellInkFailed), Rgba::hex("#d58881"));
 }
 
 /// The check the window runs over the theme it ships with runs over every theme
@@ -1975,5 +2031,27 @@ fn a_declaration_is_read_past_its_comment_and_its_qualifier() {
                   }\n";
 
     assert_eq!(declared_roles(source), ["a-b", "c-d", "e-f"]);
+}
+
+#[test]
+fn expanded_cell_copy_button_uses_primitive_without_resting_opacity_layer() {
+    let source = include_str!("../../ui/transcript.slint");
+    let cell_start = source.find("if data.kind == 3 :").expect("cell row block");
+    let cell_end = source[cell_start..]
+        .find("if data.kind == 5 || is-summary :")
+        .expect("end of cell row block");
+    let cell_block = &source[cell_start..cell_start + cell_end];
+    assert!(
+        cell_block.contains("copy-btn := Button {") || cell_block.contains("Button {"),
+        "expanded Cell Copy control must use Button primitive"
+    );
+    assert!(
+        cell_block.contains("root.copy()"),
+        "expanded Cell Copy Button must invoke root.copy()"
+    );
+    assert!(
+        !cell_block.contains("opacity:"),
+        "Cell block must not use resting opacity: 0 offscreen layers"
+    );
 }
 

@@ -71,9 +71,11 @@ pub struct Row {
     /// Tool-call id for cell rows: the live event path and the store path both
     /// build a row for the same call, and this is how they are told apart.
     pub id: String,
+    pub verb: String,
     pub title: String,
     pub meta: String,
     pub body: String,
+    pub raw_code: String,
     pub code: String,
     pub output: String,
     pub has_code: bool,
@@ -83,7 +85,7 @@ pub struct Row {
     pub has_body: bool,
     pub expanded: bool,
     pub failed: bool,
-    pub reason: String,
+    pub running: bool,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
     /// which message this row belongs to: the daemon's id when it has one,
@@ -123,9 +125,11 @@ impl Row {
         Self {
             kind,
             id: String::new(),
+            verb: String::new(),
             title: String::new(),
             meta: String::new(),
             body: String::new(),
+            raw_code: String::new(),
             code: String::new(),
             output: String::new(),
             has_code: false,
@@ -133,7 +137,7 @@ impl Row {
             has_body: false,
             expanded: false,
             failed: false,
-            reason: String::new(),
+            running: false,
             image: String::new(),
             elapsed: String::new(),
             timestamp: String::new(),
@@ -468,8 +472,8 @@ fn build_message(
                     continue;
                 }
                 let mut row = Row::new(KIND_THINKING);
+                row.title = "Thinking".to_string();
                 row.body = plain_markup(text);
-                row.meta = format!("{} lines", text.lines().count());
                 rows.push(row);
             }
             "toolCall" => {
@@ -480,16 +484,14 @@ fn build_message(
                     .unwrap_or_default();
                 let mut row = Row::new(KIND_CELL);
                 row.id = id.to_string();
+                row.raw_code = code.to_string();
                 row.code = highlight_python(code, theme);
                 row.has_code = !code.is_empty();
                 if let Some((output, failed)) = outputs.get(id) {
                     row.output = plain_markup(output);
                     row.has_output = !output.trim().is_empty();
                     row.failed = *failed;
-                    row.reason = failure_reason(output, *failed);
                 }
-                let lines = code.lines().count();
-                row.meta = if lines == 1 { "1 line".to_string() } else { format!("{lines} lines") };
                 let info = bashes.get(&row.id).cloned();
                 let taken = durations.get(&row.id).copied();
                 apply_header(&mut row, code, info.as_ref(), taken);

@@ -221,6 +221,29 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
                 .max(1);
             (lines as f32 * 21.5) + 8.0
         }
+        transcript::KIND_CELL => {
+            if row.expanded {
+                let code_lines = if row.has_code {
+                    let source = if row.raw_code.is_empty() {
+                        row.code.as_str()
+                    } else {
+                        row.raw_code.as_str()
+                    };
+                    wrapped_lines(source, 72)
+                } else {
+                    0
+                };
+                let out_lines = if row.has_output {
+                    wrapped_lines(&row.output, 84)
+                } else {
+                    0
+                };
+                let rule = if row.has_code && row.has_output { 15.0 } else { 0.0 };
+                38.0 + 18.0 + (code_lines as f32 * 16.5) + rule + (out_lines as f32 * 15.5)
+            } else {
+                38.0
+            }
+        }
         _ => {
             if row.expanded {
                 let code_lines = row.code.lines().count().min(12);
@@ -425,6 +448,9 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
             }
             if let Some(ui) = u.and_then(|w| w.upgrade()) {
                 sync_ui_spacers(&ui, 0.0, 0.0, 0);
+                if ui.get_has_running_row() {
+                    ui.set_has_running_row(false);
+                }
             }
             if let Ok(mut vs) = vstate.try_borrow_mut() {
                 vs.in_slint_call = false;
@@ -614,16 +640,22 @@ fn apply_virtual_update(vstate: &Rc<RefCell<VirtualSlintRows>>, force: bool) {
         }
     }
 
-    let (ui_weak, top, bottom, wstart, scroll_delta) = {
+    let (ui_weak, top, bottom, wstart, scroll_delta, has_running) = {
         let Ok(mut vs) = vstate.try_borrow_mut() else { return };
         vs.clear_pending_flush();
         let scroll_delta = std::mem::take(&mut vs.pending_scroll_delta);
         let (t, b, w) = vs.compute_spacers();
-        (vs.ui.clone(), t, b, w, scroll_delta)
+        let end = vs.win_end.min(vs.all_rows.len());
+        let start = vs.win_start.min(end);
+        let has_running = vs.all_rows[start..end].iter().any(|row| row.running);
+        (vs.ui.clone(), t, b, w, scroll_delta, has_running)
     };
     let mut updated_scroll_y = None;
     if let Some(ui) = ui_weak.and_then(|w| w.upgrade()) {
         sync_ui_spacers(&ui, top, bottom, wstart);
+        if ui.get_has_running_row() != has_running {
+            ui.set_has_running_row(has_running);
+        }
         if scroll_delta.abs() > 0.0 && !ui.get_follow_bottom() && !ui.get_scrollbar_dragging() {
             let cur_y = prev_cy.unwrap_or_else(|| ui.get_dbg_cy());
             #[cfg(test)]
@@ -685,10 +717,13 @@ impl Paging {
     }
 }
 
+type ClipboardFn = Rc<dyn Fn(&str) -> Result<(), String>>;
+
 pub(crate) struct Sheet {
     inner: RefCell<Inner>,
     vstate: Rc<RefCell<VirtualSlintRows>>,
     paging: RefCell<Paging>,
+    clipboard: RefCell<ClipboardFn>,
 }
 
 struct Inner {
@@ -729,6 +764,7 @@ impl Sheet {
             }),
             vstate,
             paging: RefCell::new(Paging::new(history_rows)),
+            clipboard: RefCell::new(Rc::new(crate::sessions::copy_to_clipboard)),
         };
         (sheet, ModelRc::from(model))
     }
@@ -754,6 +790,30 @@ impl Sheet {
         ui.on_toggle_row(move |index| {
             sheet_toggle.toggle(index as usize);
         });
+        let sheet_copy = self.clone();
+        ui.on_copy_cell(move |index| {
+            usize::try_from(index).is_ok_and(|at| sheet_copy.copy_cell(at))
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_clipboard_for_test(&self, clipboard: ClipboardFn) {
+        *self.clipboard.borrow_mut() = clipboard;
+    }
+
+    pub fn copy_cell(&self, at: usize) -> bool {
+        let text = {
+            let inner = self.inner.borrow();
+            let Some(row) = inner.rows.get(at) else {
+                return false;
+            };
+            cell_copy_text(row)
+        };
+        let Some(text) = text else {
+            return false;
+        };
+        let copy = self.clipboard.borrow().clone();
+        copy(&text).is_ok()
     }
 
     pub fn reset_paging(&self, ui: &AppWindow) {
@@ -1198,9 +1258,25 @@ impl Sheet {
     }
 
     pub fn answer_ended(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.open = None;
-        inner.after_open_end = None;
+        let vstate = {
+            let mut inner = self.inner.borrow_mut();
+            inner.open = None;
+            inner.after_open_end = None;
+            let mut settled = false;
+            let len = inner.rows.len();
+            for at in 0..len {
+                if inner.rows[at].running {
+                    inner.rows[at].running = false;
+                    let updated = inner.rows[at].clone();
+                    inner.drawn.set(at, &updated);
+                    settled = true;
+                }
+            }
+            settled.then(|| inner.virtual_state.clone()).flatten()
+        };
+        if let Some(vs) = vstate {
+            apply_virtual_update(&vs, false);
+        }
     }
 
     pub fn toggle(&self, at: usize) {
@@ -1591,11 +1667,23 @@ fn row_identity(row: &Row) -> String {
     format!("{}#{}#{}", row.message, row.kind, row.title)
 }
 
+fn wrapped_lines(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|l| (l.chars().count() / width) + 1)
+        .sum::<usize>()
+        .clamp(1, 16)
+}
+
+fn cell_copy_text(row: &Row) -> Option<String> {
+    (row.kind == transcript::KIND_CELL && !row.raw_code.is_empty()).then(|| row.raw_code.clone())
+}
+
 pub(crate) fn to_slint(row: &Row) -> TRow {
     #[cfg(test)]
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
     TRow {
         kind: row.kind,
+        verb: row.verb.clone().into(),
         title: transcript::plain(&row.title).into(),
         meta: transcript::plain(&row.meta).into(),
         body: transcript::styled(&row.body),
@@ -1606,7 +1694,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         has_body: row.has_body,
         expanded: row.expanded,
         failed: row.failed,
-        reason: transcript::plain(&row.reason).into(),
+        running: row.running,
         image: images::from_wire(&row.image),
         elapsed: row.elapsed.clone().into(),
         timestamp: row.timestamp.clone().into(),
@@ -1620,11 +1708,16 @@ pub(crate) fn dump(rows: &[Row]) {
     let dump: String = rows
         .iter()
         .map(|row| {
+            let title = if row.verb.is_empty() {
+                row.title.replace('\n', " ")
+            } else {
+                format!("{} {}", row.verb, row.title).replace('\n', " ")
+            };
             format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\n",
                 row.kind,
                 row.id,
-                row.title.replace('\n', " "),
+                title,
                 row.meta.replace('\n', " "),
                 row.elapsed.replace('\n', " "),
                 row.body.replace('\n', " ").chars().take(90).collect::<String>()
@@ -1652,4 +1745,4 @@ pub(crate) fn trace(what: &str, rows: &[Row]) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

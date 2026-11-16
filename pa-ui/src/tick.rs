@@ -2586,9 +2586,11 @@ mod status_strip_tests {
         scrolling_into_unmounted_rows_converts_on_demand_with_identical_content_and_heights();
         multi_op_merge_above_mounted_window_keeps_offscreen_updates_lazy();
         crate::sessions::virtual_sidebar_tests::run_all();
+        crate::sheet::tests::copy_cell_callback_routes_from_app_window_to_clipboard();
         tighter_mounted_window_bounds_rows_and_covers_viewport_across_scroll_and_live_turn();
         multi_row_measurement_pass_coalesces_spacers_and_scroll_anchor_compensation();
         real_window_layout_and_scroll_remain_gap_free_with_tighter_window();
+        live_active_state_drives_and_clears_has_running_row();
         let _ = std::fs::remove_file(&settings_path);
         std::env::remove_var("PA_SETTINGS_FILE");
     }
@@ -5114,9 +5116,11 @@ fn main() {}
             .map(|i| crate::transcript::Row {
                 kind: crate::transcript::KIND_CELL,
                 id: format!("call-{prefix}-{i}"),
+                verb: "bash".to_string(),
                 title: format!("bash #{i}"),
                 meta: String::new(),
                 body: String::new(),
+                raw_code: format!("echo step_{i}"),
                 code: format!("echo step_{i}"),
                 output: format!("output line {i}"),
                 has_code: true,
@@ -5124,7 +5128,7 @@ fn main() {}
                 has_body: false,
                 expanded: false,
                 failed: false,
-                reason: String::new(),
+                running: false,
                 image: String::new(),
                 message: format!("{prefix}-{i}"),
                 elapsed: String::new(),
@@ -5366,7 +5370,7 @@ fn main() {}
 
         h.ui.set_follow_bottom(false);
         let row_h = crate::sheet::estimate_row_height(&rows[0]);
-        assert_eq!(row_h, 28.0);
+        assert_eq!(row_h, 38.0);
         for first_vis in [0usize, 80, 150, 240, 290] {
             let scroll_top = first_vis as f32 * row_h + 1.0;
             let viewport_h = 1000.0;
@@ -5541,5 +5545,91 @@ fn main() {}
         let _ = h.ui.hide();
         appearance.set_smooth_scroll(prev_smooth);
         assert!(verified.get());
+    }
+
+    fn live_active_state_drives_and_clears_has_running_row() {
+        let h = Harness::new();
+        h.ui.set_selected_id("s".into());
+        assert!(!h.ui.get_has_running_row());
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_start",
+                "message": { "id": "m_live", "role": "assistant", "content": [] }
+            }),
+            sequence: Some(1),
+        });
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "thinking_delta", "delta": "checking" },
+                "message": { "id": "m_live", "role": "assistant" }
+            }),
+            sequence: Some(2),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+        let model = h.ui.get_transcript();
+        let first = slint::Model::row_data(&model, 0).expect("thinking row");
+        assert!(first.running);
+        assert_eq!(first.title.as_str(), "Thinking");
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": "c_live",
+                "args": { "code": "print(1)" }
+            }),
+            sequence: Some(3),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+        let thinking = slint::Model::row_data(&model, 0).expect("settled thinking");
+        let cell = slint::Model::row_data(&model, 1).expect("running cell");
+        assert!(!thinking.running);
+        assert_eq!(thinking.title.as_str(), "Thinking");
+        assert!(cell.running);
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "tool_execution_end",
+                "toolCallId": "c_live",
+                "isError": false,
+                "result": { "content": [{ "text": "1" }] }
+            }),
+            sequence: Some(4),
+        });
+        h.run();
+        assert!(!h.ui.get_has_running_row());
+        let settled_cell = slint::Model::row_data(&model, 1).expect("settled cell");
+        assert!(!settled_cell.running);
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({
+                "type": "message_update",
+                "assistantMessageEvent": { "type": "thinking_delta", "delta": "wrapping up" },
+                "message": { "id": "m_live", "role": "assistant" }
+            }),
+            sequence: Some(5),
+        });
+        h.run();
+        assert!(h.ui.get_has_running_row());
+
+        h.send_at(1, Msg::Event {
+            session: "s".to_string(),
+            event: serde_json::json!({ "type": "turn_end" }),
+            sequence: Some(6),
+        });
+        h.run();
+        assert!(!h.ui.get_has_running_row());
+        let last = slint::Model::row_data(&model, slint::Model::row_count(&model) - 1)
+            .expect("settled trailing thinking");
+        assert!(!last.running);
+        assert_eq!(last.title.as_str(), "Thinking");
     }
 }

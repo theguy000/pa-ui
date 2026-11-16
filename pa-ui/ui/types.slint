@@ -40,6 +40,7 @@ export global Appearance {
 
 export struct TRow {
     kind: int,          // KIND_* constants in transcript/mod.rs
+    verb: string,
     title: string,
     meta: string,
     body: styled-text,
@@ -50,7 +51,7 @@ export struct TRow {
     has-body: bool,
     expanded: bool,
     failed: bool,
-    reason: string,
+    running: bool,
     image: image,
     elapsed: string,
     timestamp: string,

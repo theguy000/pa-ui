@@ -132,24 +132,35 @@ fn set(global: &Theme<'_>, role: Role, value: slint::Color) {
         Role::TranscriptCaretMark => global.set_transcript_caret_mark(value),
         Role::TranscriptCellFill => global.set_transcript_cell_fill(value),
         Role::TranscriptCellFillHover => global.set_transcript_cell_fill_hover(value),
+        Role::TranscriptCellEdge => global.set_transcript_cell_edge(value),
+        Role::TranscriptCellVerbInk => global.set_transcript_cell_verb_ink(value),
         Role::TranscriptCellTitleInk => global.set_transcript_cell_title_ink(value),
         Role::TranscriptCellMetaInk => global.set_transcript_cell_meta_ink(value),
-        Role::TranscriptCellSeparatorInk => global.set_transcript_cell_separator_ink(value),
         Role::TranscriptCellCodeInk => global.set_transcript_cell_code_ink(value),
         Role::TranscriptCellOutputInk => global.set_transcript_cell_output_ink(value),
         Role::TranscriptCellRule => global.set_transcript_cell_rule(value),
+        Role::TranscriptCellCopyFill => global.set_transcript_cell_copy_fill(value),
+        Role::TranscriptCellCopyFillHover => global.set_transcript_cell_copy_fill_hover(value),
+        Role::TranscriptCellCopyEdge => global.set_transcript_cell_copy_edge(value),
+        Role::TranscriptCellCopyEdgeHover => global.set_transcript_cell_copy_edge_hover(value),
+        Role::TranscriptCellCopyInk => global.set_transcript_cell_copy_ink(value),
+        Role::TranscriptCellCopyInkHover => global.set_transcript_cell_copy_ink_hover(value),
         Role::TranscriptCellEdgeExpanded => global.set_transcript_cell_edge_expanded(value),
         Role::TranscriptThinkingEdgeExpanded => global.set_transcript_thinking_edge_expanded(value),
-        Role::TranscriptCellFillFailed => global.set_transcript_cell_fill_failed(value),
-        Role::TranscriptCellFillFailedHover => global.set_transcript_cell_fill_failed_hover(value),
         Role::TranscriptCellInkFailed => global.set_transcript_cell_ink_failed(value),
-        Role::TranscriptCellBadgeFill => global.set_transcript_cell_badge_fill(value),
-        Role::TranscriptCellBadgeFillHover => {
-            global.set_transcript_cell_badge_fill_hover(value)
+        Role::TranscriptWorkingInk => global.set_transcript_working_ink(value),
+        Role::TranscriptWorkingInkDim => global.set_transcript_working_ink_dim(value),
+        Role::TranscriptCellFillWorking => global.set_transcript_cell_fill_working(value),
+        Role::TranscriptCellFillWorkingHover => {
+            global.set_transcript_cell_fill_working_hover(value)
         }
-        Role::TranscriptCellBadgeMark => global.set_transcript_cell_badge_mark(value),
-        Role::TranscriptReasonEdge => global.set_transcript_reason_edge(value),
-        Role::TranscriptReasonInk => global.set_transcript_reason_ink(value),
+        Role::TranscriptCellEdgeWorking => global.set_transcript_cell_edge_working(value),
+        Role::TranscriptCellVerbInkWorking => global.set_transcript_cell_verb_ink_working(value),
+        Role::TranscriptCellTitleInkWorking => global.set_transcript_cell_title_ink_working(value),
+        Role::TranscriptCellMetaInkWorking => global.set_transcript_cell_meta_ink_working(value),
+        Role::TranscriptThinkingLabelInkWorking => {
+            global.set_transcript_thinking_label_ink_working(value)
+        }
         Role::TranscriptRowFillExpanded => global.set_transcript_row_fill_expanded(value),
         Role::TranscriptThinkingFill => global.set_transcript_thinking_fill(value),
         Role::TranscriptThinkingFillHover => global.set_transcript_thinking_fill_hover(value),

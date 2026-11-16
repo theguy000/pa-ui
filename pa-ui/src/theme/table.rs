@@ -163,6 +163,15 @@ pub(crate) enum Derivation {
     /// draws exactly as the value it comes to while still moving with the
     /// palette it is mixed from.
     Mix(Palette, Palette, f32),
+    /// `share` of a dark- or light-calibrated anchor mixed toward a palette
+    /// entry according to whether the palette background is darker than its ink.
+    AdaptiveMix {
+        dark: Rgba,
+        light: Rgba,
+        to: Palette,
+        dark_share: f32,
+        light_share: f32,
+    },
     /// A value the palette has no word for, kept because the window drew it.
     Fixed(Rgba),
 }
@@ -386,18 +395,18 @@ pub(crate) enum Role {
     /// The field of a cell at rest: a lift of ink over the transcript, one step
     /// up from the column so the cell reads as a thing on the sheet.
     TranscriptCellFill,
-    /// The cell the pointer is on, which steps up again — and the cell whose
-    /// failure reason is open, which the row holds in the same state.
+    /// The cell the pointer is on, which steps up again.
     TranscriptCellFillHover,
-    /// The name of what ran, in the cell's header. Read at the ink a secondary
-    /// label gets: the cell is a thing to scan and open, not the words the reader
-    /// came for.
+    /// The hairline border around a cell card.
+    TranscriptCellEdge,
+    /// The muted tool verb (`python`, `bash`, `bash · python`) and resting tool
+    /// icon in the cell's header.
+    TranscriptCellVerbInk,
+    /// The elided target summary in the cell's header.
     TranscriptCellTitleInk,
-    /// The figures beside that name: what a cell was given, how long it took,
-    /// and — in a thinking row's header — how long that row ran.
+    /// The figures beside that name: how long the cell took and optional
+    /// timestamp.
     TranscriptCellMetaInk,
-    /// The `·` that parts a cell's meta from its elapsed time.
-    TranscriptCellSeparatorInk,
     /// The code a cell opened: read at the strength of prose, because it is what
     /// the reader opened the cell to read. Its own role although it ships the
     /// prose's value, because it is read on the cell's panel, not on the column.
@@ -407,36 +416,45 @@ pub(crate) enum Role {
     /// The line between a cell's code and its output, so the two are not read as
     /// one script.
     TranscriptCellRule,
+    /// The fill of the copy button inside an opened cell.
+    TranscriptCellCopyFill,
+    /// The fill of that copy button under the pointer.
+    TranscriptCellCopyFillHover,
+    /// The edge of the copy button inside an opened cell.
+    TranscriptCellCopyEdge,
+    /// The edge of that copy button under the pointer.
+    TranscriptCellCopyEdgeHover,
+    /// The label inside the copy button of an opened cell.
+    TranscriptCellCopyInk,
+    /// The label inside that copy button under the pointer.
+    TranscriptCellCopyInkHover,
     /// The edge of the body a cell opens. It and the field under it are the only
     /// two colours an opened cell adds to the sheet.
     TranscriptCellEdgeExpanded,
     /// The edge of the body a thinking row opens, its own role because the
     /// window drew the two frames a step apart and this one may not be moved.
     TranscriptThinkingEdgeExpanded,
-    /// A cell that failed, at rest. Not the danger colour thinned: the value is a
-    /// warmed red the palette has no word for, so — like the sidebar's tags — it
-    /// stays a fixed value a theme names outright.
-    TranscriptCellFillFailed,
-    /// That cell under the pointer, or with its reason open.
-    TranscriptCellFillFailedHover,
-    /// What a failed cell says: its name in the header and what it printed, both
-    /// in the same warmed red on the cell's own field.
+    /// What a failed cell says: its icon, verb, title, `failed` status, and
+    /// failed output on the calm card surface.
     TranscriptCellInkFailed,
-    /// The badge that says a cell failed before the header is read, and opens the
-    /// reason.
-    TranscriptCellBadgeFill,
-    /// The badge with the pointer on it.
-    TranscriptCellBadgeFillHover,
-    /// The alert inside that badge: the failure's own warm white, which the badge
-    /// is opened for. No palette entry describes it, so — like the failed cell's
-    /// fill and its ink — it is a fixed value a theme names outright.
-    TranscriptCellBadgeMark,
-    /// The edge of the reason the badge opens, which is drawn at the window's
-    /// root so no row paints over it. Its field is the failed cell's own, so the
-    /// popup adds this edge and the ink below and nothing else.
-    TranscriptReasonEdge,
-    /// The reason itself.
-    TranscriptReasonInk,
+    /// Full working-gold ink for active tool icons and the Ink Trace squiggle.
+    TranscriptWorkingInk,
+    /// Dim working-gold tint for ghost traces and animated stroke low points.
+    TranscriptWorkingInkDim,
+    /// Running cell card background.
+    TranscriptCellFillWorking,
+    /// Running cell header background under the pointer.
+    TranscriptCellFillWorkingHover,
+    /// Running cell card hairline border.
+    TranscriptCellEdgeWorking,
+    /// Running cell verb label.
+    TranscriptCellVerbInkWorking,
+    /// Running cell target summary.
+    TranscriptCellTitleInkWorking,
+    /// Running cell right-aligned `running` status label.
+    TranscriptCellMetaInkWorking,
+    /// Active thinking label (`Thinking…`).
+    TranscriptThinkingLabelInkWorking,
     /// The field a row opens onto: a thinking row's text, and a cell's code and
     /// output. A shade below the window's background, which is where a body
     /// belonging to the row above it sits.
@@ -833,7 +851,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) const ALL: [Role; 209] = [
+    pub(crate) const ALL: [Role; 218] = [
         Role::WindowSurface,
         Role::TitleBarGlyph,
         Role::TitleBarCaptionFillHover,
@@ -899,22 +917,31 @@ impl Role {
         Role::TranscriptCaretMark,
         Role::TranscriptCellFill,
         Role::TranscriptCellFillHover,
+        Role::TranscriptCellEdge,
+        Role::TranscriptCellVerbInk,
         Role::TranscriptCellTitleInk,
         Role::TranscriptCellMetaInk,
-        Role::TranscriptCellSeparatorInk,
         Role::TranscriptCellCodeInk,
         Role::TranscriptCellOutputInk,
         Role::TranscriptCellRule,
+        Role::TranscriptCellCopyFill,
+        Role::TranscriptCellCopyFillHover,
+        Role::TranscriptCellCopyEdge,
+        Role::TranscriptCellCopyEdgeHover,
+        Role::TranscriptCellCopyInk,
+        Role::TranscriptCellCopyInkHover,
         Role::TranscriptCellEdgeExpanded,
         Role::TranscriptThinkingEdgeExpanded,
-        Role::TranscriptCellFillFailed,
-        Role::TranscriptCellFillFailedHover,
         Role::TranscriptCellInkFailed,
-        Role::TranscriptCellBadgeFill,
-        Role::TranscriptCellBadgeFillHover,
-        Role::TranscriptCellBadgeMark,
-        Role::TranscriptReasonEdge,
-        Role::TranscriptReasonInk,
+        Role::TranscriptWorkingInk,
+        Role::TranscriptWorkingInkDim,
+        Role::TranscriptCellFillWorking,
+        Role::TranscriptCellFillWorkingHover,
+        Role::TranscriptCellEdgeWorking,
+        Role::TranscriptCellVerbInkWorking,
+        Role::TranscriptCellTitleInkWorking,
+        Role::TranscriptCellMetaInkWorking,
+        Role::TranscriptThinkingLabelInkWorking,
         Role::TranscriptRowFillExpanded,
         Role::TranscriptThinkingFill,
         Role::TranscriptThinkingFillHover,
@@ -1113,22 +1140,31 @@ impl Role {
             Role::TranscriptCaretMark => "transcript-caret-mark",
             Role::TranscriptCellFill => "transcript-cell-fill",
             Role::TranscriptCellFillHover => "transcript-cell-fill-hover",
+            Role::TranscriptCellEdge => "transcript-cell-edge",
+            Role::TranscriptCellVerbInk => "transcript-cell-verb-ink",
             Role::TranscriptCellTitleInk => "transcript-cell-title-ink",
             Role::TranscriptCellMetaInk => "transcript-cell-meta-ink",
-            Role::TranscriptCellSeparatorInk => "transcript-cell-separator-ink",
             Role::TranscriptCellCodeInk => "transcript-cell-code-ink",
             Role::TranscriptCellOutputInk => "transcript-cell-output-ink",
             Role::TranscriptCellRule => "transcript-cell-rule",
+            Role::TranscriptCellCopyFill => "transcript-cell-copy-fill",
+            Role::TranscriptCellCopyFillHover => "transcript-cell-copy-fill-hover",
+            Role::TranscriptCellCopyEdge => "transcript-cell-copy-edge",
+            Role::TranscriptCellCopyEdgeHover => "transcript-cell-copy-edge-hover",
+            Role::TranscriptCellCopyInk => "transcript-cell-copy-ink",
+            Role::TranscriptCellCopyInkHover => "transcript-cell-copy-ink-hover",
             Role::TranscriptCellEdgeExpanded => "transcript-cell-edge-expanded",
             Role::TranscriptThinkingEdgeExpanded => "transcript-thinking-edge-expanded",
-            Role::TranscriptCellFillFailed => "transcript-cell-fill-failed",
-            Role::TranscriptCellFillFailedHover => "transcript-cell-fill-failed-hover",
             Role::TranscriptCellInkFailed => "transcript-cell-ink-failed",
-            Role::TranscriptCellBadgeFill => "transcript-cell-badge-fill",
-            Role::TranscriptCellBadgeFillHover => "transcript-cell-badge-fill-hover",
-            Role::TranscriptCellBadgeMark => "transcript-cell-badge-mark",
-            Role::TranscriptReasonEdge => "transcript-reason-edge",
-            Role::TranscriptReasonInk => "transcript-reason-ink",
+            Role::TranscriptWorkingInk => "transcript-working-ink",
+            Role::TranscriptWorkingInkDim => "transcript-working-ink-dim",
+            Role::TranscriptCellFillWorking => "transcript-cell-fill-working",
+            Role::TranscriptCellFillWorkingHover => "transcript-cell-fill-working-hover",
+            Role::TranscriptCellEdgeWorking => "transcript-cell-edge-working",
+            Role::TranscriptCellVerbInkWorking => "transcript-cell-verb-ink-working",
+            Role::TranscriptCellTitleInkWorking => "transcript-cell-title-ink-working",
+            Role::TranscriptCellMetaInkWorking => "transcript-cell-meta-ink-working",
+            Role::TranscriptThinkingLabelInkWorking => "transcript-thinking-label-ink-working",
             Role::TranscriptRowFillExpanded => "transcript-row-fill-expanded",
             Role::TranscriptThinkingFill => "transcript-thinking-fill",
             Role::TranscriptThinkingFillHover => "transcript-thinking-fill-hover",
@@ -1358,39 +1394,108 @@ impl Role {
             Role::TranscriptCellFillHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0377)
             }
+            Role::TranscriptCellEdge => Derivation::Mix(Palette::Ink, Palette::Background, 0.066),
+            Role::TranscriptCellVerbInk => {
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.74)
+            }
             Role::TranscriptCellTitleInk => {
-                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7673)
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.82)
             }
             Role::TranscriptCellMetaInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.3711)
             }
-            Role::TranscriptCellSeparatorInk => Derivation::Fixed(Rgba::hex("#ffffff")),
             Role::TranscriptCellCodeInk => Derivation::Mix(Palette::Ink, Palette::Background, 0.9057),
             Role::TranscriptCellOutputInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.7987)
             }
             Role::TranscriptCellRule => Derivation::Mix(Palette::Ink, Palette::Background, 0.066),
+            Role::TranscriptCellCopyFill => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0235)
+            }
+            Role::TranscriptCellCopyFillHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.0519)
+            }
+            Role::TranscriptCellCopyEdge => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.098)
+            }
+            Role::TranscriptCellCopyEdgeHover => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.1698)
+            }
+            Role::TranscriptCellCopyInk => {
+                Derivation::Mix(Palette::Ink, Palette::Background, 0.65)
+            }
+            Role::TranscriptCellCopyInkHover => Derivation::Palette(Palette::Ink),
             Role::TranscriptCellEdgeExpanded => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0896)
             }
             Role::TranscriptThinkingEdgeExpanded => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.066)
             }
-            Role::TranscriptCellFillFailed => Derivation::Fixed(Rgba::hex("#1d1412")),
-            Role::TranscriptCellFillFailedHover => Derivation::Fixed(Rgba::hex("#241713")),
-            Role::TranscriptCellInkFailed => Derivation::Fixed(Rgba::hex("#c98a7f")),
-            Role::TranscriptCellBadgeFill => Derivation::Fixed(Rgba::hex("#6b342b")),
-            Role::TranscriptCellBadgeFillHover => Derivation::Fixed(Rgba::hex("#8d4235")),
-            Role::TranscriptCellBadgeMark => Derivation::Fixed(Rgba::hex("#f3ded8")),
-            Role::TranscriptReasonEdge => Derivation::Fixed(Rgba::hex("#6b342b")),
-            Role::TranscriptReasonInk => Derivation::Fixed(Rgba::hex("#e0b6ad")),
+            Role::TranscriptCellInkFailed => Derivation::Mix(Palette::Danger, Palette::Ink, 0.5),
+            Role::TranscriptWorkingInk => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2b93b"),
+                light: Rgba::hex("#a87b00"),
+                to: Palette::Ink,
+                dark_share: 0.90,
+                light_share: 0.55,
+            },
+            Role::TranscriptWorkingInkDim => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2bd4b"),
+                light: Rgba::hex("#6b520e"),
+                to: Palette::Background,
+                dark_share: 0.30,
+                light_share: 0.30,
+            },
+            Role::TranscriptCellFillWorking => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2b93b"),
+                light: Rgba::hex("#d4a017"),
+                to: Palette::Background,
+                dark_share: 0.04,
+                light_share: 0.055,
+            },
+            Role::TranscriptCellFillWorkingHover => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2b93b"),
+                light: Rgba::hex("#d4a017"),
+                to: Palette::Background,
+                dark_share: 0.075,
+                light_share: 0.095,
+            },
+            Role::TranscriptCellEdgeWorking => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2b93b"),
+                light: Rgba::hex("#d4a017"),
+                to: Palette::Background,
+                dark_share: 0.18,
+                light_share: 0.28,
+            },
+            Role::TranscriptCellVerbInkWorking => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2bd4b"),
+                light: Rgba::hex("#6b520e"),
+                to: Palette::Background,
+                dark_share: 0.80,
+                light_share: 0.92,
+            },
+            Role::TranscriptCellTitleInkWorking => Derivation::Palette(Palette::Ink),
+            Role::TranscriptCellMetaInkWorking => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2bd4b"),
+                light: Rgba::hex("#6b520e"),
+                to: Palette::Background,
+                dark_share: 0.85,
+                light_share: 0.95,
+            },
+            Role::TranscriptThinkingLabelInkWorking => Derivation::AdaptiveMix {
+                dark: Rgba::hex("#e2bd4b"),
+                light: Rgba::hex("#6b520e"),
+                to: Palette::Ink,
+                dark_share: 0.58,
+                light_share: 0.50,
+            },
             Role::TranscriptRowFillExpanded => Derivation::Shade(Palette::Background, 0x0a),
             Role::TranscriptThinkingFill => Derivation::Veil(Palette::Background, 0x00),
             Role::TranscriptThinkingFillHover => {
                 Derivation::Mix(Palette::Ink, Palette::Background, 0.0472)
             }
             Role::TranscriptThinkingLabelInk => {
-                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.566)
+                Derivation::Mix(Palette::QuietInk, Palette::Background, 0.6918)
             }
             Role::TranscriptThinkingInk => {
                 Derivation::Mix(Palette::QuietInk, Palette::Background, 0.6918)
@@ -1690,6 +1795,18 @@ fn derive(palette: &[Rgba; Palette::ALL.len()], role: Role) -> Rgba {
         Derivation::Veil(key, alpha) => palette[key as usize].with_alpha(alpha),
         Derivation::Shade(key, amount) => palette[key as usize].shaded(amount),
         Derivation::Mix(from, to, share) => palette[from as usize].mix(palette[to as usize], share),
+        Derivation::AdaptiveMix {
+            dark,
+            light,
+            to,
+            dark_share,
+            light_share,
+        } => {
+            let luma = |c: Rgba| 0.2126 * f32::from(c.r) + 0.7152 * f32::from(c.g) + 0.0722 * f32::from(c.b);
+            let is_dark = luma(palette[Palette::Background as usize]) < luma(palette[Palette::Ink as usize]);
+            let (anchor, share) = if is_dark { (dark, dark_share) } else { (light, light_share) };
+            anchor.mix(palette[to as usize], share)
+        }
         Derivation::Fixed(value) => value,
     }
 }

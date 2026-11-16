@@ -114,9 +114,21 @@ impl Live {
     #[must_use]
     pub fn rows(&self) -> Vec<Row> {
         let mut out: Vec<Row> = Vec::new();
-        for part in &self.parts {
+        for (idx, part) in self.parts.iter().enumerate() {
             match part {
-                Part::Thinking(text) => out.extend(block_rows("thinking", text)),
+                Part::Thinking(text) => {
+                    let mut rows = block_rows("thinking", text);
+                    let trailing = !self.parts[idx + 1..].iter().any(|later| match later {
+                        Part::Tool { .. } => true,
+                        Part::Text(t) | Part::Thinking(t) => !t.trim().is_empty(),
+                    });
+                    if trailing {
+                        for row in &mut rows {
+                            row.running = true;
+                        }
+                    }
+                    out.extend(rows);
+                }
                 Part::Text(text) => out.extend(block_rows("text", text)),
                 Part::Tool {
                     id,
@@ -129,10 +141,16 @@ impl Live {
                     let mut row = transcript::tool_cell(id, args);
                     if let Some(output) = output {
                         transcript::finish_cell(&mut row, output, *failed);
+                    } else {
+                        row.running = true;
                     }
-                    if let Some(info) = bash {
-                        let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
-                        transcript::apply_header(&mut row, code, Some(info), *duration);
+                    if bash.is_some() || duration.is_some() {
+                        transcript::apply_header(
+                            &mut row,
+                            &transcript::tool_source(args),
+                            bash.as_ref(),
+                            *duration,
+                        );
                     }
                     out.push(row);
                 }
@@ -158,4 +176,50 @@ fn block_rows(kind: &str, text: &str) -> Vec<Row> {
         "content": [{ "type": kind, kind: text }],
     });
     transcript::build(std::slice::from_ref(&message), 1).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn open_tool_call_is_running_and_finished_call_without_duration_is_settled() {
+        let mut live = Live::new("m1".to_string());
+        live.start_tool("c1", json!({ "code": "print(1)" }));
+        let open = live.rows();
+        assert_eq!(open.len(), 1);
+        assert!(open[0].running);
+
+        live.finish_tool("c1", "1".to_string(), false, None, None);
+        let settled = live.rows();
+        assert_eq!(settled.len(), 1);
+        assert!(!settled[0].running);
+        assert!(settled[0].elapsed.is_empty());
+    }
+
+    #[test]
+    fn trailing_thinking_is_running_and_settles_when_followed() {
+        let mut live = Live::new("m1".to_string());
+        live.push_thinking("considering");
+        let active = live.rows();
+        assert_eq!(active.len(), 1);
+        assert!(active[0].running);
+        assert_eq!(active[0].title, "Thinking");
+
+        live.push_text("answer");
+        let with_text = live.rows();
+        assert_eq!(with_text[0].kind, transcript::KIND_THINKING);
+        assert!(!with_text[0].running);
+        assert_eq!(with_text[0].title, "Thinking");
+        assert!(!with_text[1].running);
+
+        let mut live_with_tool = Live::new("m2".to_string());
+        live_with_tool.push_thinking("planning");
+        live_with_tool.start_tool("c2", json!({ "code": "ls" }));
+        let rows = live_with_tool.rows();
+        assert!(!rows[0].running);
+        assert_eq!(rows[0].title, "Thinking");
+        assert!(rows[1].running);
+    }
 }
