@@ -576,3 +576,42 @@ cargo test -p pa-ui" } }]
     assert_eq!(*copied.borrow(), vec!["%%bash
 cargo test -p pa-ui".to_string()]);
 }
+
+#[test]
+fn image_height_estimate_accounts_for_thumbnail_and_padding() {
+    let img = row("m1", transcript::KIND_IMAGE, "", "", "");
+    assert_eq!(estimate_row_height(&img), 162.0);
+}
+
+#[test]
+fn summary_and_custom_message_height_estimates_reflect_30px_card_and_expanded_well() {
+    for kind in [transcript::KIND_CUSTOM_MESSAGE, transcript::KIND_SUMMARY] {
+        let mut r = row("m1", kind, "Refinement", "", "Applied 1 edit");
+        r.has_body = false;
+        r.expanded = true;
+        assert_eq!(estimate_row_height(&r), 38.0);
+
+        r.has_body = true;
+        r.expanded = false;
+        assert_eq!(estimate_row_height(&r), 38.0);
+
+        r.expanded = true;
+        let one_line = estimate_row_height(&r);
+        assert_eq!(one_line, 75.0);
+
+        r.body = "word ".repeat(30);
+        assert!(estimate_row_height(&r) > one_line);
+    }
+}
+
+#[test]
+fn error_height_estimate_reflects_inline_card_and_wrapping() {
+    let short = row("m1", transcript::KIND_ERROR, "Error:", "", "Request failed");
+    let single_line = estimate_row_height(&short);
+    assert_eq!(single_line, 45.5);
+
+    let long_body = "x".repeat(130);
+    let wrapped = row("m2", transcript::KIND_ERROR, "Error:", "", &long_body);
+    assert!(estimate_row_height(&wrapped) > single_line);
+    assert_eq!(estimate_row_height(&wrapped), (3.0 * 21.5) + 24.0);
+}

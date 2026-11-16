@@ -193,7 +193,7 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
         }
         transcript::KIND_CUSTOM_MESSAGE | transcript::KIND_SUMMARY => {
             if !row.expanded || !row.has_body {
-                34.0
+                38.0
             } else {
                 let body = transcript::plain(&row.body);
                 let lines = body
@@ -202,25 +202,24 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
                         if line.trim().is_empty() {
                             1
                         } else {
-                            (line.chars().count() / 80) + 1
+                            (line.chars().count() / 76) + 1
                         }
                     })
                     .sum::<usize>()
                     .max(1);
-                60.0 + (lines as f32 * 19.0)
+                56.0 + (lines as f32 * 19.0)
             }
         }
-        9 => {
-            // The error text box is 118px narrower than prose, and the row
-            // carries markup; estimate from the plain words at that width.
+        transcript::KIND_ERROR => {
             let body = transcript::plain(&row.body);
             let lines = body
                 .lines()
-                .map(|line| (line.chars().count() / 64) + 1)
+                .map(|line| (line.chars().count() / 60) + 1)
                 .sum::<usize>()
                 .max(1);
-            (lines as f32 * 21.5) + 8.0
+            (lines as f32 * 21.5) + 24.0
         }
+        transcript::KIND_IMAGE => 162.0,
         transcript::KIND_CELL => {
             if row.expanded {
                 let code_lines = if row.has_code {
