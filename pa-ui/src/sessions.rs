@@ -374,6 +374,37 @@ pub(crate) fn session_entries(
     )
 }
 
+pub(crate) fn group_box_height(folded: bool, row_count: usize, row_height: f32) -> f32 {
+    if !folded && row_count > 0 {
+        (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP) as f32 + row_count as f32 * row_height
+    } else {
+        (2 * GROUP_PAD + HEADER_HEIGHT) as f32
+    }
+}
+
+pub(crate) fn group_boxes_at(
+    active: &[SessionItem],
+    idle: &[SessionItem],
+    done: &[SessionItem],
+    folded: [bool; 3],
+    row_height: f32,
+) -> Vec<SidebarGroupBox> {
+    let mut boxes = Vec::with_capacity(3);
+    let mut at: f32 = COLUMN_TOP as f32;
+    for (index, rows) in [(0usize, active), (1, idle), (2, done)] {
+        let box_h = group_box_height(folded[index], rows.len(), row_height);
+        boxes.push(SidebarGroupBox {
+            at,
+            height: box_h,
+            empty: rows.is_empty(),
+        });
+        if index < 2 {
+            at += box_h + GROUP_GAP as f32;
+        }
+    }
+    boxes
+}
+
 pub(crate) fn session_entries_at(
     active: &[SessionItem],
     idle: &[SessionItem],
@@ -390,7 +421,8 @@ pub(crate) fn session_entries_at(
         (1, "Idle", idle, idle_folded),
         (2, "Done", done, done_folded),
     ] {
-        let header_at = at;
+        let box_at = at;
+        let header_at = box_at + GROUP_PAD as f32;
         entries.push(SessionEntry {
             is_header: true,
             label: label.into(),
@@ -401,9 +433,11 @@ pub(crate) fn session_entries_at(
             target: header_at,
             seam: index,
         });
-        at += HEADER_HEIGHT as f32;
         for (number, row) in rows.iter().enumerate() {
-            let row_target = header_at + HEADER_HEIGHT as f32 + number as f32 * row_height;
+            let row_target = header_at
+                + HEADER_HEIGHT as f32
+                + GROUP_BODY_GAP as f32
+                + number as f32 * row_height;
             let row_at = if folded { header_at } else { row_target };
             entries.push(SessionEntry {
                 is_header: false,
@@ -416,8 +450,9 @@ pub(crate) fn session_entries_at(
                 seam: index,
             });
         }
-        if !folded {
-            at += rows.len() as f32 * row_height;
+        let box_h = group_box_height(folded, rows.len(), row_height);
+        if index < 2 {
+            at = box_at + box_h + GROUP_GAP as f32;
         }
     }
     entries
@@ -472,6 +507,8 @@ pub(crate) struct Column {
     pub(crate) previous: Vec<SessionEntry>,
     pub(crate) entries: Vec<SessionEntry>,
     pub(crate) from_y: Vec<f32>,
+    pub(crate) prev_group_boxes: Vec<SidebarGroupBox>,
+    pub(crate) group_boxes: Vec<SidebarGroupBox>,
     pub(crate) was_height: f32,
     pub(crate) height: f32,
 }
@@ -546,6 +583,12 @@ pub(crate) fn column_at(
         folded[2],
         row_height,
     );
+    let prev_group_boxes = if first_fill {
+        Vec::new()
+    } else {
+        group_boxes_at(was.0, was.1, was.2, was_folded, row_height)
+    };
+    let group_boxes = group_boxes_at(active, idle, done, folded, row_height);
     let from_y = if first_fill {
         entries.iter().map(|entry| entry.at).collect()
     } else {
@@ -557,6 +600,8 @@ pub(crate) fn column_at(
         previous,
         entries,
         from_y,
+        prev_group_boxes,
+        group_boxes,
     }
 }
 
@@ -632,6 +677,7 @@ pub(crate) fn entries_height_at(entries: &[SessionEntry], row_height: f32) -> f3
                 } else {
                     row_height
                 }
+                + GROUP_PAD as f32
         })
         .fold(COLUMN_TOP as f32, f32::max)
 }
@@ -640,9 +686,12 @@ fn row_height_for(ui: &AppWindow) -> f32 {
     ui.global::<crate::Appearance>().get_session_row_height()
 }
 
-pub(crate) const HEADER_HEIGHT: i32 = 32;
+pub(crate) const HEADER_HEIGHT: i32 = 26;
 pub(crate) const ROW_HEIGHT: i32 = 32;
 pub(crate) const COLUMN_TOP: i32 = 88;
+pub(crate) const GROUP_PAD: i32 = 4;
+pub(crate) const GROUP_GAP: i32 = 10;
+pub(crate) const GROUP_BODY_GAP: i32 = 2;
 
 pub(crate) fn uuid_of<'a>(rows: &'a [SessionRow], id: &str) -> Option<&'a str> {
     rows.iter()
@@ -1212,6 +1261,14 @@ impl Sidebar {
                 Self::clear_fold_animation(&mut w);
             }
         }
+
+        let prev_boxes = if column.prev_group_boxes.is_empty() {
+            column.group_boxes.clone()
+        } else {
+            column.prev_group_boxes
+        };
+        ui.set_prev_group_boxes(ModelRc::from(Rc::new(VecModel::from(prev_boxes))));
+        ui.set_group_boxes(ModelRc::from(Rc::new(VecModel::from(column.group_boxes))));
 
         if previous_empty {
             ui.set_sessions_height(column.height);
@@ -1939,8 +1996,26 @@ pub(crate) mod virtual_sidebar_tests {
         let mounted = entries.row_count();
         assert!(mounted > 0 && mounted <= 64, "expected bounded mounted entries, got {mounted}");
 
-        let expected_h = (COLUMN_TOP + 3 * HEADER_HEIGHT + 155 * ROW_HEIGHT) as f32;
+        let expected_h = (COLUMN_TOP
+            + 3 * (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP)
+            + 2 * GROUP_GAP
+            + 155 * ROW_HEIGHT) as f32;
         assert_eq!(ui.get_sessions_height(), expected_h);
+
+        let boxes = ui.get_group_boxes();
+        assert_eq!(boxes.row_count(), 3);
+        assert_eq!(ui.get_prev_group_boxes().row_count(), 3);
+        let group_boxes: Vec<SidebarGroupBox> = (0..boxes.row_count())
+            .filter_map(|i| boxes.row_data(i))
+            .collect();
+        assert_eq!(group_boxes[0].at, COLUMN_TOP as f32);
+        assert_eq!(group_boxes[0].height, group_box_height(false, 10, ROW_HEIGHT as f32));
+        assert_eq!(group_boxes[1].height, group_box_height(false, 20, ROW_HEIGHT as f32));
+        assert_eq!(group_boxes[2].height, group_box_height(false, 125, ROW_HEIGHT as f32));
+        assert!(group_boxes.iter().all(|b| !b.empty && b.height > 0.0));
+        assert_eq!(group_boxes[1].at, group_boxes[0].at + group_boxes[0].height + GROUP_GAP as f32);
+        assert_eq!(group_boxes[2].at, group_boxes[1].at + group_boxes[1].height + GROUP_GAP as f32);
+        assert_eq!(group_boxes[2].at + group_boxes[2].height, expected_h);
 
         let mounted_list: Vec<SessionEntry> = (0..mounted).filter_map(|i| entries.row_data(i)).collect();
         assert!(mounted_list.iter().any(|e| e.is_header && e.label == "Active"));
@@ -1967,6 +2042,11 @@ pub(crate) mod virtual_sidebar_tests {
         ui.invoke_setting_toggled("reduce-motion".into());
         ui.invoke_group_toggled("Done".into());
         assert_eq!(done_count_mounted(), 0, "instant collapse must omit folded Done rows immediately");
+        let folded_boxes = ui.get_group_boxes();
+        assert_eq!(folded_boxes.row_count(), 3);
+        let done_box = folded_boxes.row_data(2).expect("done box");
+        assert_eq!(done_box.height, (2 * GROUP_PAD + HEADER_HEIGHT) as f32);
+        assert_eq!(ui.get_sessions_height(), done_box.at + done_box.height);
         assert!(
             (0..ui.get_session_entries().row_count())
                 .filter_map(|i| ui.get_session_entries().row_data(i))
@@ -2011,8 +2091,16 @@ pub(crate) mod virtual_sidebar_tests {
         sidebar.apply_roster(&ui, rows);
         ui.invoke_setting_chosen("session-order".into(), "Manual".into());
 
-        let expected_h = (COLUMN_TOP + 3 * HEADER_HEIGHT + 155 * ROW_HEIGHT) as f32;
+        let expected_h = (COLUMN_TOP
+            + 3 * (2 * GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP)
+            + 2 * GROUP_GAP
+            + 155 * ROW_HEIGHT) as f32;
         assert_eq!(ui.get_sessions_height(), expected_h);
+        let boxes = ui.get_group_boxes();
+        assert_eq!(boxes.row_count(), 3);
+        let done_box = boxes.row_data(2).expect("done box");
+        assert_eq!(done_box.at + done_box.height, expected_h);
+        assert_eq!(ui.invoke_group_bottom(2), expected_h);
 
         ui.set_selected_id("d-080".into());
         ui.invoke_restore_sidebar_cy(-3200.0);
@@ -2028,7 +2116,10 @@ pub(crate) mod virtual_sidebar_tests {
             .iter()
             .find(|e| !e.is_header && e.item.id == "d-080")
             .expect("d-080 should be mounted near scroll offset -3200");
-        let expected_d080_at = (COLUMN_TOP + 3 * HEADER_HEIGHT + (10 + 20 + 80) * ROW_HEIGHT) as f32;
+        let expected_d080_at = (COLUMN_TOP
+            + 3 * (GROUP_PAD + HEADER_HEIGHT + GROUP_BODY_GAP)
+            + 2 * (GROUP_PAD + GROUP_GAP)
+            + (10 + 20 + 80) * ROW_HEIGHT) as f32;
         assert_eq!(d080.at, expected_d080_at);
         assert_eq!(ui.invoke_row_y(0), mounted_list[0].at);
         assert_eq!(ui.get_selected_id().as_str(), "d-080");

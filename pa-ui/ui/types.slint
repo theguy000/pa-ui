@@ -73,6 +73,12 @@ export struct SessionItem {
     file: string,
 }
 
+export struct SidebarGroupBox {
+    at: length,
+    height: length,
+    empty: bool,
+}
+
 // One line of the sessions column: a group's header, or one session under it.
 // Every entry carries the y it is drawn at, computed by the window from the
 // group order, the row counts and the fold state.

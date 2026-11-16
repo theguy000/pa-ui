@@ -1,24 +1,19 @@
-// The sessions column: one session's row, and the headers that group the rows.
-//
-// A row is a name and nothing else: the state it is in is which group the row sits
-// under, so no row carries a tag dot, an age or a status word. Double-clicking a
-// row renames it in place; the three-dots menu appears under the pointer.
-
 import { Appearance, SessionItem, Type } from "types.slint";
-import { IconCaret, IconDoneTick, IconGrip, IconMore } from "icons.slint";
+import { IconCaret, IconGrip, IconMore } from "icons.slint";
 import { Theme } from "theme.slint";
-import { Button } from "primitives.slint";
+import { Button, Tag, TagKind } from "primitives.slint";
 
-// A group header: the caret, the word, and how many rows it holds. Clicking it
-// folds the group.
 export component SessionGroupHeader inherits Rectangle {
     in property <string> label;
     in property <int> count;
-    // folded: the caret points at the rows instead of down at them
     in property <bool> closed: false;
     callback toggled();
 
-    height: 32px;
+    property <color> text-ink: header-touch.has-hover
+        ? (root.count == 0 ? Theme.sidebar-name-ink : Theme.sidebar-name-ink-selected)
+        : (root.count == 0 ? Theme.sidebar-group-empty-ink : Theme.sidebar-group-ink);
+
+    height: 26px;
     border-radius: 6px;
     background: header-touch.has-hover ? Theme.sidebar-row-fill-hover : transparent;
 
@@ -31,53 +26,48 @@ export component SessionGroupHeader inherits Rectangle {
         clicked => { root.toggled(); }
     }
 
-    // No layout here either, for the same reason as the row below: a layout
-    // makes the header report a preferred height the list then uses, and the
-    // list drew its entries a header apart from where they were written.
+    IconCaret {
+        x: 7px;
+        y: (parent.height - self.height) / 2;
+        up: false;
+        transform-rotation: root.closed ? -90deg : 0deg;
+        animate transform-rotation { duration: Appearance.fold-caret-duration; easing: ease-in-out; }
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        tint: header-touch.has-hover
+            ? (root.count == 0 ? Theme.sidebar-name-ink : Theme.sidebar-name-ink-selected)
+            : (root.count == 0 ? Theme.sidebar-group-empty-ink : Theme.sidebar-group-caret);
+    }
+
+    // Explicit geometry: a layout makes the header report a preferred height that
+    // overrides the list's fixed placement.
     hdr-label := Text {
-        x: 10px;
+        x: 23px;
         y: 0;
-        width: self.preferred-width;
+        width: parent.width - self.x - 7px - 32px;
         height: parent.height;
-        text: root.label;
-        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
-        font-size: Appearance.session-header-size;
+        text: root.label == "Active" ? "ACTIVE"
+            : root.label == "Idle" ? "IDLE"
+            : root.label == "Done" ? "DONE"
+            : root.label;
+        color: root.text-ink;
+        font-size: Appearance.session-header-size - 1.5px;
         font-weight: 600;
+        letter-spacing: 0.7px;
         vertical-alignment: center;
         wrap: no-wrap;
     }
 
-    Rectangle {
-        x: 10px + hdr-label.preferred-width + 6px;
-        y: 0;
-        width: 12px;
-        height: parent.height;
-        opacity: header-touch.has-hover ? 1.0 : 0.0;
-        animate opacity { duration: Appearance.hover-duration; easing: ease-in-out; }
-
-        IconCaret {
-            x: 0;
-            y: (parent.height - self.height) / 2 + 1px;
-            up: false;
-            transform-rotation: root.closed ? -90deg : 0deg;
-            animate transform-rotation { duration: Appearance.fold-caret-duration; easing: ease-in-out; }
-            width: 10px;
-            height: 10px;
-            viewbox-width: 10;
-            viewbox-height: 10;
-            tint: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-caret;
-        }
-    }
-
     Text {
-        // the count's own cell, right-aligned at the header's edge
-        x: parent.width - 10px - 32px;
+        x: parent.width - 7px - 32px;
         y: 0;
         width: 32px;
         height: parent.height;
         text: root.count;
-        color: header-touch.has-hover ? Theme.sidebar-name-ink-selected : Theme.sidebar-group-ink;
-        font-size: Appearance.session-count-size;
+        color: root.text-ink;
+        font-size: Appearance.session-count-size - 0.5px;
         font-weight: 500;
         vertical-alignment: center;
         horizontal-alignment: right;
@@ -246,20 +236,22 @@ export component SessionRow inherits Rectangle {
         }
     }
 
-    if root.item.done : Rectangle {
-        x: 20px;
-        y: 0;
-        width: 11px;
-        height: parent.height;
-        IconDoneTick {
-            x: 0;
-            y: (parent.height - self.height) / 2;
-        }
+    property <bool> show-dot: root.item.status == "active" || root.item.status == "idle";
+    property <length> name-x: root.show-dot
+        ? (root.reorderable ? 30px : 24px)
+        : (root.reorderable ? 18px : 10px);
+
+    if root.show-dot : Tag {
+        x: root.reorderable ? 18px : 10px;
+        y: (parent.height - 6px) / 2;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        kind: root.item.status == "active" ? TagKind.working : TagKind.idle;
     }
 
-    // the name: from the indent (or tick) to just before the three-dots button
     if !root.editing : Text {
-        x: root.item.done ? 36px : 20px;
+        x: root.name-x;
         y: 0;
         width: parent.width - self.x - 9px - 22px;
         height: parent.height;
@@ -273,7 +265,7 @@ export component SessionRow inherits Rectangle {
     }
 
     if root.editing : input := TextInput {
-        x: root.item.done ? 36px : 20px;
+        x: root.name-x;
         text <=> root.draft;
         y: 0;
         width: parent.width - self.x - 9px - 22px;

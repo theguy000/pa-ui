@@ -1,7 +1,7 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { DraftEditor } from "draft-editor.slint";
 import { IconChevronDown, IconCross, IconNewChat, IconPlus, IconSearch, IconSend, PanelIcon, PrimeAgentMark } from "icons.slint";
-import { Appearance, EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SlashItem, ThemeItem, TRow, Type } from "types.slint";
+import { Appearance, EffortItem, ModelGroup, QueueItem, SearchRow, SessionEntry, SessionItem, SessionMenuItem, SidebarGroupBox, SlashItem, ThemeItem, TRow, Type } from "types.slint";
 import { QueueRow, QueueRowUp, TranscriptRow } from "transcript.slint";
 import { SessionGroupHeader, SessionRow as SidebarRow } from "sidebar.slint";
 import { ActivityChip, Chip, ContextCard, ContextRing } from "composer.slint";
@@ -349,8 +349,8 @@ export component AppWindow inherits Window {
     // place or off the bottom of the window. One list, each entry at a `y` the
     // writer already knows, keeps the sidebar's geometry in one place.
     in property <[SessionEntry]> session-entries: [];
-    // the height of that list, header by header and row by row: the scroll view
-    // takes it as its content height, and the window writes both
+    in property <[SidebarGroupBox]> group-boxes: [];
+    in property <[SidebarGroupBox]> prev-group-boxes: [];
     in-out property <length> sessions-height: 0px;
     // A fold in flight. The window answers a header click with the rows held
     // where they are listed plus the y each settles at; `fold-mix` then runs
@@ -384,10 +384,34 @@ export component AppWindow inherits Window {
         root.fold-mix = root.fold-flip ? 1.0 : 0.0;
     }
 
-    // Where the entry at `index` is drawn: headers and whole groups slide from
-    // `splice-at[index]` to `entry.at`; the rows inside the group being folded
-    // keep their natural 32px spacing (`entry.target`) and rise 18px into the
-    // header as the group closes.
+    pure public function group-box-at(seam: int) -> length {
+        if seam < 0 || seam >= root.group-boxes.length {
+            return 0px;
+        }
+        let cur = root.group-boxes[seam].at;
+        if root.splice-at.length > 0 && seam < root.prev-group-boxes.length {
+            let prev = root.prev-group-boxes[seam].at;
+            return prev + (cur - prev) * root.fold-progress;
+        }
+        cur
+    }
+
+    pure public function group-box-height(seam: int) -> length {
+        if seam < 0 || seam >= root.group-boxes.length {
+            return 0px;
+        }
+        let cur = root.group-boxes[seam].height;
+        if root.splice-at.length > 0 && seam < root.prev-group-boxes.length {
+            let prev = root.prev-group-boxes[seam].height;
+            return prev + (cur - prev) * root.fold-progress;
+        }
+        cur
+    }
+
+    pure public function group-bottom(seam: int) -> length {
+        root.group-box-at(seam) + root.group-box-height(seam)
+    }
+
     pure public function row-y(index: int) -> length {
         let entry = root.session-entries[index];
         if !entry.is-header && root.fold-index == entry.seam && root.splice-at.length > 0 {
@@ -891,7 +915,7 @@ export component AppWindow inherits Window {
             // survive at 48px - there is no room for a name - so the strip keeps the
             // mark and the three controls and drops the rows.
             sidebar-column := Rectangle {
-                width: root.sidebar-open ? 232px : 48px;
+                width: root.sidebar-open ? 244px : 48px;
                 vertical-stretch: 1;
                 // Explicit height: the column holds a layout and a list, and a
                 // Rectangle sizes itself to its first children only - with the
@@ -984,8 +1008,8 @@ export component AppWindow inherits Window {
                     width: parent.width;
                     height: parent.height;
                     visible: root.sidebar-open;
-                    padding-left: 8px;
-                    padding-right: 8px;
+                    padding-left: 10px;
+                    padding-right: 10px;
                     padding-top: 2px;
                     spacing: 6px;
                     // The band: the column's own header. Logo + wordmark on the left,
@@ -1049,9 +1073,12 @@ export component AppWindow inherits Window {
                     // the one thing a session list is for. It calls the same new-chat
                     // the folded strip does: a layout change, not a lifecycle change.
                     new-session := Button {
-                        height: 36px;
-                        border-radius: 10px;
-                        kind: ButtonKind.primary;
+                        height: 34px;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: Theme.sidebar-new-session-edge;
+                        fill: Theme.sidebar-new-session-fill;
+                        fill-hover: Theme.sidebar-new-session-fill-hover;
                         described: "New Session";
                         clicked => { root.new-chat(); }
 
@@ -1097,14 +1124,10 @@ export component AppWindow inherits Window {
                 // lays nothing out, so each entry keeps the box it is given.
                 sidebar-list := Flickable {
                     visible: root.sidebar-open;
-                    // The list starts below the band and New Session at 88px,
-                    // matching `COLUMN_TOP`, and its entries subtract 88px so
-                    // the first header lands at y=0 inside the Flickable.
-                    x: 8px;
+                    x: 10px;
                     y: 88px;
-                    width: 232px - 16px;
-                    // the window's height, not the Flickable's own or the
-                    // column's: either way back through the layout is a loop
+                    width: 244px - 20px;
+                    // Bound to root.height rather than parent/column height to avoid a layout loop.
                     height: max(0px, root.height - 88px);
                     content-width: self.width;
                     content-height: max(0px, root.animated-sessions-height - 88px);
@@ -1117,25 +1140,49 @@ export component AppWindow inherits Window {
                         width: parent.width;
                         height: max(0px, root.animated-sessions-height - 88px);
 
+                        for box[i] in root.group-boxes : Rectangle {
+                            x: 0px;
+                            y: root.group-box-at(i) - 88px;
+                            width: parent.width;
+                            height: root.group-box-height(i);
+                            border-radius: 10px;
+                            border-width: 1px;
+                            background: box.empty ? transparent : Theme.sidebar-group-surface;
+                            border-color: box.empty ? Theme.sidebar-group-empty-edge : Theme.sidebar-group-edge;
+                        }
+
                         for entry[k] in root.session-entries : slot := Rectangle {
+                            property <length> raw-y: root.row-y(k);
+                            property <bool> folding-seam: !entry.is-header
+                                && root.fold-index == entry.seam
+                                && root.splice-at.length > 0
+                                && entry.seam >= 0
+                                && entry.seam < root.group-boxes.length;
+                            property <length> clip-top: folding-seam
+                                ? max(raw-y, root.group-box-at(entry.seam) + 32px)
+                                : raw-y;
+                            property <length> clip-bot: folding-seam
+                                ? min(raw-y + Appearance.session-row-height, root.group-bottom(entry.seam) - 4px)
+                                : raw-y + Appearance.session-row-height;
                             property <bool> drop-hit: root.drag-session-id != ""
                                 && !entry.is-header && !entry.folded
                                 && entry.item.status == root.drag-session-status
                                 && root.drag-pointer-y >= sidebar-list.absolute-position.y
                                 && root.drag-pointer-y < sidebar-list.absolute-position.y + sidebar-list.height
-                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (root.row-y(k) - 88px)
-                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (root.row-y(k) - 88px) + 32px;
+                                && root.drag-pointer-y >= sidebar-content.absolute-position.y + (raw-y - 88px)
+                                && root.drag-pointer-y < sidebar-content.absolute-position.y + (raw-y - 88px) + Appearance.session-row-height;
                             visible: entry.is-header
-                                || (root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01);
-                            y: root.row-y(k) - 88px;
-                            width: 100%;
-                            height: 32px;
+                                || (self.height > 0.5px && root.row-h(k) > 0.5px && root.row-opacity(k) > 0.01);
+                            x: 4px;
+                            y: clip-top - 88px;
+                            width: parent.width - 8px;
+                            height: entry.is-header ? 26px : max(0px, clip-bot - clip-top);
                             opacity: entry.is-header ? 1.0 : root.row-fade(k);
                             clip: !entry.is-header;
 
                             if entry.is-header : SessionGroupHeader {
                                 width: 100%;
-                                height: 32px;
+                                height: 26px;
                                 label: entry.label;
                                 count: entry.count;
                                 closed: entry.folded;
@@ -1143,8 +1190,9 @@ export component AppWindow inherits Window {
                             }
 
                             if !entry.is-header : SidebarRow {
+                                y: parent.raw-y - parent.clip-top;
                                 width: 100%;
-                                height: 32px;
+                                height: Appearance.session-row-height;
                                 item: entry.item;
                                 selected: root.selected-id != "" && entry.item.id == root.selected-id;
                                 editing: root.editing-id != "" && entry.item.id == root.editing-id;
@@ -1233,9 +1281,8 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Thin scrollbar thumb on the right edge of the sessions list
                 if root.sidebar-open && sidebar-list.content-height > sidebar-list.height : Rectangle {
-                    x: 232px - 6px;
+                    x: 244px - 6px;
                     y: 88px;
                     width: 4px;
                     height: sidebar-list.height;
@@ -1905,7 +1952,7 @@ export component AppWindow inherits Window {
     // of the sidebar, the way a tooltip is expected to behave
     if root.hover-title != "" : Panel {
         // 12px clear of the column, whichever width it has
-        x: root.sidebar-open ? 244px : 60px;
+        x: root.sidebar-open ? 256px : 60px;
         y: clamp(root.hover-y - 4px, 40px, root.height - self.height - 12px);
         width: min(self.preferred-width, 260px);
         height: self.preferred-height;

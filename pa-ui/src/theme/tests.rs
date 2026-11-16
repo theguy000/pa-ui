@@ -56,8 +56,11 @@ fn the_shipped_theme_draws_todays_sidebar() {
     assert_eq!(theme.get(Role::WindowSurface), Rgba::hex("#10110e"));
     // A row at rest draws no fill of its own: the column runs through it.
     assert_eq!(theme.get(Role::SidebarRowFill).a, 0, "a resting row is not a fill");
-    assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#171815"));
-    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1c1d1a"));
+    assert_eq!(theme.get(Role::SidebarGroupSurface), Rgba::hex("#151613"));
+    assert_eq!(theme.get(Role::SidebarGroupEmptyInk), Rgba::hex("#7e7f78"));
+    assert_eq!(theme.get(Role::SidebarGroupInk), Rgba::hex("#8b8c84"));
+    assert_eq!(theme.get(Role::SidebarRowFillHover), Rgba::hex("#191a17"));
+    assert_eq!(theme.get(Role::SidebarRowFillSelected), Rgba::hex("#1f1f1c"));
     assert_eq!(theme.get(Role::SidebarNameInk), Rgba::hex("#b0b1a8"));
     assert_eq!(theme.get(Role::SidebarNameInkSelected), Rgba::hex("#e7e5df"));
     assert_eq!(theme.get(Role::SidebarNameInkEditing), Rgba::hex("#e7e5df"));
@@ -716,6 +719,10 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-name-ink": "#303030",
                "sidebar-name-ink-selected": "#101010",
                "sidebar-name-ink-editing": "#101010",
+               "sidebar-group-surface": "#eaeaea",
+               "sidebar-group-edge": "#00000018",
+               "sidebar-group-empty-edge": "#00000012",
+               "sidebar-group-empty-ink": "#7a7a7a",
                 "sidebar-group-ink": "#6a6a6a",
                 "sidebar-group-caret": "#6a6a6a",
                "tag-working": "#8a6d00",
@@ -734,6 +741,9 @@ fn a_theme_that_names_the_sidebar_roles_moves_only_those() {
                "sidebar-row-rename-fill-hover": "#4a4a4a",
                 "sidebar-row-menu-mark": "#5a5a5a",
                 "sidebar-row-done-mark": "#2f7d3a",
+               "sidebar-new-session-fill": "#e5e5e5",
+               "sidebar-new-session-fill-hover": "#d8d8d8",
+               "sidebar-new-session-edge": "#cccccc",
                "sidebar-new-session-ink": "#101010",
                "sidebar-new-session-ink-hover": "#000000",
                "sidebar-open-tip-fill": "#dddddd",
@@ -771,6 +781,57 @@ fn a_theme_that_moves_the_base_values_moves_the_sidebar_with_them() {
     // hover steps darker than the field rather than lighter.
     let hover = theme.get(Role::SidebarRowFillHover);
     assert!(hover.r < 0xf5 && hover.r > 0x20, "{hover:?}");
+}
+
+#[test]
+fn sidebar_enclosure_and_new_session_roles_resolve_across_palettes() {
+    let shipped = Resolved::shipped();
+    let mono = resolve("mono").expect("the bundled mono theme");
+    let custom = from_text(
+        "custom.json",
+        r##"{ "name": "custom", "version": 1,
+             "palette": { "background": "#1a1b26", "ink": "#c0caf5", "quiet-ink": "#7982a9" } }"##,
+    )
+    .expect("a custom palette theme");
+
+    let expected_shipped = [
+        (Role::SidebarGroupSurface, Rgba::hex("#151613")),
+        (Role::SidebarGroupEdge, Rgba::hex("#e7e5df0e")),
+        (Role::SidebarGroupEmptyEdge, Rgba::hex("#e7e5df0b")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#7e7f78")),
+        (Role::SidebarNewSessionFill, Rgba::hex("#e7e5df0c")),
+        (Role::SidebarNewSessionFillHover, Rgba::hex("#e7e5df14")),
+        (Role::SidebarNewSessionEdge, Rgba::hex("#e7e5df13")),
+    ];
+    let expected_mono = [
+        (Role::SidebarGroupSurface, Rgba::hex("#161616")),
+        (Role::SidebarGroupEdge, Rgba::hex("#e5e5e50e")),
+        (Role::SidebarGroupEmptyEdge, Rgba::hex("#e5e5e50b")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#7f7f7f")),
+        (Role::SidebarNewSessionFill, Rgba::hex("#e5e5e50c")),
+        (Role::SidebarNewSessionFillHover, Rgba::hex("#e5e5e514")),
+        (Role::SidebarNewSessionEdge, Rgba::hex("#e5e5e513")),
+    ];
+    let expected_custom = [
+        (Role::SidebarGroupSurface, Rgba::hex("#1e1f2b")),
+        (Role::SidebarGroupEdge, Rgba::hex("#c0caf50e")),
+        (Role::SidebarGroupEmptyEdge, Rgba::hex("#c0caf50b")),
+        (Role::SidebarGroupEmptyInk, Rgba::hex("#5c6280")),
+        (Role::SidebarNewSessionFill, Rgba::hex("#c0caf50c")),
+        (Role::SidebarNewSessionFillHover, Rgba::hex("#c0caf514")),
+        (Role::SidebarNewSessionEdge, Rgba::hex("#c0caf513")),
+    ];
+
+    for (role, value) in expected_shipped {
+        assert_eq!(shipped.get(role), value, "shipped {}", role.name());
+    }
+    for (role, value) in expected_mono {
+        assert_eq!(mono.get(role), value, "mono {}", role.name());
+    }
+    for (role, value) in expected_custom {
+        assert_eq!(custom.get(role), value, "custom {}", role.name());
+        assert_ne!(custom.get(role), shipped.get(role), "moved {}", role.name());
+    }
 }
 
 /// The three tags are told apart by colour alone, so a theme that paints two of
@@ -1220,10 +1281,9 @@ fn a_theme_that_paints_a_waiting_rows_buttons_like_the_row_is_reported() {
 /// beside it. The chip the pointer lights under the pencil is opaque, so the
 /// pencil on it stays as readable as it was drawn.
 ///
-/// A group's header is the same shape as a row's pencil: its word is quiet ink on
-/// a field that is a lift of the ink, and its caret is drawn on the fill the
-/// pointer lights under the header itself. Both go dim with the rest, and both are
-/// named here so the author knows to move them.
+/// A group's header is the same shape as a row's pencil: its word and caret
+/// sit on a field that is a lift of the ink, and empty headers and tags inside
+/// the group go dim with the rest, so all are named here.
 #[test]
 fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
     let theme = from_text(
@@ -1232,6 +1292,19 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
              "palette": { "background": "#f5f5f5", "ink": "#202020", "danger": "#7a1f18" } }"##,
     )
     .expect("a file that names only base values");
+
+    let shipped = Resolved::shipped();
+    for role in [
+        Role::SidebarGroupSurface,
+        Role::SidebarGroupEdge,
+        Role::SidebarGroupEmptyEdge,
+        Role::SidebarGroupEmptyInk,
+        Role::SidebarNewSessionFill,
+        Role::SidebarNewSessionFillHover,
+        Role::SidebarNewSessionEdge,
+    ] {
+        assert_ne!(theme.get(role), shipped.get(role), "light {}", role.name());
+    }
 
     let mut named: Vec<&str> = contrast(&theme).iter().map(|finding| finding.what).collect();
     named.sort_unstable();
@@ -1242,7 +1315,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a cell's verb at rest",
             "a cell's verb under the pointer",
             "a command's name",
-            "a group's caret while the pointer is on its header",
+            "a group's caret at rest",
             "a group's word at rest",
             "a ledger value",
             "a link in prose",
@@ -1253,6 +1326,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "a session's name in the search list",
             "a session's name under the pointer",
             "a table's text",
+            "an empty group's header",
             "how many messages are waiting",
             "how many messages the pill counts",
             "how many messages the pill counts, with its card open",
@@ -1269,6 +1343,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the caret on the composer's chip",
             "the command a draft starts with",
             "the fold mark at rest",
+            "the idle tag inside a group",
             "the label a thinking row carries",
             "the letters a query matched",
             "the level the running model is at",
@@ -1291,6 +1366,7 @@ fn a_light_palette_still_resolves_and_the_check_names_what_it_left_dim() {
             "the word beside the count, with the pill's card open",
             "the word that says what the turn is doing",
             "the words on New Session under the pointer",
+            "the working tag inside a group",
             "what a cell printed",
             "what a command does",
             "what is left of the context",
