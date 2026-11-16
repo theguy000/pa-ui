@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="en" data-prototype="true">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE — Ultra-Clean Grouped Sidebar · Prime Agent Desktop</title>
+<!-- THROWAWAY PROTOTYPE: Three ultra-clean, calm ways to make sidebar session grouping
+     unmistakable without adding badges, filter bars, or dashboard clutter.
+     Switchable via ?variant=A|B|C, bottom switcher bar, or Left/Right arrow keys.
+     No persistence, no daemon, no real mutations. -->
+<style>
+:root {
+  --window-surface: #10110e;
+  --sidebar-surface: #10110e;
+  --group-surface: #151613;
+  --group-surface-hover: #181915;
+  --group-edge: rgba(231, 229, 223, 0.055);
+  --row-hover: rgba(231, 229, 223, 0.045);
+  --row-selected: #1f201c;
+  --row-selected-soft: rgba(231, 229, 223, 0.085);
+  --ink-primary: #e7e5df;
+  --ink-secondary: #b4b5ac;
+  --ink-muted: #76776f;
+  --ink-faint: #55564f;
+  --hairline: rgba(231, 229, 223, 0.075);
+  --hairline-soft: rgba(231, 229, 223, 0.045);
+  --tag-working: #c9a86a;
+  --tag-idle: #6f9f5f;
+  --tag-done: #66675f;
+  --danger-ink: #d47b6f;
+  --danger-fill: rgba(196, 43, 28, 0.16);
+  --transcript-surface: #121310;
+  --transcript-prose-ink: #d3d1cb;
+  --transcript-message-fill: #2e2916;
+  --transcript-cell-fill: #151613;
+  --composer-surface: #0f100d;
+  --composer-edge: #232421;
+  --status-strip-surface: #181916;
+  --status-strip-edge: #2d2e2b;
+  --panel-surface: #171815;
+  --panel-edge: #2b2c27;
+  --panel-row-hover: #21221e;
+  --brand-blade: #ffffff;
+  --brand-wing: #aeaead;
+  --brand-wing-inner: #828381;
+  --brand-wing-shadow: #595a58;
+  --brand-stem: #626361;
+  --brand-stem-shadow: #323330;
+  color-scheme: dark;
+}
+
+html[data-theme="mono"] {
+  --window-surface: #111111;
+  --sidebar-surface: #111111;
+  --group-surface: #161616;
+  --row-selected: #222222;
+  --ink-primary: #e5e5e5;
+  --ink-secondary: #b0b0b0;
+  --ink-muted: #737373;
+  --ink-faint: #525252;
+  --tag-working: #e5e5e5;
+  --tag-idle: #9a9a9a;
+  --transcript-surface: #131313;
+  --transcript-message-fill: #292929;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: #090a08;
+  color: var(--transcript-prose-ink);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; color: inherit; border: 0; background: none; padding: 0; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 1.5px solid var(--tag-working); outline-offset: 2px; }
+.mono { font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  background: var(--window-surface);
+}
+
+/* ---------- Shared Main Workspace ---------- */
+.main-area {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; height: 100%;
+}
+.titlebar {
+  height: 32px;
+  display: flex; align-items: center; justify-content: flex-end;
+  flex: none;
+}
+.title-btn {
+  width: 26px; height: 26px; border-radius: 13px;
+  display: grid; place-items: center;
+  color: var(--ink-muted); margin-right: 4px;
+  transition: background 110ms, color 110ms;
+}
+.title-btn:hover { background: rgba(231, 229, 223, 0.08); color: var(--ink-primary); }
+.title-btn.active { color: var(--tag-working); }
+.cap-btn { width: 46px; height: 32px; display: grid; place-items: center; color: var(--ink-secondary); }
+.cap-btn:hover { background: rgba(231, 229, 223, 0.08); }
+.cap-btn.close:hover { background: #c42b1c; color: #fff; }
+
+.sheet-frame {
+  flex: 1; min-height: 0;
+  background: var(--transcript-surface);
+  border-top-left-radius: 10px;
+  border-top: 1px solid var(--hairline-soft);
+  border-left: 1px solid var(--hairline-soft);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.sheet-scroll {
+  flex: 1; overflow-y: auto;
+  padding: 28px 36px 20px;
+  max-width: 820px; width: 100%; margin: 0 auto;
+}
+.sheet-scroll::-webkit-scrollbar { width: 5px; }
+.sheet-scroll::-webkit-scrollbar-thumb { background: rgba(231, 229, 223, 0.12); border-radius: 3px; }
+.msg-user-wrap { display: flex; justify-content: flex-end; margin: 14px 0; }
+.msg-user { background: var(--transcript-message-fill); color: var(--ink-primary); padding: 9px 14px; border-radius: 12px; max-width: 68%; font-size: 14px; }
+.msg-assistant { font-size: 14.5px; line-height: 1.6; color: var(--transcript-prose-ink); margin: 14px 0; }
+.msg-assistant h3 { font-size: 14.5px; color: var(--ink-primary); margin: 16px 0 6px; font-weight: 600; }
+.msg-assistant ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-secondary); }
+.msg-assistant li { margin: 5px 0; }
+.tool-cell {
+  background: var(--transcript-cell-fill); border-radius: 7px; padding: 7px 11px; margin: 6px 0;
+  display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-muted);
+  border: 1px solid var(--hairline-soft);
+}
+.tool-cell .meta { margin-left: auto; color: var(--ink-faint); font-size: 11px; }
+
+.composer-dock { max-width: 820px; width: 100%; margin: 0 auto; padding: 0 28px 64px; flex: none; }
+.composer-box { background: var(--composer-surface); border: 1px solid var(--composer-edge); border-radius: 12px; padding: 10px 12px 9px; }
+.composer-input { width: 100%; min-height: 26px; color: var(--ink-primary); font-size: 14px; outline: none; }
+.composer-input::placeholder { color: var(--ink-faint); }
+.composer-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.activity-chip { display: flex; align-items: center; gap: 10px; color: var(--ink-faint); font-size: 12px; }
+.activity-item { display: inline-flex; align-items: center; gap: 4px; }
+.model-chip { background: #191a17; color: var(--ink-secondary); border: 1px solid var(--hairline); border-radius: 14px; padding: 4px 10px; font-size: 11.5px; }
+.send-btn { width: 28px; height: 28px; border-radius: 14px; background: var(--ink-primary); color: var(--window-surface); display: grid; place-items: center; }
+
+/* ---------- Shared Sidebar Chrome ---------- */
+.sidebar-host {
+  height: 100%;
+  flex: none;
+  width: 244px;
+  background: var(--sidebar-surface);
+  display: flex;
+  flex-direction: column;
+  padding: 4px 10px 10px;
+  transition: width 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sidebar-host.collapsed {
+  width: 48px;
+  padding: 6px 0 10px;
+  align-items: center;
+}
+
+.sb-topband {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  margin-bottom: 8px;
+  flex: none;
+}
+.sb-wordmark {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-primary);
+  letter-spacing: -0.01em;
+  margin-right: auto;
+}
+.icon-btn {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: grid; place-items: center;
+  color: var(--ink-muted);
+  transition: background 110ms, color 110ms;
+  flex: none;
+}
+.icon-btn:hover { background: var(--row-hover); color: var(--ink-primary); }
+
+/* Calm New Session action (all variants keep this whisper-quiet) */
+.new-btn {
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(231, 229, 223, 0.045);
+  border: 1px solid var(--hairline);
+  color: var(--ink-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  margin-bottom: 14px;
+  flex: none;
+  transition: background 110ms, border-color 110ms;
+}
+.new-btn:hover { background: rgba(231, 229, 223, 0.08); border-color: rgba(231, 229, 223, 0.14); }
+.new-btn svg { color: var(--ink-secondary); }
+
+.sb-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.sb-scroll::-webkit-scrollbar { width: 4px; }
+.sb-scroll::-webkit-scrollbar-thumb { background: rgba(231, 229, 223, 0.1); border-radius: 2px; }
+.sb-scroll::-webkit-scrollbar-thumb:hover { background: rgba(231, 229, 223, 0.22); }
+
+.row-more-btn {
+  width: 22px; height: 22px; border-radius: 5px;
+  display: grid; place-items: center;
+  color: var(--ink-muted);
+  opacity: 0;
+  flex: none;
+  transition: opacity 90ms, background 90ms, color 90ms;
+}
+.s-row:hover .row-more-btn, .s-row.menu-open .row-more-btn { opacity: 1; }
+.row-more-btn:hover { background: rgba(231, 229, 223, 0.1); color: var(--ink-primary); }
+
+.inline-rename {
+  flex: 1; min-width: 0;
+  background: rgba(231, 229, 223, 0.07);
+  border: 1px solid var(--tag-working);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--ink-primary);
+  font-size: 12.8px;
+  outline: none;
+}
+
+.dot-active { width: 6px; height: 6px; border-radius: 50%; background: var(--tag-working); flex: none; }
+.dot-idle { width: 6px; height: 6px; border-radius: 50%; background: var(--tag-idle); flex: none; }
+.ring-idle { width: 6px; height: 6px; border-radius: 50%; border: 1.4px solid var(--tag-idle); flex: none; }
+
+/* Collapsed rail (shared across all 3 ultra-clean variants) */
+.rail-stack { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+
+/* ================================================================
+   VARIANT A — Soft Group Enclosures (Tonal Containers)
+   Each group is a soft rounded surface so items visibly belong inside it.
+   ================================================================ */
+.a-group {
+  background: var(--group-surface);
+  border: 1px solid var(--group-edge);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 10px;
+}
+.a-group.is-empty {
+  background: transparent;
+  border-color: var(--hairline-soft);
+}
+.a-group-hdr {
+  width: 100%;
+  height: 26px;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  transition: color 100ms, background 100ms;
+}
+.a-group-hdr:hover { color: var(--ink-primary); }
+.a-group.is-empty .a-group-hdr { color: var(--ink-faint); }
+.a-group-hdr .chev { display: grid; place-items: center; transition: transform 140ms ease; opacity: 0.75; }
+.a-group-hdr.closed .chev { transform: rotate(-90deg); }
+.a-group-hdr .cnt {
+  margin-left: auto;
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.a-group-body {
+  padding-top: 2px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.a-empty-note {
+  padding: 4px 10px 6px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+.a-row {
+  height: 31px;
+  padding: 0 4px 0 10px;
+  border-radius: 6px;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: background 90ms, color 90ms;
+}
+.a-row:hover { background: var(--row-hover); color: var(--ink-primary); }
+.a-row.selected { background: var(--row-selected); color: var(--ink-primary); font-weight: 500; }
+.a-row.done-row { color: #9c9d95; }
+.a-row.done-row:hover, .a-row.done-row.selected { color: var(--ink-primary); }
+.a-row-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.8px; }
+
+/* ================================================================
+   VARIANT B — Quiet Tree Rails (Linear / Folder Nesting)
+   Small tracked headers + 1px left vertical guide connecting nested rows.
+   ================================================================ */
+.b-group {
+  margin-bottom: 14px;
+}
+.b-hdr {
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: left;
+  transition: color 100ms, background 100ms;
+}
+.b-hdr:hover { background: var(--row-hover); color: var(--ink-primary); }
+.b-hdr.is-empty { color: var(--ink-faint); }
+.b-hdr .chev { display: grid; place-items: center; transition: transform 140ms ease; }
+.b-hdr.closed .chev { transform: rotate(-90deg); }
+.b-hdr .cnt {
+  margin-left: auto;
+  font-size: 10.5px; font-weight: 500; letter-spacing: 0;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.b-tree {
+  margin-left: 11px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline);
+  margin-top: 2px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.b-row {
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border-radius: 7px;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-secondary);
+  position: relative;
+  cursor: pointer;
+  transition: background 90ms, color 90ms;
+}
+.b-row:hover { background: var(--row-hover); color: var(--ink-primary); }
+.b-row.selected { background: var(--row-selected); color: var(--ink-primary); font-weight: 500; }
+.b-row.selected::before {
+  content: "";
+  position: absolute;
+  left: -9px; top: 6px; bottom: 6px; width: 1.5px;
+  background: var(--tag-working);
+  border-radius: 1px;
+}
+.b-row.done-row { color: #9c9d95; }
+.b-row.done-row:hover, .b-row.done-row.selected { color: var(--ink-primary); }
+.b-row-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.8px; }
+
+/* ================================================================
+   VARIANT C — Whispered Sections (Header Status + Hairline + Spatial Air)
+   Status lives ONCE on the header; generous section breaks + deep row indent.
+   ================================================================ */
+.c-group {
+  padding-top: 10px;
+  margin-top: 6px;
+  border-top: 1px solid var(--hairline-soft);
+}
+.c-group:first-child {
+  padding-top: 2px;
+  margin-top: 0;
+  border-top: 0;
+}
+.c-hdr {
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 100ms, color 100ms;
+}
+.c-hdr:hover { background: var(--row-hover); color: var(--ink-primary); }
+.c-hdr.is-empty { color: var(--ink-faint); }
+.c-hdr .cnt {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.c-hdr .chev { margin-left: auto; display: grid; place-items: center; opacity: 0.65; transition: transform 140ms ease; }
+.c-hdr.closed .chev { transform: rotate(-90deg); }
+.c-list {
+  margin-top: 3px;
+  padding-left: 12px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.c-row {
+  height: 31px;
+  padding: 0 4px 0 10px;
+  border-radius: 7px;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: background 90ms, color 90ms;
+}
+.c-row:hover { background: var(--row-hover); color: var(--ink-primary); }
+.c-row.selected { background: var(--row-selected); color: var(--ink-primary); font-weight: 500; }
+.c-row.done-row { color: #9c9d95; }
+.c-row.done-row:hover, .c-row.done-row.selected { color: var(--ink-primary); }
+.c-row-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.8px; }
+
+/* ---------- Overlays: Tooltip Card, Row Menu, Search ---------- */
+.hover-card {
+  position: fixed; z-index: 50; max-width: 260px;
+  background: var(--panel-surface); border: 1px solid var(--panel-edge);
+  border-radius: 8px; padding: 6px 10px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  font-size: 11.5px; color: var(--ink-primary);
+  pointer-events: none; display: none; word-break: break-word;
+}
+.hover-card.show { display: block; }
+
+.ctx-menu {
+  position: fixed; z-index: 70; width: 184px;
+  background: var(--panel-surface); border: 1px solid var(--panel-edge);
+  border-radius: 10px; padding: 5px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+  display: none;
+}
+.ctx-menu.open { display: block; }
+.ctx-item {
+  width: 100%; min-height: 30px; border-radius: 6px; padding: 5px 9px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--ink-secondary); text-align: left;
+}
+.ctx-item:hover { background: var(--panel-row-hover); color: var(--ink-primary); }
+.ctx-item.sep { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--panel-edge); }
+.ctx-item.danger { color: var(--danger-ink); }
+.ctx-item.danger:hover { background: var(--danger-fill); color: #f4b7af; }
+.ctx-note { display: block; font-size: 10px; opacity: 0.85; }
+
+.search-modal-bg {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(0, 0, 0, 0.45);
+  display: none; align-items: center; justify-content: center;
+}
+.search-modal-bg.open { display: flex; }
+.search-modal {
+  width: 400px; max-width: calc(100vw - 32px);
+  background: var(--panel-surface); border-radius: 16px;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.6);
+  overflow: hidden; border: 1px solid var(--panel-edge);
+}
+.sm-head { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--panel-edge); }
+.sm-input { flex: 1; font-size: 13.5px; color: var(--ink-primary); outline: none; }
+.sm-list { max-height: 260px; overflow-y: auto; padding: 6px; }
+.sm-row {
+  height: 32px; border-radius: 7px; padding: 0 10px;
+  display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink-secondary);
+}
+.sm-row:hover { background: var(--panel-row-hover); color: var(--ink-primary); }
+
+/* ---------- Floating Prototype Switcher Bar ---------- */
+.proto-bar {
+  position: fixed;
+  left: calc(50% + 115px);
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: #f2efe7;
+  color: #151613;
+  border-radius: 999px;
+  padding: 5px 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.proto-arrow { width: 26px; height: 26px; border-radius: 13px; display: grid; place-items: center; color: #151613; font-weight: 700; }
+.proto-arrow:hover { background: rgba(21, 22, 19, 0.1); }
+.proto-pill {
+  height: 26px; padding: 0 10px; border-radius: 999px;
+  font-weight: 600; font-size: 11.5px; color: #4b4c45;
+  display: inline-flex; align-items: center; white-space: nowrap;
+}
+.proto-pill:hover { background: rgba(21, 22, 19, 0.08); color: #151613; }
+.proto-pill.active { background: #151613; color: #f2efe7; }
+.proto-sample {
+  height: 24px; padding: 0 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(21, 22, 19, 0.08); color: #2b2c26;
+  margin-left: 4px; white-space: nowrap;
+}
+.proto-sample:hover { background: rgba(21, 22, 19, 0.16); }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebarHost" class="sidebar-host" aria-label="Sessions sidebar"></aside>
+
+  <main class="main-area">
+    <header class="titlebar">
+      <button class="title-btn" id="themeToggleBtn" title="Toggle Default / Mono theme" aria-label="Toggle theme">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85.99 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button class="title-btn" aria-label="Right column">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z M16 8v8"/>
+        </svg>
+      </button>
+      <button class="cap-btn" aria-label="Minimise"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0.5 5.5h9" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button class="cap-btn" aria-label="Maximise"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button class="cap-btn close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" stroke-width="1"/></svg></button>
+    </header>
+
+    <section class="sheet-frame">
+      <div class="sheet-scroll" id="transcriptView"></div>
+      <div class="composer-dock">
+        <div class="composer-box">
+          <input class="composer-input" placeholder="Message session…" />
+          <div class="composer-foot">
+            <div class="activity-chip mono">
+              <span class="activity-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2.5"/><circle cx="6.5" cy="18.5" r="2.5"/><circle cx="17.5" cy="18.5" r="2.5"/><path d="M12 8v4 M6.5 16v-1.5A2.5 2.5 0 0 1 9 12h6a2.5 2.5 0 0 1 2.5 2.5V16"/></svg>
+                <span>0</span>
+              </span>
+              <span class="activity-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4.2l2.3-6 5 12 2.3-6H21"/></svg>
+                <span>0</span>
+              </span>
+              <span class="activity-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z"/><path d="M8 9.3L11.2 12 8 14.7M12.8 14.7H16"/></svg>
+                <span>0</span>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button class="model-chip">DeepSeek V4.1 Flash ▾</button>
+              <button class="send-btn" aria-label="Send">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 10.5V2M2.2 5.8L6 2l3.8 3.8"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="hover-card" id="hoverCard"></div>
+<div class="ctx-menu" id="ctxMenu" role="menu"></div>
+
+<div class="search-modal-bg" id="searchModalBg">
+  <div class="search-modal" role="dialog" aria-label="Search sessions">
+    <div class="sm-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7.5"/><path d="M16.3 16.3L20.2 20.2"/></svg>
+      <input class="sm-input" id="smInput" placeholder="Search sessions…" />
+      <button class="icon-btn" id="smClose" aria-label="Close">✕</button>
+    </div>
+    <div class="sm-list" id="smList"></div>
+  </div>
+</div>
+
+<nav class="proto-bar" aria-label="Prototype switcher">
+  <button class="proto-arrow" id="prevVar" title="Previous (←)">←</button>
+  <button class="proto-pill" data-var="A">A · Soft Sections</button>
+  <button class="proto-pill" data-var="B">B · Tree Rails</button>
+  <button class="proto-pill" data-var="C">C · Whispered Rules</button>
+  <button class="proto-arrow" id="nextVar" title="Next (→)">→</button>
+  <button class="proto-sample" id="sampleToggle" title="Switch sample roster">0 Active / 1 Idle</button>
+</nav>
+
+<script>
+const BRAND_SVG = `<svg width="18" height="18" viewBox="13.5 16 74 74" aria-hidden="true">
+  <path fill="var(--brand-wing)" d="M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z"/>
+  <path fill="var(--brand-wing-inner)" d="M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z"/>
+  <path fill="var(--brand-wing-shadow)" d="M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z"/>
+  <path fill="var(--brand-stem)" d="M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z"/>
+  <path fill="var(--brand-stem-shadow)" d="M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z"/>
+  <path fill="var(--brand-blade)" d="M 28 16.5 L 28 33.22 L 73 41.5 L 50 16.5 Z"/>
+</svg>`;
+const ICON_NEW = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M 10.5 5 C 6 5 4 7.2 4 12.5 C 4 17.8 6.2 20 11.8 20 C 17.4 20 19.5 17.8 19.5 13 M 9.36 10.93 L 15.73 4.56 A 1.8 1.8 0 0 1 18.27 4.56 L 18.84 5.13 A 1.8 1.8 0 0 1 18.84 7.67 L 12.47 14.04 A 1.8 1.8 0 0 1 9.93 14.04 L 9.36 13.47 A 1.8 1.8 0 0 1 9.36 10.93 Z"/></svg>`;
+const ICON_SEARCH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7.5"/><path d="M16.3 16.3L20.2 20.2"/></svg>`;
+const ICON_MORE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>`;
+const ICON_CHEV = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 3.5L5 6.5L8 3.5"/></svg>`;
+const ICON_DONE_HDR = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 6.4L4.4 9.5L10.5 2.5"/></svg>`;
+const ICON_COLLAPSE = (open) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z M8 8v8"/><path d="${open ? 'M15 9.5L12 12l3 2.5' : 'M12.5 9.5L15.5 12l-3 2.5'}"/></svg>`;
+
+const DONE_BASE = [
+  { id: "d1", name: "stremio", status: "done" },
+  { id: "d2", name: "oddsy", status: "done" },
+  { id: "d3", name: "https://github.com/Shadow-dev/overlay-render-tests", status: "done" },
+  { id: "d4", name: "INSTRUCTIONS In thinking mode verify all edge cases", status: "done" },
+  { id: "d5", name: "# THE BENCH — house voice audit", status: "done" },
+  { id: "d6", name: "go to he anon directory in downloads and check", status: "done" },
+  { id: "d7", name: "What are your global rules?", status: "done" },
+  { id: "d8", name: "i would like my pc to not stutter on idle", status: "done" },
+  { id: "d9", name: "local nvidia", status: "done" },
+  { id: "d10", name: "nvidia reverse", status: "done" },
+  { id: "d11", name: "prime-1", status: "done" },
+  { id: "d12", name: "fix this. the repo is in git dir", status: "done" },
+  { id: "d13", name: "btw is ponytail loaded?", status: "done" },
+  { id: "d14", name: "What is a global harness state entry?", status: "done" },
+  { id: "d15", name: "Reply with exactly: ok", status: "done" },
+  { id: "d16", name: "test", status: "done" },
+];
+
+const SAMPLES = {
+  sparse: [
+    { id: "p1", name: "prime", status: "idle" },
+    ...DONE_BASE,
+  ],
+  busy: [
+    { id: "a1", name: "prime", status: "active" },
+    { id: "a2", name: "oddsy-pinnacle-slip", status: "active" },
+    { id: "i1", name: "Istiak Mahmud · b3e005", status: "idle" },
+    { id: "i2", name: "stremio-logs-ux", status: "idle" },
+    ...DONE_BASE,
+  ],
+};
+
+const state = {
+  variant: "A",
+  sample: "sparse",
+  collapsed: false,
+  selectedId: "p1",
+  folded: { active: false, idle: false, done: false },
+  editingId: null,
+  menuId: null,
+  armedDeleteId: null,
+  theme: "default",
+  sessions: structuredClone(SAMPLES.sparse),
+};
+
+function readVariantFromUrl() {
+  const v = new URLSearchParams(window.location.search).get("variant");
+  return (v && ["A", "B", "C"].includes(v.toUpperCase())) ? v.toUpperCase() : "A";
+}
+
+function setVariant(v) {
+  state.variant = v;
+  state.menuId = null;
+  state.armedDeleteId = null;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("variant", v);
+    history.replaceState(null, "", url.toString());
+  } catch (_) {}
+  renderAll();
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function groupSlices() {
+  return [
+    { key: "active", label: "Active", items: state.sessions.filter(s => s.status === "active") },
+    { key: "idle", label: "Idle", items: state.sessions.filter(s => s.status === "idle") },
+    { key: "done", label: "Done", items: state.sessions.filter(s => s.status === "done"), realCount: 85 },
+  ];
+}
+
+function headerBlock() {
+  return `
+    <div class="sb-topband">
+      ${BRAND_SVG}
+      <span class="sb-wordmark">Prime Agent</span>
+      <button class="icon-btn" data-act="open-search" title="Search sessions (Ctrl+K)">${ICON_SEARCH}</button>
+      <button class="icon-btn" data-act="toggle-collapse" title="Collapse sidebar">${ICON_COLLAPSE(true)}</button>
+    </div>
+    <button class="new-btn" data-act="new">${ICON_NEW}<span>New Session</span></button>`;
+}
+
+function renderRowInner(s, cls, dotHtml) {
+  const sel = s.id === state.selectedId;
+  const menuOpen = s.id === state.menuId;
+  const editing = s.id === state.editingId;
+  const doneClass = s.status === "done" ? "done-row" : "";
+  return `
+    <div class="s-row ${cls} ${sel ? 'selected' : ''} ${menuOpen ? 'menu-open' : ''} ${doneClass}" data-pick="${s.id}" data-hover="${s.id}">
+      ${dotHtml}
+      ${editing
+        ? `<input class="inline-rename" data-rename-id="${s.id}" value="${esc(s.name)}" />`
+        : `<span class="${cls}-name">${esc(s.name)}</span>`}
+      <button class="row-more-btn" data-menu="${s.id}" title="Session menu">${ICON_MORE}</button>
+    </div>`;
+}
+
+/* Variant A — Soft Section Enclosures */
+function renderGroupsA(groups) {
+  return groups.map(g => {
+    const cnt = g.key === "done" ? (g.items.length === DONE_BASE.length ? 85 : g.items.length) : g.items.length;
+    const empty = g.items.length === 0;
+    const closed = !!state.folded[g.key];
+    return `
+      <div class="a-group ${empty ? 'is-empty' : ''}">
+        <button class="a-group-hdr ${closed ? 'closed' : ''}" data-fold="${g.key}">
+          <span class="chev">${ICON_CHEV}</span>
+          <span>${g.label}</span>
+          <span class="cnt">${cnt}</span>
+        </button>
+        ${!closed && !empty ? `
+          <div class="a-group-body">
+            ${g.items.map(s => {
+              const dot = s.status === "active"
+                ? `<span class="dot-active"></span>`
+                : s.status === "idle"
+                  ? `<span class="dot-idle"></span>`
+                  : ``;
+              return renderRowInner(s, "a-row", dot);
+            }).join("")}
+          </div>` : ''}
+      </div>`;
+  }).join("");
+}
+
+/* Variant B — Tree Rails */
+function renderGroupsB(groups) {
+  return groups.map(g => {
+    const cnt = g.key === "done" ? (g.items.length === DONE_BASE.length ? 85 : g.items.length) : g.items.length;
+    const empty = g.items.length === 0;
+    const closed = !!state.folded[g.key];
+    return `
+      <div class="b-group">
+        <button class="b-hdr ${closed ? 'closed' : ''} ${empty ? 'is-empty' : ''}" data-fold="${g.key}">
+          <span class="chev">${ICON_CHEV}</span>
+          <span>${g.label}</span>
+          <span class="cnt">${cnt}</span>
+        </button>
+        ${!closed && !empty ? `
+          <div class="b-tree">
+            ${g.items.map(s => {
+              const dot = s.status === "active"
+                ? `<span class="dot-active"></span>`
+                : s.status === "idle"
+                  ? `<span class="ring-idle"></span>`
+                  : ``;
+              return renderRowInner(s, "b-row", dot);
+            }).join("")}
+          </div>` : ''}
+      </div>`;
+  }).join("");
+}
+
+/* Variant C — Whispered Rules & Header Status */
+function renderGroupsC(groups) {
+  return groups.map(g => {
+    const cnt = g.key === "done" ? (g.items.length === DONE_BASE.length ? 85 : g.items.length) : g.items.length;
+    const empty = g.items.length === 0;
+    const closed = !!state.folded[g.key];
+    const hdrMark = g.key === "active"
+      ? `<span class="dot-active" style="opacity:${empty ? 0.3 : 1}"></span>`
+      : g.key === "idle"
+        ? `<span class="ring-idle" style="opacity:${empty ? 0.35 : 1}"></span>`
+        : `<span style="color:var(--ink-muted);display:grid;place-items:center">${ICON_DONE_HDR}</span>`;
+    return `
+      <div class="c-group">
+        <button class="c-hdr ${closed ? 'closed' : ''} ${empty ? 'is-empty' : ''}" data-fold="${g.key}">
+          ${hdrMark}
+          <span>${g.label}</span>
+          <span class="cnt">${cnt}</span>
+          ${!empty ? `<span class="chev">${ICON_CHEV}</span>` : ''}
+        </button>
+        ${!closed && !empty ? `
+          <div class="c-list">
+            ${g.items.map(s => renderRowInner(s, "c-row", ``)).join("")}
+          </div>` : ''}
+      </div>`;
+  }).join("");
+}
+
+function renderSidebar() {
+  const host = document.getElementById("sidebarHost");
+  host.className = "sidebar-host" + (state.collapsed ? " collapsed" : "");
+  if (state.collapsed) {
+    host.innerHTML = `
+      <div class="rail-stack">
+        <button class="icon-btn" data-act="toggle-collapse" title="Open sidebar">${BRAND_SVG}</button>
+        <button class="icon-btn" data-act="new" title="New Session">${ICON_NEW}</button>
+        <button class="icon-btn" data-act="open-search" title="Search (Ctrl+K)">${ICON_SEARCH}</button>
+      </div>`;
+    return;
+  }
+  const groups = groupSlices();
+  const body = state.variant === "A"
+    ? renderGroupsA(groups)
+    : state.variant === "B"
+      ? renderGroupsB(groups)
+      : renderGroupsC(groups);
+
+  host.innerHTML = `${headerBlock()}<div class="sb-scroll">${body}</div>`;
+}
+
+function renderTranscript() {
+  const s = state.sessions.find(x => x.id === state.selectedId) || state.sessions[0];
+  if (!s) return;
+  const notes = {
+    A: ["Each group lives inside its own soft rounded container so items visibly belong to Active, Idle, or Done.", "Empty groups stay subdued instead of looking like active items; Done rows drop the 85 repeated green checkmarks."],
+    B: ["Small tracked section labels paired with a 1px vertical tree rail down the left edge of each group's rows.", "Rows sit indented inside the rail, so even a 1-row Idle group reads unmistakably as nested under Idle."],
+    C: ["Status lives once on the section header (amber dot on Active, green ring on Idle, single check on Done).", "Thin horizontal rules + wider inter-group spacing + row indent give maximum calm and zero boxes."],
+  }[state.variant];
+
+  document.getElementById("transcriptView").innerHTML = `
+    <div class="msg-user-wrap"><div class="msg-user">let's go with ultra clean and calm, with clear grouping.</div></div>
+    <div class="tool-cell mono"><span>✓</span><span>session · ${esc(s.name)} (${esc(s.status)})</span><span class="meta">prototype</span></div>
+    <div class="msg-assistant">
+      <h3>Variant ${state.variant} — ${state.variant === "A" ? "Soft Section Enclosures" : state.variant === "B" ? "Tree Rails" : "Whispered Sections"}</h3>
+      <ul>
+        <li>${notes[0]}</li>
+        <li>${notes[1]}</li>
+      </ul>
+      <p style="color:var(--ink-muted);margin-top:14px">Use the bottom pill to test <strong>0 Active / 1 Idle</strong> (your exact case) vs <strong>2 Active / 2 Idle</strong>, or press <span class="mono">←</span> / <span class="mono">→</span>.</p>
+    </div>`;
+}
+
+function renderProtoBar() {
+  document.querySelectorAll(".proto-pill").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.var === state.variant);
+  });
+  document.getElementById("sampleToggle").textContent =
+    state.sample === "sparse" ? "Case: 0 Active / 1 Idle" : "Case: 2 Active / 2 Idle";
+}
+
+function renderAll() {
+  renderSidebar();
+  if (state.editingId) {
+    const inp = document.querySelector(`[data-rename-id="${state.editingId}"]`);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  renderTranscript();
+  renderProtoBar();
+}
+
+const hostEl = document.getElementById("sidebarHost");
+const hoverCard = document.getElementById("hoverCard");
+const ctxMenu = document.getElementById("ctxMenu");
+
+hostEl.addEventListener("click", e => {
+  const menuBtn = e.target.closest("[data-menu]");
+  if (menuBtn) {
+    e.stopPropagation();
+    const id = menuBtn.dataset.menu;
+    if (state.menuId === id) { closeMenu(); return; }
+    openCtxMenu(id, menuBtn.getBoundingClientRect());
+    return;
+  }
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (act === "toggle-collapse") { state.collapsed = !state.collapsed; closeMenu(); renderAll(); return; }
+  if (act === "new") {
+    const id = "new-" + Date.now();
+    state.sessions.unshift({ id, name: "New session", status: "idle" });
+    state.selectedId = id;
+    renderAll();
+    return;
+  }
+  if (act === "open-search") { openSearchModal(); return; }
+
+  const fold = e.target.closest("[data-fold]")?.dataset.fold;
+  if (fold) { state.folded[fold] = !state.folded[fold]; renderAll(); return; }
+
+  const pick = e.target.closest("[data-pick]")?.dataset.pick;
+  if (pick && state.editingId !== pick) {
+    state.selectedId = pick;
+    closeMenu();
+    hoverCard.classList.remove("show");
+    renderAll();
+  }
+});
+
+hostEl.addEventListener("dblclick", e => {
+  const pick = e.target.closest("[data-pick]")?.dataset.pick;
+  if (pick) { state.editingId = pick; hoverCard.classList.remove("show"); renderAll(); }
+});
+
+hostEl.addEventListener("keydown", e => {
+  if (e.target.matches("[data-rename-id]")) {
+    const id = e.target.dataset.renameId;
+    if (e.key === "Enter") {
+      const s = state.sessions.find(x => x.id === id);
+      if (s && e.target.value.trim()) s.name = e.target.value.trim();
+      state.editingId = null;
+      renderAll();
+    } else if (e.key === "Escape") {
+      state.editingId = null;
+      renderAll();
+    }
+  }
+});
+
+hostEl.addEventListener("mouseover", e => {
+  if (state.collapsed || state.menuId || state.editingId) return;
+  const row = e.target.closest("[data-hover]");
+  if (!row) { hoverCard.classList.remove("show"); return; }
+  const s = state.sessions.find(x => x.id === row.dataset.hover);
+  if (!s) return;
+  const rect = row.getBoundingClientRect();
+  hoverCard.textContent = s.name;
+  hoverCard.style.left = (hostEl.getBoundingClientRect().right + 10) + "px";
+  hoverCard.style.top = Math.min(window.innerHeight - 60, Math.max(40, rect.top)) + "px";
+  hoverCard.classList.add("show");
+});
+hostEl.addEventListener("mouseleave", () => hoverCard.classList.remove("show"));
+
+function openCtxMenu(id, btnRect) {
+  state.menuId = id;
+  state.armedDeleteId = null;
+  hoverCard.classList.remove("show");
+  renderCtxMenu();
+  ctxMenu.style.left = Math.max(8, btnRect.right - 184) + "px";
+  ctxMenu.style.top = Math.min(window.innerHeight - 170, btnRect.bottom + 4) + "px";
+  ctxMenu.classList.add("open");
+  renderAll();
+}
+function renderCtxMenu() {
+  const s = state.sessions.find(x => x.id === state.menuId);
+  if (!s) return;
+  const armed = state.armedDeleteId === s.id;
+  const items = s.status !== "done"
+    ? [{ k: "done", label: "Mark done" }, { k: "rename", label: "Rename" }, { k: "share", label: "Share as gist" }, { k: "copy", label: "Copy id" }]
+    : [{ k: "rename", label: "Rename" }, { k: "copy", label: "Copy id" }, { k: "delete", label: armed ? "Delete for good" : "Delete", note: armed ? "this removes the session file" : "", danger: true, sep: true }];
+  ctxMenu.innerHTML = items.map(it => `<button class="ctx-item ${it.danger ? 'danger' : ''} ${it.sep ? 'sep' : ''}" data-ctx="${it.k}"><span>${esc(it.label)}${it.note ? `<span class="ctx-note">${esc(it.note)}</span>` : ''}</span></button>`).join("");
+}
+function closeMenu() { state.menuId = null; state.armedDeleteId = null; ctxMenu.classList.remove("open"); }
+ctxMenu.addEventListener("click", e => {
+  e.stopPropagation();
+  const k = e.target.closest("[data-ctx]")?.dataset.ctx;
+  const s = state.sessions.find(x => x.id === state.menuId);
+  if (!k || !s) return;
+  if (k === "done") { s.status = "done"; closeMenu(); renderAll(); }
+  else if (k === "rename") { const id = s.id; closeMenu(); state.editingId = id; renderAll(); }
+  else if (k === "delete") {
+    if (state.armedDeleteId !== s.id) { state.armedDeleteId = s.id; renderCtxMenu(); }
+    else { state.sessions = state.sessions.filter(x => x.id !== s.id); if (state.selectedId === s.id) state.selectedId = state.sessions[0]?.id || ""; closeMenu(); renderAll(); }
+  } else { closeMenu(); renderAll(); }
+});
+document.addEventListener("click", e => { if (state.menuId && !e.target.closest("#ctxMenu")) { closeMenu(); renderAll(); } });
+
+const smBg = document.getElementById("searchModalBg");
+const smInput = document.getElementById("smInput");
+function openSearchModal() { smBg.classList.add("open"); smInput.value = ""; renderSearchModal(); setTimeout(() => smInput.focus(), 10); }
+function renderSearchModal() {
+  const q = smInput.value.trim().toLowerCase();
+  const rows = state.sessions.filter(s => !q || s.name.toLowerCase().includes(q)).slice(0, 10);
+  document.getElementById("smList").innerHTML = rows.map(s => `<div class="sm-row" data-smpick="${s.id}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name)}</span></div>`).join("");
+}
+smInput.addEventListener("input", renderSearchModal);
+document.getElementById("smList").addEventListener("click", e => {
+  const id = e.target.closest("[data-smpick]")?.dataset.smpick;
+  if (id) { state.selectedId = id; smBg.classList.remove("open"); renderAll(); }
+});
+document.getElementById("smClose").addEventListener("click", () => smBg.classList.remove("open"));
+smBg.addEventListener("click", e => { if (e.target === smBg) smBg.classList.remove("open"); });
+
+document.querySelectorAll(".proto-pill").forEach(b => b.addEventListener("click", () => setVariant(b.dataset.var)));
+const ORDER = ["A", "B", "C"];
+document.getElementById("prevVar").addEventListener("click", () => setVariant(ORDER[(ORDER.indexOf(state.variant) + 2) % 3]));
+document.getElementById("nextVar").addEventListener("click", () => setVariant(ORDER[(ORDER.indexOf(state.variant) + 1) % 3]));
+document.getElementById("sampleToggle").addEventListener("click", () => {
+  state.sample = state.sample === "sparse" ? "busy" : "sparse";
+  state.sessions = structuredClone(SAMPLES[state.sample]);
+  state.selectedId = state.sessions[0].id;
+  renderAll();
+});
+document.getElementById("themeToggleBtn").addEventListener("click", () => {
+  state.theme = state.theme === "default" ? "mono" : "default";
+  document.documentElement.dataset.theme = state.theme === "mono" ? "mono" : "";
+  document.getElementById("themeToggleBtn").classList.toggle("active", state.theme === "mono");
+});
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openSearchModal(); return; }
+  if (e.key === "Escape") { smBg.classList.remove("open"); closeMenu(); state.editingId = null; renderAll(); return; }
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); setVariant(ORDER[(ORDER.indexOf(state.variant) + 2) % 3]); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); setVariant(ORDER[(ORDER.indexOf(state.variant) + 1) % 3]); }
+});
+
+state.variant = readVariantFromUrl();
+renderAll();
+</script>
+</body>
+</html>
