@@ -5120,6 +5120,7 @@ fn main() {}
                 title: format!("bash #{i}"),
                 meta: String::new(),
                 body: String::new(),
+                table: None,
                 raw_code: format!("echo step_{i}"),
                 code: format!("echo step_{i}"),
                 output: format!("output line {i}"),

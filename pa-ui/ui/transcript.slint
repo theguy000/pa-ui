@@ -933,6 +933,8 @@ export component TranscriptRow inherits VerticalLayout {
 
         table-card := Rectangle {
             property <bool> copied: false;
+            // every body row starts one row past the header in the flat cell list
+            property <int> columns: data.table-widths.length;
 
             width: root.width - 48px;
             height: self.preferred-height;
@@ -957,22 +959,21 @@ export component TranscriptRow inherits VerticalLayout {
                 HorizontalLayout {
                     height: 28px;
                     spacing: 0px;
-                    alignment: center;
 
-                    for cell in data.table : Rectangle {
-                        horizontal-stretch: cell.header ? cell.stretch : 0.0;
+                    for column in data.table-column-indices : Rectangle {
+                        horizontal-stretch: data.table-widths[column];
 
-                        if cell.header : HorizontalLayout {
-                            padding-left: cell.column == 0 ? 0px : 8px;
+                        HorizontalLayout {
+                            padding-left: column == 0 ? 0px : 8px;
                             padding-right: 8px;
 
                             StyledText {
                                 horizontal-stretch: 1.0;
-                                text: cell.text;
+                                text: data.table[column].text;
                                 default-color: Theme.transcript-prose-ink;
                                 default-font-size: Appearance.cell-output-size;
-                                horizontal-alignment: cell.align == 1 ? right
-                                    : cell.align == 2 ? center : left;
+                                horizontal-alignment: data.table[column].align == 1 ? right
+                                    : data.table[column].align == 2 ? center : left;
                                 link-color: Theme.transcript-link-ink;
                                 link-clicked(link) => { root.open-link(link); }
                             }
@@ -985,7 +986,7 @@ export component TranscriptRow inherits VerticalLayout {
                     background: Theme.transcript-quote-edge;
                 }
 
-                for row-index in data.table-rows : VerticalLayout {
+                for row in data.table-row-indices : VerticalLayout {
                     spacing: 0px;
 
                     HorizontalLayout {
@@ -993,20 +994,20 @@ export component TranscriptRow inherits VerticalLayout {
                         padding-bottom: 6px;
                         spacing: 0px;
 
-                        for cell in data.table : Rectangle {
-                            horizontal-stretch: cell.row == row-index ? cell.stretch : 0.0;
+                        for column in data.table-column-indices : Rectangle {
+                            horizontal-stretch: data.table-widths[column];
 
-                            if cell.row == row-index : HorizontalLayout {
-                                padding-left: cell.column == 0 ? 0px : 8px;
+                            HorizontalLayout {
+                                padding-left: column == 0 ? 0px : 8px;
                                 padding-right: 8px;
 
                                 StyledText {
                                     horizontal-stretch: 1.0;
-                                    text: cell.text;
+                                    text: data.table[(row + 1) * table-card.columns + column].text;
                                     default-color: Theme.transcript-prose-ink;
                                     default-font-size: Appearance.cell-output-size;
-                                    horizontal-alignment: cell.align == 1 ? right
-                                        : cell.align == 2 ? center : left;
+                                    horizontal-alignment: data.table[(row + 1) * table-card.columns + column].align == 1 ? right
+                                        : data.table[(row + 1) * table-card.columns + column].align == 2 ? center : left;
                                     link-color: Theme.transcript-link-ink;
                                     link-clicked(link) => { root.open-link(link); }
                                 }
@@ -1014,7 +1015,7 @@ export component TranscriptRow inherits VerticalLayout {
                         }
                     }
 
-                    if row-index < data.table-rows.length - 1 : Rectangle {
+                    if row < data.table-row-indices.length - 1 : Rectangle {
                         height: 1px;
                         background: Theme.transcript-cell-rule;
                     }
@@ -1061,6 +1062,7 @@ export component TranscriptRow inherits VerticalLayout {
             }
         }
     }
+
     // an image the user sent: the picture itself, thumbnailed, on the same edge
     // as the bubble so the sent turn reads as one thing
     if data.kind == 8 : HorizontalLayout {

@@ -1035,28 +1035,21 @@ impl Table {
             .collect()
     }
 
+    /// The header row first, then every body row, so a cell's place is
+    /// `(row + 1) * columns + column` and no cell has to be searched for.
     pub(crate) fn cells(&self, theme: &Resolved) -> Vec<TableCellData> {
-        let stretches = self.stretches();
-        let mut cells = Vec::new();
+        let mut cells = Vec::with_capacity((self.rows.len() + 1) * self.header.len());
         for (column, source) in self.header.iter().enumerate() {
             cells.push(TableCellData {
-                row: -1,
-                column: column as i32,
                 text: table_cell_markup(source, true, theme),
                 align: self.aligns[column],
-                header: true,
-                stretch: stretches[column],
             });
         }
-        for (row, sources) in self.rows.iter().enumerate() {
+        for sources in &self.rows {
             for (column, source) in sources.iter().enumerate() {
                 cells.push(TableCellData {
-                    row: row as i32,
-                    column: column as i32,
                     text: table_cell_markup(source, false, theme),
                     align: self.aligns[column],
-                    header: false,
-                    stretch: stretches[column],
                 });
             }
         }
@@ -1066,12 +1059,8 @@ impl Table {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TableCellData {
-    pub row: i32,
-    pub column: i32,
     pub text: String,
     pub align: u8,
-    pub header: bool,
-    pub stretch: f32,
 }
 
 fn table_cell_markup(source: &str, header: bool, theme: &Resolved) -> String {

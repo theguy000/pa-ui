@@ -288,13 +288,8 @@ mod table_tests {
         let table = table_from_source(&row.raw_code).expect("a parsed table");
         let cells = table.cells(&Resolved::shipped());
         assert_eq!(cells.len(), 9);
-        let header: Vec<&TableCellData> = cells.iter().filter(|cell| cell.header).collect();
-        assert_eq!(header.len(), 3);
-        assert!(header.iter().all(|cell| cell.row == -1));
-        assert_eq!(header.iter().map(|cell| cell.align).collect::<Vec<_>>(), [0, 2, 1]);
+        assert_eq!(cells[..3].iter().map(|cell| cell.align).collect::<Vec<_>>(), [0, 2, 1]);
         assert_eq!(cells[0].text, "**name**");
-        assert_eq!(cells[4].row, 0);
-        assert_eq!(cells[4].column, 1);
         assert!(cells[1].text.contains("<font"), "code in a header carries its font");
         assert!(cells[4].text.contains("<font"), "code in a body cell carries its font");
         assert!(cells[3].text.contains("**a**"), "bold inside a cell survives");

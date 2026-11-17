@@ -51,6 +51,7 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         title: title.to_string(),
         meta: String::new(),
         body: body.to_string(),
+        table: None,
         raw_code: String::new(),
         code: String::new(),
         output: String::new(),
@@ -649,10 +650,17 @@ fn code_and_table_height_estimates_are_explicit_and_grow_with_content() {
     let mut row = row("m2", transcript::KIND_TABLE, "", "", table);
     row.raw_code = table.to_string();
     row.has_code = true;
+    row.table = Some(std::sync::Arc::new(
+        transcript::table_from_source(table).expect("a parsed table"),
+    ));
     let short_table = estimate_row_height(&row);
     assert!(short_table > 28.0);
 
-    row.raw_code = format!("{table}\n| some much longer cell | 200 |");
+    let longer = format!("{table}\n| some much longer cell | 200 |");
+    row.raw_code = longer.clone();
+    row.table = Some(std::sync::Arc::new(
+        transcript::table_from_source(&longer).expect("a parsed table"),
+    ));
     assert!(estimate_row_height(&row) > short_table);
 }
 
@@ -661,15 +669,18 @@ fn to_slint_carries_table_cells_rows_and_column_stretch() {
     use slint::Model;
 
     let mut row = row("m1", transcript::KIND_TABLE, "", "", "");
-    row.raw_code = "| name | score |\n|---|--:|\n| a | 1 |".to_string();
-    row.has_code = true;
+    let source = "| name | score |\n|---|--:|\n| a | 1 |".to_string();
+    row.raw_code = source.clone();
+    row.table = Some(std::sync::Arc::new(
+        transcript::table_from_source(&source).expect("a parsed table"),
+    ));
 
     let trow = to_slint(&row);
-    assert_eq!(trow.table.row_count(), 4);
-    assert_eq!(trow.table_rows.row_count(), 1);
-    assert_eq!(trow.table_columns.row_count(), 2);
-    assert!(trow.table.row_data(0).expect("header cell").header);
-    assert_eq!(trow.table.row_data(1).expect("right cell").align, 1);
+    assert_eq!(trow.table.row_count(), 4, "one header row and one body row");
+    assert_eq!(trow.table_row_indices.row_count(), 1);
+    assert_eq!(trow.table_column_indices.row_count(), 2);
+    assert_eq!(trow.table_widths.row_count(), 2);
+    assert_eq!(trow.table.row_data(3).expect("right cell").align, 1);
 }
 
 #[test]

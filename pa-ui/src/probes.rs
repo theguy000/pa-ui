@@ -309,8 +309,9 @@ mod transcript_scroll_contract {
             "custom-text:=StyledText{width:max(0px,root.width-48px-44px);",
             "error-line:=StyledText{width:max(0px,root.width-102px-error-label.preferred-width);",
             "code-text:=StyledText{width:root.width-72px;",
-            "ifcell.header:HorizontalLayout{",
-            "ifcell.row==row-index:HorizontalLayout{",
+            "forcolumnindata.table-column-indices:Rectangle{horizontal-stretch:data.table-widths[column];",
+            "forrowindata.table-row-indices:VerticalLayout{",
+            "data.table[(row+1)*table-card.columns+column].text",
         ] {
             assert!(
                 compact.contains(needle),

@@ -228,10 +228,7 @@ pub(crate) fn estimate_row_height(row: &Row) -> f32 {
             };
             48.0 + (text_lines(&source, 72) as f32 * 16.5)
         }
-        transcript::KIND_TABLE => match transcript::table_from_source(&row.raw_code) {
-            Some(table) => table_height(&table),
-            None => 28.0,
-        },
+        transcript::KIND_TABLE => row.table.as_deref().map_or(28.0, table_height),
         transcript::KIND_CELL => {
             if row.expanded {
                 let code_lines = if row.has_code {
@@ -1724,27 +1721,24 @@ fn cell_copy_text(row: &Row) -> Option<String> {
     Some(row.raw_code.clone())
 }
 
-fn table_models(source: &str) -> (ModelRc<TableCell>, ModelRc<i32>, ModelRc<f32>) {
-    let Some(table) = transcript::table_from_source(source) else {
-        return (ModelRc::default(), ModelRc::default(), ModelRc::default());
-    };
+fn table_models(
+    table: &transcript::Table,
+) -> (ModelRc<TableCell>, ModelRc<i32>, ModelRc<i32>, ModelRc<f32>) {
     let theme = theme::current();
     let cells: Vec<TableCell> = table
         .cells(&theme)
         .into_iter()
         .map(|cell| TableCell {
-            row: cell.row,
-            column: cell.column,
             text: transcript::styled(&cell.text),
             align: i32::from(cell.align),
-            header: cell.header,
-            stretch: cell.stretch,
         })
         .collect();
     let rows: Vec<i32> = (0..table.rows.len() as i32).collect();
+    let columns: Vec<i32> = (0..table.header.len() as i32).collect();
     (
         ModelRc::from(Rc::new(VecModel::from(cells))),
         ModelRc::from(Rc::new(VecModel::from(rows))),
+        ModelRc::from(Rc::new(VecModel::from(columns))),
         ModelRc::from(Rc::new(VecModel::from(table.stretches()))),
     )
 }
@@ -1752,10 +1746,14 @@ fn table_models(source: &str) -> (ModelRc<TableCell>, ModelRc<i32>, ModelRc<f32>
 pub(crate) fn to_slint(row: &Row) -> TRow {
     #[cfg(test)]
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
-    let (table, table_rows, table_columns) = if row.kind == transcript::KIND_TABLE {
-        table_models(&row.raw_code)
-    } else {
-        (ModelRc::default(), ModelRc::default(), ModelRc::default())
+    let (table, table_rows, table_columns, table_widths) = match row.table.as_deref() {
+        Some(table) if row.kind == transcript::KIND_TABLE => table_models(table),
+        _ => (
+            ModelRc::default(),
+            ModelRc::default(),
+            ModelRc::default(),
+            ModelRc::default(),
+        ),
     };
     TRow {
         kind: row.kind,
@@ -1775,8 +1773,9 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         elapsed: row.elapsed.clone().into(),
         timestamp: row.timestamp.clone().into(),
         table,
-        table_rows,
-        table_columns,
+        table_row_indices: table_rows,
+        table_column_indices: table_columns,
+        table_widths,
     }
 }
 

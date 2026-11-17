@@ -88,6 +88,9 @@ pub struct Row {
     pub running: bool,
     /// base64 payload of an image row, exactly as it sits on the wire
     pub image: String,
+    /// A table row's cells, parsed once when the row is built: the drawn
+    /// columns and the height estimate read the same parse.
+    pub table: Option<std::sync::Arc<Table>>,
     /// which message this row belongs to: the daemon's id when it has one,
     /// a custom-message key from its details or content, and a role+timestamp
     /// key only as the last resort. Rows are merged per message, so a rebuild
@@ -139,6 +142,7 @@ impl Row {
             failed: false,
             running: false,
             image: String::new(),
+            table: None,
             elapsed: String::new(),
             timestamp: String::new(),
             message: String::new(),
@@ -462,8 +466,8 @@ fn build_message(
                         Block::Table(table) => {
                             let mut row = Row::new(KIND_TABLE);
                             row.raw_code = table.source.clone();
-                            row.body = table.source;
                             row.has_code = true;
+                            row.table = Some(std::sync::Arc::new(table));
                             rows.push(row);
                         }
                     }
