@@ -64,7 +64,10 @@ export struct TRow {
     table: [TableCell],
     table-row-indices: [int],
     table-column-indices: [int],
-    table-widths: [float],
+    table-widths: [length],
+    // a ScrollView has no content height of its own, so the Sheet passes the
+    // height it estimated and the table is drawn exactly that tall
+    table-height: length,
 }
 
 export struct SessionItem {

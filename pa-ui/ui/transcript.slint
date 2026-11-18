@@ -937,7 +937,7 @@ export component TranscriptRow inherits VerticalLayout {
             property <int> columns: data.table-widths.length;
 
             width: root.width - 48px;
-            height: self.preferred-height;
+            height: data.table-height;
 
             table-touch := TouchArea {
                 x: 0;
@@ -952,41 +952,13 @@ export component TranscriptRow inherits VerticalLayout {
                 triggered => { table-card.copied = false; }
             }
 
-            VerticalLayout {
-                spacing: 0px;
-                padding-right: 70px;
+            // Columns carry their own width, so a table wider than the Sheet
+            // scrolls sideways instead of clipping its last columns.
+            table-scroll := ScrollView {
+                width: parent.width;
+                height: data.table-height;
 
-                HorizontalLayout {
-                    height: 28px;
-                    spacing: 0px;
-
-                    for column in data.table-column-indices : Rectangle {
-                        horizontal-stretch: data.table-widths[column];
-
-                        HorizontalLayout {
-                            padding-left: column == 0 ? 0px : 8px;
-                            padding-right: 8px;
-
-                            StyledText {
-                                horizontal-stretch: 1.0;
-                                text: data.table[column].text;
-                                default-color: Theme.transcript-prose-ink;
-                                default-font-size: Appearance.cell-output-size;
-                                horizontal-alignment: data.table[column].align == 1 ? right
-                                    : data.table[column].align == 2 ? center : left;
-                                link-color: Theme.transcript-link-ink;
-                                link-clicked(link) => { root.open-link(link); }
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    height: 1px;
-                    background: Theme.transcript-quote-edge;
-                }
-
-                for row in data.table-row-indices : VerticalLayout {
+                VerticalLayout {
                     spacing: 0px;
 
                     HorizontalLayout {
@@ -995,7 +967,7 @@ export component TranscriptRow inherits VerticalLayout {
                         spacing: 0px;
 
                         for column in data.table-column-indices : Rectangle {
-                            horizontal-stretch: data.table-widths[column];
+                            width: data.table-widths[column];
 
                             HorizontalLayout {
                                 padding-left: column == 0 ? 0px : 8px;
@@ -1003,11 +975,11 @@ export component TranscriptRow inherits VerticalLayout {
 
                                 StyledText {
                                     horizontal-stretch: 1.0;
-                                    text: data.table[(row + 1) * table-card.columns + column].text;
+                                    text: data.table[column].text;
                                     default-color: Theme.transcript-prose-ink;
                                     default-font-size: Appearance.cell-output-size;
-                                    horizontal-alignment: data.table[(row + 1) * table-card.columns + column].align == 1 ? right
-                                        : data.table[(row + 1) * table-card.columns + column].align == 2 ? center : left;
+                                    horizontal-alignment: data.table[column].align == 1 ? right
+                                        : data.table[column].align == 2 ? center : left;
                                     link-color: Theme.transcript-link-ink;
                                     link-clicked(link) => { root.open-link(link); }
                                 }
@@ -1015,9 +987,44 @@ export component TranscriptRow inherits VerticalLayout {
                         }
                     }
 
-                    if row < data.table-row-indices.length - 1 : Rectangle {
+                    Rectangle {
                         height: 1px;
-                        background: Theme.transcript-cell-rule;
+                        background: Theme.transcript-quote-edge;
+                    }
+
+                    for row in data.table-row-indices : VerticalLayout {
+                        spacing: 0px;
+
+                        HorizontalLayout {
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            spacing: 0px;
+
+                            for column in data.table-column-indices : Rectangle {
+                                width: data.table-widths[column];
+
+                                HorizontalLayout {
+                                    padding-left: column == 0 ? 0px : 8px;
+                                    padding-right: 8px;
+
+                                    StyledText {
+                                        horizontal-stretch: 1.0;
+                                        text: data.table[(row + 1) * table-card.columns + column].text;
+                                        default-color: Theme.transcript-prose-ink;
+                                        default-font-size: Appearance.cell-output-size;
+                                        horizontal-alignment: data.table[(row + 1) * table-card.columns + column].align == 1 ? right
+                                            : data.table[(row + 1) * table-card.columns + column].align == 2 ? center : left;
+                                        link-color: Theme.transcript-link-ink;
+                                        link-clicked(link) => { root.open-link(link); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if row < data.table-row-indices.length - 1 : Rectangle {
+                            height: 1px;
+                            background: Theme.transcript-cell-rule;
+                        }
                     }
                 }
             }

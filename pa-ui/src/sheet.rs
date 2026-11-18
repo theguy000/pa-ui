@@ -1689,25 +1689,32 @@ fn text_lines(text: &str, width: usize) -> usize {
         .max(1)
 }
 
+/// The table's own type, at `Appearance.cell-output-size`: the advance a
+/// character takes, and the line it sits on. The estimate has to use the same
+/// numbers the drawn row does, or the row overlaps the one below it.
+const TABLE_CHAR_PX: f32 = 6.6;
+const TABLE_LINE_PX: f32 = 16.0;
+const TABLE_CELL_PAD: f32 = 18.0;
+
+fn table_row_lines(cells: &[String], widths: &[f32]) -> f32 {
+    cells
+        .iter()
+        .zip(widths)
+        .map(|(cell, width)| {
+            let per_line = ((width - TABLE_CELL_PAD) / TABLE_CHAR_PX).max(1.0);
+            (cell.chars().count() as f32 / per_line).ceil().max(1.0)
+        })
+        .fold(1.0, f32::max)
+}
+
 fn table_height(table: &transcript::Table) -> f32 {
-    let stretches = table.stretches();
-    let total = stretches.iter().sum::<f32>().max(0.1);
-    let mut height = 28.0 + 1.0;
-    for (index, cells) in table.rows.iter().enumerate() {
-        let lines = cells
-            .iter()
-            .zip(&stretches)
-            .map(|(cell, stretch)| {
-                let width = (76.0 * stretch / total).max(6.0);
-                (cell.chars().count() as f32 / width).ceil().max(1.0)
-            })
-            .fold(1.0f32, f32::max);
-        height += 12.0 + lines * 16.0;
-        if index + 1 < table.rows.len() {
-            height += 1.0;
-        }
+    let widths = table.widths();
+    let mut height = 12.0 + table_row_lines(&table.header, &widths) * TABLE_LINE_PX;
+    for cells in &table.rows {
+        height += 1.0;
+        height += 12.0 + table_row_lines(cells, &widths) * TABLE_LINE_PX;
     }
-    height + 10.0
+    height + 6.0
 }
 
 fn cell_copy_text(row: &Row) -> Option<String> {
@@ -1739,22 +1746,27 @@ fn table_models(
         ModelRc::from(Rc::new(VecModel::from(cells))),
         ModelRc::from(Rc::new(VecModel::from(rows))),
         ModelRc::from(Rc::new(VecModel::from(columns))),
-        ModelRc::from(Rc::new(VecModel::from(table.stretches()))),
+        ModelRc::from(Rc::new(VecModel::from(table.widths()))),
     )
 }
 
 pub(crate) fn to_slint(row: &Row) -> TRow {
     #[cfg(test)]
     CONVERSION_COUNT.with(|c| c.set(c.get() + 1));
-    let (table, table_rows, table_columns, table_widths) = match row.table.as_deref() {
-        Some(table) if row.kind == transcript::KIND_TABLE => table_models(table),
-        _ => (
-            ModelRc::default(),
-            ModelRc::default(),
-            ModelRc::default(),
-            ModelRc::default(),
-        ),
-    };
+    let (table, table_rows, table_columns, table_widths, table_height) =
+        match row.table.as_deref() {
+            Some(table) if row.kind == transcript::KIND_TABLE => {
+                let (cells, rows, columns, widths) = table_models(table);
+                (cells, rows, columns, widths, table_height(table))
+            }
+            _ => (
+                ModelRc::default(),
+                ModelRc::default(),
+                ModelRc::default(),
+                ModelRc::default(),
+                0.0,
+            ),
+        };
     TRow {
         kind: row.kind,
         verb: row.verb.clone().into(),
@@ -1776,6 +1788,7 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         table_row_indices: table_rows,
         table_column_indices: table_columns,
         table_widths,
+        table_height,
     }
 }
 

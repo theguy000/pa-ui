@@ -218,18 +218,19 @@ mod strong_tests {
         assert_eq!(table.header, ["model", "cost", "note"]);
         assert_eq!(table.aligns, [0, 1, 2]);
         assert_eq!(table.rows.len(), 2);
-        let stretches = table.stretches();
-        assert_eq!(stretches.len(), 3);
-        assert!(stretches.iter().all(|stretch| (0.4..=3.0).contains(stretch)));
-        assert!(stretches[0] > stretches[2], "a long column outgrows a short one");
+        let widths = table.widths();
+        assert_eq!(widths.len(), 3);
+        assert!(widths.iter().all(|width| (56.0..=280.0).contains(width)));
+        assert!(widths[0] > widths[2], "a long column outgrows a short one");
     }
 
     #[test]
-    fn a_wide_table_caps_column_stretch() {
+    fn a_wide_table_caps_its_column_width() {
         let wide = "x".repeat(200);
         let table = table_from_source(&format!("| {wide} |\n|---|\n| {wide} |"))
             .expect("a valid table");
-        assert_eq!(table.stretches(), [3.0]);
+        assert_eq!(table.widths(), [280.0]);
+        assert_eq!(table_from_source("| a |\n|---|\n| b |").expect("table").widths(), [56.0]);
     }
 
     #[test]
@@ -247,6 +248,16 @@ mod strong_tests {
     fn code_spans_and_escapes_do_not_count() {
         assert_eq!(balance_strong("`a**b` c"), "`a**b` c");
         assert_eq!(balance_strong(r"a \*\* b"), r"a \*\* b");
+    }
+
+    #[test]
+    fn a_heading_draws_its_text_with_weight() {
+        let drawn = markdown_markup("## receipts and throughput", &crate::theme::Resolved::shipped());
+        let rendered = format!(
+            "{:?}",
+            StyledText::from_markdown(&drawn).expect("a heading parses")
+        );
+        assert!(rendered.contains("Strong"), "got {rendered}\n---\n{drawn}");
     }
 
     #[test]

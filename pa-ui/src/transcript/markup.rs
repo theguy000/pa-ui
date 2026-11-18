@@ -1019,7 +1019,10 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    pub(crate) fn stretches(&self) -> Vec<f32> {
+    /// A column's drawn width: its widest cell at the table's own type, plus the
+    /// cell's padding. Never narrower than a few readable characters, never wider
+    /// than a third of a pane, so forty columns stay legible and scroll.
+    pub(crate) fn widths(&self) -> Vec<f32> {
         (0..self.header.len())
             .map(|column| {
                 let widest = self
@@ -1030,7 +1033,7 @@ impl Table {
                     .map(|cell| cell.chars().count())
                     .max()
                     .unwrap_or(1);
-                (widest as f32 / 16.0).clamp(0.4, 3.0)
+                ((widest as f32 * 6.6) + 18.0).clamp(56.0, 280.0)
             })
             .collect()
     }
