@@ -659,7 +659,9 @@ export component TranscriptRow inherits VerticalLayout {
         Rectangle {
             width: root.width - 48px;
             background: Theme.transcript-cell-fill;
-            border-color: Theme.transcript-cell-edge;
+            border-color: data.custom-kind == "provider-retry"
+                ? Theme.transcript-cell-edge-working
+                : Theme.transcript-cell-edge;
             border-width: 1px;
             border-radius: 8px;
             clip: true;

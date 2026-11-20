@@ -50,6 +50,8 @@ fn row(message: &str, kind: i32, title: &str, id: &str, body: &str) -> Row {
         verb: String::new(),
         title: title.to_string(),
         meta: String::new(),
+        custom_kind: String::new(),
+        badge_secondary: String::new(),
         body: body.to_string(),
         table: None,
         raw_code: String::new(),

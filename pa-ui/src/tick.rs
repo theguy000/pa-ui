@@ -5119,6 +5119,8 @@ fn main() {}
                 verb: "bash".to_string(),
                 title: format!("bash #{i}"),
                 meta: String::new(),
+                custom_kind: String::new(),
+                badge_secondary: String::new(),
                 body: String::new(),
                 table: None,
                 raw_code: format!("echo step_{i}"),

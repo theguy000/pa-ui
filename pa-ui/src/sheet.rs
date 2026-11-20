@@ -1772,6 +1772,8 @@ pub(crate) fn to_slint(row: &Row) -> TRow {
         verb: row.verb.clone().into(),
         title: transcript::plain(&row.title).into(),
         meta: transcript::plain(&row.meta).into(),
+        custom_kind: row.custom_kind.clone().into(),
+        badge_secondary: row.badge_secondary.clone().into(),
         body: transcript::styled(&row.body),
         code: transcript::styled(&row.code),
         output: transcript::styled(&row.output),

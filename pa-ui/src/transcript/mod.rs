@@ -74,6 +74,8 @@ pub struct Row {
     pub verb: String,
     pub title: String,
     pub meta: String,
+    pub custom_kind: String,
+    pub badge_secondary: String,
     pub body: String,
     pub raw_code: String,
     pub code: String,
@@ -131,6 +133,8 @@ impl Row {
             verb: String::new(),
             title: String::new(),
             meta: String::new(),
+            custom_kind: String::new(),
+            badge_secondary: String::new(),
             body: String::new(),
             raw_code: String::new(),
             code: String::new(),
@@ -165,9 +169,12 @@ fn custom_message_text(message: &Value) -> String {
     }
 }
 
+#[derive(Default)]
 struct CustomMessageMeta {
     label: String,
     meta: String,
+    custom_kind: String,
+    badge_secondary: String,
     failed: bool,
     has_body: bool,
 }
@@ -178,6 +185,7 @@ fn plain_meta(label: &str, has_body: bool) -> CustomMessageMeta {
         meta: String::new(),
         failed: false,
         has_body,
+    ..Default::default()
     }
 }
 
@@ -187,6 +195,7 @@ fn failed_meta(label: &str, has_body: bool) -> CustomMessageMeta {
         meta: String::new(),
         failed: true,
         has_body,
+    ..Default::default()
     }
 }
 
@@ -240,6 +249,8 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
             CustomMessageMeta {
                 label,
                 meta: String::new(),
+                custom_kind: String::new(),
+                badge_secondary: String::new(),
                 failed: false,
                 has_body: has_arguments && has_body,
             }
@@ -254,6 +265,8 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
             }
             .to_string(),
             meta: String::new(),
+            custom_kind: String::new(),
+            badge_secondary: String::new(),
             failed: details.get("success").and_then(Value::as_bool) == Some(false),
             has_body,
         },
@@ -265,9 +278,11 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
                 .and_then(Value::as_i64);
             CustomMessageMeta {
                 label: "Background shell command finished".to_string(),
+                custom_kind: "bash-done".into(),
                 meta: exit_code.map_or_else(String::new, |code| format!("exit {code}")),
                 failed: exit_code.is_some_and(|code| code != 0),
                 has_body,
+            ..Default::default()
             }
         }
         "rlm_child_terminal_notice" => plain_meta("Subagent finished", has_body),
@@ -276,23 +291,29 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
             let outcome = details.get("outcome").and_then(Value::as_str).unwrap_or("");
             CustomMessageMeta {
                 label: "Compaction".to_string(),
+                custom_kind: "harness".into(),
                 meta: outcome.to_string(),
                 failed: matches!(outcome, "failed" | "cancelled"),
                 has_body,
+            ..Default::default()
             }
         }
         "refinement_outcome" => {
+            let custom_kind = "harness".to_string();
             let (label, meta, failed) = refinement_state(details);
             CustomMessageMeta {
                 label,
                 meta,
                 failed,
                 has_body,
+            ..Default::default()
             }
         }
         "provider_retry_outcome" => CustomMessageMeta {
             label: "Provider retry".to_string(),
             meta: String::new(),
+            custom_kind: String::new(),
+            badge_secondary: String::new(),
             failed: details.get("success").and_then(Value::as_bool) == Some(false),
             has_body,
         },
@@ -320,6 +341,8 @@ fn custom_message_row(
     let mut row = Row::new(KIND_CUSTOM_MESSAGE);
     row.title = meta.label;
     row.meta = meta.meta;
+    row.custom_kind = meta.custom_kind;
+    row.badge_secondary = meta.badge_secondary;
     row.failed = meta.failed;
     if meta.has_body {
         set_body(&mut row, body, theme);
