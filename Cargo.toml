@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["pa-client", "pa-ui"]
+members = ["pa-client", "pa-ui", "pa-gpui"]
 
 # Iteration profile: release-quality codegen without LTO, so a rebuild stays
 # in the seconds. `cargo build --profile fast -p pa-ui`
