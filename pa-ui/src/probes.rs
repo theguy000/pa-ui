@@ -309,7 +309,7 @@ mod transcript_scroll_contract {
             "custom-text:=StyledText{width:max(0px,root.width-48px-44px);",
             "error-line:=StyledText{width:max(0px,root.width-102px-error-label.preferred-width);",
             "code-text:=StyledText{width:root.width-72px;",
-            "forcolumnindata.table-column-indices:Rectangle{width:data.table-widths[column];",
+            "forcolumnindata.table-column-indices:HorizontalLayout{",
             "forrowindata.table-row-indices:VerticalLayout{",
             "data.table[(row+1)*table-card.columns+column].text",
         ] {

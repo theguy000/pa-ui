@@ -1709,10 +1709,10 @@ fn table_row_lines(cells: &[String], widths: &[f32]) -> f32 {
 
 fn table_height(table: &transcript::Table) -> f32 {
     let widths = table.widths();
-    let mut height = 12.0 + table_row_lines(&table.header, &widths) * TABLE_LINE_PX;
+    let mut height = 16.0 + table_row_lines(&table.header, &widths) * TABLE_LINE_PX;
     for cells in &table.rows {
         height += 1.0;
-        height += 12.0 + table_row_lines(cells, &widths) * TABLE_LINE_PX;
+        height += 16.0 + table_row_lines(cells, &widths) * TABLE_LINE_PX;
     }
     height + 6.0
 }

@@ -938,6 +938,10 @@ export component TranscriptRow inherits VerticalLayout {
 
             width: root.width - 48px;
             height: data.table-height;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.transcript-cell-edge;
+            clip: true;
 
             table-touch := TouchArea {
                 x: 0;
@@ -961,17 +965,28 @@ export component TranscriptRow inherits VerticalLayout {
                 VerticalLayout {
                     spacing: 0px;
 
-                    HorizontalLayout {
-                        padding-top: 6px;
-                        padding-bottom: 6px;
-                        spacing: 0px;
+                    Rectangle {
+                        background: Theme.transcript-code-fill;
 
-                        for column in data.table-column-indices : Rectangle {
-                            width: data.table-widths[column];
+                        HorizontalLayout {
+                            spacing: 0px;
 
-                            HorizontalLayout {
-                                padding-left: column == 0 ? 0px : 8px;
-                                padding-right: 8px;
+                            for column in data.table-column-indices : HorizontalLayout {
+                                spacing: 0px;
+
+                                if column > 0 : Rectangle {
+                                    width: 1px;
+                                    background: Theme.transcript-cell-rule;
+                                }
+
+                                Rectangle {
+                                    width: data.table-widths[column];
+
+                                    HorizontalLayout {
+                                        padding-top: 8px;
+                                        padding-bottom: 8px;
+                                        padding-left: 12px;
+                                        padding-right: 12px;
 
                                 StyledText {
                                     horizontal-stretch: 1.0;
@@ -981,7 +996,8 @@ export component TranscriptRow inherits VerticalLayout {
                                     horizontal-alignment: data.table[column].align == 1 ? right
                                         : data.table[column].align == 2 ? center : left;
                                     link-color: Theme.transcript-link-ink;
-                                    link-clicked(link) => { root.open-link(link); }
+                                        link-clicked(link) => { root.open-link(link); }
+                                    }
                                 }
                             }
                         }
@@ -989,23 +1005,31 @@ export component TranscriptRow inherits VerticalLayout {
 
                     Rectangle {
                         height: 1px;
-                        background: Theme.transcript-quote-edge;
+                        background: Theme.transcript-cell-edge;
                     }
 
                     for row in data.table-row-indices : VerticalLayout {
                         spacing: 0px;
 
                         HorizontalLayout {
-                            padding-top: 6px;
-                            padding-bottom: 6px;
                             spacing: 0px;
 
-                            for column in data.table-column-indices : Rectangle {
-                                width: data.table-widths[column];
+                            for column in data.table-column-indices : HorizontalLayout {
+                                spacing: 0px;
 
-                                HorizontalLayout {
-                                    padding-left: column == 0 ? 0px : 8px;
-                                    padding-right: 8px;
+                                if column > 0 : Rectangle {
+                                    width: 1px;
+                                    background: Theme.transcript-cell-rule;
+                                }
+
+                                Rectangle {
+                                    width: data.table-widths[column];
+
+                                    HorizontalLayout {
+                                        padding-top: 8px;
+                                        padding-bottom: 8px;
+                                        padding-left: 12px;
+                                        padding-right: 12px;
 
                                     StyledText {
                                         horizontal-stretch: 1.0;
@@ -1019,6 +1043,7 @@ export component TranscriptRow inherits VerticalLayout {
                                     }
                                 }
                             }
+                        }
                         }
 
                         if row < data.table-row-indices.length - 1 : Rectangle {
