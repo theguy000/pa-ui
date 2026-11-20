@@ -346,6 +346,7 @@ fn custom_message_row(
     row.failed = meta.failed;
     if meta.has_body {
         set_body(&mut row, body, theme);
+        row.expanded = false;
     }
     row
 }

@@ -1076,7 +1076,7 @@ mod custom_message_tests {
         assert_eq!(rows[0].kind, KIND_CUSTOM_MESSAGE);
         assert_eq!(rows[0].title, "/refine");
         assert!(rows[0].has_body);
-        assert!(rows[0].expanded);
+        assert!(!rows[0].expanded);
         assert!(plain(&rows[0].body).contains("--global tighten the policy"));
     }
 
@@ -1091,7 +1091,7 @@ mod custom_message_tests {
         }));
         assert_eq!(rows[0].title, "Refinement");
         assert!(rows[0].has_body);
-        assert!(rows[0].expanded);
+        assert!(!rows[0].expanded);
         assert!(!rows[0].failed);
         assert!(plain(&rows[0].body).contains("2 edits applied"));
     }
@@ -1163,7 +1163,7 @@ mod custom_message_tests {
             "content": body
         }));
         assert!(rows[0].has_body);
-        assert!(rows[0].expanded);
+        assert!(!rows[0].expanded);
         assert!(plain(&rows[0].body).contains("a long agent report"));
     }
 
