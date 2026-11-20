@@ -735,8 +735,9 @@ export component TranscriptRow inherits VerticalLayout {
                         if data.custom-kind == "provider-retry" : Rectangle {
                             width: 14px;
                             height: 30px;
-                            property <float> phase: Math.mod(animation-tick() / 1ms, 2400) / 2400.0;
-                            property <angle> flip: phase < 0.7 ? 0deg : ((phase - 0.7) / 0.3) * 180deg;
+                            property <bool> retrying: data.badge-secondary == "waiting" && !data.failed;
+                            property <float> phase: retrying ? Math.mod(animation-tick() / 1ms, 2400) / 2400.0 : 0.0;
+                            property <angle> flip: retrying && phase >= 0.7 ? ((phase - 0.7) / 0.3) * 180deg : 0deg;
                             Path {
                                 width: 13px;
                                 height: 13px;
@@ -752,14 +753,13 @@ export component TranscriptRow inherits VerticalLayout {
                                 transform-rotation: flip;
                                 commands: "M5 22h14 M5 2h14 M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22 M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2";
                             }
-                            Rectangle {
+                            if retrying && phase < 0.7 : Rectangle {
                                 x: 6.5px;
                                 y: 14px + Math.mod(animation-tick() / 1ms, 900) / 900.0 * 5px;
                                 width: 1.5px;
                                 height: 2px;
                                 border-radius: 1px;
                                 background: Theme.transcript-cell-edge-working;
-                                opacity: phase < 0.7 ? 1 : 0;
                             }
                         }
 
