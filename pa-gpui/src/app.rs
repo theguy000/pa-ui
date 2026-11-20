@@ -1,14 +1,19 @@
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
-use crate::transcript::{build_items, ItemKind, TranscriptItem};
+use crate::transcript::{
+    append_text_delta, append_thinking_delta, build_items, finish_tool_call, format_expanded_body,
+    settle_all, start_tool_call, CardVariant, ItemKind, TranscriptItem,
+};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
+    scroll::ScrollableElement as _,
     text::{TextView, TextViewState},
     v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::SessionRow;
+use serde_json::Value;
 use std::time::Duration;
 
 pub struct PaApp {
@@ -17,6 +22,7 @@ pub struct PaApp {
     sessions: Vec<SessionRow>,
     active_session_id: Option<String>,
     items: Vec<TranscriptItem>,
+    is_streaming: bool,
     scroll_handle: ScrollHandle,
     composer: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -27,8 +33,7 @@ impl PaApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let bridge = DaemonBridge::spawn();
         let composer = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Message Prime Agent… (Enter to send)")
+            InputState::new(window, cx).placeholder("Message Prime Agent… (Enter to send)")
         });
 
         let sub = cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, window, cx| {
@@ -39,7 +44,7 @@ impl PaApp {
 
         let poll_task = cx.spawn(async move |weak_self, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(40))
+                .timer(Duration::from_millis(24))
                 .await;
             let keep_going = weak_self
                 .update(cx, |this, cx| {
@@ -57,6 +62,7 @@ impl PaApp {
             sessions: Vec::new(),
             active_session_id: None,
             items: Vec::new(),
+            is_streaming: false,
             scroll_handle: ScrollHandle::new(),
             composer,
             _subscriptions: vec![sub],
@@ -74,12 +80,19 @@ impl PaApp {
                 }
                 DaemonEvent::Disconnected(reason) => {
                     self.status = format!("Disconnected: {reason}").into();
+                    self.is_streaming = false;
+                    settle_all(&mut self.items);
                 }
                 DaemonEvent::Sessions(rows) => {
                     self.sessions = rows;
                     if self.active_session_id.is_none() {
                         if let Some(first) = self.sessions.first() {
                             self.active_session_id = Some(session_key(first));
+                        }
+                    }
+                    if let Some(sid) = self.active_session_id.as_deref() {
+                        if let Some(row) = self.sessions.iter().find(|s| session_key(s) == sid) {
+                            self.is_streaming = row.is_streaming;
                         }
                     }
                 }
@@ -89,13 +102,7 @@ impl PaApp {
                     self.scroll_handle.scroll_to_bottom();
                 }
                 DaemonEvent::LiveFrame(frame) => {
-                    let ty = frame.get("type").and_then(|v| v.as_str()).unwrap_or_default();
-                    if matches!(ty, "session_updated" | "message_end" | "turn_end" | "agent_end") {
-                        if let Some(sid) = self.active_session_id.clone() {
-                            let _ = self.bridge.tx.send(DaemonCmd::SelectSession(sid));
-                        }
-                        let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);
-                    }
+                    self.handle_live_frame(&frame, cx);
                 }
                 DaemonEvent::Error(err) => {
                     self.status = format!("Error: {err}").into();
@@ -107,6 +114,100 @@ impl PaApp {
         }
     }
 
+    fn handle_live_frame(&mut self, frame: &Value, cx: &mut Context<Self>) {
+        let frame_sid = frame
+            .get("activeSessionId")
+            .or_else(|| frame.get("sessionId"))
+            .and_then(Value::as_str);
+        let matches_active = match (frame_sid, self.active_session_id.as_deref()) {
+            (Some(fs), Some(cur)) => fs == cur,
+            _ => true,
+        };
+        if !matches_active {
+            return;
+        }
+
+        let event = frame.get("event").filter(|v| v.is_object()).unwrap_or(frame);
+        let kind = event.get("type").and_then(Value::as_str).unwrap_or_default();
+
+        match kind {
+            "agent_start" | "turn_start" => {
+                self.is_streaming = true;
+            }
+            "message_update" => {
+                self.is_streaming = true;
+                let delta_ev = event
+                    .get("assistantMessageEvent")
+                    .filter(|v| v.is_object())
+                    .unwrap_or(event);
+                let delta_kind = delta_ev
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if let Some(delta) = delta_ev.get("delta").and_then(Value::as_str) {
+                    if delta_kind.starts_with("text_delta") {
+                        append_text_delta(&mut self.items, delta, cx);
+                        self.scroll_handle.scroll_to_bottom();
+                    } else if delta_kind.starts_with("thinking_delta") {
+                        append_thinking_delta(&mut self.items, delta, cx);
+                        self.scroll_handle.scroll_to_bottom();
+                    }
+                }
+            }
+            "tool_execution_start" => {
+                self.is_streaming = true;
+                let cid = event
+                    .get("toolCallId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let name = event
+                    .get("toolName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool");
+                let args = event.get("args").unwrap_or(&Value::Null);
+                start_tool_call(&mut self.items, cid, name, args);
+                self.scroll_handle.scroll_to_bottom();
+            }
+            "tool_execution_end" => {
+                let cid = event
+                    .get("toolCallId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let is_err = event
+                    .get("isError")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let out = event
+                    .get("result")
+                    .and_then(|r| {
+                        r.as_str().map(str::to_string).or_else(|| {
+                            r.get("content").and_then(Value::as_array).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|p| p.get("text").and_then(Value::as_str))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            })
+                        })
+                    })
+                    .unwrap_or_default();
+                finish_tool_call(&mut self.items, cid, out, is_err, cx);
+            }
+            "agent_end" | "turn_end" => {
+                self.is_streaming = false;
+                settle_all(&mut self.items);
+                if let Some(sid) = self.active_session_id.clone() {
+                    let _ = self.bridge.tx.send(DaemonCmd::SelectSession(sid));
+                }
+                let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);
+            }
+            "session_updated" => {
+                let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);
+            }
+            _ => {}
+        }
+    }
+
     fn send_current_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().trim().to_string();
         if text.is_empty() {
@@ -115,6 +216,26 @@ impl PaApp {
         let Some(sid) = self.active_session_id.clone() else {
             return;
         };
+        // Optimistic user bubble so send feels instant
+        let next_id = self.items.last().map_or(0, |i| i.id + 1);
+        let md = cx.new(|cx| TextViewState::markdown(&text, cx));
+        self.items.push(TranscriptItem {
+            id: next_id,
+            call_id: None,
+            kind: ItemKind::User,
+            variant: CardVariant::None,
+            verb: SharedString::default(),
+            title: "You".into(),
+            meta: SharedString::default(),
+            body_md: Some(md),
+            raw_body: text.clone(),
+            output: None,
+            expanded: true,
+            active: false,
+            failed: false,
+        });
+        self.scroll_handle.scroll_to_bottom();
+
         let _ = self.bridge.tx.send(DaemonCmd::SendPrompt {
             session: sid,
             text,
@@ -129,16 +250,15 @@ impl PaApp {
         if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
             item.expanded = !item.expanded;
             if item.expanded && item.body_md.is_none() && !item.raw_body.is_empty() {
-                let body = item.raw_body.clone();
-                let formatted = if item.kind == ItemKind::ToolCall {
-                    format!("```\n{body}\n```")
-                } else {
-                    body
-                };
+                let formatted = format_expanded_body(item);
                 item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
             }
             cx.notify();
         }
+    }
+
+    fn copy_text(&self, text: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -152,7 +272,7 @@ impl PaApp {
             .sessions
             .iter()
             .filter(|s| !s.is_resident())
-            .take(40)
+            .take(50)
             .collect();
 
         v_flex()
@@ -189,7 +309,7 @@ impl PaApp {
                 div()
                     .id("sidebar-scroll")
                     .flex_1()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .child(
                         v_flex()
                             .gap_3()
@@ -230,25 +350,40 @@ impl PaApp {
                 key.chars().take(12).collect()
             };
             let click_key = key.clone();
+            let streaming = row.is_streaming;
 
             group = group.child(
-                div()
+                h_flex()
                     .id((title, idx))
                     .px_2()
                     .py_1()
+                    .gap_2()
+                    .items_center()
                     .rounded(px(6.))
                     .cursor_pointer()
                     .when(selected, |d| d.bg(theme.accent))
                     .hover(|d| d.bg(theme.accent.opacity(0.6)))
-                    .text_sm()
-                    .text_color(if selected {
-                        theme.accent_foreground
-                    } else {
-                        theme.foreground
+                    .when(streaming, |d| {
+                        d.child(
+                            div()
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(theme.warning),
+                        )
                     })
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(label)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(if selected {
+                                theme.accent_foreground
+                            } else {
+                                theme.foreground
+                            })
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(label),
+                    )
                     .on_click(cx.listener(move |this, _, _, _| {
                         let _ = this
                             .bridge
@@ -276,12 +411,15 @@ impl PaApp {
                         .map(|md| TextView::new(md).selectable(true)),
                 )
                 .into_any_element(),
-            ItemKind::Assistant => div().w_full().py_1().children(
-                item.body_md
-                    .as_ref()
-                    .map(|md| TextView::new(md).selectable(true)),
-            )
-            .into_any_element(),
+            ItemKind::Assistant => div()
+                .w_full()
+                .py_1()
+                .children(item.body_md.as_ref().map(|md| {
+                    TextView::new(md)
+                        .selectable(true)
+                        .stream_fade(item.active)
+                }))
+                .into_any_element(),
             ItemKind::Error => div()
                 .w_full()
                 .rounded(px(8.))
@@ -296,17 +434,36 @@ impl PaApp {
                 .into_any_element(),
             ItemKind::Thinking | ItemKind::ToolCall | ItemKind::Summary | ItemKind::Custom => {
                 let id = item.id;
-                let icon = match item.kind {
-                    ItemKind::ToolCall => IconName::SquareTerminal,
-                    ItemKind::Summary => IconName::File,
-                    ItemKind::Thinking => IconName::Info,
-                    _ => IconName::Bot,
+                let copy_payload = item.raw_body.clone();
+                let icon = match (item.kind, item.variant) {
+                    (ItemKind::ToolCall, CardVariant::Python) => IconName::File,
+                    (ItemKind::ToolCall, CardVariant::Bash) => IconName::SquareTerminal,
+                    (ItemKind::ToolCall, _) => IconName::SquareTerminal,
+                    (ItemKind::Thinking, _) => IconName::Info,
+                    (_, CardVariant::BashDone) => IconName::SquareTerminal,
+                    (_, CardVariant::AgentMessage) => IconName::Bot,
+                    (_, CardVariant::ProviderRetry) => IconName::Loader,
+                    _ => IconName::Inbox,
                 };
+                // Standardized two-state icon color rule:
+                // animating/active -> warning (working gold), failed -> danger, settled -> muted
+                let icon_color = if item.active {
+                    theme.warning
+                } else if item.failed {
+                    theme.danger
+                } else {
+                    theme.muted_foreground
+                };
+
                 v_flex()
                     .w_full()
                     .rounded(px(8.))
                     .border_1()
-                    .border_color(theme.border)
+                    .border_color(if item.active {
+                        theme.warning.opacity(0.55)
+                    } else {
+                        theme.border
+                    })
                     .bg(theme.secondary.opacity(0.4))
                     .child(
                         h_flex()
@@ -319,12 +476,29 @@ impl PaApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle_item(id, cx);
                             }))
-                            .child(Icon::new(icon).xsmall().text_color(theme.muted_foreground))
+                            .child(Icon::new(icon).xsmall().text_color(icon_color))
+                            .when(!item.verb.is_empty(), |row| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .font_medium()
+                                        .text_color(if item.active {
+                                            theme.warning
+                                        } else {
+                                            theme.muted_foreground
+                                        })
+                                        .child(item.verb.clone()),
+                                )
+                            })
                             .child(
                                 div()
                                     .flex_1()
                                     .text_xs()
-                                    .text_color(theme.foreground)
+                                    .text_color(if item.failed {
+                                        theme.danger_foreground
+                                    } else {
+                                        theme.foreground
+                                    })
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .child(item.title.clone()),
@@ -337,8 +511,24 @@ impl PaApp {
                                         .border_1()
                                         .border_color(theme.border)
                                         .text_xs()
-                                        .text_color(theme.muted_foreground)
+                                        .text_color(if item.failed {
+                                            theme.danger_foreground
+                                        } else {
+                                            theme.muted_foreground
+                                        })
                                         .child(item.meta.clone()),
+                                )
+                            })
+                            .when(item.kind == ItemKind::ToolCall && !item.raw_body.is_empty(), |row| {
+                                row.child(
+                                    Button::new(("copy-btn", id))
+                                        .ghost()
+                                        .xsmall()
+                                        .label("Copy")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.copy_text(copy_payload.clone(), cx);
+                                        })),
                                 )
                             })
                             .child(
@@ -385,7 +575,7 @@ impl Render for PaApp {
                     session_key(s)
                 }
             })
-            .unwrap_or_else(|| "Prime Agent (GPUI Spike)".to_string());
+            .unwrap_or_else(|| "Prime Agent".to_string());
 
         let active_model = self
             .active_session_id
@@ -417,10 +607,18 @@ impl Render for PaApp {
                             .justify_between()
                             .items_center()
                             .child(
-                                div()
-                                    .text_sm()
-                                    .font_semibold()
-                                    .child(active_title),
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .when(self.is_streaming, |h| {
+                                        h.child(
+                                            div()
+                                                .size(px(8.))
+                                                .rounded_full()
+                                                .bg(theme.warning),
+                                        )
+                                    })
+                                    .child(div().text_sm().font_semibold().child(active_title)),
                             )
                             .child(
                                 div()
@@ -434,8 +632,8 @@ impl Render for PaApp {
                             .id("transcript-scroll")
                             .flex_1()
                             .w_full()
-                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
+                            .overflow_y_scrollbar()
                             .px_6()
                             .py_4()
                             .child(
@@ -465,19 +663,21 @@ impl Render for PaApp {
                                         this.send_current_prompt(window, cx);
                                     })),
                             )
-                            .child(
-                                Button::new("abort-btn")
-                                    .outline()
-                                    .label("Stop")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        if let Some(sid) = this.active_session_id.clone() {
-                                            let _ = this
-                                                .bridge
-                                                .tx
-                                                .send(DaemonCmd::Abort { session: sid });
-                                        }
-                                    })),
-                            ),
+                            .when(self.is_streaming, |h| {
+                                h.child(
+                                    Button::new("abort-btn")
+                                        .outline()
+                                        .label("Stop")
+                                        .on_click(cx.listener(|this, _, _, _| {
+                                            if let Some(sid) = this.active_session_id.clone() {
+                                                let _ = this
+                                                    .bridge
+                                                    .tx
+                                                    .send(DaemonCmd::Abort { session: sid });
+                                            }
+                                        })),
+                                )
+                            }),
                     ),
             )
     }
