@@ -958,11 +958,14 @@ export component TranscriptRow inherits VerticalLayout {
 
             // Columns carry their own width, so a table wider than the Sheet
             // scrolls sideways instead of clipping its last columns.
-            table-scroll := ScrollView {
+            table-scroll := Flickable {
                 width: parent.width;
                 height: data.table-height;
+                viewport-width: table-content.preferred-width;
+                viewport-height: data.table-height;
+                interactive: true;
 
-                VerticalLayout {
+                table-content := VerticalLayout {
                     spacing: 0px;
 
                     Rectangle {
@@ -1091,6 +1094,45 @@ export component TranscriptRow inherits VerticalLayout {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     animate color { duration: Appearance.reduce-motion ? 0ms : 100ms; }
+                }
+            }
+        }
+
+        if table-scroll.viewport-width > table-scroll.width : Rectangle {
+            width: root.width - 48px;
+            height: 8px;
+            background: transparent;
+
+            Rectangle {
+                property <length> track-w: parent.width;
+                property <length> thumb-w: max(32px, track-w * (table-scroll.width / table-scroll.viewport-width));
+                property <length> max-scroll: max(1px, table-scroll.viewport-width - table-scroll.width);
+
+                x: (track-w - thumb-w) * clamp(-table-scroll.viewport-x / max-scroll, 0, 1);
+                y: 2px;
+                width: thumb-w;
+                height: 4px;
+                border-radius: 2px;
+                background: thumb-touch.has-hover || thumb-touch.pressed
+                    ? Theme.transcript-cell-copy-ink-hover
+                    : Theme.transcript-quote-edge;
+
+                thumb-touch := TouchArea {
+                    property <length> drag-start-x;
+                    property <length> drag-start-vx;
+
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                            drag-start-x = self.mouse-x;
+                            drag-start-vx = table-scroll.viewport-x;
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            let ratio = (table-scroll.viewport-width - table-scroll.width) / max(1px, parent.width - parent.width * (table-scroll.width / table-scroll.viewport-width));
+                            table-scroll.viewport-x = clamp(drag-start-vx - (self.mouse-x - drag-start-x) * ratio, -(table-scroll.viewport-width - table-scroll.width), 0px);
+                        }
+                    }
                 }
             }
         }
