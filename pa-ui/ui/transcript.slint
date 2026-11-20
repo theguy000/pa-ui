@@ -735,6 +735,8 @@ export component TranscriptRow inherits VerticalLayout {
                         if data.custom-kind == "provider-retry" : Rectangle {
                             width: 14px;
                             height: 30px;
+                            property <float> phase: Math.mod(animation-tick() / 1ms, 2400) / 2400.0;
+                            property <angle> flip: phase < 0.7 ? 0deg : ((phase - 0.7) / 0.3) * 180deg;
                             Path {
                                 width: 13px;
                                 height: 13px;
@@ -747,11 +749,21 @@ export component TranscriptRow inherits VerticalLayout {
                                 stroke-line-cap: round;
                                 stroke-line-join: round;
                                 fill: transparent;
+                                transform-rotation: flip;
                                 commands: "M5 22h14 M5 2h14 M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22 M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2";
+                            }
+                            Rectangle {
+                                x: 6.5px;
+                                y: 14px + Math.mod(animation-tick() / 1ms, 900) / 900.0 * 5px;
+                                width: 1.5px;
+                                height: 2px;
+                                border-radius: 1px;
+                                background: Theme.transcript-cell-edge-working;
+                                opacity: phase < 0.7 ? 1 : 0;
                             }
                         }
 
-                        if data.custom-kind == "harness" : Rectangle {
+                        if data.custom-kind == "harness" || is-summary : Rectangle {
                             width: 14px;
                             height: 30px;
                             Path {
@@ -783,6 +795,7 @@ export component TranscriptRow inherits VerticalLayout {
                         }
 
                         if data.meta != "" : Rectangle {
+                            y: (parent.height - self.height) / 2;
                             height: 18px;
                             border-radius: 9px;
                             border-width: 1px;
@@ -808,6 +821,7 @@ export component TranscriptRow inherits VerticalLayout {
                         }
 
                         if data.badge-secondary != "" : Rectangle {
+                            y: (parent.height - self.height) / 2;
                             height: 18px;
                             border-radius: 9px;
                             border-width: 1px;
