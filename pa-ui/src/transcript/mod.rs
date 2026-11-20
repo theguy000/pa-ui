@@ -310,9 +310,9 @@ fn custom_message_meta(custom_type: &str, body: &str, details: &Value) -> Custom
             }
         }
         "provider_retry_outcome" => CustomMessageMeta {
+            custom_kind: "provider-retry".into(),
             label: "Provider retry".to_string(),
             meta: String::new(),
-            custom_kind: String::new(),
             badge_secondary: String::new(),
             failed: details.get("success").and_then(Value::as_bool) == Some(false),
             has_body,

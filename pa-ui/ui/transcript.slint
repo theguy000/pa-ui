@@ -694,14 +694,79 @@ export component TranscriptRow inherits VerticalLayout {
                         padding-right: 10px;
                         spacing: 8px;
 
-                        if data.has-body : Rectangle {
+                        if data.custom-kind == "bash-done" : Rectangle {
                             width: 14px;
                             height: 30px;
-                            IconChevronRight {
-                                x: 1px;
+                            Path {
+                                width: 13px;
+                                height: 13px;
+                                x: 0.5px;
                                 y: (parent.height - self.height) / 2;
-                                open: data.expanded;
-                                tint: Theme.transcript-caret-mark;
+                                viewbox-width: 24;
+                                viewbox-height: 24;
+                                stroke: data.failed ? Theme.transcript-cell-ink-failed : Theme.transcript-cell-meta-ink;
+                                stroke-width: 2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                                fill: transparent;
+                                commands: "M4 17l6-6-6-6 M12 19h8";
+                            }
+                        }
+
+                        if data.custom-kind == "agent-message" : Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            Path {
+                                width: 13px;
+                                height: 13px;
+                                x: 0.5px;
+                                y: (parent.height - self.height) / 2;
+                                viewbox-width: 24;
+                                viewbox-height: 24;
+                                stroke: Theme.transcript-heading-ink;
+                                stroke-width: 2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                                fill: transparent;
+                                commands: "M12 8V4H8 M6 8h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z M2 14h2 M20 14h2 M15 13v2 M9 13v2";
+                            }
+                        }
+
+                        if data.custom-kind == "provider-retry" : Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            Path {
+                                width: 13px;
+                                height: 13px;
+                                x: 0.5px;
+                                y: (parent.height - self.height) / 2;
+                                viewbox-width: 24;
+                                viewbox-height: 24;
+                                stroke: Theme.transcript-cell-edge-working;
+                                stroke-width: 2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                                fill: transparent;
+                                commands: "M5 22h14 M5 2h14 M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22 M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2";
+                            }
+                        }
+
+                        if data.custom-kind == "harness" : Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            Path {
+                                width: 13px;
+                                height: 13px;
+                                x: 0.5px;
+                                y: (parent.height - self.height) / 2;
+                                viewbox-width: 24;
+                                viewbox-height: 24;
+                                stroke: Theme.transcript-cell-meta-ink;
+                                stroke-width: 2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                                fill: transparent;
+                                commands: "M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z";
                             }
                         }
 
@@ -717,11 +782,59 @@ export component TranscriptRow inherits VerticalLayout {
                             horizontal-stretch: 1;
                         }
 
-                        if data.meta != "" : Text {
-                            text: data.meta;
-                            color: Theme.transcript-cell-meta-ink;
-                            font-size: Appearance.meta-size;
-                            vertical-alignment: center;
+                        if data.meta != "" : Rectangle {
+                            height: 18px;
+                            border-radius: 9px;
+                            border-width: 1px;
+                            border-color: data.custom-kind == "provider-retry"
+                                ? Theme.transcript-cell-edge-working
+                                : Theme.transcript-cell-edge;
+
+                            HorizontalLayout {
+                                padding-left: 7px;
+                                padding-right: 7px;
+
+                                Text {
+                                    text: data.meta;
+                                    color: data.failed
+                                        ? Theme.transcript-cell-ink-failed
+                                        : data.custom-kind == "provider-retry"
+                                            ? Theme.transcript-cell-edge-working
+                                            : Theme.transcript-cell-meta-ink;
+                                    font-size: Appearance.meta-size;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        if data.badge-secondary != "" : Rectangle {
+                            height: 18px;
+                            border-radius: 9px;
+                            border-width: 1px;
+                            border-color: Theme.transcript-cell-edge;
+
+                            HorizontalLayout {
+                                padding-left: 7px;
+                                padding-right: 7px;
+
+                                Text {
+                                    text: data.badge-secondary;
+                                    color: Theme.transcript-cell-meta-ink;
+                                    font-size: Appearance.meta-size;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        if data.has-body : Rectangle {
+                            width: 14px;
+                            height: 30px;
+                            IconChevronRight {
+                                x: 1px;
+                                y: (parent.height - self.height) / 2;
+                                open: data.expanded;
+                                tint: Theme.transcript-caret-mark;
+                            }
                         }
                     }
                 }
