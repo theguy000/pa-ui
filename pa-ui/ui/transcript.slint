@@ -743,7 +743,7 @@ export component TranscriptRow inherits VerticalLayout {
                                 y: (parent.height - self.height) / 2 + 0.5px;
                                 viewbox-width: 24;
                                 viewbox-height: 24;
-                                stroke: Theme.transcript-working-ink;
+                                stroke: retrying ? Theme.transcript-working-ink : Theme.transcript-cell-meta-ink;
                                 stroke-width: 2px;
                                 stroke-line-cap: round;
                                 stroke-line-join: round;
