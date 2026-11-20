@@ -1312,7 +1312,7 @@ mod summary_tests {
         assert_eq!(rows[0].title, "Context compacted");
         assert_eq!(rows[0].meta, "12345 tokens before \u{00b7} 2 retained");
         assert!(rows[0].has_body);
-        assert!(rows[0].expanded);
+        assert!(!rows[0].expanded);
         let body = plain(&rows[0].body);
         assert!(body.contains("The retained work continues here."));
         assert!(body.contains("keep the plan"));
@@ -1337,7 +1337,7 @@ mod summary_tests {
         assert_eq!(rows[0].title, "Branch summary");
         assert_eq!(rows[0].meta, "from branch-entry-7");
         assert!(rows[0].has_body);
-        assert!(rows[0].expanded);
+        assert!(!rows[0].expanded);
         assert!(plain(&rows[0].body).contains("Recover the branch context."));
     }
 }

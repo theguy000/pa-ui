@@ -405,6 +405,7 @@ fn summary_row(message: &Value, role: &str, theme: &Resolved) -> Option<Row> {
         }
         _ => return None,
     }
+    row.expanded = false;
     Some(row)
 }
 
