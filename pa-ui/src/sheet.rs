@@ -1692,8 +1692,8 @@ fn text_lines(text: &str, width: usize) -> usize {
 /// The table's own type, at `Appearance.cell-output-size`: the advance a
 /// character takes, and the line it sits on. The estimate has to use the same
 /// numbers the drawn row does, or the row overlaps the one below it.
-const TABLE_CHAR_PX: f32 = 6.6;
-const TABLE_LINE_PX: f32 = 16.0;
+const TABLE_CHAR_PX: f32 = 7.6;
+const TABLE_LINE_PX: f32 = 19.0;
 const TABLE_CELL_PAD: f32 = 18.0;
 
 fn table_row_lines(cells: &[String], widths: &[f32]) -> f32 {

@@ -992,7 +992,7 @@ export component TranscriptRow inherits VerticalLayout {
                                     horizontal-stretch: 1.0;
                                     text: data.table[column].text;
                                     default-color: Theme.transcript-prose-ink;
-                                    default-font-size: Appearance.cell-output-size;
+                                    default-font-size: Appearance.transcript-size;
                                     horizontal-alignment: data.table[column].align == 1 ? right
                                         : data.table[column].align == 2 ? center : left;
                                     link-color: Theme.transcript-link-ink;
@@ -1036,7 +1036,7 @@ export component TranscriptRow inherits VerticalLayout {
                                         horizontal-stretch: 1.0;
                                         text: data.table[(row + 1) * table-card.columns + column].text;
                                         default-color: Theme.transcript-prose-ink;
-                                        default-font-size: Appearance.cell-output-size;
+                                        default-font-size: Appearance.transcript-size;
                                         horizontal-alignment: data.table[(row + 1) * table-card.columns + column].align == 1 ? right
                                             : data.table[(row + 1) * table-card.columns + column].align == 2 ? center : left;
                                         link-color: Theme.transcript-link-ink;
