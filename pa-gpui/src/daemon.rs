@@ -26,6 +26,7 @@ pub enum DaemonEvent {
     Connected,
     Disconnected(String),
     Sessions(Vec<SessionRow>),
+    SessionCreated(String),
     Messages { session: String, messages: Vec<Value> },
     Models(Vec<ModelEntry>),
     Stats { session: String, stats: SessionStats },
@@ -52,7 +53,12 @@ impl DaemonBridge {
     }
 }
 
-fn load_session_details(client: &Client, sid: &str, ev_tx: &Sender<DaemonEvent>) {
+fn load_session_details(
+    client: &Client,
+    sid: &str,
+    ev_tx: &Sender<DaemonEvent>,
+    models_loaded: &mut bool,
+) {
     match pa_client::attach_messages(client, sid) {
         Ok(messages) => {
             let _ = ev_tx.send(DaemonEvent::Messages {
@@ -64,8 +70,11 @@ fn load_session_details(client: &Client, sid: &str, ev_tx: &Sender<DaemonEvent>)
             let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
         }
     }
-    if let Ok(models) = pa_client::model_catalog(client, sid) {
-        let _ = ev_tx.send(DaemonEvent::Models(models));
+    if !*models_loaded {
+        if let Ok(models) = pa_client::model_catalog(client, sid) {
+            *models_loaded = true;
+            let _ = ev_tx.send(DaemonEvent::Models(models));
+        }
     }
     if let Ok(stats) = pa_client::session_stats(client, sid) {
         let _ = ev_tx.send(DaemonEvent::Stats {
@@ -104,12 +113,13 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                 let _ = ev_tx.send(DaemonEvent::Disconnected(format!(
                     "Reconnecting… ({err})"
                 )));
-                // Drain stale commands while disconnected
                 while cmd_rx.try_recv().is_ok() {}
                 thread::sleep(Duration::from_millis(1500));
                 continue;
             }
         };
+
+        let mut models_loaded = false;
 
         if let Ok(sessions) = pa_client::list_sessions(&client) {
             let first_id = sessions.first().map(|s| {
@@ -121,7 +131,7 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
             });
             let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
             if let Some(sid) = first_id {
-                load_session_details(&client, &sid, &ev_tx);
+                load_session_details(&client, &sid, &ev_tx, &mut models_loaded);
             }
         }
 
@@ -137,22 +147,40 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                         }
                     },
                     DaemonCmd::SelectSession(sid) => {
-                        load_session_details(&client, &sid, &ev_tx);
+                        load_session_details(&client, &sid, &ev_tx, &mut models_loaded);
                     }
                     DaemonCmd::CreateSession => match pa_client::create_session(&client) {
-                        Ok(_) => {
+                        Ok(new_sid) => {
+                            let _ = ev_tx.send(DaemonEvent::SessionCreated(new_sid.clone()));
+                            let _ = ev_tx.send(DaemonEvent::Messages {
+                                session: new_sid.clone(),
+                                messages: Vec::new(),
+                            });
+                            let _ = ev_tx.send(DaemonEvent::Queue {
+                                session: new_sid.clone(),
+                                steer: Vec::new(),
+                                follow_up: Vec::new(),
+                            });
+                            let _ = ev_tx.send(DaemonEvent::Activity {
+                                session: new_sid.clone(),
+                                subagents: 0,
+                                shells: 0,
+                                heartbeats: 0,
+                            });
                             if let Ok(sessions) = pa_client::list_sessions(&client) {
-                                let new_first = sessions.first().map(|s| {
-                                    if !s.id.is_empty() {
-                                        s.id.clone()
-                                    } else {
-                                        s.session_file.clone()
-                                    }
-                                });
                                 let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
-                                if let Some(sid) = new_first {
-                                    load_session_details(&client, &sid, &ev_tx);
+                            }
+                            if !models_loaded {
+                                if let Ok(models) = pa_client::model_catalog(&client, &new_sid) {
+                                    models_loaded = true;
+                                    let _ = ev_tx.send(DaemonEvent::Models(models));
                                 }
+                            }
+                            if let Ok(stats) = pa_client::session_stats(&client, &new_sid) {
+                                let _ = ev_tx.send(DaemonEvent::Stats {
+                                    session: new_sid,
+                                    stats,
+                                });
                             }
                         }
                         Err(err) => {
@@ -221,8 +249,10 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                         }
                     }
                     DaemonCmd::ExportHtml { session } => {
-                        let out = std::env::temp_dir()
-                            .join(format!("prime-agent-{}.html", session.chars().take(8).collect::<String>()));
+                        let out = std::env::temp_dir().join(format!(
+                            "prime-agent-{}.html",
+                            session.chars().take(8).collect::<String>()
+                        ));
                         let out_str = out.to_string_lossy().to_string();
                         match pa_client::export_html(&client, &session, &out_str) {
                             Ok(path) => {

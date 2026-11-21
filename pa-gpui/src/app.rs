@@ -1,4 +1,7 @@
-use crate::assets::{PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
+use crate::assets::{
+    ICON_BASH_PATH, ICON_PYTHON_PATH, ICON_THINKING_PATH, PRIME_AGENT_MARK_DARK_PATH,
+    PRIME_AGENT_MARK_LIGHT_PATH,
+};
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
 use crate::settings::AppSettings;
 use crate::theme::PaPalette;
@@ -9,7 +12,7 @@ use crate::transcript::{
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     scroll::ScrollableElement as _,
     text::{TextView, TextViewState},
     v_flex, Icon, IconName, Sizable as _, StyledExt as _, Theme, ThemeMode, TitleBar,
@@ -54,6 +57,8 @@ pub struct PaApp {
     renaming_path: Option<String>,
     items: Vec<TranscriptItem>,
     is_streaming: bool,
+    creating_session: bool,
+    rail_mark_hovered: bool,
     settings: AppSettings,
     subagent_count: usize,
     shell_count: usize,
@@ -66,7 +71,7 @@ pub struct PaApp {
     search_input: Entity<InputState>,
     find_input: Entity<InputState>,
     rename_input: Entity<InputState>,
-    composer: Entity<InputState>,
+    composer: Entity<TextareaState>,
     _subscriptions: Vec<Subscription>,
     _poll_task: Task<()>,
 }
@@ -78,18 +83,19 @@ impl PaApp {
         let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in transcript…"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
         let composer = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Ask anything… (/ for commands)")
+            TextareaState::new(window, cx)
+                .placeholder("Ask anything… (/ for commands · Shift+Enter for newline)")
+                .soft_wrap(true)
+                .auto_grow(1, 8)
+                .submit_on_enter(true)
         });
 
         let sub_composer = cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, window, cx| {
             match ev {
-                InputEvent::PressEnter {
-                    secondary: false,
-                    shift: false,
-                } => {
+                InputEvent::PressEnter { shift: false, .. } => {
                     this.send_current_prompt(false, window, cx);
                 }
-                InputEvent::Change => {
+                InputEvent::Change | InputEvent::Focus | InputEvent::Blur => {
                     cx.notify();
                 }
                 _ => {}
@@ -97,7 +103,7 @@ impl PaApp {
         });
 
         let sub_search = cx.subscribe_in(&search_input, window, |_this, _, ev: &InputEvent, _, cx| {
-            if matches!(ev, InputEvent::Change) {
+            if matches!(ev, InputEvent::Change | InputEvent::Focus | InputEvent::Blur) {
                 cx.notify();
             }
         });
@@ -108,22 +114,27 @@ impl PaApp {
                     this.find_index = 0;
                     cx.notify();
                 }
+                InputEvent::Focus | InputEvent::Blur => {
+                    cx.notify();
+                }
                 InputEvent::PressEnter { .. } => {
                     this.step_find(1, cx);
                 }
-                _ => {}
             }
         });
 
         let sub_rename = cx.subscribe_in(&rename_input, window, |this, _, ev: &InputEvent, window, cx| {
-            if matches!(
-                ev,
+            match ev {
                 InputEvent::PressEnter {
                     secondary: false,
                     shift: false,
+                } => {
+                    this.commit_rename(window, cx);
                 }
-            ) {
-                this.commit_rename(window, cx);
+                InputEvent::Focus | InputEvent::Blur => {
+                    cx.notify();
+                }
+                _ => {}
             }
         });
 
@@ -154,6 +165,8 @@ impl PaApp {
             renaming_path: None,
             items: Vec::new(),
             is_streaming: false,
+            creating_session: false,
+            rail_mark_hovered: false,
             settings,
             subagent_count: 0,
             shell_count: 0,
@@ -174,6 +187,27 @@ impl PaApp {
 
     fn palette(&self) -> PaPalette {
         PaPalette::for_mode(self.settings.dark_mode)
+    }
+
+    fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.creating_session {
+            return;
+        }
+        self.open_popup = OpenPopup::None;
+        self.creating_session = true;
+        self.is_streaming = false;
+        self.items.clear();
+        self.stats = None;
+        self.queued_steer.clear();
+        self.queued_follow_up.clear();
+        self.subagent_count = 0;
+        self.shell_count = 0;
+        self.heartbeat_count = 0;
+        self.notice = Some("Starting new session…".into());
+        let focus = self.composer.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        let _ = self.bridge.tx.send(DaemonCmd::CreateSession);
+        cx.notify();
     }
 
     fn is_near_bottom(&self) -> bool {
@@ -202,7 +236,15 @@ impl PaApp {
                 DaemonEvent::Disconnected(reason) => {
                     self.status = reason.into();
                     self.is_streaming = false;
+                    self.creating_session = false;
                     settle_all(&mut self.items);
+                }
+                DaemonEvent::SessionCreated(new_sid) => {
+                    self.creating_session = false;
+                    self.active_session_id = Some(new_sid);
+                    self.is_streaming = false;
+                    self.items.clear();
+                    self.notice = None;
                 }
                 DaemonEvent::Sessions(rows) => {
                     self.sessions = rows;
@@ -220,6 +262,7 @@ impl PaApp {
                 DaemonEvent::Messages { session, messages } => {
                     let switching = self.active_session_id.as_deref() != Some(session.as_str());
                     self.active_session_id = Some(session);
+                    self.creating_session = false;
                     self.items = build_items(&messages, cx);
                     if switching || self.is_near_bottom() {
                         self.scroll_handle.scroll_to_bottom();
@@ -262,7 +305,9 @@ impl PaApp {
                     self.handle_live_frame(&frame, cx);
                 }
                 DaemonEvent::Error(err) => {
+                    self.creating_session = false;
                     self.status = format!("Error: {err}").into();
+                    self.notice = Some(format!("Error: {err}").into());
                 }
             }
         }
@@ -335,6 +380,10 @@ impl PaApp {
                     .get("isError")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let details = event
+                    .get("result")
+                    .and_then(|r| r.get("details"))
+                    .or_else(|| event.get("details"));
                 let out = event
                     .get("result")
                     .and_then(|r| {
@@ -348,7 +397,7 @@ impl PaApp {
                         })
                     })
                     .unwrap_or_default();
-                finish_tool_call(&mut self.items, cid, out, is_err, cx);
+                finish_tool_call(&mut self.items, cid, out, is_err, details, cx);
             }
             "agent_end" | "turn_end" => {
                 self.is_streaming = false;
@@ -423,6 +472,8 @@ impl PaApp {
         self.rename_input.update(cx, |input, cx| {
             input.set_value(current_name, window, cx);
         });
+        let focus = self.rename_input.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -512,6 +563,35 @@ impl PaApp {
         img(path).size(px(18.)).object_fit(ObjectFit::Contain)
     }
 
+    fn render_slim_input(
+        &self,
+        state: &Entity<InputState>,
+        window: &Window,
+        cx: &App,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let focused = state.read(cx).focus_handle(cx).is_focused(window);
+        div()
+            .w_full()
+            .px(px(8.))
+            .py(px(3.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(if focused {
+                p.composer_edge_focus
+            } else {
+                p.composer_edge
+            })
+            .bg(p.composer_surface)
+            .child(
+                Input::new(state)
+                    .xsmall()
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false),
+            )
+    }
+
     fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
         let settings_open = self.open_popup == OpenPopup::SettingsMenu;
@@ -540,8 +620,12 @@ impl PaApp {
                             .when(self.find_open, |d| d.bg(p.sidebar_row_selected))
                             .hover(|d| d.bg(p.sidebar_row_hover))
                             .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.find_open = !this.find_open;
+                                if this.find_open {
+                                    let focus = this.find_input.read(cx).focus_handle(cx);
+                                    window.focus(&focus, cx);
+                                }
                                 cx.notify();
                             })),
                     )
@@ -614,9 +698,21 @@ impl PaApp {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
-                    .child(self.render_prime_mark())
+                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                        this.rail_mark_hovered = *hovered;
+                        cx.notify();
+                    }))
+                    .child(if self.rail_mark_hovered {
+                        Icon::new(IconName::PanelLeftOpen)
+                            .xsmall()
+                            .text_color(p.ink)
+                            .into_any_element()
+                    } else {
+                        self.render_prime_mark().into_any_element()
+                    })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings.sidebar_open = true;
+                        this.rail_mark_hovered = false;
                         this.settings.save();
                         cx.notify();
                     })),
@@ -632,8 +728,8 @@ impl PaApp {
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .child(Icon::new(IconName::Plus).xsmall().text_color(p.quiet_ink))
-                    .on_click(cx.listener(|this, _, _, _| {
-                        let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.request_new_session(window, cx);
                     })),
             )
             .child(
@@ -647,16 +743,18 @@ impl PaApp {
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.settings.sidebar_open = true;
                         this.search_open = true;
                         this.settings.save();
+                        let focus = this.search_input.read(cx).focus_handle(cx);
+                        window.focus(&focus, cx);
                         cx.notify();
                     })),
             )
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         if !self.settings.sidebar_open {
             return self.render_collapsed_rail(cx).into_any_element();
         }
@@ -735,8 +833,12 @@ impl PaApp {
                                     .when(self.search_open, |d| d.bg(p.sidebar_row_selected))
                                     .hover(|d| d.bg(p.sidebar_row_hover))
                                     .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                    .on_click(cx.listener(|this, _, window, cx| {
                                         this.search_open = !this.search_open;
+                                        if this.search_open {
+                                            let focus = this.search_input.read(cx).focus_handle(cx);
+                                            window.focus(&focus, cx);
+                                        }
                                         cx.notify();
                                     })),
                             )
@@ -757,6 +859,7 @@ impl PaApp {
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.settings.sidebar_open = false;
+                                        this.rail_mark_hovered = false;
                                         this.settings.save();
                                         cx.notify();
                                     })),
@@ -778,20 +881,33 @@ impl PaApp {
                     .gap(px(7.))
                     .cursor_pointer()
                     .child(Icon::new(IconName::Plus).xsmall().text_color(p.ink))
-                    .child(div().text_size(px(13.)).text_color(p.ink).child("New Session"))
-                    .on_click(cx.listener(|this, _, _, _| {
-                        let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(p.ink)
+                            .child(if self.creating_session {
+                                "Creating…"
+                            } else {
+                                "New Session"
+                            }),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.request_new_session(window, cx);
                     })),
             )
             .when(self.search_open, |col| {
-                col.child(Input::new(&self.search_input).xsmall())
+                col.child(self.render_slim_input(&self.search_input, window, cx))
             })
             .when(self.renaming_path.is_some(), |col| {
                 col.child(
                     h_flex()
                         .gap_1()
                         .items_center()
-                        .child(div().flex_1().child(Input::new(&self.rename_input).xsmall()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(self.render_slim_input(&self.rename_input, window, cx)),
+                        )
                         .child(
                             Button::new("save-rename")
                                 .primary()
@@ -963,7 +1079,7 @@ impl PaApp {
                     .when(selected, |d| d.bg(p.sidebar_row_selected))
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .when_some(dot_color, |d, c| {
-                        d.child(div().size(px(6.)).rounded_full().bg(c))
+                        d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
                     })
                     .child(
                         div()
@@ -987,7 +1103,11 @@ impl PaApp {
                             .justify_center()
                             .cursor_pointer()
                             .hover(|d| d.bg(p.sidebar_row_selected))
-                            .child(Icon::new(IconName::Ellipsis).size(px(12.)).text_color(p.sidebar_group_empty_ink))
+                            .child(
+                                Icon::new(IconName::Ellipsis)
+                                    .size(px(12.))
+                                    .text_color(p.sidebar_group_empty_ink),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 let next = OpenPopup::SessionMenu {
@@ -1019,7 +1139,7 @@ impl PaApp {
         card
     }
 
-    fn render_find_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_find_bar(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.find_open {
             return None;
         }
@@ -1040,7 +1160,11 @@ impl PaApp {
                 .bg(p.transcript_cell_fill)
                 .gap_2()
                 .items_center()
-                .child(div().w(px(260.)).child(Input::new(&self.find_input).xsmall()))
+                .child(
+                    div()
+                        .w(px(260.))
+                        .child(self.render_slim_input(&self.find_input, window, cx)),
+                )
                 .child(div().text_xs().text_color(p.quiet_ink).child(count_label))
                 .child(
                     Button::new("find-prev")
@@ -1070,10 +1194,10 @@ impl PaApp {
         )
     }
 
-    fn render_slash_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_slash_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let val = self.composer.read(cx).value();
         let trimmed = val.trim_start();
-        if !trimmed.starts_with('/') || trimmed.contains(' ') {
+        if !trimmed.starts_with('/') || trimmed.contains(' ') || trimmed.contains('\n') {
             return None;
         }
         let prefix = &trimmed[1..];
@@ -1082,14 +1206,22 @@ impl PaApp {
             return None;
         }
         let p = self.palette();
+        let left_offset = if self.settings.sidebar_open {
+            px(262.)
+        } else {
+            px(62.)
+        };
         let mut list = v_flex()
-            .w_full()
-            .mb(px(6.))
-            .p_1()
+            .absolute()
+            .bottom(px(108.))
+            .left(left_offset)
+            .w(px(420.))
+            .p_1p5()
             .rounded(px(10.))
             .border_1()
             .border_color(p.panel_edge)
             .bg(p.panel_surface)
+            .shadow_lg()
             .gap_0p5();
 
         for (i, cmd) in matches.into_iter().take(6).enumerate() {
@@ -1114,10 +1246,12 @@ impl PaApp {
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0()
                             .text_xs()
                             .text_color(p.quiet_ink)
                             .overflow_hidden()
                             .whitespace_nowrap()
+                            .text_ellipsis()
                             .child(cmd_desc),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1173,171 +1307,6 @@ impl PaApp {
                                     .send(DaemonCmd::ClearQueue { session: sid });
                             }
                         })),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn render_model_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.open_popup != OpenPopup::ModelMenu {
-            return None;
-        }
-        let p = self.palette();
-        let cur_model_id = self
-            .active_session()
-            .map(|s| s.model.clone())
-            .unwrap_or_default();
-        let cur_thinking = self
-            .active_session()
-            .map(|s| s.thinking.clone())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "medium".to_string());
-
-        let thinking_levels: Vec<String> = self
-            .models
-            .iter()
-            .find(|m| m.id == cur_model_id)
-            .map(|m| m.thinking_levels.clone())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| {
-                vec![
-                    "off".into(),
-                    "low".into(),
-                    "medium".into(),
-                    "high".into(),
-                    "max".into(),
-                ]
-            });
-
-        let configured_models: Vec<ModelEntry> = self
-            .models
-            .iter()
-            .filter(|m| m.configured)
-            .take(24)
-            .cloned()
-            .collect();
-
-        let mut model_list = v_flex().gap(px(2.));
-        if configured_models.is_empty() {
-            model_list = model_list.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(p.quiet_ink)
-                    .child("No configured models"),
-            );
-        } else {
-            for (idx, m) in configured_models.into_iter().enumerate() {
-                let selected = m.id == cur_model_id;
-                let prov = m.provider.clone();
-                let mid = m.id.clone();
-                model_list = model_list.child(
-                    h_flex()
-                        .id(("m-opt", idx))
-                        .px_2()
-                        .py_1()
-                        .rounded(px(6.))
-                        .justify_between()
-                        .items_center()
-                        .cursor_pointer()
-                        .when(selected, |d| d.bg(p.sidebar_row_selected))
-                        .hover(|d| d.bg(p.sidebar_row_hover))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(if selected { p.ink } else { p.quiet_ink })
-                                .child(m.name),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(p.sidebar_group_empty_ink)
-                                .child(m.provider),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(sid) = this.active_session_id.clone() {
-                                let _ = this.bridge.tx.send(DaemonCmd::SetModel {
-                                    session: sid,
-                                    provider: prov.clone(),
-                                    model_id: mid.clone(),
-                                });
-                            }
-                            this.open_popup = OpenPopup::None;
-                            cx.notify();
-                        })),
-                );
-            }
-        }
-
-        let mut effort_row = h_flex().gap_1().flex_wrap();
-        for (idx, lvl) in thinking_levels.into_iter().enumerate() {
-            let active = lvl == cur_thinking;
-            let level_c = lvl.clone();
-            effort_row = effort_row.child(
-                div()
-                    .id(("eff-opt", idx))
-                    .px_2()
-                    .py_0p5()
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(if active { p.working } else { p.panel_edge })
-                    .bg(if active {
-                        p.sidebar_row_selected
-                    } else {
-                        gpui_kit::transparent_black()
-                    })
-                    .text_xs()
-                    .text_color(if active { p.ink } else { p.quiet_ink })
-                    .cursor_pointer()
-                    .hover(|d| d.bg(p.sidebar_row_hover))
-                    .child(lvl)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(sid) = this.active_session_id.clone() {
-                            let _ = this.bridge.tx.send(DaemonCmd::SetThinking {
-                                session: sid,
-                                level: level_c.clone(),
-                            });
-                        }
-                        this.open_popup = OpenPopup::None;
-                        cx.notify();
-                    })),
-            );
-        }
-
-        Some(
-            v_flex()
-                .w(px(360.))
-                .ml_auto()
-                .mb(px(6.))
-                .p_3()
-                .rounded(px(10.))
-                .border_1()
-                .border_color(p.panel_edge)
-                .bg(p.panel_surface)
-                .gap_2()
-                .child(
-                    div()
-                        .text_size(px(10.5))
-                        .font_semibold()
-                        .text_color(p.quiet_ink)
-                        .child("THINKING EFFORT"),
-                )
-                .child(effort_row)
-                .child(div().h(px(1.)).w_full().bg(p.panel_edge))
-                .child(
-                    div()
-                        .text_size(px(10.5))
-                        .font_semibold()
-                        .text_color(p.quiet_ink)
-                        .child("MODELS"),
-                )
-                .child(
-                    div()
-                        .id("model-popup-scroll")
-                        .max_h(px(240.))
-                        .overflow_y_scrollbar()
-                        .child(model_list),
                 )
                 .into_any_element(),
         )
@@ -1421,28 +1390,9 @@ impl PaApp {
             .child(ledger("session cost", cost))
     }
 
-    fn render_context_popup(&self) -> Option<AnyElement> {
-        if self.open_popup != OpenPopup::ContextCard {
-            return None;
-        }
+    fn render_composer_band(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
-        Some(
-            div()
-                .w(px(230.))
-                .ml_auto()
-                .mb(px(6.))
-                .p_3()
-                .rounded(px(10.))
-                .border_1()
-                .border_color(p.panel_edge)
-                .bg(p.panel_surface)
-                .child(self.render_context_card_content())
-                .into_any_element(),
-        )
-    }
-
-    fn render_composer_band(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = self.palette();
+        let composer_focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
         let model_chip_label = self
             .active_session()
             .map(|s| {
@@ -1474,15 +1424,16 @@ impl PaApp {
             .pb(px(12.))
             .pt(px(4.))
             .children(self.render_queue_strip(cx))
-            .children(self.render_slash_popup(cx))
-            .children(self.render_model_popup(cx))
-            .children(self.render_context_popup())
             .child(
                 v_flex()
                     .w_full()
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(p.composer_edge)
+                    .border_color(if composer_focused {
+                        p.composer_edge_focus
+                    } else {
+                        p.composer_edge
+                    })
                     .bg(p.composer_surface)
                     .child(
                         h_flex()
@@ -1504,7 +1455,7 @@ impl PaApp {
                             .pt(px(4.))
                             .pb(px(6.))
                             .child(
-                                Input::new(&self.composer)
+                                Textarea::new(&self.composer)
                                     .appearance(false)
                                     .bordered(false),
                             ),
@@ -1591,6 +1542,7 @@ impl PaApp {
                                     .text_color(p.quiet_ink)
                                     .child(ctx_pct)
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
                                         this.open_popup =
                                             if this.open_popup == OpenPopup::ContextCard {
                                                 OpenPopup::None
@@ -1645,6 +1597,7 @@ impl PaApp {
                                             .text_color(p.quiet_ink),
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
                                         this.open_popup =
                                             if this.open_popup == OpenPopup::ModelMenu {
                                                 OpenPopup::None
@@ -1794,9 +1747,200 @@ impl PaApp {
 
     fn render_floating_popups(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.palette();
+        let right_offset = if self.settings.right_open {
+            px(322.)
+        } else {
+            px(24.)
+        };
+
         match &self.open_popup {
+            OpenPopup::None => self.render_slash_overlay(cx),
+            OpenPopup::ModelMenu => {
+                let cur_model_id = self
+                    .active_session()
+                    .map(|s| s.model.clone())
+                    .unwrap_or_default();
+                let cur_thinking = self
+                    .active_session()
+                    .map(|s| s.thinking.clone())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "medium".to_string());
+
+                let thinking_levels: Vec<String> = self
+                    .models
+                    .iter()
+                    .find(|m| m.id == cur_model_id)
+                    .map(|m| m.thinking_levels.clone())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| {
+                        vec![
+                            "off".into(),
+                            "low".into(),
+                            "medium".into(),
+                            "high".into(),
+                            "max".into(),
+                        ]
+                    });
+
+                let configured_models: Vec<ModelEntry> = self
+                    .models
+                    .iter()
+                    .filter(|m| m.configured)
+                    .take(24)
+                    .cloned()
+                    .collect();
+
+                let mut model_list = v_flex().gap(px(2.));
+                if configured_models.is_empty() {
+                    model_list = model_list.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(p.quiet_ink)
+                            .child("No configured models"),
+                    );
+                } else {
+                    for (idx, m) in configured_models.into_iter().enumerate() {
+                        let selected = m.id == cur_model_id;
+                        let prov = m.provider.clone();
+                        let mid = m.id.clone();
+                        model_list = model_list.child(
+                            h_flex()
+                                .id(("m-opt", idx))
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.))
+                                .justify_between()
+                                .items_center()
+                                .cursor_pointer()
+                                .when(selected, |d| d.bg(p.sidebar_row_selected))
+                                .hover(|d| d.bg(p.sidebar_row_hover))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if selected { p.ink } else { p.quiet_ink })
+                                        .child(m.name),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(p.sidebar_group_empty_ink)
+                                        .child(m.provider),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(sid) = this.active_session_id.clone() {
+                                        let _ = this.bridge.tx.send(DaemonCmd::SetModel {
+                                            session: sid,
+                                            provider: prov.clone(),
+                                            model_id: mid.clone(),
+                                        });
+                                    }
+                                    this.open_popup = OpenPopup::None;
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                }
+
+                let mut effort_row = h_flex().gap_1().flex_wrap();
+                for (idx, lvl) in thinking_levels.into_iter().enumerate() {
+                    let active = lvl == cur_thinking;
+                    let level_c = lvl.clone();
+                    effort_row = effort_row.child(
+                        div()
+                            .id(("eff-opt", idx))
+                            .px_2()
+                            .py_0p5()
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(if active { p.working } else { p.panel_edge })
+                            .bg(if active {
+                                p.sidebar_row_selected
+                            } else {
+                                gpui_kit::transparent_black()
+                            })
+                            .text_xs()
+                            .text_color(if active { p.ink } else { p.quiet_ink })
+                            .cursor_pointer()
+                            .hover(|d| d.bg(p.sidebar_row_hover))
+                            .child(lvl)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(sid) = this.active_session_id.clone() {
+                                    let _ = this.bridge.tx.send(DaemonCmd::SetThinking {
+                                        session: sid,
+                                        level: level_c.clone(),
+                                    });
+                                }
+                                this.open_popup = OpenPopup::None;
+                                cx.notify();
+                            })),
+                    );
+                }
+
+                Some(
+                    v_flex()
+                        .id("floating-model-menu")
+                        .absolute()
+                        .bottom(px(108.))
+                        .right(right_offset)
+                        .w(px(360.))
+                        .p_3()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(p.panel_edge)
+                        .bg(p.panel_surface)
+                        .shadow_lg()
+                        .gap_2()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_semibold()
+                                .text_color(p.quiet_ink)
+                                .child("THINKING EFFORT"),
+                        )
+                        .child(effort_row)
+                        .child(div().h(px(1.)).w_full().bg(p.panel_edge))
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_semibold()
+                                .text_color(p.quiet_ink)
+                                .child("MODELS"),
+                        )
+                        .child(
+                            div()
+                                .id("model-popup-scroll")
+                                .max_h(px(260.))
+                                .overflow_y_scrollbar()
+                                .child(model_list),
+                        )
+                        .into_any_element(),
+                )
+            }
+            OpenPopup::ContextCard => Some(
+                div()
+                    .id("floating-ctx-card")
+                    .absolute()
+                    .bottom(px(108.))
+                    .right(right_offset)
+                    .w(px(236.))
+                    .p_3()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(p.panel_edge)
+                    .bg(p.panel_surface)
+                    .shadow_lg()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(self.render_context_card_content())
+                    .into_any_element(),
+            ),
             OpenPopup::SettingsMenu => Some(
                 div()
+                    .id("floating-settings-menu")
                     .absolute()
                     .top(px(36.))
                     .right(px(16.))
@@ -1806,6 +1950,8 @@ impl PaApp {
                     .border_1()
                     .border_color(p.panel_edge)
                     .bg(p.panel_surface)
+                    .shadow_lg()
+                    .on_click(|_, _, cx| cx.stop_propagation())
                     .child(
                         v_flex()
                             .gap_1()
@@ -1888,6 +2034,7 @@ impl PaApp {
                 let resident = *is_resident;
                 Some(
                     div()
+                        .id("floating-session-menu")
                         .absolute()
                         .top(px(96.))
                         .left(px(252.))
@@ -1897,6 +2044,8 @@ impl PaApp {
                         .border_1()
                         .border_color(p.panel_edge)
                         .bg(p.panel_surface)
+                        .shadow_lg()
+                        .on_click(|_, _, cx| cx.stop_propagation())
                         .child(
                             v_flex()
                                 .gap_0p5()
@@ -1909,6 +2058,7 @@ impl PaApp {
                                         .text_color(p.quiet_ink)
                                         .overflow_hidden()
                                         .whitespace_nowrap()
+                                        .text_ellipsis()
                                         .child(name_c.clone()),
                                 )
                                 .when(!file_ren.is_empty(), |col| {
@@ -1980,7 +2130,38 @@ impl PaApp {
                         .into_any_element(),
                 )
             }
-            _ => None,
+        }
+    }
+
+    fn render_card_icon(&self, item: &TranscriptItem, color: Hsla) -> AnyElement {
+        match (item.kind, item.variant) {
+            (ItemKind::Thinking, _) => svg()
+                .path(ICON_THINKING_PATH)
+                .size(px(14.))
+                .text_color(color)
+                .into_any_element(),
+            (ItemKind::ToolCall, CardVariant::Python) => svg()
+                .path(ICON_PYTHON_PATH)
+                .size(px(14.))
+                .text_color(color)
+                .into_any_element(),
+            (ItemKind::ToolCall, CardVariant::Bash) | (_, CardVariant::BashDone) => svg()
+                .path(ICON_BASH_PATH)
+                .size(px(14.))
+                .text_color(color)
+                .into_any_element(),
+            (ItemKind::ToolCall, _) => svg()
+                .path(ICON_PYTHON_PATH)
+                .size(px(14.))
+                .text_color(color)
+                .into_any_element(),
+            (_, CardVariant::AgentMessage) => {
+                Icon::new(IconName::Bot).xsmall().text_color(color).into_any_element()
+            }
+            (_, CardVariant::ProviderRetry) => {
+                Icon::new(IconName::Loader).xsmall().text_color(color).into_any_element()
+            }
+            _ => Icon::new(IconName::Inbox).xsmall().text_color(color).into_any_element(),
         }
     }
 
@@ -2036,16 +2217,6 @@ impl PaApp {
             ItemKind::Thinking | ItemKind::ToolCall | ItemKind::Summary | ItemKind::Custom => {
                 let id = item.id;
                 let copy_payload = item.raw_body.clone();
-                let icon = match (item.kind, item.variant) {
-                    (ItemKind::ToolCall, CardVariant::Python) => IconName::SquareTerminal,
-                    (ItemKind::ToolCall, CardVariant::Bash) => IconName::SquareTerminal,
-                    (ItemKind::ToolCall, _) => IconName::SquareTerminal,
-                    (ItemKind::Thinking, _) => IconName::Info,
-                    (_, CardVariant::BashDone) => IconName::SquareTerminal,
-                    (_, CardVariant::AgentMessage) => IconName::Bot,
-                    (_, CardVariant::ProviderRetry) => IconName::Loader,
-                    _ => IconName::Inbox,
-                };
                 let icon_color = if item.active {
                     p.working
                 } else if item.failed {
@@ -2075,7 +2246,7 @@ impl PaApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle_item(id, cx);
                             }))
-                            .child(Icon::new(icon).xsmall().text_color(icon_color))
+                            .child(self.render_card_icon(item, icon_color))
                             .when(!item.verb.is_empty(), |row| {
                                 row.child(
                                     div()
@@ -2160,7 +2331,7 @@ impl PaApp {
 }
 
 impl Render for PaApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
         let mut rendered_items = Vec::with_capacity(self.items.len());
         for it in &self.items {
@@ -2168,21 +2339,33 @@ impl Render for PaApp {
         }
 
         div()
+            .id("pa-root")
             .relative()
             .size_full()
             .bg(p.window_surface)
             .text_color(p.ink)
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+            .on_click(cx.listener(|this, _, _, cx| {
+                if this.open_popup != OpenPopup::None {
+                    this.open_popup = OpenPopup::None;
+                    cx.notify();
+                }
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let key = ev.keystroke.key.as_str();
                 let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
                 if ctrl && key == "b" {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
+                    this.rail_mark_hovered = false;
                     this.settings.save();
                     cx.notify();
                 } else if ctrl && key == "n" {
-                    let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                    this.request_new_session(window, cx);
                 } else if ctrl && key == "f" {
                     this.find_open = !this.find_open;
+                    if this.find_open {
+                        let focus = this.find_input.read(cx).focus_handle(cx);
+                        window.focus(&focus, cx);
+                    }
                     cx.notify();
                 } else if key == "escape" {
                     if this.open_popup != OpenPopup::None {
@@ -2210,7 +2393,7 @@ impl Render for PaApp {
                             .flex_1()
                             .w_full()
                             .min_h_0()
-                            .child(self.render_sidebar(cx))
+                            .child(self.render_sidebar(window, cx))
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -2220,7 +2403,7 @@ impl Render for PaApp {
                                     .rounded_tl(px(10.))
                                     .when(self.settings.right_open, |s| s.rounded_tr(px(10.)))
                                     .overflow_hidden()
-                                    .children(self.render_find_bar(cx))
+                                    .children(self.render_find_bar(window, cx))
                                     .child(
                                         div()
                                             .id("transcript-scroll")
@@ -2239,7 +2422,7 @@ impl Render for PaApp {
                                                     .children(rendered_items),
                                             ),
                                     )
-                                    .child(self.render_composer_band(cx)),
+                                    .child(self.render_composer_band(window, cx)),
                             )
                             .children(self.render_right_column(cx)),
                     ),
