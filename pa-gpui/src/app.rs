@@ -21,16 +21,21 @@ use std::time::Duration;
 pub struct PaApp {
     bridge: DaemonBridge,
     status: SharedString,
+    notice: Option<SharedString>,
     sessions: Vec<SessionRow>,
     models: Vec<ModelEntry>,
     stats: Option<SessionStats>,
+    queued_steer: Vec<String>,
+    queued_follow_up: Vec<String>,
     active_session_id: Option<String>,
+    renaming_path: Option<String>,
     items: Vec<TranscriptItem>,
     is_streaming: bool,
     sidebar_open: bool,
     dark_mode: bool,
     scroll_handle: ScrollHandle,
     search_input: Entity<InputState>,
+    rename_input: Entity<InputState>,
     composer: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
     _poll_task: Task<()>,
@@ -40,6 +45,7 @@ impl PaApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let bridge = DaemonBridge::spawn();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter sessions…"));
+        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
         let composer = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Message Prime Agent… (/ for commands)")
         });
@@ -65,6 +71,18 @@ impl PaApp {
             }
         });
 
+        let sub_rename = cx.subscribe_in(&rename_input, window, |this, _, ev: &InputEvent, window, cx| {
+            if matches!(
+                ev,
+                InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false,
+                }
+            ) {
+                this.commit_rename(window, cx);
+            }
+        });
+
         let poll_task = cx.spawn(async move |weak_self, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(24))
@@ -82,19 +100,39 @@ impl PaApp {
         Self {
             bridge,
             status: "Connecting to daemon…".into(),
+            notice: None,
             sessions: Vec::new(),
             models: Vec::new(),
             stats: None,
+            queued_steer: Vec::new(),
+            queued_follow_up: Vec::new(),
             active_session_id: None,
+            renaming_path: None,
             items: Vec::new(),
             is_streaming: false,
             sidebar_open: true,
             dark_mode: true,
             scroll_handle: ScrollHandle::new(),
             search_input,
+            rename_input,
             composer,
-            _subscriptions: vec![sub_composer, sub_search],
+            _subscriptions: vec![sub_composer, sub_search, sub_rename],
             _poll_task: poll_task,
+        }
+    }
+
+    fn is_near_bottom(&self) -> bool {
+        let max_y = self.scroll_handle.max_offset().y;
+        if max_y <= px(4.) {
+            return true;
+        }
+        let cur_y = -self.scroll_handle.offset().y;
+        (max_y - cur_y) <= px(120.)
+    }
+
+    fn scroll_if_sticky(&self) {
+        if self.is_near_bottom() {
+            self.scroll_handle.scroll_to_bottom();
         }
     }
 
@@ -107,7 +145,7 @@ impl PaApp {
                     self.status = "Connected".into();
                 }
                 DaemonEvent::Disconnected(reason) => {
-                    self.status = format!("Disconnected: {reason}").into();
+                    self.status = reason.into();
                     self.is_streaming = false;
                     settle_all(&mut self.items);
                 }
@@ -125,9 +163,12 @@ impl PaApp {
                     }
                 }
                 DaemonEvent::Messages { session, messages } => {
+                    let switching = self.active_session_id.as_deref() != Some(session.as_str());
                     self.active_session_id = Some(session);
                     self.items = build_items(&messages, cx);
-                    self.scroll_handle.scroll_to_bottom();
+                    if switching || self.is_near_bottom() {
+                        self.scroll_handle.scroll_to_bottom();
+                    }
                 }
                 DaemonEvent::Models(models) => {
                     self.models = models;
@@ -136,6 +177,19 @@ impl PaApp {
                     if self.active_session_id.as_deref() == Some(session.as_str()) {
                         self.stats = Some(stats);
                     }
+                }
+                DaemonEvent::Queue {
+                    session,
+                    steer,
+                    follow_up,
+                } => {
+                    if self.active_session_id.as_deref() == Some(session.as_str()) {
+                        self.queued_steer = steer;
+                        self.queued_follow_up = follow_up;
+                    }
+                }
+                DaemonEvent::Notice(msg) => {
+                    self.notice = Some(msg.into());
                 }
                 DaemonEvent::LiveFrame(frame) => {
                     self.handle_live_frame(&frame, cx);
@@ -183,10 +237,10 @@ impl PaApp {
                 if let Some(delta) = delta_ev.get("delta").and_then(Value::as_str) {
                     if delta_kind.starts_with("text_delta") {
                         append_text_delta(&mut self.items, delta, cx);
-                        self.scroll_handle.scroll_to_bottom();
+                        self.scroll_if_sticky();
                     } else if delta_kind.starts_with("thinking_delta") {
                         append_thinking_delta(&mut self.items, delta, cx);
-                        self.scroll_handle.scroll_to_bottom();
+                        self.scroll_if_sticky();
                     }
                 }
             }
@@ -203,7 +257,7 @@ impl PaApp {
                     .unwrap_or("tool");
                 let args = event.get("args").unwrap_or(&Value::Null);
                 start_tool_call(&mut self.items, cid, name, args);
-                self.scroll_handle.scroll_to_bottom();
+                self.scroll_if_sticky();
             }
             "tool_execution_end" => {
                 let cid = event
@@ -288,6 +342,31 @@ impl PaApp {
         cx.notify();
     }
 
+    fn start_rename(&mut self, path: String, current_name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming_path = Some(path);
+        self.rename_input.update(cx, |input, cx| {
+            input.set_value(current_name, window, cx);
+        });
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.renaming_path.take() else {
+            return;
+        };
+        let name = self.rename_input.read(cx).value().trim().to_string();
+        if !name.is_empty() {
+            let _ = self.bridge.tx.send(DaemonCmd::RenameSaved {
+                session_path: path,
+                name,
+            });
+        }
+        self.rename_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        cx.notify();
+    }
+
     fn toggle_item(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
             item.expanded = !item.expanded;
@@ -327,10 +406,11 @@ impl PaApp {
             .filter(|st| st.context_window > 0)
             .map(|st| {
                 format!(
-                    "{:.0}k / {:.0}k ({:.0}%)",
+                    "{:.0}k / {:.0}k ({:.0}%) · ${:.3}",
                     st.context_tokens as f64 / 1000.0,
                     st.context_window as f64 / 1000.0,
-                    st.percent
+                    st.percent,
+                    st.cost
                 )
             })
             .unwrap_or_default();
@@ -373,7 +453,7 @@ impl PaApp {
                 )
                 .child(
                     h_flex()
-                        .gap_3()
+                        .gap_2()
                         .items_center()
                         .pr_2()
                         .when(!context_label.is_empty(), |h| {
@@ -382,6 +462,22 @@ impl PaApp {
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
                                     .child(context_label),
+                            )
+                        })
+                        .when(self.active_session_id.is_some(), |h| {
+                            h.child(
+                                Button::new("export-html")
+                                    .ghost()
+                                    .xsmall()
+                                    .label("Export")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        if let Some(sid) = this.active_session_id.clone() {
+                                            let _ = this
+                                                .bridge
+                                                .tx
+                                                .send(DaemonCmd::ExportHtml { session: sid });
+                                        }
+                                    })),
                             )
                         })
                         .child(
@@ -468,6 +564,23 @@ impl PaApp {
                     ),
             )
             .child(Input::new(&self.search_input).xsmall())
+            .when(self.renaming_path.is_some(), |col| {
+                col.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(div().flex_1().child(Input::new(&self.rename_input).xsmall()))
+                        .child(
+                            Button::new("save-rename")
+                                .primary()
+                                .xsmall()
+                                .label("Save")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.commit_rename(window, cx);
+                                })),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("sidebar-scroll")
@@ -532,8 +645,10 @@ impl PaApp {
             let click_key = key.clone();
             let action_id = row.id.clone();
             let action_file = row.session_file.clone();
+            let cur_name = label.clone();
             let streaming = row.is_streaming;
             let tx_clone = self.bridge.tx.clone();
+            let view_entity = cx.entity().clone();
 
             group = group.child(
                 h_flex()
@@ -569,6 +684,25 @@ impl PaApp {
                             .icon(IconName::Ellipsis)
                             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                                 let tx = tx_clone.clone();
+                                let path_ren = action_file.clone();
+                                let name_ren = cur_name.clone();
+                                let view = view_entity.clone();
+                                let menu = if !path_ren.is_empty() {
+                                    menu.item(PopupMenuItem::new("Rename").on_click(
+                                        move |_, window, cx| {
+                                            view.update(cx, |app, cx| {
+                                                app.start_rename(
+                                                    path_ren.clone(),
+                                                    name_ren.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    ))
+                                } else {
+                                    menu
+                                };
                                 if is_active_group {
                                     let sid = action_id.clone();
                                     menu.item(PopupMenuItem::new("Stop / Archive").on_click(
@@ -666,6 +800,53 @@ impl PaApp {
         Some(list.into_any_element())
     }
 
+    fn render_queue_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let total = self.queued_steer.len() + self.queued_follow_up.len();
+        if total == 0 {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        Some(
+            h_flex()
+                .w_full()
+                .max_w(px(860.))
+                .mx_auto()
+                .px_3()
+                .py_1()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.secondary.opacity(0.6))
+                .justify_between()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!(
+                            "Queued: {} steer · {} follow-up",
+                            self.queued_steer.len(),
+                            self.queued_follow_up.len()
+                        )),
+                )
+                .child(
+                    Button::new("clear-queue")
+                        .ghost()
+                        .xsmall()
+                        .label("Clear queue")
+                        .on_click(cx.listener(|this, _, _, _| {
+                            if let Some(sid) = this.active_session_id.clone() {
+                                let _ = this
+                                    .bridge
+                                    .tx
+                                    .send(DaemonCmd::ClearQueue { session: sid });
+                            }
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_composer_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let cur_model_label = self
@@ -728,6 +909,7 @@ impl PaApp {
             .border_t_1()
             .border_color(theme.border)
             .gap_2()
+            .children(self.render_queue_strip(cx))
             .children(self.render_slash_popup(cx))
             .child(
                 v_flex()
@@ -776,73 +958,87 @@ impl PaApp {
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .justify_between()
                             .items_center()
                             .child(
-                                Button::new("model-picker")
-                                    .ghost()
-                                    .xsmall()
-                                    .label(cur_model_label)
-                                    .icon(IconName::ChevronDown)
-                                    .dropdown_menu_with_anchor(
-                                        Anchor::BottomLeft,
-                                        move |mut menu, _, _| {
-                                            for (prov, mid, mname) in &configured_models {
-                                                let tx = tx_for_model.clone();
-                                                let sid = sid_for_model.clone();
-                                                let p = prov.clone();
-                                                let id = mid.clone();
-                                                menu = menu.item(
-                                                    PopupMenuItem::new(format!("{mname} ({prov})"))
-                                                        .on_click(move |_, _, _| {
-                                                            if let Some(s) = sid.clone() {
-                                                                let _ = tx.send(
-                                                                    DaemonCmd::SetModel {
-                                                                        session: s,
-                                                                        provider: p.clone(),
-                                                                        model_id: id.clone(),
-                                                                    },
-                                                                );
-                                                            }
-                                                        }),
-                                                );
-                                            }
-                                            menu
-                                        },
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Button::new("model-picker")
+                                            .ghost()
+                                            .xsmall()
+                                            .label(cur_model_label)
+                                            .icon(IconName::ChevronDown)
+                                            .dropdown_menu_with_anchor(
+                                                Anchor::BottomLeft,
+                                                move |mut menu, _, _| {
+                                                    for (prov, mid, mname) in &configured_models {
+                                                        let tx = tx_for_model.clone();
+                                                        let sid = sid_for_model.clone();
+                                                        let p = prov.clone();
+                                                        let id = mid.clone();
+                                                        menu = menu.item(
+                                                            PopupMenuItem::new(format!(
+                                                                "{mname} ({prov})"
+                                                            ))
+                                                            .on_click(move |_, _, _| {
+                                                                if let Some(s) = sid.clone() {
+                                                                    let _ = tx.send(
+                                                                        DaemonCmd::SetModel {
+                                                                            session: s,
+                                                                            provider: p.clone(),
+                                                                            model_id: id.clone(),
+                                                                        },
+                                                                    );
+                                                                }
+                                                            }),
+                                                        );
+                                                    }
+                                                    menu
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new("thinking-picker")
+                                            .ghost()
+                                            .xsmall()
+                                            .label(format!("Thinking: {cur_thinking}"))
+                                            .icon(IconName::ChevronDown)
+                                            .dropdown_menu_with_anchor(
+                                                Anchor::BottomLeft,
+                                                move |mut menu, _, _| {
+                                                    for lvl in &thinking_levels {
+                                                        let tx = tx_for_think.clone();
+                                                        let sid = sid_for_think.clone();
+                                                        let level = lvl.clone();
+                                                        menu = menu.item(
+                                                            PopupMenuItem::new(level.clone())
+                                                                .on_click(move |_, _, _| {
+                                                                    if let Some(s) = sid.clone() {
+                                                                        let _ = tx.send(
+                                                                            DaemonCmd::SetThinking {
+                                                                                session: s,
+                                                                                level: level.clone(),
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                }),
+                                                        );
+                                                    }
+                                                    menu
+                                                },
+                                            ),
                                     ),
                             )
-                            .child(
-                                Button::new("thinking-picker")
-                                    .ghost()
-                                    .xsmall()
-                                    .label(format!("Thinking: {cur_thinking}"))
-                                    .icon(IconName::ChevronDown)
-                                    .dropdown_menu_with_anchor(
-                                        Anchor::BottomLeft,
-                                        move |mut menu, _, _| {
-                                            for lvl in &thinking_levels {
-                                                let tx = tx_for_think.clone();
-                                                let sid = sid_for_think.clone();
-                                                let level = lvl.clone();
-                                                menu = menu.item(
-                                                    PopupMenuItem::new(level.clone()).on_click(
-                                                        move |_, _, _| {
-                                                            if let Some(s) = sid.clone() {
-                                                                let _ = tx.send(
-                                                                    DaemonCmd::SetThinking {
-                                                                        session: s,
-                                                                        level: level.clone(),
-                                                                    },
-                                                                );
-                                                            }
-                                                        },
-                                                    ),
-                                                );
-                                            }
-                                            menu
-                                        },
-                                    ),
-                            ),
+                            .when_some(self.notice.clone(), |row, note| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(note),
+                                )
+                            }),
                     ),
             )
     }
