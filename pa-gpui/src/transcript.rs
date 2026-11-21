@@ -466,35 +466,77 @@ fn format_tool_call(name: &str, args: &Value) -> (CardVariant, String, String, S
     (variant, verb, summary, code)
 }
 
+fn parse_bracket_exit_code(header: &str) -> Option<i64> {
+    let idx = header.find("exit:")?;
+    let rest = &header[idx + 5..];
+    let digits: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    digits.parse::<i64>().ok()
+}
+
 fn classify_custom(ctype: &str, text: &str, details: &Value) -> (CardVariant, String, String, bool) {
-    match ctype {
-        "bash_done" | "background_shell_done" => {
-            let exit_code = details.get("exitCode").and_then(Value::as_i64);
-            let meta = exit_code.map(|c| format!("exit {c}")).unwrap_or_default();
-            let failed = exit_code.is_some_and(|c| c != 0);
-            (
-                CardVariant::BashDone,
-                "Background shell finished".to_string(),
-                meta,
-                failed,
-            )
-        }
-        "agent_message" => (
+    let first_line = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+
+    if matches!(ctype, "bash_done" | "bash-done" | "background_shell_done")
+        || first_line.starts_with("[bash-done")
+    {
+        let exit_code = details
+            .get("exitCode")
+            .and_then(Value::as_i64)
+            .or_else(|| parse_bracket_exit_code(first_line));
+        let meta = exit_code.map(|c| format!("exit {c}")).unwrap_or_default();
+        let failed = exit_code.is_some_and(|c| c != 0);
+        let title = if first_line.starts_with("[bash-done") {
+            let cmd = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("Command:"))
+                .map(str::trim)
+                .unwrap_or("");
+            if cmd.is_empty() {
+                "Background shell finished".to_string()
+            } else {
+                cmd.chars().take(72).collect()
+            }
+        } else {
+            "Background shell finished".to_string()
+        };
+        return (CardVariant::BashDone, title, meta, failed);
+    }
+
+    if matches!(ctype, "agent_message" | "agent-message")
+        || first_line.starts_with("[agent-message")
+    {
+        return (
             CardVariant::AgentMessage,
             "Agent message".to_string(),
             String::new(),
             false,
-        ),
-        "provider_retry_outcome" => {
-            let failed = details.get("success").and_then(Value::as_bool) == Some(false);
-            (
-                CardVariant::ProviderRetry,
-                "Provider retry".to_string(),
-                if failed { "failed" } else { "recovered" }.to_string(),
-                failed,
-            )
-        }
-        "session_slash_command_result" | "auto_refinement" | "self_refinement" => (
+        );
+    }
+
+    if matches!(ctype, "provider_retry_outcome" | "provider-retry")
+        || first_line.starts_with("[provider-retry")
+    {
+        let failed = details.get("success").and_then(Value::as_bool) == Some(false);
+        return (
+            CardVariant::ProviderRetry,
+            "Provider retry".to_string(),
+            if failed { "failed" } else { "recovered" }.to_string(),
+            failed,
+        );
+    }
+
+    if matches!(
+        ctype,
+        "session_slash_command_result" | "auto_refinement" | "self_refinement"
+    ) {
+        return (
             CardVariant::Harness,
             if ctype == "session_slash_command_result" {
                 "Refinement".to_string()
@@ -503,19 +545,15 @@ fn classify_custom(ctype: &str, text: &str, details: &Value) -> (CardVariant, St
             },
             String::new(),
             false,
-        ),
-        _ => {
-            let first = text
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or(ctype)
-                .trim()
-                .chars()
-                .take(72)
-                .collect::<String>();
-            (CardVariant::Harness, first, String::new(), false)
-        }
+        );
     }
+
+    let first = if first_line.is_empty() {
+        ctype.to_string()
+    } else {
+        first_line.chars().take(72).collect::<String>()
+    };
+    (CardVariant::Harness, first, String::new(), false)
 }
 
 fn extract_text(msg: &Value) -> String {

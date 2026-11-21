@@ -1,5 +1,7 @@
+use crate::assets::{PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
 use crate::settings::AppSettings;
+use crate::theme::PaPalette;
 use crate::transcript::{
     append_text_delta, append_thinking_delta, build_items, finish_tool_call, format_expanded_body,
     settle_all, start_tool_call, CardVariant, ItemKind, TranscriptItem,
@@ -8,16 +10,36 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     text::{TextView, TextViewState},
-    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, Theme, ThemeMode,
-    TitleBar,
+    v_flex, Icon, IconName, Sizable as _, StyledExt as _, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::{ModelEntry, SessionRow, SessionStats};
 use serde_json::Value;
 use std::time::Duration;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SidebarGroup {
+    Active,
+    Idle,
+    Done,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum OpenPopup {
+    None,
+    ModelMenu,
+    SettingsMenu,
+    ContextCard,
+    SessionMenu {
+        key: String,
+        id: String,
+        file: String,
+        name: String,
+        is_resident: bool,
+    },
+}
 
 pub struct PaApp {
     bridge: DaemonBridge,
@@ -36,8 +58,10 @@ pub struct PaApp {
     subagent_count: usize,
     shell_count: usize,
     heartbeat_count: usize,
+    search_open: bool,
     find_open: bool,
     find_index: usize,
+    open_popup: OpenPopup,
     scroll_handle: ScrollHandle,
     search_input: Entity<InputState>,
     find_input: Entity<InputState>,
@@ -50,11 +74,11 @@ pub struct PaApp {
 impl PaApp {
     pub fn new(settings: AppSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let bridge = DaemonBridge::spawn();
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter sessions…"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
         let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in transcript…"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
         let composer = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Message Prime Agent… (/ for commands)")
+            InputState::new(window, cx).placeholder("Ask anything… (/ for commands)")
         });
 
         let sub_composer = cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, window, cx| {
@@ -119,7 +143,7 @@ impl PaApp {
 
         Self {
             bridge,
-            status: "Connecting to daemon…".into(),
+            status: "Connecting…".into(),
             notice: None,
             sessions: Vec::new(),
             models: Vec::new(),
@@ -134,8 +158,10 @@ impl PaApp {
             subagent_count: 0,
             shell_count: 0,
             heartbeat_count: 0,
+            search_open: false,
             find_open: false,
             find_index: 0,
+            open_popup: OpenPopup::None,
             scroll_handle: ScrollHandle::new(),
             search_input,
             find_input,
@@ -144,6 +170,10 @@ impl PaApp {
             _subscriptions: vec![sub_composer, sub_search, sub_find, sub_rename],
             _poll_task: poll_task,
         }
+    }
+
+    fn palette(&self) -> PaPalette {
+        PaPalette::for_mode(self.settings.dark_mode)
     }
 
     fn is_near_bottom(&self) -> bool {
@@ -336,6 +366,7 @@ impl PaApp {
     }
 
     fn send_current_prompt(&mut self, steer: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_popup = OpenPopup::None;
         let text = self.composer.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
@@ -380,7 +411,14 @@ impl PaApp {
         cx.notify();
     }
 
-    fn start_rename(&mut self, path: String, current_name: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_rename(
+        &mut self,
+        path: String,
+        current_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_popup = OpenPopup::None;
         self.renaming_path = Some(path);
         self.rename_input.update(cx, |input, cx| {
             input.set_value(current_name, window, cx);
@@ -405,7 +443,18 @@ impl PaApp {
         cx.notify();
     }
 
+    fn toggle_group(&mut self, group: SidebarGroup, cx: &mut Context<Self>) {
+        match group {
+            SidebarGroup::Active => self.settings.active_closed = !self.settings.active_closed,
+            SidebarGroup::Idle => self.settings.idle_closed = !self.settings.idle_closed,
+            SidebarGroup::Done => self.settings.done_closed = !self.settings.done_closed,
+        }
+        self.settings.save();
+        cx.notify();
+    }
+
     fn toggle_item(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.open_popup = OpenPopup::None;
         if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
             item.expanded = !item.expanded;
             if item.expanded && item.body_md.is_none() && !item.raw_body.is_empty() {
@@ -454,11 +503,527 @@ impl PaApp {
         cx.notify();
     }
 
+    fn render_prime_mark(&self) -> impl IntoElement {
+        let path = if self.settings.dark_mode {
+            PRIME_AGENT_MARK_DARK_PATH
+        } else {
+            PRIME_AGENT_MARK_LIGHT_PATH
+        };
+        img(path).size(px(18.)).object_fit(ObjectFit::Contain)
+    }
+
+    fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        let settings_open = self.open_popup == OpenPopup::SettingsMenu;
+
+        TitleBar::new()
+            .h(px(32.))
+            .bg(p.window_surface)
+            .border_b_0()
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_full()
+                    .items_center()
+                    .justify_end()
+                    .gap_1()
+                    .pr_2()
+                    .child(
+                        div()
+                            .id("tb-find")
+                            .size(px(26.))
+                            .rounded(px(6.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(self.find_open, |d| d.bg(p.sidebar_row_selected))
+                            .hover(|d| d.bg(p.sidebar_row_hover))
+                            .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.find_open = !this.find_open;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("tb-settings")
+                            .size(px(26.))
+                            .rounded(px(6.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(settings_open, |d| d.bg(p.sidebar_row_selected))
+                            .hover(|d| d.bg(p.sidebar_row_hover))
+                            .child(Icon::new(IconName::Settings).xsmall().text_color(p.quiet_ink))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_popup = if this.open_popup == OpenPopup::SettingsMenu {
+                                    OpenPopup::None
+                                } else {
+                                    OpenPopup::SettingsMenu
+                                };
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("tb-right-col")
+                            .size(px(26.))
+                            .rounded(px(6.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(self.settings.right_open, |d| d.bg(p.sidebar_row_selected))
+                            .hover(|d| d.bg(p.sidebar_row_hover))
+                            .child(
+                                Icon::new(if self.settings.right_open {
+                                    IconName::PanelRightClose
+                                } else {
+                                    IconName::PanelRightOpen
+                                })
+                                .xsmall()
+                                .text_color(p.quiet_ink),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.settings.right_open = !this.settings.right_open;
+                                this.settings.save();
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
+    fn render_collapsed_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        v_flex()
+            .w(px(44.))
+            .h_full()
+            .bg(p.sidebar_surface)
+            .pt_1()
+            .gap_1p5()
+            .items_center()
+            .child(
+                div()
+                    .id("rail-open-sidebar")
+                    .size(px(32.))
+                    .rounded(px(7.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .child(self.render_prime_mark())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings.sidebar_open = true;
+                        this.settings.save();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("rail-new-session")
+                    .size(px(32.))
+                    .rounded(px(7.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .child(Icon::new(IconName::Plus).xsmall().text_color(p.quiet_ink))
+                    .on_click(cx.listener(|this, _, _, _| {
+                        let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                    })),
+            )
+            .child(
+                div()
+                    .id("rail-search")
+                    .size(px(32.))
+                    .rounded(px(7.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings.sidebar_open = true;
+                        this.search_open = true;
+                        this.settings.save();
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.settings.sidebar_open {
+            return self.render_collapsed_rail(cx).into_any_element();
+        }
+        let p = self.palette();
+        let query = self.search_input.read(cx).value().trim().to_ascii_lowercase();
+        let matches_query = |s: &&SessionRow| -> bool {
+            if query.is_empty() {
+                return true;
+            }
+            s.name.to_ascii_lowercase().contains(&query)
+                || s.id.to_ascii_lowercase().contains(&query)
+                || s.cwd.to_ascii_lowercase().contains(&query)
+        };
+
+        let active_rows: Vec<&SessionRow> = self
+            .sessions
+            .iter()
+            .filter(|s| s.roster_status() == "Running")
+            .filter(matches_query)
+            .collect();
+        let idle_rows: Vec<&SessionRow> = self
+            .sessions
+            .iter()
+            .filter(|s| s.roster_status() == "Idle")
+            .filter(matches_query)
+            .collect();
+        let done_rows: Vec<&SessionRow> = self
+            .sessions
+            .iter()
+            .filter(|s| !matches!(s.roster_status(), "Running" | "Idle"))
+            .filter(matches_query)
+            .take(60)
+            .collect();
+
+        v_flex()
+            .w(px(244.))
+            .h_full()
+            .bg(p.sidebar_surface)
+            .px(px(10.))
+            .pt(px(2.))
+            .pb(px(8.))
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .h(px(36.))
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .pl(px(6.))
+                            .gap(px(8.))
+                            .items_center()
+                            .child(self.render_prime_mark())
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_semibold()
+                                    .text_color(p.ink)
+                                    .child("Prime Agent"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("sb-search-btn")
+                                    .size(px(30.))
+                                    .rounded(px(7.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .when(self.search_open, |d| d.bg(p.sidebar_row_selected))
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.search_open = !this.search_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("sb-collapse-btn")
+                                    .size(px(30.))
+                                    .rounded(px(7.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(
+                                        Icon::new(IconName::PanelLeftClose)
+                                            .xsmall()
+                                            .text_color(p.quiet_ink),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings.sidebar_open = false;
+                                        this.settings.save();
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .id("sb-new-session")
+                    .h(px(34.))
+                    .w_full()
+                    .rounded(px(9.))
+                    .border_1()
+                    .border_color(p.sidebar_new_edge)
+                    .bg(p.sidebar_new_fill)
+                    .hover(|d| d.bg(p.sidebar_new_fill_hover))
+                    .items_center()
+                    .justify_center()
+                    .gap(px(7.))
+                    .cursor_pointer()
+                    .child(Icon::new(IconName::Plus).xsmall().text_color(p.ink))
+                    .child(div().text_size(px(13.)).text_color(p.ink).child("New Session"))
+                    .on_click(cx.listener(|this, _, _, _| {
+                        let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                    })),
+            )
+            .when(self.search_open, |col| {
+                col.child(Input::new(&self.search_input).xsmall())
+            })
+            .when(self.renaming_path.is_some(), |col| {
+                col.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(div().flex_1().child(Input::new(&self.rename_input).xsmall()))
+                        .child(
+                            Button::new("save-rename")
+                                .primary()
+                                .xsmall()
+                                .label("Save")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.commit_rename(window, cx);
+                                })),
+                        ),
+                )
+            })
+            .child(
+                div()
+                    .id("sidebar-scroll")
+                    .flex_1()
+                    .overflow_y_scrollbar()
+                    .child(
+                        v_flex()
+                            .gap(px(8.))
+                            .pt(px(4.))
+                            .child(self.render_session_group(
+                                SidebarGroup::Active,
+                                "ACTIVE",
+                                &active_rows,
+                                self.settings.active_closed,
+                                cx,
+                            ))
+                            .child(self.render_session_group(
+                                SidebarGroup::Idle,
+                                "IDLE",
+                                &idle_rows,
+                                self.settings.idle_closed,
+                                cx,
+                            ))
+                            .child(self.render_session_group(
+                                SidebarGroup::Done,
+                                "DONE",
+                                &done_rows,
+                                self.settings.done_closed,
+                                cx,
+                            )),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_session_group(
+        &self,
+        group_kind: SidebarGroup,
+        title: &'static str,
+        rows: &[&SessionRow],
+        closed: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let empty = rows.is_empty();
+        let mut card = v_flex()
+            .w_full()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(if empty {
+                p.sidebar_group_empty_edge
+            } else {
+                p.sidebar_group_edge
+            })
+            .bg(if empty {
+                gpui_kit::transparent_black()
+            } else {
+                p.sidebar_group_surface
+            })
+            .p(px(4.))
+            .gap(px(2.))
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!("grp-hdr-{title}")))
+                    .h(px(26.))
+                    .w_full()
+                    .px(px(6.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_group(group_kind, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(
+                                Icon::new(if closed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .size(px(11.))
+                                .text_color(if empty {
+                                    p.sidebar_group_empty_ink
+                                } else {
+                                    p.sidebar_group_ink
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_semibold()
+                                    .text_color(if empty {
+                                        p.sidebar_group_empty_ink
+                                    } else {
+                                        p.sidebar_group_ink
+                                    })
+                                    .child(title),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_medium()
+                            .text_color(if empty {
+                                p.sidebar_group_empty_ink
+                            } else {
+                                p.sidebar_group_ink
+                            })
+                            .child(rows.len().to_string()),
+                    ),
+            );
+
+        if closed || empty {
+            return card;
+        }
+
+        for (idx, row) in rows.iter().enumerate() {
+            let key = session_key(row);
+            let selected = self.active_session_id.as_deref() == Some(key.as_str());
+            let label = {
+                let single: String = row
+                    .name
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !single.is_empty() {
+                    single
+                } else {
+                    key.chars().take(12).collect()
+                }
+            };
+            let click_key = key.clone();
+            let menu_key = key.clone();
+            let menu_id = row.id.clone();
+            let menu_file = row.session_file.clone();
+            let menu_name = label.clone();
+            let is_resident = row.is_resident();
+            let dot_color = match group_kind {
+                SidebarGroup::Active => Some(p.working),
+                SidebarGroup::Idle => Some(p.tag_idle),
+                SidebarGroup::Done => None,
+            };
+
+            card = card.child(
+                h_flex()
+                    .id((title, idx))
+                    .h(px(28.))
+                    .px(px(7.))
+                    .gap(px(6.))
+                    .items_center()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(p.sidebar_row_selected))
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .when_some(dot_color, |d, c| {
+                        d.child(div().size(px(6.)).rounded_full().bg(c))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(12.5))
+                            .text_color(if selected { p.ink } else { p.quiet_ink })
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("sess-dots-{title}-{idx}")))
+                            .size(px(22.))
+                            .flex_shrink_0()
+                            .rounded(px(5.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|d| d.bg(p.sidebar_row_selected))
+                            .child(Icon::new(IconName::Ellipsis).size(px(12.)).text_color(p.sidebar_group_empty_ink))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                let next = OpenPopup::SessionMenu {
+                                    key: menu_key.clone(),
+                                    id: menu_id.clone(),
+                                    file: menu_file.clone(),
+                                    name: menu_name.clone(),
+                                    is_resident,
+                                };
+                                this.open_popup = if this.open_popup == next {
+                                    OpenPopup::None
+                                } else {
+                                    next
+                                };
+                                cx.notify();
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_popup = OpenPopup::None;
+                        let _ = this
+                            .bridge
+                            .tx
+                            .send(DaemonCmd::SelectSession(click_key.clone()));
+                        cx.notify();
+                    })),
+            );
+        }
+
+        card
+    }
+
     fn render_find_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.find_open {
             return None;
         }
-        let theme = cx.theme().clone();
+        let p = self.palette();
         let matches = self.find_matches(cx);
         let count_label = if matches.is_empty() {
             "0 matches".to_string()
@@ -468,20 +1033,15 @@ impl PaApp {
         Some(
             h_flex()
                 .w_full()
-                .px_6()
+                .px_5()
                 .py_1p5()
                 .border_b_1()
-                .border_color(theme.border)
-                .bg(theme.secondary.opacity(0.5))
+                .border_color(p.transcript_cell_edge)
+                .bg(p.transcript_cell_fill)
                 .gap_2()
                 .items_center()
-                .child(div().w(px(280.)).child(Input::new(&self.find_input).xsmall()))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(count_label),
-                )
+                .child(div().w(px(260.)).child(Input::new(&self.find_input).xsmall()))
+                .child(div().text_xs().text_color(p.quiet_ink).child(count_label))
                 .child(
                     Button::new("find-prev")
                         .ghost()
@@ -510,403 +1070,6 @@ impl PaApp {
         )
     }
 
-    fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let active_title = self
-            .active_session()
-            .map(|s| {
-                if !s.name.trim().is_empty() {
-                    s.name.clone()
-                } else {
-                    session_key(s)
-                }
-            })
-            .unwrap_or_else(|| "Prime Agent".to_string());
-
-        let context_label = self
-            .stats
-            .as_ref()
-            .filter(|st| st.context_window > 0)
-            .map(|st| {
-                format!(
-                    "{:.0}k / {:.0}k ({:.0}%) · ${:.3}",
-                    st.context_tokens as f64 / 1000.0,
-                    st.context_window as f64 / 1000.0,
-                    st.percent,
-                    st.cost
-                )
-            })
-            .unwrap_or_default();
-
-        TitleBar::new().child(
-            h_flex()
-                .w_full()
-                .h_full()
-                .px_2()
-                .items_center()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            Button::new("toggle-sidebar")
-                                .ghost()
-                                .xsmall()
-                                .icon(if self.settings.sidebar_open {
-                                    IconName::PanelLeftClose
-                                } else {
-                                    IconName::PanelLeftOpen
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.settings.sidebar_open = !this.settings.sidebar_open;
-                                    this.settings.save();
-                                    cx.notify();
-                                })),
-                        )
-                        .when(self.is_streaming, |h| {
-                            h.child(div().size(px(7.)).rounded_full().bg(theme.warning))
-                        })
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_semibold()
-                                .text_color(theme.foreground)
-                                .child(active_title),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .pr_2()
-                        .when(self.subagent_count > 0, |h| {
-                            h.child(
-                                div()
-                                    .px_2()
-                                    .rounded(px(9.))
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!("{} subagents", self.subagent_count)),
-                            )
-                        })
-                        .when(self.shell_count > 0, |h| {
-                            h.child(
-                                div()
-                                    .px_2()
-                                    .rounded(px(9.))
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!("{} shells", self.shell_count)),
-                            )
-                        })
-                        .when(self.heartbeat_count > 0, |h| {
-                            h.child(
-                                div()
-                                    .px_2()
-                                    .rounded(px(9.))
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!("{} hb", self.heartbeat_count)),
-                            )
-                        })
-                        .when(!context_label.is_empty(), |h| {
-                            h.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(context_label),
-                            )
-                        })
-                        .child(
-                            Button::new("toggle-find")
-                                .ghost()
-                                .xsmall()
-                                .icon(IconName::Search)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.find_open = !this.find_open;
-                                    cx.notify();
-                                })),
-                        )
-                        .when(self.active_session_id.is_some(), |h| {
-                            h.child(
-                                Button::new("export-html")
-                                    .ghost()
-                                    .xsmall()
-                                    .label("Export")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        if let Some(sid) = this.active_session_id.clone() {
-                                            let _ = this
-                                                .bridge
-                                                .tx
-                                                .send(DaemonCmd::ExportHtml { session: sid });
-                                        }
-                                    })),
-                            )
-                        })
-                        .child(
-                            Button::new("toggle-theme")
-                                .ghost()
-                                .xsmall()
-                                .icon(if self.settings.dark_mode {
-                                    IconName::Sun
-                                } else {
-                                    IconName::Moon
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.settings.dark_mode = !this.settings.dark_mode;
-                                    this.settings.save();
-                                    Theme::change(
-                                        if this.settings.dark_mode {
-                                            ThemeMode::Dark
-                                        } else {
-                                            ThemeMode::Light
-                                        },
-                                        Some(window),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                })),
-                        ),
-                ),
-        )
-    }
-
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let query = self.search_input.read(cx).value().trim().to_ascii_lowercase();
-        let matches_query = |s: &&SessionRow| -> bool {
-            if query.is_empty() {
-                return true;
-            }
-            s.name.to_ascii_lowercase().contains(&query)
-                || s.id.to_ascii_lowercase().contains(&query)
-                || s.cwd.to_ascii_lowercase().contains(&query)
-        };
-
-        let active_rows: Vec<&SessionRow> = self
-            .sessions
-            .iter()
-            .filter(|s| s.is_resident())
-            .filter(matches_query)
-            .collect();
-        let recent_rows: Vec<&SessionRow> = self
-            .sessions
-            .iter()
-            .filter(|s| !s.is_resident())
-            .filter(matches_query)
-            .take(50)
-            .collect();
-
-        v_flex()
-            .w(px(244.))
-            .h_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.border)
-            .p_3()
-            .gap_2()
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_semibold()
-                            .text_color(theme.foreground)
-                            .child("Sessions"),
-                    )
-                    .child(
-                        Button::new("new-session")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Plus)
-                            .on_click(cx.listener(|this, _, _, _| {
-                                let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
-                            })),
-                    ),
-            )
-            .child(Input::new(&self.search_input).xsmall())
-            .when(self.renaming_path.is_some(), |col| {
-                col.child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(div().flex_1().child(Input::new(&self.rename_input).xsmall()))
-                        .child(
-                            Button::new("save-rename")
-                                .primary()
-                                .xsmall()
-                                .label("Save")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.commit_rename(window, cx);
-                                })),
-                        ),
-                )
-            })
-            .child(
-                div()
-                    .id("sidebar-scroll")
-                    .flex_1()
-                    .overflow_y_scrollbar()
-                    .child(
-                        v_flex()
-                            .gap_3()
-                            .child(self.render_session_group("Active", &active_rows, true, cx))
-                            .child(self.render_session_group("Recent", &recent_rows, false, cx)),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(self.status.clone()),
-            )
-    }
-
-    fn render_session_group(
-        &self,
-        title: &'static str,
-        rows: &[&SessionRow],
-        is_active_group: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let mut group = v_flex().gap_1().child(
-            div()
-                .px_2()
-                .text_xs()
-                .font_medium()
-                .text_color(theme.muted_foreground)
-                .child(format!("{title} · {}", rows.len())),
-        );
-
-        if rows.is_empty() && is_active_group {
-            group = group.child(
-                div()
-                    .mx_1()
-                    .px_2()
-                    .py_2()
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(theme.border.opacity(0.6))
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("No active sessions"),
-            );
-            return group;
-        }
-
-        for (idx, row) in rows.iter().enumerate() {
-            let key = session_key(row);
-            let selected = self.active_session_id.as_deref() == Some(key.as_str());
-            let label = if !row.name.trim().is_empty() {
-                row.name.clone()
-            } else {
-                key.chars().take(12).collect()
-            };
-            let click_key = key.clone();
-            let action_id = row.id.clone();
-            let action_file = row.session_file.clone();
-            let cur_name = label.clone();
-            let streaming = row.is_streaming;
-            let tx_clone = self.bridge.tx.clone();
-            let view_entity = cx.entity().clone();
-
-            group = group.child(
-                h_flex()
-                    .id((title, idx))
-                    .px_2()
-                    .py_1()
-                    .gap_1()
-                    .items_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .when(selected, |d| d.bg(theme.accent))
-                    .hover(|d| d.bg(theme.accent.opacity(0.6)))
-                    .when(streaming, |d| {
-                        d.child(div().size(px(6.)).rounded_full().bg(theme.warning))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .text_color(if selected {
-                                theme.accent_foreground
-                            } else {
-                                theme.foreground
-                            })
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(label),
-                    )
-                    .child(
-                        Button::new((if is_active_group { "act-menu" } else { "rec-menu" }, idx))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Ellipsis)
-                            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                                let tx = tx_clone.clone();
-                                let path_ren = action_file.clone();
-                                let name_ren = cur_name.clone();
-                                let view = view_entity.clone();
-                                let menu = if !path_ren.is_empty() {
-                                    menu.item(PopupMenuItem::new("Rename").on_click(
-                                        move |_, window, cx| {
-                                            view.update(cx, |app, cx| {
-                                                app.start_rename(
-                                                    path_ren.clone(),
-                                                    name_ren.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ))
-                                } else {
-                                    menu
-                                };
-                                if is_active_group {
-                                    let sid = action_id.clone();
-                                    menu.item(PopupMenuItem::new("Stop / Archive").on_click(
-                                        move |_, _, _| {
-                                            let _ = tx.send(DaemonCmd::MarkDone {
-                                                session: sid.clone(),
-                                            });
-                                        },
-                                    ))
-                                } else {
-                                    let path = action_file.clone();
-                                    menu.item(PopupMenuItem::new("Delete session").on_click(
-                                        move |_, _, _| {
-                                            let _ = tx.send(DaemonCmd::DeleteSaved {
-                                                session_path: path.clone(),
-                                            });
-                                        },
-                                    ))
-                                }
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, _| {
-                        let _ = this
-                            .bridge
-                            .tx
-                            .send(DaemonCmd::SelectSession(click_key.clone()));
-                    })),
-            );
-        }
-
-        group
-    }
-
     fn render_slash_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let val = self.composer.read(cx).value();
         let trimmed = val.trim_start();
@@ -918,17 +1081,15 @@ impl PaApp {
         if matches.is_empty() {
             return None;
         }
-        let theme = cx.theme().clone();
+        let p = self.palette();
         let mut list = v_flex()
             .w_full()
-            .max_w(px(860.))
-            .mx_auto()
-            .mb_1()
+            .mb(px(6.))
             .p_1()
-            .rounded(px(8.))
+            .rounded(px(10.))
             .border_1()
-            .border_color(theme.border)
-            .bg(theme.popover)
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
             .gap_0p5();
 
         for (i, cmd) in matches.into_iter().take(6).enumerate() {
@@ -940,21 +1101,21 @@ impl PaApp {
                     .px_2()
                     .py_1()
                     .gap_3()
-                    .rounded(px(5.))
+                    .rounded(px(6.))
                     .cursor_pointer()
-                    .hover(|d| d.bg(theme.accent))
+                    .hover(|d| d.bg(p.sidebar_row_hover))
                     .child(
                         div()
                             .text_xs()
                             .font_semibold()
-                            .text_color(theme.foreground)
+                            .text_color(p.ink)
                             .child(format!("/{cmd_name}")),
                     )
                     .child(
                         div()
                             .flex_1()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .text_color(p.quiet_ink)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .child(cmd_desc),
@@ -976,24 +1137,23 @@ impl PaApp {
         if total == 0 {
             return None;
         }
-        let theme = cx.theme().clone();
+        let p = self.palette();
         Some(
             h_flex()
                 .w_full()
-                .max_w(px(860.))
-                .mx_auto()
+                .mb(px(6.))
                 .px_3()
                 .py_1()
-                .rounded(px(6.))
+                .rounded(px(8.))
                 .border_1()
-                .border_color(theme.border)
-                .bg(theme.secondary.opacity(0.6))
+                .border_color(p.composer_edge)
+                .bg(p.composer_surface)
                 .justify_between()
                 .items_center()
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_color(p.quiet_ink)
                         .child(format!(
                             "Queued: {} steer · {} follow-up",
                             self.queued_steer.len(),
@@ -1004,7 +1164,7 @@ impl PaApp {
                     Button::new("clear-queue")
                         .ghost()
                         .xsmall()
-                        .label("Clear queue")
+                        .label("Clear")
                         .on_click(cx.listener(|this, _, _, _| {
                             if let Some(sid) = this.active_session_id.clone() {
                                 let _ = this
@@ -1018,31 +1178,20 @@ impl PaApp {
         )
     }
 
-    fn render_composer_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let cur_model_label = self
+    fn render_model_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.open_popup != OpenPopup::ModelMenu {
+            return None;
+        }
+        let p = self.palette();
+        let cur_model_id = self
             .active_session()
-            .map(|s| {
-                if !s.model_name.is_empty() {
-                    s.model_name.clone()
-                } else if !s.model.is_empty() {
-                    s.model.clone()
-                } else {
-                    "Model".to_string()
-                }
-            })
-            .unwrap_or_else(|| "Model".to_string());
-
+            .map(|s| s.model.clone())
+            .unwrap_or_default();
         let cur_thinking = self
             .active_session()
             .map(|s| s.thinking.clone())
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| "medium".to_string());
-
-        let cur_model_id = self
-            .active_session()
-            .map(|s| s.model.clone())
-            .unwrap_or_default();
 
         let thinking_levels: Vec<String> = self
             .models
@@ -1060,167 +1209,788 @@ impl PaApp {
                 ]
             });
 
-        let configured_models: Vec<(String, String, String)> = self
+        let configured_models: Vec<ModelEntry> = self
             .models
             .iter()
             .filter(|m| m.configured)
-            .take(25)
-            .map(|m| (m.provider.clone(), m.id.clone(), m.name.clone()))
+            .take(24)
+            .cloned()
             .collect();
 
-        let sid_for_model = self.active_session_id.clone();
-        let tx_for_model = self.bridge.tx.clone();
-        let sid_for_think = self.active_session_id.clone();
-        let tx_for_think = self.bridge.tx.clone();
+        let mut model_list = v_flex().gap(px(2.));
+        if configured_models.is_empty() {
+            model_list = model_list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(p.quiet_ink)
+                    .child("No configured models"),
+            );
+        } else {
+            for (idx, m) in configured_models.into_iter().enumerate() {
+                let selected = m.id == cur_model_id;
+                let prov = m.provider.clone();
+                let mid = m.id.clone();
+                model_list = model_list.child(
+                    h_flex()
+                        .id(("m-opt", idx))
+                        .px_2()
+                        .py_1()
+                        .rounded(px(6.))
+                        .justify_between()
+                        .items_center()
+                        .cursor_pointer()
+                        .when(selected, |d| d.bg(p.sidebar_row_selected))
+                        .hover(|d| d.bg(p.sidebar_row_hover))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if selected { p.ink } else { p.quiet_ink })
+                                .child(m.name),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(p.sidebar_group_empty_ink)
+                                .child(m.provider),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(sid) = this.active_session_id.clone() {
+                                let _ = this.bridge.tx.send(DaemonCmd::SetModel {
+                                    session: sid,
+                                    provider: prov.clone(),
+                                    model_id: mid.clone(),
+                                });
+                            }
+                            this.open_popup = OpenPopup::None;
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+
+        let mut effort_row = h_flex().gap_1().flex_wrap();
+        for (idx, lvl) in thinking_levels.into_iter().enumerate() {
+            let active = lvl == cur_thinking;
+            let level_c = lvl.clone();
+            effort_row = effort_row.child(
+                div()
+                    .id(("eff-opt", idx))
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(if active { p.working } else { p.panel_edge })
+                    .bg(if active {
+                        p.sidebar_row_selected
+                    } else {
+                        gpui_kit::transparent_black()
+                    })
+                    .text_xs()
+                    .text_color(if active { p.ink } else { p.quiet_ink })
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .child(lvl)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(sid) = this.active_session_id.clone() {
+                            let _ = this.bridge.tx.send(DaemonCmd::SetThinking {
+                                session: sid,
+                                level: level_c.clone(),
+                            });
+                        }
+                        this.open_popup = OpenPopup::None;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        Some(
+            v_flex()
+                .w(px(360.))
+                .ml_auto()
+                .mb(px(6.))
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(p.panel_edge)
+                .bg(p.panel_surface)
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .font_semibold()
+                        .text_color(p.quiet_ink)
+                        .child("THINKING EFFORT"),
+                )
+                .child(effort_row)
+                .child(div().h(px(1.)).w_full().bg(p.panel_edge))
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .font_semibold()
+                        .text_color(p.quiet_ink)
+                        .child("MODELS"),
+                )
+                .child(
+                    div()
+                        .id("model-popup-scroll")
+                        .max_h(px(240.))
+                        .overflow_y_scrollbar()
+                        .child(model_list),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_context_card_content(&self) -> impl IntoElement {
+        let p = self.palette();
+        let (used_str, pct_str, fill, msgs, tools, inp, outp, cached, cost) = match &self.stats {
+            Some(st) => {
+                let fill = if st.context_window > 0 {
+                    (st.context_tokens as f32 / st.context_window as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                (
+                    format!("{} / {}", st.context_tokens, st.context_window),
+                    format!("{:.0}%", st.percent),
+                    fill,
+                    st.messages.to_string(),
+                    st.tool_calls.to_string(),
+                    st.input_tokens.to_string(),
+                    st.output_tokens.to_string(),
+                    st.cache_read.to_string(),
+                    format!("${:.4}", st.cost),
+                )
+            }
+            None => (
+                "—".into(),
+                "0%".into(),
+                0.0,
+                "0".into(),
+                "0".into(),
+                "0".into(),
+                "0".into(),
+                "0".into(),
+                "$0.0000".into(),
+            ),
+        };
+
+        let ledger = |label: &'static str, value: String| {
+            h_flex()
+                .w_full()
+                .justify_between()
+                .child(div().text_size(px(11.)).text_color(p.quiet_ink).child(label))
+                .child(div().text_size(px(11.)).text_color(p.ink).child(value))
+        };
 
         v_flex()
             .w_full()
-            .px_6()
-            .py_3()
-            .border_t_1()
-            .border_color(theme.border)
-            .gap_2()
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(div().text_size(px(10.5)).text_color(p.quiet_ink).child("context"))
+                    .child(div().text_size(px(12.)).font_semibold().text_color(p.ink).child(pct_str)),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .h(px(3.))
+                    .rounded(px(2.))
+                    .bg(p.panel_edge)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(fill))
+                            .rounded(px(2.))
+                            .bg(p.working),
+                    ),
+            )
+            .child(div().text_size(px(10.5)).text_color(p.quiet_ink).child(used_str))
+            .child(div().h(px(1.)).w_full().bg(p.panel_edge))
+            .child(ledger("messages", msgs))
+            .child(ledger("tool calls", tools))
+            .child(ledger("input", inp))
+            .child(ledger("output", outp))
+            .child(ledger("cache read", cached))
+            .child(div().h(px(1.)).w_full().bg(p.panel_edge))
+            .child(ledger("session cost", cost))
+    }
+
+    fn render_context_popup(&self) -> Option<AnyElement> {
+        if self.open_popup != OpenPopup::ContextCard {
+            return None;
+        }
+        let p = self.palette();
+        Some(
+            div()
+                .w(px(230.))
+                .ml_auto()
+                .mb(px(6.))
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(p.panel_edge)
+                .bg(p.panel_surface)
+                .child(self.render_context_card_content())
+                .into_any_element(),
+        )
+    }
+
+    fn render_composer_band(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        let model_chip_label = self
+            .active_session()
+            .map(|s| {
+                let m = if !s.model_name.is_empty() {
+                    s.model_name.as_str()
+                } else if !s.model.is_empty() {
+                    s.model.as_str()
+                } else {
+                    "Model"
+                };
+                if s.thinking.is_empty() {
+                    m.to_string()
+                } else {
+                    format!("{m} · {}", s.thinking)
+                }
+            })
+            .unwrap_or_else(|| "Model".to_string());
+
+        let ctx_pct = self
+            .stats
+            .as_ref()
+            .filter(|st| st.context_window > 0)
+            .map(|st| format!("{:.0}%", st.percent))
+            .unwrap_or_else(|| "0%".to_string());
+
+        v_flex()
+            .w_full()
+            .px(px(18.))
+            .pb(px(12.))
+            .pt(px(4.))
             .children(self.render_queue_strip(cx))
             .children(self.render_slash_popup(cx))
+            .children(self.render_model_popup(cx))
+            .children(self.render_context_popup())
             .child(
                 v_flex()
                     .w_full()
-                    .max_w(px(860.))
-                    .mx_auto()
-                    .gap_2()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(p.composer_edge)
+                    .bg(p.composer_surface)
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
-                            .items_end()
-                            .child(div().flex_1().child(Input::new(&self.composer)))
+                            .justify_center()
+                            .pt(px(5.))
+                            .child(
+                                div()
+                                    .w(px(36.))
+                                    .h(px(3.))
+                                    .rounded(px(1.5))
+                                    .bg(p.composer_handle),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(10.))
+                            .pt(px(4.))
+                            .pb(px(6.))
+                            .child(
+                                Input::new(&self.composer)
+                                    .appearance(false)
+                                    .bordered(false),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(33.))
+                            .px(px(12.))
+                            .pb(px(8.))
+                            .gap(px(8.))
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .items_center()
+                                    .when(self.subagent_count > 0, |h| {
+                                        h.child(
+                                            div()
+                                                .px(px(6.))
+                                                .py(px(1.))
+                                                .rounded(px(6.))
+                                                .border_1()
+                                                .border_color(p.composer_edge)
+                                                .text_size(px(11.))
+                                                .text_color(p.quiet_ink)
+                                                .child(format!("{} sub", self.subagent_count)),
+                                        )
+                                    })
+                                    .when(self.shell_count > 0, |h| {
+                                        h.child(
+                                            div()
+                                                .px(px(6.))
+                                                .py(px(1.))
+                                                .rounded(px(6.))
+                                                .border_1()
+                                                .border_color(p.composer_edge)
+                                                .text_size(px(11.))
+                                                .text_color(p.quiet_ink)
+                                                .child(format!("{} sh", self.shell_count)),
+                                        )
+                                    })
+                                    .when(self.heartbeat_count > 0, |h| {
+                                        h.child(
+                                            div()
+                                                .px(px(6.))
+                                                .py(px(1.))
+                                                .rounded(px(6.))
+                                                .border_1()
+                                                .border_color(p.composer_edge)
+                                                .text_size(px(11.))
+                                                .text_color(p.quiet_ink)
+                                                .child(format!("{} hb", self.heartbeat_count)),
+                                        )
+                                    })
+                                    .when_some(self.notice.clone(), |h, note| {
+                                        h.child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(p.quiet_ink)
+                                                .child(note),
+                                        )
+                                    }),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .id("ctx-ring-btn")
+                                    .h(px(22.))
+                                    .px(px(7.))
+                                    .rounded(px(11.))
+                                    .border_1()
+                                    .border_color(if self.open_popup == OpenPopup::ContextCard {
+                                        p.working
+                                    } else {
+                                        p.composer_edge
+                                    })
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .text_size(px(10.5))
+                                    .text_color(p.quiet_ink)
+                                    .child(ctx_pct)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_popup =
+                                            if this.open_popup == OpenPopup::ContextCard {
+                                                OpenPopup::None
+                                            } else {
+                                                OpenPopup::ContextCard
+                                            };
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("attach-btn")
+                                    .size(px(22.))
+                                    .rounded(px(6.))
+                                    .bg(p.composer_attach_fill)
+                                    .hover(|d| d.bg(p.sidebar_row_selected))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .child(Icon::new(IconName::Plus).size(px(12.)).text_color(p.quiet_ink))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.notice = Some("Paste or drop images in composer".into());
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                h_flex()
+                                    .id("model-chip-btn")
+                                    .h(px(22.))
+                                    .px(px(8.))
+                                    .gap(px(5.))
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(if self.open_popup == OpenPopup::ModelMenu {
+                                        p.working
+                                    } else {
+                                        p.composer_edge
+                                    })
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .text_color(p.quiet_ink)
+                                            .child(model_chip_label),
+                                    )
+                                    .child(
+                                        Icon::new(IconName::ChevronDown)
+                                            .size(px(11.))
+                                            .text_color(p.quiet_ink),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_popup =
+                                            if this.open_popup == OpenPopup::ModelMenu {
+                                                OpenPopup::None
+                                            } else {
+                                                OpenPopup::ModelMenu
+                                            };
+                                        cx.notify();
+                                    })),
+                            )
                             .when(self.is_streaming, |h| {
                                 h.child(
-                                    Button::new("steer-btn")
-                                        .outline()
-                                        .label("Steer")
+                                    div()
+                                        .id("steer-chip")
+                                        .h(px(22.))
+                                        .px(px(8.))
+                                        .rounded(px(6.))
+                                        .border_1()
+                                        .border_color(p.composer_edge)
+                                        .flex()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(p.sidebar_row_hover))
+                                        .text_size(px(11.))
+                                        .text_color(p.ink)
+                                        .child("Steer")
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.send_current_prompt(true, window, cx);
                                         })),
                                 )
-                                .child(
-                                    Button::new("abort-btn")
-                                        .danger()
-                                        .label("Stop")
-                                        .on_click(cx.listener(|this, _, _, _| {
+                            })
+                            .child(
+                                div()
+                                    .id("send-stop-circle")
+                                    .size(px(25.))
+                                    .rounded_full()
+                                    .bg(if self.is_streaming {
+                                        p.danger
+                                    } else {
+                                        p.composer_send_fill
+                                    })
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .child(if self.is_streaming {
+                                        div()
+                                            .size(px(8.))
+                                            .rounded(px(1.5))
+                                            .bg(rgb(0xffffff))
+                                            .into_any_element()
+                                    } else {
+                                        Icon::new(IconName::ArrowUp)
+                                            .size(px(13.))
+                                            .text_color(p.composer_send_mark)
+                                            .into_any_element()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.is_streaming {
                                             if let Some(sid) = this.active_session_id.clone() {
                                                 let _ = this
                                                     .bridge
                                                     .tx
                                                     .send(DaemonCmd::Abort { session: sid });
                                             }
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("send-btn")
-                                    .primary()
-                                    .label("Send")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.send_current_prompt(false, window, cx);
+                                        } else {
+                                            this.send_current_prompt(false, window, cx);
+                                        }
                                     })),
                             ),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        Button::new("model-picker")
-                                            .ghost()
-                                            .xsmall()
-                                            .label(cur_model_label)
-                                            .icon(IconName::ChevronDown)
-                                            .dropdown_menu_with_anchor(
-                                                Anchor::BottomLeft,
-                                                move |mut menu, _, _| {
-                                                    for (prov, mid, mname) in &configured_models {
-                                                        let tx = tx_for_model.clone();
-                                                        let sid = sid_for_model.clone();
-                                                        let p = prov.clone();
-                                                        let id = mid.clone();
-                                                        menu = menu.item(
-                                                            PopupMenuItem::new(format!(
-                                                                "{mname} ({prov})"
-                                                            ))
-                                                            .on_click(move |_, _, _| {
-                                                                if let Some(s) = sid.clone() {
-                                                                    let _ = tx.send(
-                                                                        DaemonCmd::SetModel {
-                                                                            session: s,
-                                                                            provider: p.clone(),
-                                                                            model_id: id.clone(),
-                                                                        },
-                                                                    );
-                                                                }
-                                                            }),
-                                                        );
-                                                    }
-                                                    menu
-                                                },
-                                            ),
-                                    )
-                                    .child(
-                                        Button::new("thinking-picker")
-                                            .ghost()
-                                            .xsmall()
-                                            .label(format!("Thinking: {cur_thinking}"))
-                                            .icon(IconName::ChevronDown)
-                                            .dropdown_menu_with_anchor(
-                                                Anchor::BottomLeft,
-                                                move |mut menu, _, _| {
-                                                    for lvl in &thinking_levels {
-                                                        let tx = tx_for_think.clone();
-                                                        let sid = sid_for_think.clone();
-                                                        let level = lvl.clone();
-                                                        menu = menu.item(
-                                                            PopupMenuItem::new(level.clone())
-                                                                .on_click(move |_, _, _| {
-                                                                    if let Some(s) = sid.clone() {
-                                                                        let _ = tx.send(
-                                                                            DaemonCmd::SetThinking {
-                                                                                session: s,
-                                                                                level: level.clone(),
-                                                                            },
-                                                                        );
-                                                                    }
-                                                                }),
-                                                        );
-                                                    }
-                                                    menu
-                                                },
-                                            ),
-                                    ),
-                            )
-                            .when_some(self.notice.clone(), |row, note| {
-                                row.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme.muted_foreground)
-                                        .child(note),
-                                )
-                            }),
                     ),
             )
     }
 
+    fn render_right_column(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.settings.right_open {
+            return None;
+        }
+        let p = self.palette();
+        let active_name = self
+            .active_session()
+            .map(|s| {
+                if !s.name.trim().is_empty() {
+                    s.name.clone()
+                } else {
+                    session_key(s)
+                }
+            })
+            .unwrap_or_else(|| "No session".to_string());
+
+        Some(
+            v_flex()
+                .w(px(300.))
+                .h_full()
+                .bg(p.window_surface)
+                .px_4()
+                .py_3()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(p.quiet_ink)
+                        .child("SESSION"),
+                )
+                .child(div().text_sm().font_semibold().text_color(p.ink).child(active_name))
+                .child(
+                    div()
+                        .p_3()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(p.sidebar_group_edge)
+                        .bg(p.sidebar_group_surface)
+                        .child(self.render_context_card_content()),
+                )
+                .when(self.active_session_id.is_some(), |col| {
+                    col.child(
+                        h_flex()
+                            .id("right-export")
+                            .h(px(30.))
+                            .px_3()
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(p.sidebar_group_edge)
+                            .bg(p.sidebar_new_fill)
+                            .hover(|d| d.bg(p.sidebar_new_fill_hover))
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .text_xs()
+                            .text_color(p.ink)
+                            .child("Export HTML")
+                            .on_click(cx.listener(|this, _, _, _| {
+                                if let Some(sid) = this.active_session_id.clone() {
+                                    let _ = this
+                                        .bridge
+                                        .tx
+                                        .send(DaemonCmd::ExportHtml { session: sid });
+                                }
+                            })),
+                    )
+                })
+                .child(div().flex_1())
+                .child(div().text_xs().text_color(p.quiet_ink).child(self.status.clone()))
+                .into_any_element(),
+        )
+    }
+
+    fn render_floating_popups(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let p = self.palette();
+        match &self.open_popup {
+            OpenPopup::SettingsMenu => Some(
+                div()
+                    .absolute()
+                    .top(px(36.))
+                    .right(px(16.))
+                    .w(px(210.))
+                    .p_2()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(p.panel_edge)
+                    .bg(p.panel_surface)
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .text_size(px(10.5))
+                                    .font_semibold()
+                                    .text_color(p.quiet_ink)
+                                    .child("APPEARANCE"),
+                            )
+                            .child(
+                                h_flex()
+                                    .id("set-theme-toggle")
+                                    .px_2()
+                                    .py_1p5()
+                                    .rounded(px(6.))
+                                    .justify_between()
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(div().text_xs().text_color(p.ink).child("Theme"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(p.quiet_ink)
+                                            .child(if self.settings.dark_mode { "Dark" } else { "Light" }),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.settings.dark_mode = !this.settings.dark_mode;
+                                        this.settings.save();
+                                        Theme::change(
+                                            if this.settings.dark_mode {
+                                                ThemeMode::Dark
+                                            } else {
+                                                ThemeMode::Light
+                                            },
+                                            Some(window),
+                                            cx,
+                                        );
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                h_flex()
+                                    .id("set-export-html")
+                                    .px_2()
+                                    .py_1p5()
+                                    .rounded(px(6.))
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(div().text_xs().text_color(p.ink).child("Export session HTML"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(sid) = this.active_session_id.clone() {
+                                            let _ = this
+                                                .bridge
+                                                .tx
+                                                .send(DaemonCmd::ExportHtml { session: sid });
+                                        }
+                                        this.open_popup = OpenPopup::None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            OpenPopup::SessionMenu {
+                id,
+                file,
+                name,
+                is_resident,
+                ..
+            } => {
+                let id_c = id.clone();
+                let file_ren = file.clone();
+                let file_del = file.clone();
+                let name_c = name.clone();
+                let resident = *is_resident;
+                Some(
+                    div()
+                        .absolute()
+                        .top(px(96.))
+                        .left(px(252.))
+                        .w(px(190.))
+                        .p_1p5()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(p.panel_edge)
+                        .bg(p.panel_surface)
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_1()
+                                        .text_size(px(11.))
+                                        .font_semibold()
+                                        .text_color(p.quiet_ink)
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(name_c.clone()),
+                                )
+                                .when(!file_ren.is_empty(), |col| {
+                                    col.child(
+                                        h_flex()
+                                            .id("sm-rename")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded(px(6.))
+                                            .cursor_pointer()
+                                            .hover(|d| d.bg(p.sidebar_row_hover))
+                                            .text_xs()
+                                            .text_color(p.ink)
+                                            .child("Rename")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.start_rename(
+                                                    file_ren.clone(),
+                                                    name_c.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                })
+                                .when(resident, |col| {
+                                    col.child(
+                                        h_flex()
+                                            .id("sm-stop")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded(px(6.))
+                                            .cursor_pointer()
+                                            .hover(|d| d.bg(p.sidebar_row_hover))
+                                            .text_xs()
+                                            .text_color(p.ink)
+                                            .child("Stop / Archive")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let _ = this.bridge.tx.send(DaemonCmd::MarkDone {
+                                                    session: id_c.clone(),
+                                                });
+                                                this.open_popup = OpenPopup::None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .when(!resident && !file_del.is_empty(), |col| {
+                                    col.child(
+                                        h_flex()
+                                            .id("sm-delete")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded(px(6.))
+                                            .cursor_pointer()
+                                            .hover(|d| d.bg(p.danger_surface))
+                                            .text_xs()
+                                            .text_color(p.danger)
+                                            .child("Delete session")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let _ =
+                                                    this.bridge.tx.send(DaemonCmd::DeleteSaved {
+                                                        session_path: file_del.clone(),
+                                                    });
+                                                this.open_popup = OpenPopup::None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        )
+                        .into_any_element(),
+                )
+            }
+            _ => None,
+        }
+    }
+
     fn render_item(&self, item: &TranscriptItem, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
+        let p = self.palette();
         match item.kind {
             ItemKind::User => v_flex()
                 .w_full()
                 .rounded(px(10.))
-                .bg(theme.secondary)
+                .bg(p.transcript_user_fill)
                 .px_4()
                 .py_3()
                 .gap_2()
@@ -1255,19 +2025,19 @@ impl PaApp {
                 .w_full()
                 .rounded(px(8.))
                 .border_1()
-                .border_color(theme.danger)
-                .bg(theme.danger.opacity(0.08))
+                .border_color(p.danger)
+                .bg(p.danger_surface)
                 .px_3()
                 .py_2()
                 .text_sm()
-                .text_color(theme.danger_foreground)
+                .text_color(p.ink)
                 .child(item.raw_body.clone())
                 .into_any_element(),
             ItemKind::Thinking | ItemKind::ToolCall | ItemKind::Summary | ItemKind::Custom => {
                 let id = item.id;
                 let copy_payload = item.raw_body.clone();
                 let icon = match (item.kind, item.variant) {
-                    (ItemKind::ToolCall, CardVariant::Python) => IconName::File,
+                    (ItemKind::ToolCall, CardVariant::Python) => IconName::SquareTerminal,
                     (ItemKind::ToolCall, CardVariant::Bash) => IconName::SquareTerminal,
                     (ItemKind::ToolCall, _) => IconName::SquareTerminal,
                     (ItemKind::Thinking, _) => IconName::Info,
@@ -1277,11 +2047,11 @@ impl PaApp {
                     _ => IconName::Inbox,
                 };
                 let icon_color = if item.active {
-                    theme.warning
+                    p.working
                 } else if item.failed {
-                    theme.danger
+                    p.danger
                 } else {
-                    theme.muted_foreground
+                    p.quiet_ink
                 };
 
                 v_flex()
@@ -1289,11 +2059,11 @@ impl PaApp {
                     .rounded(px(8.))
                     .border_1()
                     .border_color(if item.active {
-                        theme.warning.opacity(0.55)
+                        p.working
                     } else {
-                        theme.border
+                        p.transcript_cell_edge
                     })
-                    .bg(theme.secondary.opacity(0.4))
+                    .bg(p.transcript_cell_fill)
                     .child(
                         h_flex()
                             .id(("card-hdr", id))
@@ -1311,25 +2081,19 @@ impl PaApp {
                                     div()
                                         .text_xs()
                                         .font_medium()
-                                        .text_color(if item.active {
-                                            theme.warning
-                                        } else {
-                                            theme.muted_foreground
-                                        })
+                                        .text_color(if item.active { p.working } else { p.quiet_ink })
                                         .child(item.verb.clone()),
                                 )
                             })
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w_0()
                                     .text_xs()
-                                    .text_color(if item.failed {
-                                        theme.danger_foreground
-                                    } else {
-                                        theme.foreground
-                                    })
+                                    .text_color(if item.failed { p.danger } else { p.ink })
                                     .overflow_hidden()
                                     .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .child(item.title.clone()),
                             )
                             .when(!item.meta.is_empty(), |row| {
@@ -1338,13 +2102,9 @@ impl PaApp {
                                         .px_2()
                                         .rounded(px(9.))
                                         .border_1()
-                                        .border_color(theme.border)
+                                        .border_color(p.transcript_cell_edge)
                                         .text_xs()
-                                        .text_color(if item.failed {
-                                            theme.danger_foreground
-                                        } else {
-                                            theme.muted_foreground
-                                        })
+                                        .text_color(if item.failed { p.danger } else { p.quiet_ink })
                                         .child(item.meta.clone()),
                                 )
                             })
@@ -1352,10 +2112,16 @@ impl PaApp {
                                 item.kind == ItemKind::ToolCall && !item.raw_body.is_empty(),
                                 |row| {
                                     row.child(
-                                        Button::new(("copy-btn", id))
-                                            .ghost()
-                                            .xsmall()
-                                            .label("Copy")
+                                        div()
+                                            .id(("copy-btn", id))
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded(px(5.))
+                                            .cursor_pointer()
+                                            .hover(|d| d.bg(p.sidebar_row_hover))
+                                            .text_size(px(11.))
+                                            .text_color(p.quiet_ink)
+                                            .child("Copy")
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 this.copy_text(copy_payload.clone(), cx);
@@ -1370,14 +2136,14 @@ impl PaApp {
                                     IconName::ChevronRight
                                 })
                                 .xsmall()
-                                .text_color(theme.muted_foreground),
+                                .text_color(p.quiet_ink),
                             ),
                     )
                     .when(item.expanded, |card| {
                         card.child(
                             div()
                                 .border_t_1()
-                                .border_color(theme.border)
+                                .border_color(p.transcript_cell_edge)
                                 .px_3()
                                 .py_2()
                                 .children(
@@ -1395,16 +2161,17 @@ impl PaApp {
 
 impl Render for PaApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
+        let p = self.palette();
         let mut rendered_items = Vec::with_capacity(self.items.len());
         for it in &self.items {
             rendered_items.push(self.render_item(it, cx));
         }
 
-        v_flex()
+        div()
+            .relative()
             .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
+            .bg(p.window_surface)
+            .text_color(p.ink)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 let key = ev.keystroke.key.as_str();
                 let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
@@ -1418,7 +2185,10 @@ impl Render for PaApp {
                     this.find_open = !this.find_open;
                     cx.notify();
                 } else if key == "escape" {
-                    if this.find_open {
+                    if this.open_popup != OpenPopup::None {
+                        this.open_popup = OpenPopup::None;
+                        cx.notify();
+                    } else if this.find_open {
                         this.find_open = false;
                         cx.notify();
                     } else if this.renaming_path.is_some() {
@@ -1431,40 +2201,50 @@ impl Render for PaApp {
                     }
                 }
             }))
-            .child(self.render_titlebar(cx))
             .child(
-                h_flex()
-                    .flex_1()
-                    .w_full()
-                    .min_h_0()
-                    .when(self.settings.sidebar_open, |row| row.child(self.render_sidebar(cx)))
+                v_flex()
+                    .size_full()
+                    .child(self.render_titlebar(cx))
                     .child(
-                        v_flex()
+                        h_flex()
                             .flex_1()
-                            .h_full()
-                            .min_w_0()
-                            .children(self.render_find_bar(cx))
+                            .w_full()
+                            .min_h_0()
+                            .child(self.render_sidebar(cx))
                             .child(
-                                div()
-                                    .id("transcript-scroll")
+                                v_flex()
                                     .flex_1()
-                                    .w_full()
-                                    .track_scroll(&self.scroll_handle)
-                                    .overflow_y_scrollbar()
-                                    .px_6()
-                                    .py_4()
+                                    .h_full()
+                                    .min_w_0()
+                                    .bg(p.transcript_surface)
+                                    .rounded_tl(px(10.))
+                                    .when(self.settings.right_open, |s| s.rounded_tr(px(10.)))
+                                    .overflow_hidden()
+                                    .children(self.render_find_bar(cx))
                                     .child(
-                                        v_flex()
+                                        div()
+                                            .id("transcript-scroll")
+                                            .flex_1()
                                             .w_full()
-                                            .max_w(px(860.))
-                                            .mx_auto()
-                                            .gap_3()
-                                            .children(rendered_items),
-                                    ),
+                                            .track_scroll(&self.scroll_handle)
+                                            .overflow_y_scrollbar()
+                                            .px_6()
+                                            .py_4()
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .max_w(px(860.))
+                                                    .mx_auto()
+                                                    .gap_3()
+                                                    .children(rendered_items),
+                                            ),
+                                    )
+                                    .child(self.render_composer_band(cx)),
                             )
-                            .child(self.render_composer_bar(cx)),
+                            .children(self.render_right_column(cx)),
                     ),
             )
+            .children(self.render_floating_popups(cx))
     }
 }
 

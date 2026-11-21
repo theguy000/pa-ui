@@ -2,9 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub dark_mode: bool,
     pub sidebar_open: bool,
+    pub right_open: bool,
+    pub active_closed: bool,
+    pub idle_closed: bool,
+    pub done_closed: bool,
 }
 
 impl Default for AppSettings {
@@ -12,6 +17,10 @@ impl Default for AppSettings {
         Self {
             dark_mode: true,
             sidebar_open: true,
+            right_open: false,
+            active_closed: false,
+            idle_closed: false,
+            done_closed: false,
         }
     }
 }

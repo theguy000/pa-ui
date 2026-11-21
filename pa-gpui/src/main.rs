@@ -1,16 +1,18 @@
 mod app;
+mod assets;
 mod daemon;
 mod settings;
+mod theme;
 mod transcript;
 
 use app::PaApp;
-use gpui_kit::assets::Assets;
+use assets::AppAssets;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 use settings::AppSettings;
 
 fn main() {
-    let app = gpui_kit::application().with_assets(Assets);
+    let app = gpui_kit::application().with_assets(AppAssets);
 
     app.run(move |cx| {
         gpui_kit::init(cx);
@@ -26,7 +28,7 @@ fn main() {
         );
 
         let mut window_options = TitleBar::window_options();
-        window_options.window_bounds = Some(WindowBounds::centered(size(px(1320.), px(860.)), cx));
+        window_options.window_bounds = Some(WindowBounds::centered(size(px(1240.), px(840.)), cx));
 
         gpui_kit::open_window(window_options, cx, |window, cx| {
             cx.new(|cx| PaApp::new(initial_settings, window, cx))
