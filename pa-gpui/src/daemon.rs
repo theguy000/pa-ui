@@ -1,5 +1,5 @@
 use pa_client::{Client, ModelEntry, SessionRow, SessionStats};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -16,6 +16,13 @@ pub enum DaemonCmd {
     DeleteSaved { session_path: String },
     RenameSaved { session_path: String, name: String },
     ClearQueue { session: String },
+    MutateQueue {
+        session: String,
+        lane: String,
+        slot: usize,
+        expected: String,
+        action: String,
+    },
     ExportHtml { session: String },
     SetModel { session: String, provider: String, model_id: String },
     SetThinking { session: String, level: String },
@@ -245,6 +252,31 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                                 session,
                                 steer: Vec::new(),
                                 follow_up: Vec::new(),
+                            });
+                        }
+                    }
+                    DaemonCmd::MutateQueue {
+                        session,
+                        lane,
+                        slot,
+                        expected,
+                        action,
+                    } => {
+                        let mutation = if action == "promote" {
+                            json!({"type": "replace", "lane": "steering", "text": expected})
+                        } else {
+                            json!({"type": "delete"})
+                        };
+                        if let Err(err) = pa_client::mutate_queue(
+                            &client, &session, &lane, slot, &expected, mutation,
+                        ) {
+                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                        }
+                        if let Ok((steer, follow_up)) = pa_client::get_queue(&client, &session) {
+                            let _ = ev_tx.send(DaemonEvent::Queue {
+                                session,
+                                steer,
+                                follow_up,
                             });
                         }
                     }

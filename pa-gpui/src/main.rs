@@ -12,6 +12,17 @@ use gpui_kit::*;
 use settings::AppSettings;
 
 fn main() {
+    // On Windows multi-refresh-rate setups (e.g. 200Hz primary + 60Hz virtual/secondary display),
+    // GPUI's DirectComposition + WS_EX_NOREDIRECTIONBITMAP path locks DWM window dragging to 60fps.
+    // Using the standard HWND flip-model swap chain restores full native monitor refresh rate dragging.
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
+        // SAFETY: Called at the very start of main() before any worker threads are spawned.
+        unsafe {
+            std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
+        }
+    }
+
     let app = gpui_kit::application().with_assets(AppAssets);
 
     app.run(move |cx| {
@@ -29,6 +40,9 @@ fn main() {
 
         let mut window_options = TitleBar::window_options();
         window_options.window_bounds = Some(WindowBounds::centered(size(px(1240.), px(840.)), cx));
+        window_options.inactive_frame_interval = None;
+        window_options.low_power_frame_interval = None;
+        window_options.thermal_frame_interval = None;
 
         gpui_kit::open_window(window_options, cx, |window, cx| {
             cx.new(|cx| PaApp::new(initial_settings, window, cx))

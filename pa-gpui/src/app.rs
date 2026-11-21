@@ -1,5 +1,6 @@
 use crate::assets::{
-    ICON_BASH_PATH, ICON_PYTHON_PATH, ICON_THINKING_PATH, PRIME_AGENT_MARK_DARK_PATH,
+    ICON_BASH_PATH, ICON_HEARTBEAT_PATH, ICON_PYTHON_PATH, ICON_SEND_PATH, ICON_SHELLS_PATH,
+    ICON_SUBAGENTS_PATH, ICON_THINKING_PATH, PRIME_AGENT_MARK_DARK_PATH,
     PRIME_AGENT_MARK_LIGHT_PATH,
 };
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
@@ -20,7 +21,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::{ModelEntry, SessionRow, SessionStats};
 use serde_json::Value;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SidebarGroup {
@@ -35,6 +36,7 @@ enum OpenPopup {
     ModelMenu,
     SettingsMenu,
     ContextCard,
+    QueuePanel,
     SessionMenu {
         key: String,
         id: String,
@@ -42,6 +44,28 @@ enum OpenPopup {
         name: String,
         is_resident: bool,
     },
+}
+
+fn lerp_hsla(a: Hsla, b: Hsla, t: f32) -> Hsla {
+    let t = t.clamp(0.0, 1.0);
+    let ra: Rgba = a.into();
+    let rb: Rgba = b.into();
+    Rgba {
+        r: ra.r + (rb.r - ra.r) * t,
+        g: ra.g + (rb.g - ra.g) * t,
+        b: ra.b + (rb.b - ra.b) * t,
+        a: ra.a + (rb.a - ra.a) * t,
+    }
+    .into()
+}
+
+fn ease_in_out_cubic(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    }
 }
 
 pub struct PaApp {
@@ -59,6 +83,18 @@ pub struct PaApp {
     is_streaming: bool,
     creating_session: bool,
     rail_mark_hovered: bool,
+    // Smooth Send <-> Stop morph state (0.0 = Send arrow, 1.0 = Stop square)
+    stop_mix: f32,
+    stop_target: f32,
+    last_anim_tick: Instant,
+    // Interactive composer drag-resize state
+    composer_height: Option<f32>,
+    dragging_composer: bool,
+    drag_start_y: f32,
+    drag_start_height: f32,
+    handle_hovered: bool,
+    // Jump-to-bottom tracking
+    scrolled_up: bool,
     settings: AppSettings,
     subagent_count: usize,
     shell_count: usize,
@@ -92,10 +128,16 @@ impl PaApp {
 
         let sub_composer = cx.subscribe_in(&composer, window, |this, _, ev: &InputEvent, window, cx| {
             match ev {
-                InputEvent::PressEnter { shift: false, .. } => {
-                    this.send_current_prompt(false, window, cx);
+                InputEvent::PressEnter {
+                    secondary,
+                    shift: false,
+                } => {
+                    // Plain Enter sends (or steers if streaming); Ctrl+Enter queues follow-up when streaming.
+                    let steer = this.is_streaming && !*secondary;
+                    this.send_current_prompt(steer, window, cx);
                 }
                 InputEvent::Change | InputEvent::Focus | InputEvent::Blur => {
+                    this.sync_stop_target(cx);
                     cx.notify();
                 }
                 _ => {}
@@ -140,11 +182,11 @@ impl PaApp {
 
         let poll_task = cx.spawn(async move |weak_self, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(24))
+                .timer(Duration::from_millis(12))
                 .await;
             let keep_going = weak_self
                 .update(cx, |this, cx| {
-                    this.drain_daemon(cx);
+                    this.tick(cx);
                 })
                 .is_ok();
             if !keep_going {
@@ -167,6 +209,15 @@ impl PaApp {
             is_streaming: false,
             creating_session: false,
             rail_mark_hovered: false,
+            stop_mix: 0.0,
+            stop_target: 0.0,
+            last_anim_tick: Instant::now(),
+            composer_height: None,
+            dragging_composer: false,
+            drag_start_y: 0.0,
+            drag_start_height: 54.0,
+            handle_hovered: false,
+            scrolled_up: false,
             settings,
             subagent_count: 0,
             shell_count: 0,
@@ -189,6 +240,47 @@ impl PaApp {
         PaPalette::for_mode(self.settings.dark_mode)
     }
 
+    fn sync_stop_target(&mut self, cx: &Context<Self>) {
+        let has_text = !self.composer.read(cx).value().trim().is_empty();
+        self.stop_target = if self.is_streaming && !has_text {
+            1.0
+        } else {
+            0.0
+        };
+    }
+
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        let mut changed = self.drain_daemon(cx);
+
+        // Animate Send <-> Stop morph smoothly over ~220ms
+        let now = Instant::now();
+        let dt = now.saturating_duration_since(self.last_anim_tick).as_secs_f32();
+        self.last_anim_tick = now;
+        if (self.stop_mix - self.stop_target).abs() > 0.002 {
+            let step = (dt / 0.22).min(0.25);
+            if self.stop_mix < self.stop_target {
+                self.stop_mix = (self.stop_mix + step).min(self.stop_target);
+            } else {
+                self.stop_mix = (self.stop_mix - step).max(self.stop_target);
+            }
+            changed = true;
+        } else if self.stop_mix != self.stop_target {
+            self.stop_mix = self.stop_target;
+            changed = true;
+        }
+
+        // Update Jump-to-Bottom visibility when user scrolls up/down
+        let now_scrolled_up = !self.is_near_bottom();
+        if now_scrolled_up != self.scrolled_up {
+            self.scrolled_up = now_scrolled_up;
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
     fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.creating_session {
             return;
@@ -203,7 +295,9 @@ impl PaApp {
         self.subagent_count = 0;
         self.shell_count = 0;
         self.heartbeat_count = 0;
+        self.scrolled_up = false;
         self.notice = Some("Starting new session…".into());
+        self.sync_stop_target(cx);
         let focus = self.composer.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
         let _ = self.bridge.tx.send(DaemonCmd::CreateSession);
@@ -216,7 +310,7 @@ impl PaApp {
             return true;
         }
         let cur_y = -self.scroll_handle.offset().y;
-        (max_y - cur_y) <= px(120.)
+        (max_y - cur_y) <= px(100.)
     }
 
     fn scroll_if_sticky(&self) {
@@ -225,7 +319,7 @@ impl PaApp {
         }
     }
 
-    fn drain_daemon(&mut self, cx: &mut Context<Self>) {
+    fn drain_daemon(&mut self, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
         while let Ok(ev) = self.bridge.rx.try_recv() {
             changed = true;
@@ -238,6 +332,7 @@ impl PaApp {
                     self.is_streaming = false;
                     self.creating_session = false;
                     settle_all(&mut self.items);
+                    self.sync_stop_target(cx);
                 }
                 DaemonEvent::SessionCreated(new_sid) => {
                     self.creating_session = false;
@@ -245,6 +340,7 @@ impl PaApp {
                     self.is_streaming = false;
                     self.items.clear();
                     self.notice = None;
+                    self.sync_stop_target(cx);
                 }
                 DaemonEvent::Sessions(rows) => {
                     self.sessions = rows;
@@ -258,6 +354,7 @@ impl PaApp {
                             self.is_streaming = row.is_streaming;
                         }
                     }
+                    self.sync_stop_target(cx);
                 }
                 DaemonEvent::Messages { session, messages } => {
                     let switching = self.active_session_id.as_deref() != Some(session.as_str());
@@ -284,6 +381,12 @@ impl PaApp {
                     if self.active_session_id.as_deref() == Some(session.as_str()) {
                         self.queued_steer = steer;
                         self.queued_follow_up = follow_up;
+                        if self.queued_steer.is_empty()
+                            && self.queued_follow_up.is_empty()
+                            && self.open_popup == OpenPopup::QueuePanel
+                        {
+                            self.open_popup = OpenPopup::None;
+                        }
                     }
                 }
                 DaemonEvent::Activity {
@@ -311,9 +414,7 @@ impl PaApp {
                 }
             }
         }
-        if changed {
-            cx.notify();
-        }
+        changed
     }
 
     fn handle_live_frame(&mut self, frame: &Value, cx: &mut Context<Self>) {
@@ -335,9 +436,11 @@ impl PaApp {
         match kind {
             "agent_start" | "turn_start" => {
                 self.is_streaming = true;
+                self.sync_stop_target(cx);
             }
             "message_update" => {
                 self.is_streaming = true;
+                self.sync_stop_target(cx);
                 let delta_ev = event
                     .get("assistantMessageEvent")
                     .filter(|v| v.is_object())
@@ -358,6 +461,7 @@ impl PaApp {
             }
             "tool_execution_start" => {
                 self.is_streaming = true;
+                self.sync_stop_target(cx);
                 let cid = event
                     .get("toolCallId")
                     .and_then(Value::as_str)
@@ -402,6 +506,7 @@ impl PaApp {
             "agent_end" | "turn_end" => {
                 self.is_streaming = false;
                 settle_all(&mut self.items);
+                self.sync_stop_target(cx);
                 if let Some(sid) = self.active_session_id.clone() {
                     let _ = self.bridge.tx.send(DaemonCmd::SelectSession(sid));
                 }
@@ -423,25 +528,29 @@ impl PaApp {
         let Some(sid) = self.active_session_id.clone() else {
             return;
         };
-        let next_id = self.items.last().map_or(0, |i| i.id + 1);
-        let md = cx.new(|cx| TextViewState::markdown(&text, cx));
-        self.items.push(TranscriptItem {
-            id: next_id,
-            call_id: None,
-            kind: ItemKind::User,
-            variant: CardVariant::None,
-            verb: SharedString::default(),
-            title: "You".into(),
-            meta: SharedString::default(),
-            body_md: Some(md),
-            raw_body: text.clone(),
-            output: None,
-            images: Vec::new(),
-            expanded: true,
-            active: false,
-            failed: false,
-        });
-        self.scroll_handle.scroll_to_bottom();
+
+        // If idle, append optimistically; if busy, let daemon hold it in the queue strip/panel
+        if !self.is_streaming {
+            let next_id = self.items.last().map_or(0, |i| i.id + 1);
+            let md = cx.new(|cx| TextViewState::markdown(&text, cx));
+            self.items.push(TranscriptItem {
+                id: next_id,
+                call_id: None,
+                kind: ItemKind::User,
+                variant: CardVariant::None,
+                verb: SharedString::default(),
+                title: "You".into(),
+                meta: SharedString::default(),
+                body_md: Some(md),
+                raw_body: text.clone(),
+                output: None,
+                images: Vec::new(),
+                expanded: true,
+                active: false,
+                failed: false,
+            });
+            self.scroll_handle.scroll_to_bottom();
+        }
 
         if steer {
             let _ = self.bridge.tx.send(DaemonCmd::SteerPrompt {
@@ -457,6 +566,7 @@ impl PaApp {
         self.composer.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });
+        self.sync_stop_target(cx);
         cx.notify();
     }
 
@@ -606,8 +716,8 @@ impl PaApp {
                     .h_full()
                     .items_center()
                     .justify_end()
-                    .gap_1()
-                    .pr_2()
+                    .gap(px(4.))
+                    .pr(px(8.))
                     .child(
                         div()
                             .id("tb-find")
@@ -619,8 +729,9 @@ impl PaApp {
                             .cursor_pointer()
                             .when(self.find_open, |d| d.bg(p.sidebar_row_selected))
                             .hover(|d| d.bg(p.sidebar_row_hover))
-                            .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                            .child(Icon::new(IconName::Search).size(px(14.)).text_color(p.quiet_ink))
                             .on_click(cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
                                 this.find_open = !this.find_open;
                                 if this.find_open {
                                     let focus = this.find_input.read(cx).focus_handle(cx);
@@ -640,8 +751,9 @@ impl PaApp {
                             .cursor_pointer()
                             .when(settings_open, |d| d.bg(p.sidebar_row_selected))
                             .hover(|d| d.bg(p.sidebar_row_hover))
-                            .child(Icon::new(IconName::Settings).xsmall().text_color(p.quiet_ink))
+                            .child(Icon::new(IconName::Settings).size(px(14.)).text_color(p.quiet_ink))
                             .on_click(cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.open_popup = if this.open_popup == OpenPopup::SettingsMenu {
                                     OpenPopup::None
                                 } else {
@@ -667,10 +779,11 @@ impl PaApp {
                                 } else {
                                     IconName::PanelRightOpen
                                 })
-                                .xsmall()
+                                .size(px(14.))
                                 .text_color(p.quiet_ink),
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.settings.right_open = !this.settings.right_open;
                                 this.settings.save();
                                 cx.notify();
@@ -685,8 +798,8 @@ impl PaApp {
             .w(px(44.))
             .h_full()
             .bg(p.sidebar_surface)
-            .pt_1()
-            .gap_1p5()
+            .pt(px(4.))
+            .gap(px(6.))
             .items_center()
             .child(
                 div()
@@ -704,13 +817,14 @@ impl PaApp {
                     }))
                     .child(if self.rail_mark_hovered {
                         Icon::new(IconName::PanelLeftOpen)
-                            .xsmall()
+                            .size(px(16.))
                             .text_color(p.ink)
                             .into_any_element()
                     } else {
                         self.render_prime_mark().into_any_element()
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
                         this.settings.sidebar_open = true;
                         this.rail_mark_hovered = false;
                         this.settings.save();
@@ -727,8 +841,9 @@ impl PaApp {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
-                    .child(Icon::new(IconName::Plus).xsmall().text_color(p.quiet_ink))
+                    .child(Icon::new(IconName::Plus).size(px(15.)).text_color(p.quiet_ink))
                     .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
                         this.request_new_session(window, cx);
                     })),
             )
@@ -742,8 +857,9 @@ impl PaApp {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
-                    .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                    .child(Icon::new(IconName::Search).size(px(14.)).text_color(p.quiet_ink))
                     .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
                         this.settings.sidebar_open = true;
                         this.search_open = true;
                         this.settings.save();
@@ -824,7 +940,7 @@ impl PaApp {
                             .child(
                                 div()
                                     .id("sb-search-btn")
-                                    .size(px(30.))
+                                    .size(px(28.))
                                     .rounded(px(7.))
                                     .flex()
                                     .items_center()
@@ -832,8 +948,9 @@ impl PaApp {
                                     .cursor_pointer()
                                     .when(self.search_open, |d| d.bg(p.sidebar_row_selected))
                                     .hover(|d| d.bg(p.sidebar_row_hover))
-                                    .child(Icon::new(IconName::Search).xsmall().text_color(p.quiet_ink))
+                                    .child(Icon::new(IconName::Search).size(px(14.)).text_color(p.quiet_ink))
                                     .on_click(cx.listener(|this, _, window, cx| {
+                                        cx.stop_propagation();
                                         this.search_open = !this.search_open;
                                         if this.search_open {
                                             let focus = this.search_input.read(cx).focus_handle(cx);
@@ -845,7 +962,7 @@ impl PaApp {
                             .child(
                                 div()
                                     .id("sb-collapse-btn")
-                                    .size(px(30.))
+                                    .size(px(28.))
                                     .rounded(px(7.))
                                     .flex()
                                     .items_center()
@@ -854,10 +971,11 @@ impl PaApp {
                                     .hover(|d| d.bg(p.sidebar_row_hover))
                                     .child(
                                         Icon::new(IconName::PanelLeftClose)
-                                            .xsmall()
+                                            .size(px(14.))
                                             .text_color(p.quiet_ink),
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
                                         this.settings.sidebar_open = false;
                                         this.rail_mark_hovered = false;
                                         this.settings.save();
@@ -880,7 +998,7 @@ impl PaApp {
                     .justify_center()
                     .gap(px(7.))
                     .cursor_pointer()
-                    .child(Icon::new(IconName::Plus).xsmall().text_color(p.ink))
+                    .child(Icon::new(IconName::Plus).size(px(14.)).text_color(p.ink))
                     .child(
                         div()
                             .text_size(px(13.))
@@ -892,6 +1010,7 @@ impl PaApp {
                             }),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
                         this.request_new_session(window, cx);
                     })),
             )
@@ -992,6 +1111,7 @@ impl PaApp {
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.toggle_group(group_kind, cx);
                     }))
                     .child(
@@ -1126,6 +1246,7 @@ impl PaApp {
                             })),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.open_popup = OpenPopup::None;
                         let _ = this
                             .bridge
@@ -1194,122 +1315,375 @@ impl PaApp {
         )
     }
 
-    fn render_slash_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let val = self.composer.read(cx).value();
-        let trimmed = val.trim_start();
-        if !trimmed.starts_with('/') || trimmed.contains(' ') || trimmed.contains('\n') {
-            return None;
-        }
-        let prefix = &trimmed[1..];
-        let matches = pa_client::commands::filter(prefix);
-        if matches.is_empty() {
-            return None;
-        }
+    fn render_activity_chip(&self) -> impl IntoElement {
         let p = self.palette();
-        let left_offset = if self.settings.sidebar_open {
-            px(262.)
-        } else {
-            px(62.)
-        };
-        let mut list = v_flex()
-            .absolute()
-            .bottom(px(108.))
-            .left(left_offset)
-            .w(px(420.))
-            .p_1p5()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(p.panel_edge)
-            .bg(p.panel_surface)
-            .shadow_lg()
-            .gap_0p5();
-
-        for (i, cmd) in matches.into_iter().take(6).enumerate() {
-            let cmd_name = cmd.name;
-            let cmd_desc = cmd.description;
-            list = list.child(
-                h_flex()
-                    .id(("slash-opt", i))
-                    .px_2()
-                    .py_1()
-                    .gap_3()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|d| d.bg(p.sidebar_row_hover))
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .text_color(p.ink)
-                            .child(format!("/{cmd_name}")),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(p.quiet_ink)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(cmd_desc),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.composer.update(cx, |input, cx| {
-                            input.set_value(format!("/{cmd_name} "), window, cx);
-                        });
-                        cx.notify();
-                    })),
-            );
-        }
-
-        Some(list.into_any_element())
-    }
-
-    fn render_queue_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let total = self.queued_steer.len() + self.queued_follow_up.len();
-        if total == 0 {
-            return None;
-        }
-        let p = self.palette();
-        Some(
+        let metric = |icon_path: &'static str, count: usize| {
+            let ink = if count > 0 { p.working } else { p.quiet_ink };
             h_flex()
-                .w_full()
-                .mb(px(6.))
-                .px_3()
-                .py_1()
-                .rounded(px(8.))
-                .border_1()
-                .border_color(p.composer_edge)
-                .bg(p.composer_surface)
-                .justify_between()
+                .h_full()
                 .items_center()
+                .gap(px(4.))
+                .child(svg().path(icon_path).size(px(13.)).text_color(ink))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(p.quiet_ink)
-                        .child(format!(
-                            "Queued: {} steer · {} follow-up",
-                            self.queued_steer.len(),
-                            self.queued_follow_up.len()
-                        )),
+                        .text_size(px(11.5))
+                        .line_height(px(13.))
+                        .text_color(ink)
+                        .child(count.to_string()),
                 )
-                .child(
-                    Button::new("clear-queue")
-                        .ghost()
-                        .xsmall()
-                        .label("Clear")
-                        .on_click(cx.listener(|this, _, _, _| {
-                            if let Some(sid) = this.active_session_id.clone() {
-                                let _ = this
-                                    .bridge
-                                    .tx
-                                    .send(DaemonCmd::ClearQueue { session: sid });
-                            }
-                        })),
+        };
+
+        h_flex()
+            .h(px(24.))
+            .px(px(8.))
+            .gap(px(10.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(p.composer_edge)
+            .bg(p.sidebar_group_surface)
+            .items_center()
+            .child(metric(ICON_SUBAGENTS_PATH, self.subagent_count))
+            .child(metric(ICON_HEARTBEAT_PATH, self.heartbeat_count))
+            .child(metric(ICON_SHELLS_PATH, self.shell_count))
+    }
+
+    fn render_send_stop_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        let mix = ease_in_out_cubic(self.stop_mix);
+        let bg_color = lerp_hsla(p.composer_send_fill, p.danger, mix);
+        let is_stop = self.stop_target > 0.5;
+
+        // Exact pixel-centered 26x26 circle:
+        // - Arrow is 12x12 -> (26 - 12)/2 = 7px exact integer offset
+        // - Stop square is 8x8 -> (26 - 8)/2 = 9px exact integer offset
+        let arrow_size = 12.0 * (1.0 - 0.35 * mix);
+        let arrow_opacity = (1.0 - mix).clamp(0.0, 1.0);
+        let square_size = 4.0 + 4.0 * mix;
+        let square_radius = 3.0 - 1.5 * mix;
+        let square_opacity = mix.clamp(0.0, 1.0);
+
+        div()
+            .id("send-stop-circle")
+            .relative()
+            .size(px(26.))
+            .flex_shrink_0()
+            .rounded_full()
+            .bg(bg_color)
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(arrow_opacity > 0.01, |btn| {
+                btn.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .opacity(arrow_opacity)
+                        .child(
+                            svg()
+                                .path(ICON_SEND_PATH)
+                                .size(px(arrow_size))
+                                .text_color(p.composer_send_mark),
+                        ),
                 )
-                .into_any_element(),
-        )
+            })
+            .when(square_opacity > 0.01, |btn| {
+                btn.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .opacity(square_opacity)
+                        .child(
+                            div()
+                                .size(px(square_size))
+                                .rounded(px(square_radius))
+                                .bg(rgb(0xffffff)),
+                        ),
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                if is_stop {
+                    if let Some(sid) = this.active_session_id.clone() {
+                        let _ = this.bridge.tx.send(DaemonCmd::Abort { session: sid });
+                    }
+                } else {
+                    let steer = this.is_streaming;
+                    this.send_current_prompt(steer, window, cx);
+                }
+            }))
+    }
+
+    fn render_composer_band(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        let composer_focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
+        let queued_total = self.queued_steer.len() + self.queued_follow_up.len();
+        let model_chip_label = self
+            .active_session()
+            .map(|s| {
+                let m = if !s.model_name.is_empty() {
+                    s.model_name.as_str()
+                } else if !s.model.is_empty() {
+                    s.model.as_str()
+                } else {
+                    "Model"
+                };
+                if s.thinking.is_empty() {
+                    m.to_string()
+                } else {
+                    format!("{m} · {}", s.thinking)
+                }
+            })
+            .unwrap_or_else(|| "Model".to_string());
+
+        let ctx_pct = self
+            .stats
+            .as_ref()
+            .filter(|st| st.context_window > 0)
+            .map(|st| format!("{:.0}%", st.percent))
+            .unwrap_or_else(|| "0%".to_string());
+
+        let handle_color = if self.dragging_composer {
+            p.working
+        } else if self.handle_hovered {
+            p.quiet_ink
+        } else {
+            p.composer_handle
+        };
+
+        v_flex()
+            .w_full()
+            .px(px(18.))
+            .pb(px(12.))
+            .pt(px(2.))
+            .child(
+                v_flex()
+                    .w_full()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(if composer_focused {
+                        p.composer_edge_focus
+                    } else {
+                        p.composer_edge
+                    })
+                    .bg(p.composer_surface)
+                    // Interactive resize grab handle at top center
+                    .child(
+                        div()
+                            .id("composer-resize-handle")
+                            .w_full()
+                            .h(px(12.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_ns_resize()
+                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                this.handle_hovered = *hovered;
+                                cx.notify();
+                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    if ev.click_count >= 2 {
+                                        this.composer_height = None;
+                                        this.dragging_composer = false;
+                                    } else {
+                                        this.dragging_composer = true;
+                                        this.drag_start_y = ev.position.y.as_f32();
+                                        this.drag_start_height =
+                                            this.composer_height.unwrap_or(56.0);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .w(px(36.))
+                                    .h(px(3.))
+                                    .rounded(px(1.5))
+                                    .bg(handle_color),
+                            ),
+                    )
+                    // Multi-line composer textarea (supports manual drag height OR auto-grow)
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(10.))
+                            .pb(px(6.))
+                            .child(match self.composer_height {
+                                Some(h) => Textarea::new(&self.composer)
+                                    .h(px(h))
+                                    .appearance(false)
+                                    .bordered(false),
+                                None => Textarea::new(&self.composer)
+                                    .appearance(false)
+                                    .bordered(false),
+                            }),
+                    )
+                    // Pixel-aligned bottom dock: all controls share centered 24px/26px row alignment
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(34.))
+                            .px(px(12.))
+                            .pb(px(8.))
+                            .gap(px(8.))
+                            .items_center()
+                            .child(self.render_activity_chip())
+                            .when(queued_total > 0, |row| {
+                                row.child(
+                                    h_flex()
+                                        .id("queue-chip-btn")
+                                        .h(px(24.))
+                                        .px(px(8.))
+                                        .gap(px(5.))
+                                        .rounded(px(6.))
+                                        .border_1()
+                                        .border_color(if self.open_popup == OpenPopup::QueuePanel {
+                                            p.working
+                                        } else {
+                                            p.composer_edge
+                                        })
+                                        .bg(p.sidebar_group_surface)
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(p.sidebar_row_hover))
+                                        .child(
+                                            div()
+                                                .size(px(6.))
+                                                .rounded_full()
+                                                .bg(p.working),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.5))
+                                                .line_height(px(13.))
+                                                .text_color(p.ink)
+                                                .child(format!("{queued_total} queued")),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.open_popup =
+                                                if this.open_popup == OpenPopup::QueuePanel {
+                                                    OpenPopup::None
+                                                } else {
+                                                    OpenPopup::QueuePanel
+                                                };
+                                            cx.notify();
+                                        })),
+                                )
+                            })
+                            .when_some(self.notice.clone(), |row, note| {
+                                row.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(p.quiet_ink)
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(note),
+                                )
+                            })
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .id("ctx-ring-btn")
+                                    .h(px(24.))
+                                    .px(px(8.))
+                                    .rounded(px(12.))
+                                    .border_1()
+                                    .border_color(if self.open_popup == OpenPopup::ContextCard {
+                                        p.working
+                                    } else {
+                                        p.composer_edge
+                                    })
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .text_size(px(11.))
+                                    .line_height(px(13.))
+                                    .text_color(p.quiet_ink)
+                                    .child(ctx_pct)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.open_popup =
+                                            if this.open_popup == OpenPopup::ContextCard {
+                                                OpenPopup::None
+                                            } else {
+                                                OpenPopup::ContextCard
+                                            };
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("attach-btn")
+                                    .size(px(24.))
+                                    .rounded(px(6.))
+                                    .bg(p.composer_attach_fill)
+                                    .hover(|d| d.bg(p.sidebar_row_selected))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .child(Icon::new(IconName::Plus).size(px(12.)).text_color(p.quiet_ink))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.notice = Some("Paste or drop images in composer".into());
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                h_flex()
+                                    .id("model-chip-btn")
+                                    .h(px(24.))
+                                    .px(px(8.))
+                                    .gap(px(5.))
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(if self.open_popup == OpenPopup::ModelMenu {
+                                        p.working
+                                    } else {
+                                        p.composer_edge
+                                    })
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_hover))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .line_height(px(13.))
+                                            .text_color(p.quiet_ink)
+                                            .child(model_chip_label),
+                                    )
+                                    .child(
+                                        Icon::new(IconName::ChevronDown)
+                                            .size(px(11.))
+                                            .text_color(p.quiet_ink),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.open_popup =
+                                            if this.open_popup == OpenPopup::ModelMenu {
+                                                OpenPopup::None
+                                            } else {
+                                                OpenPopup::ModelMenu
+                                            };
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(self.render_send_stop_button(cx)),
+                    ),
+            )
     }
 
     fn render_context_card_content(&self) -> impl IntoElement {
@@ -1390,285 +1764,77 @@ impl PaApp {
             .child(ledger("session cost", cost))
     }
 
-    fn render_composer_band(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_slash_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let val = self.composer.read(cx).value();
+        let trimmed = val.trim_start();
+        if !trimmed.starts_with('/') || trimmed.contains(' ') || trimmed.contains('\n') {
+            return None;
+        }
+        let prefix = &trimmed[1..];
+        let matches = pa_client::commands::filter(prefix);
+        if matches.is_empty() {
+            return None;
+        }
         let p = self.palette();
-        let composer_focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
-        let model_chip_label = self
-            .active_session()
-            .map(|s| {
-                let m = if !s.model_name.is_empty() {
-                    s.model_name.as_str()
-                } else if !s.model.is_empty() {
-                    s.model.as_str()
-                } else {
-                    "Model"
-                };
-                if s.thinking.is_empty() {
-                    m.to_string()
-                } else {
-                    format!("{m} · {}", s.thinking)
-                }
-            })
-            .unwrap_or_else(|| "Model".to_string());
+        let left_offset = if self.settings.sidebar_open {
+            px(262.)
+        } else {
+            px(62.)
+        };
+        let mut list = v_flex()
+            .absolute()
+            .bottom(px(112.))
+            .left(left_offset)
+            .w(px(420.))
+            .p_1p5()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
+            .shadow_lg()
+            .gap_0p5();
 
-        let ctx_pct = self
-            .stats
-            .as_ref()
-            .filter(|st| st.context_window > 0)
-            .map(|st| format!("{:.0}%", st.percent))
-            .unwrap_or_else(|| "0%".to_string());
-
-        v_flex()
-            .w_full()
-            .px(px(18.))
-            .pb(px(12.))
-            .pt(px(4.))
-            .children(self.render_queue_strip(cx))
-            .child(
-                v_flex()
-                    .w_full()
-                    .rounded(px(12.))
-                    .border_1()
-                    .border_color(if composer_focused {
-                        p.composer_edge_focus
-                    } else {
-                        p.composer_edge
-                    })
-                    .bg(p.composer_surface)
+        for (i, cmd) in matches.into_iter().take(6).enumerate() {
+            let cmd_name = cmd.name;
+            let cmd_desc = cmd.description;
+            list = list.child(
+                h_flex()
+                    .id(("slash-opt", i))
+                    .px_2()
+                    .py_1()
+                    .gap_3()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
                     .child(
-                        h_flex()
-                            .w_full()
-                            .justify_center()
-                            .pt(px(5.))
-                            .child(
-                                div()
-                                    .w(px(36.))
-                                    .h(px(3.))
-                                    .rounded(px(1.5))
-                                    .bg(p.composer_handle),
-                            ),
+                        div()
+                            .text_xs()
+                            .font_semibold()
+                            .text_color(p.ink)
+                            .child(format!("/{cmd_name}")),
                     )
                     .child(
                         div()
-                            .w_full()
-                            .px(px(10.))
-                            .pt(px(4.))
-                            .pb(px(6.))
-                            .child(
-                                Textarea::new(&self.composer)
-                                    .appearance(false)
-                                    .bordered(false),
-                            ),
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(p.quiet_ink)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(cmd_desc),
                     )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .h(px(33.))
-                            .px(px(12.))
-                            .pb(px(8.))
-                            .gap(px(8.))
-                            .items_center()
-                            .child(
-                                h_flex()
-                                    .gap(px(6.))
-                                    .items_center()
-                                    .when(self.subagent_count > 0, |h| {
-                                        h.child(
-                                            div()
-                                                .px(px(6.))
-                                                .py(px(1.))
-                                                .rounded(px(6.))
-                                                .border_1()
-                                                .border_color(p.composer_edge)
-                                                .text_size(px(11.))
-                                                .text_color(p.quiet_ink)
-                                                .child(format!("{} sub", self.subagent_count)),
-                                        )
-                                    })
-                                    .when(self.shell_count > 0, |h| {
-                                        h.child(
-                                            div()
-                                                .px(px(6.))
-                                                .py(px(1.))
-                                                .rounded(px(6.))
-                                                .border_1()
-                                                .border_color(p.composer_edge)
-                                                .text_size(px(11.))
-                                                .text_color(p.quiet_ink)
-                                                .child(format!("{} sh", self.shell_count)),
-                                        )
-                                    })
-                                    .when(self.heartbeat_count > 0, |h| {
-                                        h.child(
-                                            div()
-                                                .px(px(6.))
-                                                .py(px(1.))
-                                                .rounded(px(6.))
-                                                .border_1()
-                                                .border_color(p.composer_edge)
-                                                .text_size(px(11.))
-                                                .text_color(p.quiet_ink)
-                                                .child(format!("{} hb", self.heartbeat_count)),
-                                        )
-                                    })
-                                    .when_some(self.notice.clone(), |h, note| {
-                                        h.child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .text_color(p.quiet_ink)
-                                                .child(note),
-                                        )
-                                    }),
-                            )
-                            .child(div().flex_1())
-                            .child(
-                                div()
-                                    .id("ctx-ring-btn")
-                                    .h(px(22.))
-                                    .px(px(7.))
-                                    .rounded(px(11.))
-                                    .border_1()
-                                    .border_color(if self.open_popup == OpenPopup::ContextCard {
-                                        p.working
-                                    } else {
-                                        p.composer_edge
-                                    })
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .hover(|d| d.bg(p.sidebar_row_hover))
-                                    .text_size(px(10.5))
-                                    .text_color(p.quiet_ink)
-                                    .child(ctx_pct)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.open_popup =
-                                            if this.open_popup == OpenPopup::ContextCard {
-                                                OpenPopup::None
-                                            } else {
-                                                OpenPopup::ContextCard
-                                            };
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("attach-btn")
-                                    .size(px(22.))
-                                    .rounded(px(6.))
-                                    .bg(p.composer_attach_fill)
-                                    .hover(|d| d.bg(p.sidebar_row_selected))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child(Icon::new(IconName::Plus).size(px(12.)).text_color(p.quiet_ink))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.notice = Some("Paste or drop images in composer".into());
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                h_flex()
-                                    .id("model-chip-btn")
-                                    .h(px(22.))
-                                    .px(px(8.))
-                                    .gap(px(5.))
-                                    .rounded(px(6.))
-                                    .border_1()
-                                    .border_color(if self.open_popup == OpenPopup::ModelMenu {
-                                        p.working
-                                    } else {
-                                        p.composer_edge
-                                    })
-                                    .items_center()
-                                    .cursor_pointer()
-                                    .hover(|d| d.bg(p.sidebar_row_hover))
-                                    .child(
-                                        div()
-                                            .text_size(px(11.5))
-                                            .text_color(p.quiet_ink)
-                                            .child(model_chip_label),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ChevronDown)
-                                            .size(px(11.))
-                                            .text_color(p.quiet_ink),
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.open_popup =
-                                            if this.open_popup == OpenPopup::ModelMenu {
-                                                OpenPopup::None
-                                            } else {
-                                                OpenPopup::ModelMenu
-                                            };
-                                        cx.notify();
-                                    })),
-                            )
-                            .when(self.is_streaming, |h| {
-                                h.child(
-                                    div()
-                                        .id("steer-chip")
-                                        .h(px(22.))
-                                        .px(px(8.))
-                                        .rounded(px(6.))
-                                        .border_1()
-                                        .border_color(p.composer_edge)
-                                        .flex()
-                                        .items_center()
-                                        .cursor_pointer()
-                                        .hover(|d| d.bg(p.sidebar_row_hover))
-                                        .text_size(px(11.))
-                                        .text_color(p.ink)
-                                        .child("Steer")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.send_current_prompt(true, window, cx);
-                                        })),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .id("send-stop-circle")
-                                    .size(px(25.))
-                                    .rounded_full()
-                                    .bg(if self.is_streaming {
-                                        p.danger
-                                    } else {
-                                        p.composer_send_fill
-                                    })
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child(if self.is_streaming {
-                                        div()
-                                            .size(px(8.))
-                                            .rounded(px(1.5))
-                                            .bg(rgb(0xffffff))
-                                            .into_any_element()
-                                    } else {
-                                        Icon::new(IconName::ArrowUp)
-                                            .size(px(13.))
-                                            .text_color(p.composer_send_mark)
-                                            .into_any_element()
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        if this.is_streaming {
-                                            if let Some(sid) = this.active_session_id.clone() {
-                                                let _ = this
-                                                    .bridge
-                                                    .tx
-                                                    .send(DaemonCmd::Abort { session: sid });
-                                            }
-                                        } else {
-                                            this.send_current_prompt(false, window, cx);
-                                        }
-                                    })),
-                            ),
-                    ),
-            )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.composer.update(cx, |input, cx| {
+                            input.set_value(format!("/{cmd_name} "), window, cx);
+                        });
+                        cx.notify();
+                    })),
+            );
+        }
+
+        Some(list.into_any_element())
     }
 
     fn render_right_column(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1752,9 +1918,206 @@ impl PaApp {
         } else {
             px(24.)
         };
+        let left_offset = if self.settings.sidebar_open {
+            px(262.)
+        } else {
+            px(62.)
+        };
 
         match &self.open_popup {
             OpenPopup::None => self.render_slash_overlay(cx),
+            OpenPopup::QueuePanel => {
+                let mut col = v_flex().gap_2();
+                if !self.queued_steer.is_empty() {
+                    col = col.child(
+                        div()
+                            .text_size(px(10.5))
+                            .font_semibold()
+                            .text_color(p.quiet_ink)
+                            .child("STEERING (NEXT STEP)"),
+                    );
+                    for (idx, txt) in self.queued_steer.iter().enumerate() {
+                        let exp = txt.clone();
+                        col = col.child(
+                            h_flex()
+                                .id(("q-steer", idx))
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.))
+                                .bg(p.sidebar_group_surface)
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .text_color(p.ink)
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(txt.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id(("q-steer-del", idx))
+                                        .size(px(20.))
+                                        .rounded(px(5.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(p.danger_surface))
+                                        .child(Icon::new(IconName::Close).size(px(11.)).text_color(p.quiet_ink))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(sid) = this.active_session_id.clone() {
+                                                let _ = this.bridge.tx.send(DaemonCmd::MutateQueue {
+                                                    session: sid,
+                                                    lane: "steering".into(),
+                                                    slot: idx,
+                                                    expected: exp.clone(),
+                                                    action: "delete".into(),
+                                                });
+                                            }
+                                        })),
+                                ),
+                        );
+                    }
+                }
+                if !self.queued_follow_up.is_empty() {
+                    col = col.child(
+                        div()
+                            .text_size(px(10.5))
+                            .font_semibold()
+                            .text_color(p.quiet_ink)
+                            .child("FOLLOW-UP (AFTER TURN)"),
+                    );
+                    for (idx, txt) in self.queued_follow_up.iter().enumerate() {
+                        let exp_p = txt.clone();
+                        let exp_d = txt.clone();
+                        col = col.child(
+                            h_flex()
+                                .id(("q-fu", idx))
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.))
+                                .bg(p.sidebar_group_surface)
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .text_color(p.ink)
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(txt.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id(("q-fu-prom", idx))
+                                        .size(px(20.))
+                                        .rounded(px(5.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(p.sidebar_row_hover))
+                                        .child(Icon::new(IconName::ArrowUp).size(px(11.)).text_color(p.working))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(sid) = this.active_session_id.clone() {
+                                                let _ = this.bridge.tx.send(DaemonCmd::MutateQueue {
+                                                    session: sid,
+                                                    lane: "followUp".into(),
+                                                    slot: idx,
+                                                    expected: exp_p.clone(),
+                                                    action: "promote".into(),
+                                                });
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id(("q-fu-del", idx))
+                                        .size(px(20.))
+                                        .rounded(px(5.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(p.danger_surface))
+                                        .child(Icon::new(IconName::Close).size(px(11.)).text_color(p.quiet_ink))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(sid) = this.active_session_id.clone() {
+                                                let _ = this.bridge.tx.send(DaemonCmd::MutateQueue {
+                                                    session: sid,
+                                                    lane: "followUp".into(),
+                                                    slot: idx,
+                                                    expected: exp_d.clone(),
+                                                    action: "delete".into(),
+                                                });
+                                            }
+                                        })),
+                                ),
+                        );
+                    }
+                }
+
+                Some(
+                    v_flex()
+                        .id("floating-queue-panel")
+                        .absolute()
+                        .bottom(px(112.))
+                        .left(left_offset)
+                        .w(px(360.))
+                        .p_3()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(p.panel_edge)
+                        .bg(p.panel_surface)
+                        .shadow_lg()
+                        .gap_2()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .id("queue-scroll")
+                                .max_h(px(240.))
+                                .overflow_y_scrollbar()
+                                .child(col),
+                        )
+                        .child(div().h(px(1.)).w_full().bg(p.panel_edge))
+                        .child(
+                            h_flex()
+                                .id("queue-clear-all")
+                                .h(px(26.))
+                                .rounded(px(6.))
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .hover(|d| d.bg(p.danger_surface))
+                                .text_xs()
+                                .text_color(p.danger)
+                                .child("Clear all queued")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(sid) = this.active_session_id.clone() {
+                                        let _ = this
+                                            .bridge
+                                            .tx
+                                            .send(DaemonCmd::ClearQueue { session: sid });
+                                    }
+                                    this.open_popup = OpenPopup::None;
+                                    cx.notify();
+                                })),
+                        )
+                        .into_any_element(),
+                )
+            }
             OpenPopup::ModelMenu => {
                 let cur_model_id = self
                     .active_session()
@@ -1884,7 +2247,7 @@ impl PaApp {
                     v_flex()
                         .id("floating-model-menu")
                         .absolute()
-                        .bottom(px(108.))
+                        .bottom(px(112.))
                         .right(right_offset)
                         .w(px(360.))
                         .p_3()
@@ -1925,7 +2288,7 @@ impl PaApp {
                 div()
                     .id("floating-ctx-card")
                     .absolute()
-                    .bottom(px(108.))
+                    .bottom(px(112.))
                     .right(right_offset)
                     .w(px(236.))
                     .p_3()
@@ -2156,12 +2519,12 @@ impl PaApp {
                 .text_color(color)
                 .into_any_element(),
             (_, CardVariant::AgentMessage) => {
-                Icon::new(IconName::Bot).xsmall().text_color(color).into_any_element()
+                Icon::new(IconName::Bot).size(px(14.)).text_color(color).into_any_element()
             }
             (_, CardVariant::ProviderRetry) => {
-                Icon::new(IconName::Loader).xsmall().text_color(color).into_any_element()
+                Icon::new(IconName::Loader).size(px(14.)).text_color(color).into_any_element()
             }
-            _ => Icon::new(IconName::Inbox).xsmall().text_color(color).into_any_element(),
+            _ => Icon::new(IconName::Inbox).size(px(14.)).text_color(color).into_any_element(),
         }
     }
 
@@ -2244,9 +2607,18 @@ impl PaApp {
                             .items_center()
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.toggle_item(id, cx);
                             }))
-                            .child(self.render_card_icon(item, icon_color))
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(self.render_card_icon(item, icon_color)),
+                            )
                             .when(!item.verb.is_empty(), |row| {
                                 row.child(
                                     div()
@@ -2270,11 +2642,15 @@ impl PaApp {
                             .when(!item.meta.is_empty(), |row| {
                                 row.child(
                                     div()
-                                        .px_2()
+                                        .h(px(18.))
+                                        .px(px(7.))
                                         .rounded(px(9.))
                                         .border_1()
                                         .border_color(p.transcript_cell_edge)
-                                        .text_xs()
+                                        .flex()
+                                        .items_center()
+                                        .text_size(px(11.))
+                                        .line_height(px(12.))
                                         .text_color(if item.failed { p.danger } else { p.quiet_ink })
                                         .child(item.meta.clone()),
                                 )
@@ -2285,9 +2661,11 @@ impl PaApp {
                                     row.child(
                                         div()
                                             .id(("copy-btn", id))
-                                            .px_2()
-                                            .py_0p5()
+                                            .h(px(20.))
+                                            .px(px(7.))
                                             .rounded(px(5.))
+                                            .flex()
+                                            .items_center()
                                             .cursor_pointer()
                                             .hover(|d| d.bg(p.sidebar_row_hover))
                                             .text_size(px(11.))
@@ -2306,7 +2684,7 @@ impl PaApp {
                                 } else {
                                     IconName::ChevronRight
                                 })
-                                .xsmall()
+                                .size(px(12.))
                                 .text_color(p.quiet_ink),
                             ),
                     )
@@ -2344,6 +2722,28 @@ impl Render for PaApp {
             .size_full()
             .bg(p.window_surface)
             .text_color(p.ink)
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                if this.dragging_composer {
+                    if ev.pressed_button != Some(MouseButton::Left) {
+                        this.dragging_composer = false;
+                        cx.notify();
+                        return;
+                    }
+                    let dy = this.drag_start_y - ev.position.y.as_f32();
+                    let next = (this.drag_start_height + dy).clamp(44.0, 320.0);
+                    this.composer_height = Some(next);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.dragging_composer {
+                        this.dragging_composer = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .on_click(cx.listener(|this, _, _, cx| {
                 if this.open_popup != OpenPopup::None {
                     this.open_popup = OpenPopup::None;
@@ -2396,6 +2796,7 @@ impl Render for PaApp {
                             .child(self.render_sidebar(window, cx))
                             .child(
                                 v_flex()
+                                    .relative()
                                     .flex_1()
                                     .h_full()
                                     .min_w_0()
@@ -2406,21 +2807,64 @@ impl Render for PaApp {
                                     .children(self.render_find_bar(window, cx))
                                     .child(
                                         div()
-                                            .id("transcript-scroll")
+                                            .relative()
                                             .flex_1()
                                             .w_full()
-                                            .track_scroll(&self.scroll_handle)
-                                            .overflow_y_scrollbar()
-                                            .px_6()
-                                            .py_4()
+                                            .min_h_0()
                                             .child(
-                                                v_flex()
-                                                    .w_full()
-                                                    .max_w(px(860.))
-                                                    .mx_auto()
-                                                    .gap_3()
-                                                    .children(rendered_items),
-                                            ),
+                                                div()
+                                                    .id("transcript-scroll")
+                                                    .size_full()
+                                                    .track_scroll(&self.scroll_handle)
+                                                    .overflow_y_scrollbar()
+                                                    .px_6()
+                                                    .py_4()
+                                                    .child(
+                                                        v_flex()
+                                                            .w_full()
+                                                            .max_w(px(860.))
+                                                            .mx_auto()
+                                                            .gap_3()
+                                                            .children(rendered_items),
+                                                    ),
+                                            )
+                                            // Floating centered Jump-to-Bottom button when scrolled up
+                                            .when(self.scrolled_up, |wrap| {
+                                                wrap.child(
+                                                    h_flex()
+                                                        .absolute()
+                                                        .left_0()
+                                                        .right_0()
+                                                        .bottom(px(12.))
+                                                        .justify_center()
+                                                        .child(
+                                                            div()
+                                                                .id("jump-to-bottom-btn")
+                                                                .size(px(30.))
+                                                                .rounded_full()
+                                                                .border_1()
+                                                                .border_color(p.panel_edge)
+                                                                .bg(p.panel_surface)
+                                                                .shadow_md()
+                                                                .flex()
+                                                                .items_center()
+                                                                .justify_center()
+                                                                .cursor_pointer()
+                                                                .hover(|d| d.bg(p.sidebar_row_hover))
+                                                                .child(
+                                                                    Icon::new(IconName::ChevronDown)
+                                                                        .size(px(14.))
+                                                                        .text_color(p.ink),
+                                                                )
+                                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                                    cx.stop_propagation();
+                                                                    this.scroll_handle.scroll_to_bottom();
+                                                                    this.scrolled_up = false;
+                                                                    cx.notify();
+                                                                })),
+                                                        ),
+                                                )
+                                            }),
                                     )
                                     .child(self.render_composer_band(window, cx)),
                             )
