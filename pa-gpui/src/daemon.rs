@@ -30,6 +30,7 @@ pub enum DaemonEvent {
     Models(Vec<ModelEntry>),
     Stats { session: String, stats: SessionStats },
     Queue { session: String, steer: Vec<String>, follow_up: Vec<String> },
+    Activity { session: String, subagents: usize, shells: usize, heartbeats: usize },
     Notice(String),
     LiveFrame(Value),
     Error(String),
@@ -79,6 +80,17 @@ fn load_session_details(client: &Client, sid: &str, ev_tx: &Sender<DaemonEvent>)
             follow_up,
         });
     }
+    let subagents = pa_client::list_roster(client)
+        .map(|roster| pa_client::running_subagents(&roster, sid, ""))
+        .unwrap_or(0);
+    let shells = pa_client::running_shells(client, sid).unwrap_or(0);
+    let heartbeats = pa_client::scoped_heartbeat_count(client, sid, "").unwrap_or(0);
+    let _ = ev_tx.send(DaemonEvent::Activity {
+        session: sid.to_string(),
+        subagents,
+        shells,
+        heartbeats,
+    });
 }
 
 fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {

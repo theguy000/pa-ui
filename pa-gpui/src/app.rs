@@ -1,4 +1,5 @@
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
+use crate::settings::AppSettings;
 use crate::transcript::{
     append_text_delta, append_thinking_delta, build_items, finish_tool_call, format_expanded_body,
     settle_all, start_tool_call, CardVariant, ItemKind, TranscriptItem,
@@ -31,10 +32,15 @@ pub struct PaApp {
     renaming_path: Option<String>,
     items: Vec<TranscriptItem>,
     is_streaming: bool,
-    sidebar_open: bool,
-    dark_mode: bool,
+    settings: AppSettings,
+    subagent_count: usize,
+    shell_count: usize,
+    heartbeat_count: usize,
+    find_open: bool,
+    find_index: usize,
     scroll_handle: ScrollHandle,
     search_input: Entity<InputState>,
+    find_input: Entity<InputState>,
     rename_input: Entity<InputState>,
     composer: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -42,9 +48,10 @@ pub struct PaApp {
 }
 
 impl PaApp {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(settings: AppSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let bridge = DaemonBridge::spawn();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter sessions…"));
+        let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in transcript…"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
         let composer = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Message Prime Agent… (/ for commands)")
@@ -68,6 +75,19 @@ impl PaApp {
         let sub_search = cx.subscribe_in(&search_input, window, |_this, _, ev: &InputEvent, _, cx| {
             if matches!(ev, InputEvent::Change) {
                 cx.notify();
+            }
+        });
+
+        let sub_find = cx.subscribe_in(&find_input, window, |this, _, ev: &InputEvent, _, cx| {
+            match ev {
+                InputEvent::Change => {
+                    this.find_index = 0;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => {
+                    this.step_find(1, cx);
+                }
+                _ => {}
             }
         });
 
@@ -110,13 +130,18 @@ impl PaApp {
             renaming_path: None,
             items: Vec::new(),
             is_streaming: false,
-            sidebar_open: true,
-            dark_mode: true,
+            settings,
+            subagent_count: 0,
+            shell_count: 0,
+            heartbeat_count: 0,
+            find_open: false,
+            find_index: 0,
             scroll_handle: ScrollHandle::new(),
             search_input,
+            find_input,
             rename_input,
             composer,
-            _subscriptions: vec![sub_composer, sub_search, sub_rename],
+            _subscriptions: vec![sub_composer, sub_search, sub_find, sub_rename],
             _poll_task: poll_task,
         }
     }
@@ -186,6 +211,18 @@ impl PaApp {
                     if self.active_session_id.as_deref() == Some(session.as_str()) {
                         self.queued_steer = steer;
                         self.queued_follow_up = follow_up;
+                    }
+                }
+                DaemonEvent::Activity {
+                    session,
+                    subagents,
+                    shells,
+                    heartbeats,
+                } => {
+                    if self.active_session_id.as_deref() == Some(session.as_str()) {
+                        self.subagent_count = subagents;
+                        self.shell_count = shells;
+                        self.heartbeat_count = heartbeats;
                     }
                 }
                 DaemonEvent::Notice(msg) => {
@@ -319,6 +356,7 @@ impl PaApp {
             body_md: Some(md),
             raw_body: text.clone(),
             output: None,
+            images: Vec::new(),
             expanded: true,
             active: false,
             failed: false,
@@ -387,6 +425,91 @@ impl PaApp {
         self.sessions.iter().find(|s| session_key(s) == sid)
     }
 
+    fn find_matches(&self, cx: &Context<Self>) -> Vec<usize> {
+        let q = self.find_input.read(cx).value().trim().to_ascii_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        self.items
+            .iter()
+            .filter(|it| {
+                it.raw_body.to_ascii_lowercase().contains(&q)
+                    || it.title.to_ascii_lowercase().contains(&q)
+                    || it.output
+                        .as_deref()
+                        .is_some_and(|o| o.to_ascii_lowercase().contains(&q))
+            })
+            .map(|it| it.id)
+            .collect()
+    }
+
+    fn step_find(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let matches = self.find_matches(cx);
+        if matches.is_empty() {
+            self.find_index = 0;
+            return;
+        }
+        let len = matches.len() as isize;
+        self.find_index = ((self.find_index as isize + delta).rem_euclid(len)) as usize;
+        cx.notify();
+    }
+
+    fn render_find_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.find_open {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let matches = self.find_matches(cx);
+        let count_label = if matches.is_empty() {
+            "0 matches".to_string()
+        } else {
+            format!("{}/{}", (self.find_index % matches.len()) + 1, matches.len())
+        };
+        Some(
+            h_flex()
+                .w_full()
+                .px_6()
+                .py_1p5()
+                .border_b_1()
+                .border_color(theme.border)
+                .bg(theme.secondary.opacity(0.5))
+                .gap_2()
+                .items_center()
+                .child(div().w(px(280.)).child(Input::new(&self.find_input).xsmall()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(count_label),
+                )
+                .child(
+                    Button::new("find-prev")
+                        .ghost()
+                        .xsmall()
+                        .label("Prev")
+                        .on_click(cx.listener(|this, _, _, cx| this.step_find(-1, cx))),
+                )
+                .child(
+                    Button::new("find-next")
+                        .ghost()
+                        .xsmall()
+                        .label("Next")
+                        .on_click(cx.listener(|this, _, _, cx| this.step_find(1, cx))),
+                )
+                .child(
+                    Button::new("find-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Close)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.find_open = false;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let active_title = self
@@ -430,13 +553,14 @@ impl PaApp {
                             Button::new("toggle-sidebar")
                                 .ghost()
                                 .xsmall()
-                                .icon(if self.sidebar_open {
+                                .icon(if self.settings.sidebar_open {
                                     IconName::PanelLeftClose
                                 } else {
                                     IconName::PanelLeftOpen
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sidebar_open = !this.sidebar_open;
+                                    this.settings.sidebar_open = !this.settings.sidebar_open;
+                                    this.settings.save();
                                     cx.notify();
                                 })),
                         )
@@ -456,6 +580,42 @@ impl PaApp {
                         .gap_2()
                         .items_center()
                         .pr_2()
+                        .when(self.subagent_count > 0, |h| {
+                            h.child(
+                                div()
+                                    .px_2()
+                                    .rounded(px(9.))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("{} subagents", self.subagent_count)),
+                            )
+                        })
+                        .when(self.shell_count > 0, |h| {
+                            h.child(
+                                div()
+                                    .px_2()
+                                    .rounded(px(9.))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("{} shells", self.shell_count)),
+                            )
+                        })
+                        .when(self.heartbeat_count > 0, |h| {
+                            h.child(
+                                div()
+                                    .px_2()
+                                    .rounded(px(9.))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("{} hb", self.heartbeat_count)),
+                            )
+                        })
                         .when(!context_label.is_empty(), |h| {
                             h.child(
                                 div()
@@ -464,6 +624,16 @@ impl PaApp {
                                     .child(context_label),
                             )
                         })
+                        .child(
+                            Button::new("toggle-find")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Search)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.find_open = !this.find_open;
+                                    cx.notify();
+                                })),
+                        )
                         .when(self.active_session_id.is_some(), |h| {
                             h.child(
                                 Button::new("export-html")
@@ -484,15 +654,16 @@ impl PaApp {
                             Button::new("toggle-theme")
                                 .ghost()
                                 .xsmall()
-                                .icon(if self.dark_mode {
+                                .icon(if self.settings.dark_mode {
                                     IconName::Sun
                                 } else {
                                     IconName::Moon
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dark_mode = !this.dark_mode;
+                                    this.settings.dark_mode = !this.settings.dark_mode;
+                                    this.settings.save();
                                     Theme::change(
-                                        if this.dark_mode {
+                                        if this.settings.dark_mode {
                                             ThemeMode::Dark
                                         } else {
                                             ThemeMode::Light
@@ -1046,17 +1217,30 @@ impl PaApp {
     fn render_item(&self, item: &TranscriptItem, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         match item.kind {
-            ItemKind::User => div()
+            ItemKind::User => v_flex()
                 .w_full()
                 .rounded(px(10.))
                 .bg(theme.secondary)
                 .px_4()
                 .py_3()
+                .gap_2()
                 .children(
                     item.body_md
                         .as_ref()
                         .map(|md| TextView::new(md).selectable(true)),
                 )
+                .when(!item.images.is_empty(), |col| {
+                    col.child(
+                        h_flex().gap_2().flex_wrap().children(
+                            item.images.iter().cloned().map(|image| {
+                                img(image)
+                                    .max_w(px(360.))
+                                    .max_h(px(220.))
+                                    .rounded(px(6.))
+                            }),
+                        ),
+                    )
+                })
                 .into_any_element(),
             ItemKind::Assistant => div()
                 .w_full()
@@ -1221,18 +1405,45 @@ impl Render for PaApp {
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                let key = ev.keystroke.key.as_str();
+                let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
+                if ctrl && key == "b" {
+                    this.settings.sidebar_open = !this.settings.sidebar_open;
+                    this.settings.save();
+                    cx.notify();
+                } else if ctrl && key == "n" {
+                    let _ = this.bridge.tx.send(DaemonCmd::CreateSession);
+                } else if ctrl && key == "f" {
+                    this.find_open = !this.find_open;
+                    cx.notify();
+                } else if key == "escape" {
+                    if this.find_open {
+                        this.find_open = false;
+                        cx.notify();
+                    } else if this.renaming_path.is_some() {
+                        this.renaming_path = None;
+                        cx.notify();
+                    } else if this.is_streaming {
+                        if let Some(sid) = this.active_session_id.clone() {
+                            let _ = this.bridge.tx.send(DaemonCmd::Abort { session: sid });
+                        }
+                    }
+                }
+            }))
             .child(self.render_titlebar(cx))
             .child(
                 h_flex()
                     .flex_1()
                     .w_full()
                     .min_h_0()
-                    .when(self.sidebar_open, |row| row.child(self.render_sidebar(cx)))
+                    .when(self.settings.sidebar_open, |row| row.child(self.render_sidebar(cx)))
                     .child(
                         v_flex()
                             .flex_1()
                             .h_full()
                             .min_w_0()
+                            .children(self.render_find_bar(cx))
                             .child(
                                 div()
                                     .id("transcript-scroll")

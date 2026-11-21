@@ -1,7 +1,9 @@
 use gpui_kit::component::text::TextViewState;
 use gpui_kit::*;
 use serde_json::Value;
+use base64::Engine as _;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
@@ -37,6 +39,7 @@ pub struct TranscriptItem {
     pub body_md: Option<Entity<TextViewState>>,
     pub raw_body: String,
     pub output: Option<String>,
+    pub images: Vec<Arc<Image>>,
     pub expanded: bool,
     pub active: bool,
     pub failed: bool,
@@ -68,10 +71,15 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
         match role {
             "user" => {
                 let text = extract_text(msg);
-                if text.trim().is_empty() {
+                let images = extract_images(msg);
+                if text.trim().is_empty() && images.is_empty() {
                     continue;
                 }
-                let md = cx.new(|cx| TextViewState::markdown(&text, cx));
+                let md = if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(cx.new(|cx| TextViewState::markdown(&text, cx)))
+                };
                 items.push(TranscriptItem {
                     id: next_id,
                     call_id: None,
@@ -80,9 +88,10 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                     verb: SharedString::default(),
                     title: "You".into(),
                     meta: SharedString::default(),
-                    body_md: Some(md),
+                    body_md: md,
                     raw_body: text,
                     output: None,
+                    images,
                     expanded: true,
                     active: false,
                     failed: false,
@@ -103,6 +112,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                             body_md: None,
                             raw_body: err.to_string(),
                             output: None,
+                    images: Vec::new(),
                             expanded: true,
                             active: false,
                             failed: true,
@@ -134,6 +144,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                                     body_md: None,
                                     raw_body: t.to_string(),
                                     output: None,
+                    images: Vec::new(),
                                     expanded: false,
                                     active: false,
                                     failed: false,
@@ -161,6 +172,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                                     body_md: Some(md),
                                     raw_body: t.to_string(),
                                     output: None,
+                    images: Vec::new(),
                                     expanded: true,
                                     active: false,
                                     failed: false,
@@ -192,6 +204,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                                     body_md: None,
                                     raw_body: code,
                                     output,
+                                    images: Vec::new(),
                                     expanded: false,
                                     active: false,
                                     failed,
@@ -228,6 +241,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                     body_md: None,
                     raw_body: summary.to_string(),
                     output: None,
+                    images: Vec::new(),
                     expanded: false,
                     active: false,
                     failed: false,
@@ -253,6 +267,7 @@ pub fn build_items(messages: &[Value], cx: &mut App) -> Vec<TranscriptItem> {
                     body_md: None,
                     raw_body: text,
                     output: None,
+                    images: Vec::new(),
                     expanded: false,
                     active: false,
                     failed,
@@ -292,6 +307,7 @@ pub fn append_text_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &mut 
         body_md: Some(md),
         raw_body: delta.to_string(),
         output: None,
+                    images: Vec::new(),
         expanded: true,
         active: true,
         failed: false,
@@ -325,6 +341,7 @@ pub fn append_thinking_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &
         body_md: None,
         raw_body: delta.to_string(),
         output: None,
+                    images: Vec::new(),
         expanded: false,
         active: true,
         failed: false,
@@ -354,6 +371,7 @@ pub fn start_tool_call(items: &mut Vec<TranscriptItem>, call_id: String, name: &
         body_md: None,
         raw_body: code,
         output: None,
+                    images: Vec::new(),
         expanded: false,
         active: true,
         failed: false,
@@ -512,4 +530,79 @@ fn extract_text(msg: &Value) -> String {
             .join("\n");
     }
     String::new()
+}
+
+fn extract_images(msg: &Value) -> Vec<Arc<Image>> {
+    let mut out = Vec::new();
+    let Some(arr) = msg.get("content").and_then(Value::as_array) else {
+        return out;
+    };
+    for part in arr {
+        if part.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        let mime = part
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png");
+        let fmt = match mime {
+            "image/jpeg" | "image/jpg" => ImageFormat::Jpeg,
+            "image/webp" => ImageFormat::Webp,
+            "image/gif" => ImageFormat::Gif,
+            _ => ImageFormat::Png,
+        };
+        if let Some(b64) = part.get("data").and_then(Value::as_str) {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                out.push(Arc::new(Image::from_bytes(fmt, bytes)));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn format_tool_call_classifies_python_and_bash() {
+        let (v_py, verb_py, sum_py, _) =
+            format_tool_call("python_repl", &json!({"code": "# comment\nprint(42)"}));
+        assert!(v_py == CardVariant::Python);
+        assert_eq!(verb_py, "Python");
+        assert_eq!(sum_py, "print(42)");
+
+        let (v_sh, verb_sh, sum_sh, _) =
+            format_tool_call("bash", &json!({"command": "cargo test -p pa-gpui"}));
+        assert!(v_sh == CardVariant::Bash);
+        assert_eq!(verb_sh, "Bash");
+        assert_eq!(sum_sh, "cargo test -p pa-gpui");
+    }
+
+    #[::core::prelude::v1::test]
+    fn classify_custom_identifies_daemon_cards() {
+        let (v_bd, title_bd, meta_bd, failed_bd) =
+            classify_custom("bash_done", "", &json!({"exitCode": 1}));
+        assert!(v_bd == CardVariant::BashDone);
+        assert_eq!(title_bd, "Background shell finished");
+        assert_eq!(meta_bd, "exit 1");
+        assert!(failed_bd);
+
+        let (v_pr, title_pr, meta_pr, failed_pr) =
+            classify_custom("provider_retry_outcome", "", &json!({"success": true}));
+        assert!(v_pr == CardVariant::ProviderRetry);
+        assert_eq!(title_pr, "Provider retry");
+        assert_eq!(meta_pr, "recovered");
+        assert!(!failed_pr);
+    }
+
+    #[::core::prelude::v1::test]
+    fn extract_text_handles_string_and_array() {
+        assert_eq!(extract_text(&json!({"content": "hello"})), "hello");
+        assert_eq!(
+            extract_text(&json!({"content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]})),
+            "a\nb"
+        );
+    }
 }
