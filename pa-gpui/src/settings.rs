@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +11,7 @@ pub struct AppSettings {
     pub active_closed: bool,
     pub idle_closed: bool,
     pub done_closed: bool,
+    pub model_thinking: BTreeMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -21,6 +23,7 @@ impl Default for AppSettings {
             active_closed: false,
             idle_closed: false,
             done_closed: false,
+            model_thinking: BTreeMap::new(),
         }
     }
 }
@@ -53,5 +56,22 @@ impl AppSettings {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path, json);
         }
+    }
+
+    pub fn model_thinking_for(&self, provider: &str, model_id: &str) -> Option<&str> {
+        let key = format!("{provider}/{model_id}");
+        self.model_thinking.get(&key).map(String::as_str)
+    }
+
+    pub fn set_model_thinking(&mut self, provider: &str, model_id: &str, level: &str) {
+        if provider.is_empty() || model_id.is_empty() || level.is_empty() {
+            return;
+        }
+        let key = format!("{provider}/{model_id}");
+        if self.model_thinking.get(&key).map(String::as_str) == Some(level) {
+            return;
+        }
+        self.model_thinking.insert(key, level.to_string());
+        self.save();
     }
 }

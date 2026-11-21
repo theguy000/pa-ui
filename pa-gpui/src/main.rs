@@ -60,9 +60,12 @@ mod win_drag {
     use std::cell::Cell;
     use std::ffi::c_void;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_MOVE, WM_NCDESTROY, WM_TIMER,
+        LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
+        WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_MOVE, WM_NCDESTROY, WM_SETICON,
+        WM_TIMER,
     };
 
     // Matches `SIZE_MOVE_LOOP_TIMER_ID` in `gpui-pre-windows/src/events.rs`.
@@ -122,6 +125,34 @@ mod win_drag {
             return;
         };
         let hwnd = HWND(win32.hwnd.get() as *mut c_void);
+        // SAFETY: `GetModuleHandleW(None)` retrieves the current executable's HMODULE,
+        // `MAKEINTRESOURCEW(1)` references icon resource ID 1 embedded by `build.rs`, and
+        // `SendMessageW(WM_SETICON)` sets the HWND's small and large icons for taskbar and Alt-Tab.
+        unsafe {
+            if let Ok(hmod) = GetModuleHandleW(None) {
+                let res_id = windows::core::PCWSTR(1usize as *const u16);
+                if let Ok(big) =
+                    LoadImageW(Some(hmod.into()), res_id, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED)
+                {
+                    let _ = SendMessageW(
+                        hwnd,
+                        WM_SETICON,
+                        Some(WPARAM(ICON_BIG as usize)),
+                        Some(LPARAM(big.0 as isize)),
+                    );
+                }
+                if let Ok(small) =
+                    LoadImageW(Some(hmod.into()), res_id, IMAGE_ICON, 16, 16, LR_SHARED)
+                {
+                    let _ = SendMessageW(
+                        hwnd,
+                        WM_SETICON,
+                        Some(WPARAM(ICON_SMALL as usize)),
+                        Some(LPARAM(small.0 as isize)),
+                    );
+                }
+            }
+        }
         let state_ptr = Box::into_raw(Box::new(DragThrottleState::default()));
         // SAFETY: `hwnd` is a live Win32 window created on the UI thread, `drag_subclass_proc`
         // matches `SUBCLASSPROC`, and `state_ptr` is uniquely owned by this subclass until freed
