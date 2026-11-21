@@ -21,7 +21,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::{ModelEntry, SessionRow, SessionStats};
 use serde_json::Value;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SidebarGroup {
@@ -93,8 +93,6 @@ pub struct PaApp {
     drag_start_y: f32,
     drag_start_height: f32,
     handle_hovered: bool,
-    // Jump-to-bottom tracking
-    scrolled_up: bool,
     settings: AppSettings,
     subagent_count: usize,
     shell_count: usize,
@@ -103,18 +101,18 @@ pub struct PaApp {
     find_open: bool,
     find_index: usize,
     open_popup: OpenPopup,
-    scroll_handle: ScrollHandle,
+    list_state: ListState,
     search_input: Entity<InputState>,
     find_input: Entity<InputState>,
     rename_input: Entity<InputState>,
     composer: Entity<TextareaState>,
     _subscriptions: Vec<Subscription>,
-    _poll_task: Task<()>,
+    _daemon_task: Task<()>,
 }
 
 impl PaApp {
     pub fn new(settings: AppSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let bridge = DaemonBridge::spawn();
+        let (bridge, ev_rx) = DaemonBridge::spawn();
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
         let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in transcript…"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
@@ -180,19 +178,30 @@ impl PaApp {
             }
         });
 
-        let poll_task = cx.spawn(async move |weak_self, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(12))
-                .await;
-            let keep_going = weak_self
-                .update(cx, |this, cx| {
-                    this.tick(cx);
-                })
-                .is_ok();
-            if !keep_going {
-                break;
+        let daemon_task = cx.spawn(async move |weak_self, cx| {
+            while let Ok(first) = ev_rx.recv().await {
+                let mut batch = vec![first];
+                while let Ok(ev) = ev_rx.try_recv() {
+                    batch.push(ev);
+                }
+                let keep_going = weak_self
+                    .update(cx, |this, cx| {
+                        for ev in batch {
+                            this.handle_daemon_event(ev, cx);
+                        }
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !keep_going {
+                    break;
+                }
             }
         });
+
+        // Top alignment keeps short transcripts anchored to the top of the pane while
+        // FollowMode::Tail pins overflowing and streaming transcripts to the bottom.
+        let list_state = ListState::new(0, ListAlignment::Top, px(300.));
+        list_state.set_follow_mode(FollowMode::Tail);
 
         Self {
             bridge,
@@ -217,7 +226,6 @@ impl PaApp {
             drag_start_y: 0.0,
             drag_start_height: 54.0,
             handle_hovered: false,
-            scrolled_up: false,
             settings,
             subagent_count: 0,
             shell_count: 0,
@@ -226,13 +234,13 @@ impl PaApp {
             find_open: false,
             find_index: 0,
             open_popup: OpenPopup::None,
-            scroll_handle: ScrollHandle::new(),
+            list_state,
             search_input,
             find_input,
             rename_input,
             composer,
             _subscriptions: vec![sub_composer, sub_search, sub_find, sub_rename],
-            _poll_task: poll_task,
+            _daemon_task: daemon_task,
         }
     }
 
@@ -242,19 +250,22 @@ impl PaApp {
 
     fn sync_stop_target(&mut self, cx: &Context<Self>) {
         let has_text = !self.composer.read(cx).value().trim().is_empty();
-        self.stop_target = if self.is_streaming && !has_text {
+        let next = if self.is_streaming && !has_text {
             1.0
         } else {
             0.0
         };
+        if next != self.stop_target {
+            self.stop_target = next;
+            self.last_anim_tick = Instant::now();
+        }
     }
 
-    fn tick(&mut self, cx: &mut Context<Self>) {
-        let mut changed = self.drain_daemon(cx);
-
-        // Animate Send <-> Stop morph smoothly over ~220ms
+    fn advance_stop_anim(&mut self, window: &Window) {
         let now = Instant::now();
-        let dt = now.saturating_duration_since(self.last_anim_tick).as_secs_f32();
+        let dt = now
+            .saturating_duration_since(self.last_anim_tick)
+            .as_secs_f32();
         self.last_anim_tick = now;
         if (self.stop_mix - self.stop_target).abs() > 0.002 {
             let step = (dt / 0.22).min(0.25);
@@ -263,21 +274,9 @@ impl PaApp {
             } else {
                 self.stop_mix = (self.stop_mix - step).max(self.stop_target);
             }
-            changed = true;
+            window.request_animation_frame();
         } else if self.stop_mix != self.stop_target {
             self.stop_mix = self.stop_target;
-            changed = true;
-        }
-
-        // Update Jump-to-Bottom visibility when user scrolls up/down
-        let now_scrolled_up = !self.is_near_bottom();
-        if now_scrolled_up != self.scrolled_up {
-            self.scrolled_up = now_scrolled_up;
-            changed = true;
-        }
-
-        if changed {
-            cx.notify();
         }
     }
 
@@ -289,13 +288,14 @@ impl PaApp {
         self.creating_session = true;
         self.is_streaming = false;
         self.items.clear();
+        self.list_state.reset(0);
+        self.list_state.set_follow_mode(FollowMode::Tail);
         self.stats = None;
         self.queued_steer.clear();
         self.queued_follow_up.clear();
         self.subagent_count = 0;
         self.shell_count = 0;
         self.heartbeat_count = 0;
-        self.scrolled_up = false;
         self.notice = Some("Starting new session…".into());
         self.sync_stop_target(cx);
         let focus = self.composer.read(cx).focus_handle(cx);
@@ -304,117 +304,126 @@ impl PaApp {
         cx.notify();
     }
 
-    fn is_near_bottom(&self) -> bool {
-        let max_y = self.scroll_handle.max_offset().y;
+    fn is_scrolled_up(&self) -> bool {
+        if self.items.is_empty() || self.list_state.is_following_tail() {
+            return false;
+        }
+        let max_y = self.list_state.max_offset_for_scrollbar().y;
         if max_y <= px(4.) {
-            return true;
+            return false;
         }
-        let cur_y = -self.scroll_handle.offset().y;
-        (max_y - cur_y) <= px(100.)
+        let cur_y = -self.list_state.scroll_px_offset_for_scrollbar().y;
+        (max_y - cur_y) > px(80.)
     }
 
-    fn scroll_if_sticky(&self) {
-        if self.is_near_bottom() {
-            self.scroll_handle.scroll_to_bottom();
+    fn sync_list_after_tail_update(&self, old_len: usize) {
+        let new_len = self.items.len();
+        if new_len > old_len {
+            self.list_state.splice(old_len..old_len, new_len - old_len);
+        } else if new_len > 0 {
+            self.list_state.remeasure_items(new_len - 1..new_len);
         }
     }
 
-    fn drain_daemon(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut changed = false;
-        while let Ok(ev) = self.bridge.rx.try_recv() {
-            changed = true;
-            match ev {
-                DaemonEvent::Connected => {
-                    self.status = "Connected".into();
-                }
-                DaemonEvent::Disconnected(reason) => {
-                    self.status = reason.into();
-                    self.is_streaming = false;
-                    self.creating_session = false;
-                    settle_all(&mut self.items);
-                    self.sync_stop_target(cx);
-                }
-                DaemonEvent::SessionCreated(new_sid) => {
-                    self.creating_session = false;
-                    self.active_session_id = Some(new_sid);
-                    self.is_streaming = false;
-                    self.items.clear();
-                    self.notice = None;
-                    self.sync_stop_target(cx);
-                }
-                DaemonEvent::Sessions(rows) => {
-                    self.sessions = rows;
-                    if self.active_session_id.is_none() {
-                        if let Some(first) = self.sessions.first() {
-                            self.active_session_id = Some(session_key(first));
-                        }
-                    }
-                    if let Some(sid) = self.active_session_id.as_deref() {
-                        if let Some(row) = self.sessions.iter().find(|s| session_key(s) == sid) {
-                            self.is_streaming = row.is_streaming;
-                        }
-                    }
-                    self.sync_stop_target(cx);
-                }
-                DaemonEvent::Messages { session, messages } => {
-                    let switching = self.active_session_id.as_deref() != Some(session.as_str());
-                    self.active_session_id = Some(session);
-                    self.creating_session = false;
-                    self.items = build_items(&messages, cx);
-                    if switching || self.is_near_bottom() {
-                        self.scroll_handle.scroll_to_bottom();
+    fn handle_daemon_event(&mut self, ev: DaemonEvent, cx: &mut Context<Self>) {
+        match ev {
+            DaemonEvent::Connected => {
+                self.status = "Connected".into();
+            }
+            DaemonEvent::Disconnected(reason) => {
+                self.status = reason.into();
+                self.is_streaming = false;
+                self.creating_session = false;
+                settle_all(&mut self.items);
+                self.sync_stop_target(cx);
+            }
+            DaemonEvent::SessionCreated(new_sid) => {
+                self.creating_session = false;
+                self.active_session_id = Some(new_sid);
+                self.is_streaming = false;
+                self.items.clear();
+                self.list_state.reset(0);
+                self.list_state.set_follow_mode(FollowMode::Tail);
+                self.notice = None;
+                self.sync_stop_target(cx);
+            }
+            DaemonEvent::Sessions(rows) => {
+                self.sessions = rows;
+                if self.active_session_id.is_none() {
+                    if let Some(first) = self.sessions.first() {
+                        self.active_session_id = Some(session_key(first));
                     }
                 }
-                DaemonEvent::Models(models) => {
-                    self.models = models;
-                }
-                DaemonEvent::Stats { session, stats } => {
-                    if self.active_session_id.as_deref() == Some(session.as_str()) {
-                        self.stats = Some(stats);
+                if let Some(sid) = self.active_session_id.as_deref() {
+                    if let Some(row) = self.sessions.iter().find(|s| session_key(s) == sid) {
+                        self.is_streaming = row.is_streaming;
                     }
                 }
-                DaemonEvent::Queue {
-                    session,
-                    steer,
-                    follow_up,
-                } => {
-                    if self.active_session_id.as_deref() == Some(session.as_str()) {
-                        self.queued_steer = steer;
-                        self.queued_follow_up = follow_up;
-                        if self.queued_steer.is_empty()
-                            && self.queued_follow_up.is_empty()
-                            && self.open_popup == OpenPopup::QueuePanel
-                        {
-                            self.open_popup = OpenPopup::None;
-                        }
-                    }
-                }
-                DaemonEvent::Activity {
-                    session,
-                    subagents,
-                    shells,
-                    heartbeats,
-                } => {
-                    if self.active_session_id.as_deref() == Some(session.as_str()) {
-                        self.subagent_count = subagents;
-                        self.shell_count = shells;
-                        self.heartbeat_count = heartbeats;
-                    }
-                }
-                DaemonEvent::Notice(msg) => {
-                    self.notice = Some(msg.into());
-                }
-                DaemonEvent::LiveFrame(frame) => {
-                    self.handle_live_frame(&frame, cx);
-                }
-                DaemonEvent::Error(err) => {
-                    self.creating_session = false;
-                    self.status = format!("Error: {err}").into();
-                    self.notice = Some(format!("Error: {err}").into());
+                self.sync_stop_target(cx);
+            }
+            DaemonEvent::Messages { session, messages } => {
+                let switching = self.active_session_id.as_deref() != Some(session.as_str());
+                let follow_bottom = switching || !self.is_scrolled_up();
+                let prev_anchor = self.list_state.logical_scroll_top();
+                self.active_session_id = Some(session);
+                self.creating_session = false;
+                self.items = build_items(&messages, cx);
+                self.list_state
+                    .reset_with_uniform_height(self.items.len(), px(48.));
+                if follow_bottom {
+                    self.list_state.set_follow_mode(FollowMode::Tail);
+                } else {
+                    self.list_state.scroll_to(prev_anchor);
                 }
             }
+            DaemonEvent::Models(models) => {
+                self.models = models;
+            }
+            DaemonEvent::Stats { session, stats } => {
+                if self.active_session_id.as_deref() == Some(session.as_str()) {
+                    self.stats = Some(stats);
+                }
+            }
+            DaemonEvent::Queue {
+                session,
+                steer,
+                follow_up,
+            } => {
+                if self.active_session_id.as_deref() == Some(session.as_str()) {
+                    self.queued_steer = steer;
+                    self.queued_follow_up = follow_up;
+                    if self.queued_steer.is_empty()
+                        && self.queued_follow_up.is_empty()
+                        && self.open_popup == OpenPopup::QueuePanel
+                    {
+                        self.open_popup = OpenPopup::None;
+                    }
+                }
+            }
+            DaemonEvent::Activity {
+                session,
+                subagents,
+                shells,
+                heartbeats,
+            } => {
+                if self.active_session_id.as_deref() == Some(session.as_str()) {
+                    self.subagent_count = subagents;
+                    self.shell_count = shells;
+                    self.heartbeat_count = heartbeats;
+                }
+            }
+            DaemonEvent::Notice(msg) => {
+                self.notice = Some(msg.into());
+            }
+            DaemonEvent::LiveFrame(frame) => {
+                self.handle_live_frame(&frame, cx);
+            }
+            DaemonEvent::Error(err) => {
+                self.creating_session = false;
+                self.status = format!("Error: {err}").into();
+                self.notice = Some(format!("Error: {err}").into());
+            }
         }
-        changed
     }
 
     fn handle_live_frame(&mut self, frame: &Value, cx: &mut Context<Self>) {
@@ -451,11 +460,13 @@ impl PaApp {
                     .unwrap_or_default();
                 if let Some(delta) = delta_ev.get("delta").and_then(Value::as_str) {
                     if delta_kind.starts_with("text_delta") {
+                        let old_len = self.items.len();
                         append_text_delta(&mut self.items, delta, cx);
-                        self.scroll_if_sticky();
+                        self.sync_list_after_tail_update(old_len);
                     } else if delta_kind.starts_with("thinking_delta") {
+                        let old_len = self.items.len();
                         append_thinking_delta(&mut self.items, delta, cx);
-                        self.scroll_if_sticky();
+                        self.sync_list_after_tail_update(old_len);
                     }
                 }
             }
@@ -472,8 +483,9 @@ impl PaApp {
                     .and_then(Value::as_str)
                     .unwrap_or("tool");
                 let args = event.get("args").unwrap_or(&Value::Null);
+                let old_len = self.items.len();
                 start_tool_call(&mut self.items, cid, name, args);
-                self.scroll_if_sticky();
+                self.sync_list_after_tail_update(old_len);
             }
             "tool_execution_end" => {
                 let cid = event
@@ -501,7 +513,9 @@ impl PaApp {
                         })
                     })
                     .unwrap_or_default();
-                finish_tool_call(&mut self.items, cid, out, is_err, details, cx);
+                if let Some(ix) = finish_tool_call(&mut self.items, cid, out, is_err, details, cx) {
+                    self.list_state.remeasure_items(ix..ix + 1);
+                }
             }
             "agent_end" | "turn_end" => {
                 self.is_streaming = false;
@@ -529,8 +543,8 @@ impl PaApp {
             return;
         };
 
-        // If idle, append optimistically; if busy, let daemon hold it in the queue strip/panel
         if !self.is_streaming {
+            let old_len = self.items.len();
             let next_id = self.items.last().map_or(0, |i| i.id + 1);
             let md = cx.new(|cx| TextViewState::markdown(&text, cx));
             self.items.push(TranscriptItem {
@@ -549,7 +563,8 @@ impl PaApp {
                 active: false,
                 failed: false,
             });
-            self.scroll_handle.scroll_to_bottom();
+            self.list_state.splice(old_len..old_len, 1);
+            self.list_state.set_follow_mode(FollowMode::Tail);
         }
 
         if steer {
@@ -616,12 +631,18 @@ impl PaApp {
 
     fn toggle_item(&mut self, id: usize, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
-        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+        if let Some((ix, item)) = self
+            .items
+            .iter_mut()
+            .enumerate()
+            .find(|(_, i)| i.id == id)
+        {
             item.expanded = !item.expanded;
             if item.expanded && item.body_md.is_none() && !item.raw_body.is_empty() {
                 let formatted = format_expanded_body(item);
                 item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
             }
+            self.list_state.remeasure_items(ix..ix + 1);
             cx.notify();
         }
     }
@@ -661,6 +682,13 @@ impl PaApp {
         }
         let len = matches.len() as isize;
         self.find_index = ((self.find_index as isize + delta).rem_euclid(len)) as usize;
+        if let Some(ix) = self
+            .items
+            .iter()
+            .position(|it| it.id == matches[self.find_index])
+        {
+            self.list_state.scroll_to_reveal_item(ix);
+        }
         cx.notify();
     }
 
@@ -2710,11 +2738,9 @@ impl PaApp {
 
 impl Render for PaApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.advance_stop_anim(window);
         let p = self.palette();
-        let mut rendered_items = Vec::with_capacity(self.items.len());
-        for it in &self.items {
-            rendered_items.push(self.render_item(it, cx));
-        }
+        let scrolled_up = self.is_scrolled_up();
 
         div()
             .id("pa-root")
@@ -2812,24 +2838,36 @@ impl Render for PaApp {
                                             .w_full()
                                             .min_h_0()
                                             .child(
-                                                div()
-                                                    .id("transcript-scroll")
-                                                    .size_full()
-                                                    .track_scroll(&self.scroll_handle)
-                                                    .overflow_y_scrollbar()
-                                                    .px_6()
-                                                    .py_4()
-                                                    .child(
-                                                        v_flex()
+                                                list(
+                                                    self.list_state.clone(),
+                                                    cx.processor(|this, ix, _window, cx| {
+                                                        let len = this.items.len();
+                                                        let Some(item) = this.items.get(ix) else {
+                                                            return div().into_any_element();
+                                                        };
+                                                        div()
                                                             .w_full()
-                                                            .max_w(px(860.))
-                                                            .mx_auto()
-                                                            .gap_3()
-                                                            .children(rendered_items),
-                                                    ),
+                                                            .px_6()
+                                                            .when(ix == 0, |d| d.pt_4())
+                                                            .pb(if ix + 1 == len {
+                                                                px(16.)
+                                                            } else {
+                                                                px(12.)
+                                                            })
+                                                            .child(
+                                                                div()
+                                                                    .w_full()
+                                                                    .max_w(px(860.))
+                                                                    .mx_auto()
+                                                                    .child(this.render_item(item, cx)),
+                                                            )
+                                                            .into_any_element()
+                                                    }),
+                                                )
+                                                .size_full(),
                                             )
-                                            // Floating centered Jump-to-Bottom button when scrolled up
-                                            .when(self.scrolled_up, |wrap| {
+                                            .vertical_scrollbar(&self.list_state)
+                                            .when(scrolled_up, |wrap| {
                                                 wrap.child(
                                                     h_flex()
                                                         .absolute()
@@ -2858,8 +2896,9 @@ impl Render for PaApp {
                                                                 )
                                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                                     cx.stop_propagation();
-                                                                    this.scroll_handle.scroll_to_bottom();
-                                                                    this.scrolled_up = false;
+                                                                    this.list_state.set_follow_mode(
+                                                                        FollowMode::Tail,
+                                                                    );
                                                                     cx.notify();
                                                                 })),
                                                         ),

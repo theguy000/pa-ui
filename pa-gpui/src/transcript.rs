@@ -528,38 +528,38 @@ pub fn finish_tool_call(
     is_error: bool,
     details: Option<&Value>,
     cx: &mut App,
-) {
-    if let Some(item) = items
+) -> Option<usize> {
+    let (ix, item) = items
         .iter_mut()
+        .enumerate()
         .rev()
-        .find(|i| i.kind == ItemKind::ToolCall && i.call_id.as_deref() == Some(call_id))
-    {
-        let bash = parse_bash_commands(details);
-        let dur = parse_duration_ms(details);
-        if bash.is_some() {
-            let args = serde_json::json!({"code": item.raw_body});
-            let (variant, verb, summary, _) = classify_tool_call("python_repl", &args, bash.as_ref());
-            item.variant = variant;
-            item.verb = verb.into();
-            item.title = summary.into();
-        }
-        item.active = false;
-        item.failed = is_error || output.trim_start().starts_with("Traceback");
-        item.output = if output.trim().is_empty() {
-            None
-        } else {
-            Some(output)
-        };
-        item.meta = if item.failed {
-            "failed".into()
-        } else {
-            format_duration(dur).into()
-        };
-        if item.expanded {
-            let formatted = format_expanded_body(item);
-            item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
-        }
+        .find(|(_, i)| i.kind == ItemKind::ToolCall && i.call_id.as_deref() == Some(call_id))?;
+    let bash = parse_bash_commands(details);
+    let dur = parse_duration_ms(details);
+    if bash.is_some() {
+        let args = serde_json::json!({"code": item.raw_body});
+        let (variant, verb, summary, _) = classify_tool_call("python_repl", &args, bash.as_ref());
+        item.variant = variant;
+        item.verb = verb.into();
+        item.title = summary.into();
     }
+    item.active = false;
+    item.failed = is_error || output.trim_start().starts_with("Traceback");
+    item.output = if output.trim().is_empty() {
+        None
+    } else {
+        Some(output)
+    };
+    item.meta = if item.failed {
+        "failed".into()
+    } else {
+        format_duration(dur).into()
+    };
+    if item.expanded {
+        let formatted = format_expanded_body(item);
+        item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
+    }
+    Some(ix)
 }
 
 pub fn settle_all(items: &mut [TranscriptItem]) {

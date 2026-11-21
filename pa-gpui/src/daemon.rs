@@ -1,3 +1,4 @@
+use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use pa_client::{Client, ModelEntry, SessionRow, SessionStats};
 use serde_json::{json, Value};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -46,51 +47,50 @@ pub enum DaemonEvent {
 
 pub struct DaemonBridge {
     pub tx: Sender<DaemonCmd>,
-    pub rx: Receiver<DaemonEvent>,
 }
 
 impl DaemonBridge {
-    pub fn spawn() -> Self {
+    pub fn spawn() -> (Self, AsyncReceiver<DaemonEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::channel::<DaemonCmd>();
-        let (ev_tx, ev_rx) = mpsc::channel::<DaemonEvent>();
+        let (ev_tx, ev_rx) = async_channel::unbounded::<DaemonEvent>();
 
         thread::spawn(move || run_worker_loop(cmd_rx, ev_tx));
 
-        Self { tx: cmd_tx, rx: ev_rx }
+        (Self { tx: cmd_tx }, ev_rx)
     }
 }
 
 fn load_session_details(
     client: &Client,
     sid: &str,
-    ev_tx: &Sender<DaemonEvent>,
+    ev_tx: &AsyncSender<DaemonEvent>,
     models_loaded: &mut bool,
 ) {
     match pa_client::attach_messages(client, sid) {
         Ok(messages) => {
-            let _ = ev_tx.send(DaemonEvent::Messages {
+            let _ = ev_tx.try_send(DaemonEvent::Messages {
                 session: sid.to_string(),
                 messages,
             });
         }
         Err(err) => {
-            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
         }
     }
     if !*models_loaded {
         if let Ok(models) = pa_client::model_catalog(client, sid) {
             *models_loaded = true;
-            let _ = ev_tx.send(DaemonEvent::Models(models));
+            let _ = ev_tx.try_send(DaemonEvent::Models(models));
         }
     }
     if let Ok(stats) = pa_client::session_stats(client, sid) {
-        let _ = ev_tx.send(DaemonEvent::Stats {
+        let _ = ev_tx.try_send(DaemonEvent::Stats {
             session: sid.to_string(),
             stats,
         });
     }
     if let Ok((steer, follow_up)) = pa_client::get_queue(client, sid) {
-        let _ = ev_tx.send(DaemonEvent::Queue {
+        let _ = ev_tx.try_send(DaemonEvent::Queue {
             session: sid.to_string(),
             steer,
             follow_up,
@@ -101,7 +101,7 @@ fn load_session_details(
         .unwrap_or(0);
     let shells = pa_client::running_shells(client, sid).unwrap_or(0);
     let heartbeats = pa_client::scoped_heartbeat_count(client, sid, "").unwrap_or(0);
-    let _ = ev_tx.send(DaemonEvent::Activity {
+    let _ = ev_tx.try_send(DaemonEvent::Activity {
         session: sid.to_string(),
         subagents,
         shells,
@@ -109,15 +109,15 @@ fn load_session_details(
     });
 }
 
-fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
+fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>) {
     loop {
         let client = match Client::connect() {
             Ok(c) => {
-                let _ = ev_tx.send(DaemonEvent::Connected);
+                let _ = ev_tx.try_send(DaemonEvent::Connected);
                 c
             }
             Err(err) => {
-                let _ = ev_tx.send(DaemonEvent::Disconnected(format!(
+                let _ = ev_tx.try_send(DaemonEvent::Disconnected(format!(
                     "Reconnecting… ({err})"
                 )));
                 while cmd_rx.try_recv().is_ok() {}
@@ -136,7 +136,7 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                     s.session_file.clone()
                 }
             });
-            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
             if let Some(sid) = first_id {
                 load_session_details(&client, &sid, &ev_tx, &mut models_loaded);
             }
@@ -147,10 +147,10 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                 match cmd {
                     DaemonCmd::RefreshSessions => match pa_client::list_sessions(&client) {
                         Ok(sessions) => {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                         Err(err) => {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         }
                     },
                     DaemonCmd::SelectSession(sid) => {
@@ -158,47 +158,47 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                     }
                     DaemonCmd::CreateSession => match pa_client::create_session(&client) {
                         Ok(new_sid) => {
-                            let _ = ev_tx.send(DaemonEvent::SessionCreated(new_sid.clone()));
-                            let _ = ev_tx.send(DaemonEvent::Messages {
+                            let _ = ev_tx.try_send(DaemonEvent::SessionCreated(new_sid.clone()));
+                            let _ = ev_tx.try_send(DaemonEvent::Messages {
                                 session: new_sid.clone(),
                                 messages: Vec::new(),
                             });
-                            let _ = ev_tx.send(DaemonEvent::Queue {
+                            let _ = ev_tx.try_send(DaemonEvent::Queue {
                                 session: new_sid.clone(),
                                 steer: Vec::new(),
                                 follow_up: Vec::new(),
                             });
-                            let _ = ev_tx.send(DaemonEvent::Activity {
+                            let _ = ev_tx.try_send(DaemonEvent::Activity {
                                 session: new_sid.clone(),
                                 subagents: 0,
                                 shells: 0,
                                 heartbeats: 0,
                             });
                             if let Ok(sessions) = pa_client::list_sessions(&client) {
-                                let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                                let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                             }
                             if !models_loaded {
                                 if let Ok(models) = pa_client::model_catalog(&client, &new_sid) {
                                     models_loaded = true;
-                                    let _ = ev_tx.send(DaemonEvent::Models(models));
+                                    let _ = ev_tx.try_send(DaemonEvent::Models(models));
                                 }
                             }
                             if let Ok(stats) = pa_client::session_stats(&client, &new_sid) {
-                                let _ = ev_tx.send(DaemonEvent::Stats {
+                                let _ = ev_tx.try_send(DaemonEvent::Stats {
                                     session: new_sid,
                                     stats,
                                 });
                             }
                         }
                         Err(err) => {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         }
                     },
                     DaemonCmd::SendPrompt { session, text } => {
                         if let Err(err) = pa_client::send_prompt(&client, &session, &text, &[]) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok((steer, follow_up)) = pa_client::get_queue(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Queue {
+                            let _ = ev_tx.try_send(DaemonEvent::Queue {
                                 session,
                                 steer,
                                 follow_up,
@@ -207,9 +207,9 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                     }
                     DaemonCmd::SteerPrompt { session, text } => {
                         if let Err(err) = pa_client::steer_prompt(&client, &session, &text, &[]) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok((steer, follow_up)) = pa_client::get_queue(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Queue {
+                            let _ = ev_tx.try_send(DaemonEvent::Queue {
                                 session,
                                 steer,
                                 follow_up,
@@ -218,37 +218,37 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                     }
                     DaemonCmd::Abort { session } => {
                         if let Err(err) = pa_client::abort(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         }
                     }
                     DaemonCmd::MarkDone { session } => {
                         if let Err(err) = pa_client::mark_done(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok(sessions) = pa_client::list_sessions(&client) {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                     }
                     DaemonCmd::DeleteSaved { session_path } => {
                         if let Err(err) = pa_client::delete_saved_session(&client, &session_path) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok(sessions) = pa_client::list_sessions(&client) {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                     }
                     DaemonCmd::RenameSaved { session_path, name } => {
                         if let Err(err) =
                             pa_client::rename_saved_session(&client, &session_path, &name)
                         {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok(sessions) = pa_client::list_sessions(&client) {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                     }
                     DaemonCmd::ClearQueue { session } => {
                         if let Err(err) = pa_client::clear_queue(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else {
-                            let _ = ev_tx.send(DaemonEvent::Queue {
+                            let _ = ev_tx.try_send(DaemonEvent::Queue {
                                 session,
                                 steer: Vec::new(),
                                 follow_up: Vec::new(),
@@ -270,10 +270,10 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                         if let Err(err) = pa_client::mutate_queue(
                             &client, &session, &lane, slot, &expected, mutation,
                         ) {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         }
                         if let Ok((steer, follow_up)) = pa_client::get_queue(&client, &session) {
-                            let _ = ev_tx.send(DaemonEvent::Queue {
+                            let _ = ev_tx.try_send(DaemonEvent::Queue {
                                 session,
                                 steer,
                                 follow_up,
@@ -288,10 +288,11 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                         let out_str = out.to_string_lossy().to_string();
                         match pa_client::export_html(&client, &session, &out_str) {
                             Ok(path) => {
-                                let _ = ev_tx.send(DaemonEvent::Notice(format!("Exported: {path}")));
+                                let _ = ev_tx
+                                    .try_send(DaemonEvent::Notice(format!("Exported: {path}")));
                             }
                             Err(err) => {
-                                let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                             }
                         }
                     }
@@ -303,29 +304,29 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: Sender<DaemonEvent>) {
                         if let Err(err) =
                             pa_client::set_model(&client, &session, &provider, &model_id)
                         {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok(sessions) = pa_client::list_sessions(&client) {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                     }
                     DaemonCmd::SetThinking { session, level } => {
                         if let Err(err) =
                             pa_client::set_thinking_level(&client, &session, &level)
                         {
-                            let _ = ev_tx.send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                         } else if let Ok(sessions) = pa_client::list_sessions(&client) {
-                            let _ = ev_tx.send(DaemonEvent::Sessions(sessions));
+                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                         }
                     }
                 }
             }
 
             if let Some(frame) = client.recv(Duration::from_millis(24)) {
-                let _ = ev_tx.send(DaemonEvent::LiveFrame(frame));
+                let _ = ev_tx.try_send(DaemonEvent::LiveFrame(frame));
             }
 
             if !client.alive() {
-                let _ = ev_tx.send(DaemonEvent::Disconnected(
+                let _ = ev_tx.try_send(DaemonEvent::Disconnected(
                     "Daemon disconnected — reconnecting…".into(),
                 ));
                 thread::sleep(Duration::from_millis(1200));
