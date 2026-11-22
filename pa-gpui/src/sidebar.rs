@@ -202,7 +202,7 @@ impl PaApp {
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.toggle_right_sidebar(cx);
+                                this.toggle_right_column(cx);
                             })),
                     ),
             )
@@ -681,7 +681,7 @@ impl PaApp {
             return None;
         }
         let p = self.palette();
-        let width = self.right_sidebar_width(window);
+        let width = self.right_column_width(window);
         let handle_active = self.diff_model.is_dragging() || self.diff_model.is_handle_hovered();
         let edge_color = if handle_active {
             p.composer_edge_focus
@@ -716,21 +716,12 @@ impl PaApp {
                             MouseButton::Left,
                             cx.listener(|this, ev: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
+                                window.prevent_default();
                                 if ev.click_count >= 2 {
-                                    let width = this.diff_model.reset_width();
-                                    this.settings.diff_width = width;
-                                    this.settings.save();
-                                    cx.notify();
+                                    this.reset_right_column_width(cx);
                                     return;
                                 }
-                                let viewport_w = window.viewport_size().width.as_f32();
-                                let sidebar_w = this.sidebar_width();
-                                this.diff_model.begin_drag(
-                                    ev.position.x.as_f32(),
-                                    viewport_w,
-                                    sidebar_w,
-                                );
-                                cx.notify();
+                                this.begin_right_column_drag(ev.position.x.as_f32(), window, cx);
                             }),
                         ),
                 )

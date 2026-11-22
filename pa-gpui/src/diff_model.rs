@@ -1,18 +1,22 @@
 pub(crate) const DIFF_DEFAULT_WIDTH: f32 = 480.0;
 pub(crate) const DIFF_MIN_WIDTH: f32 = 280.0;
+pub(crate) const DIFF_NARROW_FLOOR: f32 = 180.0;
 pub(crate) const DIFF_MAX_WIDTH: f32 = 960.0;
 pub(crate) const CENTER_MIN_WIDTH: f32 = 340.0;
 
 pub(crate) fn clamp_diff_width(desired: f32, viewport_w: f32, sidebar_w: f32) -> f32 {
-    if !desired.is_finite() {
-        return DIFF_DEFAULT_WIDTH;
-    }
+    let desired = if desired.is_finite() {
+        desired
+    } else {
+        DIFF_DEFAULT_WIDTH
+    };
     if viewport_w <= 0.0 {
         return desired.clamp(DIFF_MIN_WIDTH, DIFF_MAX_WIDTH);
     }
-    let max_available = (viewport_w - sidebar_w - CENTER_MIN_WIDTH).min(DIFF_MAX_WIDTH);
+    let room = (viewport_w - sidebar_w).max(0.0);
+    let max_available = (room - CENTER_MIN_WIDTH).min(DIFF_MAX_WIDTH);
     if max_available < DIFF_MIN_WIDTH {
-        return max_available.max(180.0);
+        return max_available.max(DIFF_NARROW_FLOOR.min(room));
     }
     desired.clamp(DIFF_MIN_WIDTH, max_available)
 }
@@ -86,6 +90,10 @@ impl DiffModel {
         }
     }
 
+    pub(crate) fn cancel_drag(&mut self) {
+        self.dragging = false;
+    }
+
     pub(crate) fn reset_width(&mut self) -> f32 {
         self.width = DIFF_DEFAULT_WIDTH;
         self.dragging = false;
@@ -108,7 +116,9 @@ mod tests {
         assert_eq!(clamp_diff_width(1200.0, 2000.0, 44.0), DIFF_MAX_WIDTH);
         assert_eq!(clamp_diff_width(480.0, 0.0, 244.0), 480.0);
         assert_eq!(clamp_diff_width(f32::NAN, 1400.0, 244.0), DIFF_DEFAULT_WIDTH);
-        assert_eq!(clamp_diff_width(480.0, 500.0, 244.0), 180.0);
+        assert_eq!(clamp_diff_width(f32::NAN, 700.0, 244.0), DIFF_NARROW_FLOOR);
+        assert_eq!(clamp_diff_width(480.0, 500.0, 244.0), DIFF_NARROW_FLOOR);
+        assert_eq!(clamp_diff_width(480.0, 320.0, 244.0), 76.0);
     }
 
     #[::core::prelude::v1::test]

@@ -33,6 +33,7 @@ pub struct PaPalette {
     pub danger: Hsla,
     pub danger_surface: Hsla,
     pub tag_idle: Hsla,
+    pub selection: Hsla,
 }
 
 impl PaPalette {
@@ -77,6 +78,7 @@ impl PaPalette {
             danger: rgb(0xef4444).into(),
             danger_surface: rgba(0xef44441f).into(),
             tag_idle: rgb(0x4ade80).into(),
+            selection: rgba(0xffffff24).into(),
         }
     }
 
@@ -113,37 +115,36 @@ impl PaPalette {
             danger: rgb(0xdc2626).into(),
             danger_surface: rgba(0xdc262618).into(),
             tag_idle: rgb(0x16a34a).into(),
+            selection: rgba(0x00000018).into(),
         }
     }
 }
 
-pub fn apply_theme(dark: bool, window: Option<&mut Window>, cx: &mut App) {
-    use gpui_kit::component::{Theme, ThemeMode};
+pub fn apply_theme(mode: gpui_kit::component::ThemeMode, window: Option<&mut Window>, cx: &mut App) {
+    use gpui_kit::component::Theme;
 
-    Theme::change(
-        if dark {
-            ThemeMode::Dark
-        } else {
-            ThemeMode::Light
-        },
-        window,
-        cx,
-    );
-    let p = PaPalette::for_mode(dark);
-    let theme = Theme::global_mut(cx);
-    theme.colors.background = p.window_surface;
-    theme.colors.foreground = p.ink;
-    theme.colors.border = p.transcript_cell_edge;
-    theme.colors.muted = p.sidebar_group_surface;
-    theme.colors.muted_foreground = p.quiet_ink;
-    theme.colors.list_hover = p.sidebar_row_hover;
-    theme.colors.success = p.tag_idle;
-    theme.colors.danger = p.danger;
-    theme.colors.warning = p.working;
-    theme.colors.selection = if dark {
-        rgba(0xffffff24).into()
-    } else {
-        rgba(0x00000018).into()
-    };
-    theme.mono_font_family = "Cascadia Code".into();
+    Theme::change(mode, window, cx);
+    let p = PaPalette::for_mode(mode.is_dark());
+    Theme::update(cx, |theme| {
+        theme.colors.background = p.window_surface;
+        theme.colors.foreground = p.ink;
+        theme.colors.border = p.transcript_cell_edge;
+        theme.colors.muted = p.sidebar_group_surface;
+        theme.colors.muted_foreground = p.quiet_ink;
+        theme.colors.list_hover = p.sidebar_row_hover;
+        theme.colors.accent = p.sidebar_row_selected;
+        theme.colors.accent_foreground = p.ink;
+        theme.colors.primary = p.composer_send_fill;
+        theme.colors.primary_foreground = p.composer_send_mark;
+        theme.colors.secondary = p.sidebar_group_surface;
+        theme.colors.secondary_foreground = p.ink;
+        theme.colors.popover = p.panel_surface;
+        theme.colors.popover_foreground = p.ink;
+        theme.colors.sidebar = p.sidebar_surface;
+        theme.colors.scrollbar_thumb = p.composer_handle;
+        theme.colors.success = p.tag_idle;
+        theme.colors.danger = p.danger;
+        theme.colors.warning = p.working;
+        theme.colors.selection = p.selection;
+    });
 }

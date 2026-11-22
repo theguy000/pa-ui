@@ -365,7 +365,7 @@ impl PaApp {
         }
     }
 
-    pub(crate) fn right_sidebar_width(&self, window: &Window) -> f32 {
+    pub(crate) fn right_column_width(&self, window: &Window) -> f32 {
         if !self.settings.right_open {
             return 0.0;
         }
@@ -374,8 +374,39 @@ impl PaApp {
             .effective_width(viewport_w, self.sidebar_width())
     }
 
-    pub(crate) fn toggle_right_sidebar(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_right_column(&mut self, cx: &mut Context<Self>) {
         self.settings.right_open = !self.settings.right_open;
+        if !self.settings.right_open {
+            self.diff_model.cancel_drag();
+        }
+        self.settings.save();
+        cx.notify();
+    }
+
+    pub(crate) fn begin_right_column_drag(
+        &mut self,
+        mouse_x: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport_w = window.viewport_size().width.as_f32();
+        let sidebar_w = self.sidebar_width();
+        self.diff_model.begin_drag(mouse_x, viewport_w, sidebar_w);
+        cx.notify();
+    }
+
+    pub(crate) fn finish_right_column_drag(&mut self) -> bool {
+        if let Some(width) = self.diff_model.end_drag() {
+            self.settings.diff_width = width;
+            self.settings.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn reset_right_column_width(&mut self, cx: &mut Context<Self>) {
+        self.settings.diff_width = self.diff_model.reset_width();
         self.settings.save();
         cx.notify();
     }
@@ -1597,11 +1628,9 @@ impl Render for PaApp {
                 }
                 if this.diff_model.is_dragging() {
                     if ev.pressed_button != Some(MouseButton::Left) {
-                        if let Some(width) = this.diff_model.end_drag() {
-                            this.settings.diff_width = width;
-                            this.settings.save();
+                        if this.finish_right_column_drag() {
+                            cx.notify();
                         }
-                        cx.notify();
                         return;
                     }
                     let viewport_w = window.viewport_size().width.as_f32();
@@ -1633,12 +1662,8 @@ impl Render for PaApp {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    let mut changed = this.composer_model.end_drag();
-                    if let Some(width) = this.diff_model.end_drag() {
-                        this.settings.diff_width = width;
-                        this.settings.save();
-                        changed = true;
-                    }
+                    let changed =
+                        this.composer_model.end_drag() | this.finish_right_column_drag();
                     if changed {
                         cx.notify();
                     }
@@ -1655,7 +1680,7 @@ impl Render for PaApp {
                 let key = ev.keystroke.key.as_str();
                 let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
                 if ctrl && ev.keystroke.modifiers.shift && key.eq_ignore_ascii_case("b") {
-                    this.toggle_right_sidebar(cx);
+                    this.toggle_right_column(cx);
                 } else if ctrl && key.eq_ignore_ascii_case("b") {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
                     this.rail_mark_hovered = false;

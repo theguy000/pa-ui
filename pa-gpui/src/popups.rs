@@ -6,7 +6,7 @@ use crate::daemon::{DaemonCmd, ExportKind};
 use crate::roster::ModelPickEffect;
 use crate::sidebar::RenameTarget;
 use gpui_kit::component::{
-    h_flex, scroll::ScrollableElement as _, v_flex, Icon, IconName, StyledExt as _,
+    h_flex, scroll::ScrollableElement as _, v_flex, Icon, IconName, StyledExt as _, ThemeMode,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::{clamp_level, thinking_level_label, ModelEntry};
@@ -1565,7 +1565,7 @@ impl PaApp {
                                                                     this.settings.dark_mode = true;
                                                                     this.settings.save();
                                                                     crate::theme::apply_theme(
-                                                                        true,
+                                                                        ThemeMode::Dark,
                                                                         Some(window),
                                                                         cx,
                                                                     );
@@ -1581,7 +1581,7 @@ impl PaApp {
                                                                     this.settings.dark_mode = false;
                                                                     this.settings.save();
                                                                     crate::theme::apply_theme(
-                                                                        false,
+                                                                        ThemeMode::Light,
                                                                         Some(window),
                                                                         cx,
                                                                     );
