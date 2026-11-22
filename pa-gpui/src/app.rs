@@ -1,6 +1,7 @@
 use crate::composer::{parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH};
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
+use crate::dev_errors::{is_dev_environment, DevErrorLog};
 use crate::diff_model::DiffModel;
 use crate::popups::OpenPopup;
 use crate::providers::{
@@ -68,7 +69,7 @@ pub(crate) enum ProvidersEditMode {
 pub struct PaApp {
     pub(crate) bridge: DaemonBridge,
     pub(crate) status: SharedString,
-    pub(crate) notice: Option<SharedString>,
+    pub(crate) dev_errors: DevErrorLog,
     pub(crate) roster: SessionRoster,
     pub(crate) composer_model: ComposerModel,
     pub(crate) diff_model: DiffModel,
@@ -331,7 +332,7 @@ impl PaApp {
         Self {
             bridge,
             status: "Connecting…".into(),
-            notice: None,
+            dev_errors: DevErrorLog::new(is_dev_environment()),
             roster,
             composer_model: ComposerModel::new(),
             diff_model: DiffModel::new(settings.diff_width),
@@ -980,7 +981,6 @@ impl PaApp {
         self.items.clear();
         self.list_state.reset(0);
         self.list_state.set_follow_mode(FollowMode::Tail);
-        self.notice = None;
         self.sync_stop_target(cx);
         self.sync_diff_for_active_session(cx);
         let focus = self.composer.read(cx).focus_handle(cx);
@@ -1110,7 +1110,6 @@ impl PaApp {
             DaemonEvent::SessionCreated(new_sid) => {
                 self.roster.clear_draft();
                 self.roster.set_active_id(Some(new_sid));
-                self.notice = None;
                 self.sync_stop_target(cx);
                 self.sync_diff_for_active_session(cx);
             }
@@ -1307,9 +1306,6 @@ impl PaApp {
                     self.roster.apply_activity(subagents, heartbeats, shells);
                 }
             }
-            DaemonEvent::Notice(msg) => {
-                self.notice = Some(msg.into());
-            }
             DaemonEvent::ExportResult {
                 kind,
                 primary,
@@ -1334,7 +1330,7 @@ impl PaApp {
                 settle_all(&mut self.items);
                 self.sync_stop_target(cx);
                 self.status = format!("Error: {err}").into();
-                self.notice = Some(format!("Error: {err}").into());
+                self.dev_errors.push("daemon", err);
             }
         }
     }
@@ -1359,16 +1355,10 @@ impl PaApp {
                         .get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("Command rejected");
-                    self.notice = Some(err.to_string().into());
+                    self.dev_errors.push(cmd, err);
                     self.sync_stop_target(cx);
                 } else if self.composer_model.take_pending_slash().is_some() {
                     self.is_streaming = false;
-                    if matches!(
-                        self.notice.as_deref(),
-                        Some("Compacting…") | Some("Refining…")
-                    ) {
-                        self.notice = None;
-                    }
                     settle_all(&mut self.items);
                     self.sync_stop_target(cx);
                     if let Some(sid) = self.roster.active_id().map(str::to_string) {
@@ -1499,7 +1489,6 @@ impl PaApp {
             "compaction_start" => {
                 self.is_streaming = true;
                 self.composer_model.set_busy_label("Compacting", true);
-                self.notice = Some("Compacting…".into());
                 self.sync_stop_target(cx);
             }
             "compaction_end" => {
@@ -1512,10 +1501,8 @@ impl PaApp {
                         .and_then(Value::as_str)
                         .filter(|s| !s.trim().is_empty())
                     {
-                        self.notice = Some(err.to_string().into());
+                        self.dev_errors.push("compaction", err);
                     }
-                } else {
-                    self.notice = None;
                 }
                 self.sync_stop_target(cx);
                 if let Some(sid) = self.roster.active_id().map(str::to_string) {
@@ -1558,9 +1545,17 @@ impl PaApp {
                             | "model_prompt_error"
                     ) || matches!(role, "compactionSummary" | "branchSummary");
                     if is_command_done {
+                        if ctype == "model_prompt_error" {
+                            if let Some(err) = msg
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .filter(|s| !s.trim().is_empty())
+                            {
+                                self.dev_errors.push("model", err);
+                            }
+                        }
                         self.is_streaming = false;
                         self.composer_model.set_pending_slash(None);
-                        self.notice = None;
                         settle_all(&mut self.items);
                         self.sync_stop_target(cx);
                         if let Some(sid) = self.roster.active_id().map(str::to_string) {
@@ -1572,12 +1567,6 @@ impl PaApp {
             "agent_end" | "turn_end" => {
                 self.is_streaming = false;
                 self.composer_model.set_pending_slash(None);
-                if matches!(
-                    self.notice.as_deref(),
-                    Some("Compacting…") | Some("Refining…")
-                ) {
-                    self.notice = None;
-                }
                 settle_all(&mut self.items);
                 self.sync_stop_target(cx);
                 if let Some(sid) = self.roster.active_id().map(str::to_string) {
@@ -1764,9 +1753,7 @@ impl Render for PaApp {
                         cx.notify();
                     } else if this.composer_model.take_edit_queue().is_some() {
                         this.set_composer_text("", window, cx);
-                        if this.notice.as_deref() == Some("Editing queued message · Esc to cancel") {
-                            this.notice = None;
-                        }
+
                         this.sync_stop_target(cx);
                         cx.notify();
                     } else if this.is_streaming {

@@ -20,6 +20,10 @@ pub(crate) enum OpenPopup {
     FolderMenu,
     DiffBaseBranchMenu,
     DiffWorktreeMenu,
+    DevErrors {
+        // `None` = nothing copied yet, `Some(0)` = copied all, `Some(id)` = copied entry `id`.
+        copied: Option<usize>,
+    },
     ExportResult {
         kind: ExportKind,
         primary: String,
@@ -182,9 +186,6 @@ impl PaApp {
                                                 exp_edit.clone(),
                                             );
                                             this.set_composer_text(exp_edit.clone(), window, cx);
-                                            this.notice = Some(
-                                                "Editing queued message Â· Esc to cancel".into(),
-                                            );
                                             this.open_popup = OpenPopup::None;
                                             let focus = this.composer.read(cx).focus_handle(cx);
                                             window.focus(&focus, cx);
@@ -282,9 +283,6 @@ impl PaApp {
                                                 exp_edit.clone(),
                                             );
                                             this.set_composer_text(exp_edit.clone(), window, cx);
-                                            this.notice = Some(
-                                                "Editing queued message Â· Esc to cancel".into(),
-                                            );
                                             this.open_popup = OpenPopup::None;
                                             let focus = this.composer.read(cx).focus_handle(cx);
                                             window.focus(&focus, cx);
@@ -860,6 +858,7 @@ impl PaApp {
             OpenPopup::FolderMenu => Some(self.render_folder_menu_popup(cx)),
             OpenPopup::DiffBaseBranchMenu => Some(self.render_diff_base_branch_popup(window, cx)),
             OpenPopup::DiffWorktreeMenu => Some(self.render_diff_worktree_popup(cx)),
+            OpenPopup::DevErrors { copied } => Some(self.render_dev_errors_popup(*copied, cx)),
             OpenPopup::ExportResult {
                 kind,
                 primary,
@@ -1484,6 +1483,250 @@ impl PaApp {
             Some(left_x),
             rows,
         )
+    }
+
+    fn render_dev_errors_popup(
+        &self,
+        copied: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let entries = self.dev_errors.entries();
+        let count = entries.len();
+        let copied_all = copied == Some(0);
+
+        v_flex()
+            .id("floating-dev-errors")
+            .absolute()
+            .top(px(36.))
+            .right(px(12.))
+            .w(px(400.))
+            .max_h(px(440.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
+            .shadow_lg()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(
+                h_flex()
+                    .w_full()
+                    .h(px(38.))
+                    .px(px(12.))
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(p.sidebar_group_edge)
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.ink)
+                                    .child("Dev errors"),
+                            )
+                            .when(count > 0, |row| {
+                                row.child(
+                                    div()
+                                        .px(px(6.))
+                                        .py(px(1.))
+                                        .rounded(px(99.))
+                                        .bg(p.danger_surface)
+                                        .text_size(px(10.5))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(p.danger)
+                                        .child(format!("{count}")),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .when(count > 0, |row| {
+                                row.child(
+                                    div()
+                                        .id("dev-err-copy-all")
+                                        .h(px(24.))
+                                        .px(px(8.))
+                                        .rounded(px(6.))
+                                        .flex()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .text_color(if copied_all { p.tag_idle } else { p.ink })
+                                        .bg(p.sidebar_row_hover)
+                                        .hover(|d| d.bg(p.sidebar_row_selected))
+                                        .child(if copied_all { "Copied" } else { "Copy all" })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            let text = this.dev_errors.format_all();
+                                            if !text.is_empty() {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    text,
+                                                ));
+                                                this.open_popup =
+                                                    OpenPopup::DevErrors { copied: Some(0) };
+                                                cx.notify();
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id("dev-err-clear")
+                                        .h(px(24.))
+                                        .px(px(8.))
+                                        .rounded(px(6.))
+                                        .flex()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .text_color(p.quiet_ink)
+                                        .hover(|d| d.bg(p.sidebar_row_hover).text_color(p.ink))
+                                        .child("Clear")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dev_errors.clear();
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    ),
+            )
+            .child(if entries.is_empty() {
+                v_flex()
+                    .w_full()
+                    .py(px(28.))
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(p.quiet_ink)
+                            .child("No errors"),
+                    )
+                    .into_any_element()
+            } else {
+                let mut list = v_flex()
+                    .id("dev-err-list")
+                    .w_full()
+                    .max_h(px(390.))
+                    .overflow_y_scrollbar()
+                    .p(px(8.))
+                    .gap(px(6.));
+                for entry in entries {
+                    let eid = entry.id;
+                    let is_copied = copied == Some(eid);
+                    let copy_text = entry.format_for_copy();
+                    list = list.child(
+                        v_flex()
+                            .id(("dev-err-row", eid))
+                            .w_full()
+                            .p(px(8.))
+                            .gap(px(4.))
+                            .rounded(px(7.))
+                            .border_1()
+                            .border_color(p.sidebar_group_edge)
+                            .bg(p.window_surface)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(p.danger)
+                                            .child(entry.source.clone()),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap(px(2.))
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .id(("dev-err-copy", eid))
+                                                    .size(px(20.))
+                                                    .rounded(px(4.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .cursor_pointer()
+                                                    .text_color(if is_copied {
+                                                        p.tag_idle
+                                                    } else {
+                                                        p.quiet_ink
+                                                    })
+                                                    .hover(|d| {
+                                                        d.bg(p.sidebar_row_hover)
+                                                            .text_color(p.ink)
+                                                    })
+                                                    .child(
+                                                        Icon::new(if is_copied {
+                                                            IconName::Check
+                                                        } else {
+                                                            IconName::Copy
+                                                        })
+                                                        .size(px(11.5)),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            cx.write_to_clipboard(
+                                                                ClipboardItem::new_string(
+                                                                    copy_text.clone(),
+                                                                ),
+                                                            );
+                                                            this.open_popup =
+                                                                OpenPopup::DevErrors {
+                                                                    copied: Some(eid),
+                                                                };
+                                                            cx.notify();
+                                                        },
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(("dev-err-dismiss", eid))
+                                                    .size(px(20.))
+                                                    .rounded(px(4.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .cursor_pointer()
+                                                    .text_color(p.quiet_ink)
+                                                    .hover(|d| {
+                                                        d.bg(p.sidebar_row_hover)
+                                                            .text_color(p.ink)
+                                                    })
+                                                    .child(Icon::new(IconName::Close).size(px(11.5)))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.dev_errors.dismiss(eid);
+                                                            cx.notify();
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .text_size(px(11.5))
+                                    .line_height(px(16.))
+                                    .text_color(p.ink)
+                                    .child(entry.message.clone()),
+                            ),
+                    );
+                }
+                list.into_any_element()
+            })
+            .into_any_element()
     }
 
     fn render_settings_popup(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {

@@ -347,11 +347,23 @@ impl PaApp {
                 .when(!item.images.is_empty(), |col| {
                     col.child(
                         h_flex().gap_2().flex_wrap().children(
-                            item.images.iter().cloned().map(|image| {
-                                img(image)
-                                    .max_w(px(360.))
-                                    .max_h(px(220.))
-                                    .rounded(px(6.))
+                            item.images.iter().map(|ti| {
+                                let (w, h) = crate::transcript::fitted_image_size(
+                                    ti.width, ti.height, 360.0, 220.0,
+                                );
+                                div()
+                                    .w(px(w))
+                                    .h(px(h))
+                                    .rounded(px(8.))
+                                    .border_1()
+                                    .border_color(p.transcript_cell_edge)
+                                    .bg(p.sidebar_group_surface)
+                                    .overflow_hidden()
+                                    .child(
+                                        img(ti.image.clone())
+                                            .size_full()
+                                            .object_fit(ObjectFit::Contain),
+                                    )
                             }),
                         ),
                     )

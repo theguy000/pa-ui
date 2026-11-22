@@ -101,7 +101,6 @@ pub enum DaemonEvent {
     Stats { session: String, stats: SessionStats },
     Queue { session: String, steer: Vec<String>, follow_up: Vec<String> },
     Activity { session: String, subagents: usize, shells: usize, heartbeats: usize },
-    Notice(String),
     ExportResult {
         kind: ExportKind,
         primary: String,

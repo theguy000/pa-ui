@@ -366,6 +366,9 @@ impl PaApp {
         let p = self.palette();
         let settings_open = self.open_popup == OpenPopup::SettingsMenu;
         let left_offset = if self.settings.sidebar_open { 246. } else { 46. };
+        let dev_open = matches!(self.open_popup, OpenPopup::DevErrors { .. });
+        let dev_enabled = self.dev_errors.is_enabled();
+        let dev_count = self.dev_errors.len();
 
         TitleBar::new()
             .h(px(32.))
@@ -381,6 +384,53 @@ impl PaApp {
                     .items_center()
                     .children(self.render_titlebar_context(cx))
                     .child(div().flex_1().h_full())
+                    .when(dev_enabled, |bar| {
+                        bar.child(
+                            h_flex()
+                                .id("tb-dev-info")
+                                .h(px(26.))
+                                .px(px(if dev_count > 0 { 7. } else { 6. }))
+                                .gap(px(4.))
+                                .rounded(px(6.))
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .when(dev_open, |d| d.bg(p.sidebar_row_selected))
+                                .hover(|d| d.bg(p.sidebar_row_hover))
+                                .child(
+                                    Icon::new(IconName::Info)
+                                        .size(px(14.))
+                                        .text_color(if dev_count > 0 {
+                                            p.danger
+                                        } else {
+                                            p.quiet_ink
+                                        }),
+                                )
+                                .when(dev_count > 0, |d| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(p.danger)
+                                            .child(format!("{dev_count}")),
+                                    )
+                                })
+                                .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_popup =
+                                        if matches!(this.open_popup, OpenPopup::DevErrors { .. }) {
+                                            OpenPopup::None
+                                        } else {
+                                            OpenPopup::DevErrors { copied: None }
+                                        };
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .id("tb-settings")

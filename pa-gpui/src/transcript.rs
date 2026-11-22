@@ -30,6 +30,31 @@ pub enum CardVariant {
     Harness,
 }
 
+#[derive(Clone)]
+pub struct TranscriptImage {
+    pub image: Arc<Image>,
+    pub width: f32,
+    pub height: f32,
+}
+
+pub fn image_dimensions(bytes: &[u8]) -> (f32, f32) {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok();
+    match reader.and_then(|r| r.into_dimensions().ok()) {
+        Some((w, h)) if w > 0 && h > 0 => (w as f32, h as f32),
+        _ => (240.0, 160.0),
+    }
+}
+
+pub fn fitted_image_size(width: f32, height: f32, max_w: f32, max_h: f32) -> (f32, f32) {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return (240.0_f32.min(max_w), 160.0_f32.min(max_h));
+    }
+    let scale = (max_w / width).min(max_h / height).min(1.0);
+    ((width * scale).max(32.0), (height * scale).max(32.0))
+}
+
 pub struct TranscriptItem {
     pub id: usize,
     pub entry_id: Option<String>,
@@ -42,7 +67,7 @@ pub struct TranscriptItem {
     pub body_md: Option<Entity<TextViewState>>,
     pub raw_body: String,
     pub output: Option<String>,
-    pub images: Vec<Arc<Image>>,
+    pub images: Vec<TranscriptImage>,
     pub expanded: bool,
     pub active: bool,
     pub failed: bool,
@@ -1056,7 +1081,7 @@ fn extract_text(msg: &Value) -> String {
     String::new()
 }
 
-fn extract_images(msg: &Value) -> Vec<Arc<Image>> {
+fn extract_images(msg: &Value) -> Vec<TranscriptImage> {
     let mut out = Vec::new();
     let Some(arr) = msg.get("content").and_then(Value::as_array) else {
         return out;
@@ -1065,11 +1090,17 @@ fn extract_images(msg: &Value) -> Vec<Arc<Image>> {
         if part.get("type").and_then(Value::as_str) != Some("image") {
             continue;
         }
+        let source = part.get("source");
         let mime = part
             .get("mimeType")
             .and_then(Value::as_str)
+            .or_else(|| source.and_then(|s| s.get("media_type")).and_then(Value::as_str))
             .unwrap_or("image/png");
-        let Some(data) = part.get("data").and_then(Value::as_str) else {
+        let Some(data) = part
+            .get("data")
+            .and_then(Value::as_str)
+            .or_else(|| source.and_then(|s| s.get("data")).and_then(Value::as_str))
+        else {
             continue;
         };
         let format = match mime {
@@ -1079,7 +1110,12 @@ fn extract_images(msg: &Value) -> Vec<Arc<Image>> {
             _ => ImageFormat::Png,
         };
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
-            out.push(Arc::new(Image::from_bytes(format, bytes)));
+            let (width, height) = image_dimensions(&bytes);
+            out.push(TranscriptImage {
+                image: Arc::new(Image::from_bytes(format, bytes)),
+                width,
+                height,
+            });
         }
     }
     out
@@ -1246,5 +1282,30 @@ mod tests {
         assert_eq!(format_duration(Some(250)), "250ms");
         assert_eq!(format_duration(Some(12340)), "12.3s");
         assert_eq!(format_duration(Some(304000)), "5m 04s");
+    }
+
+    #[::core::prelude::v1::test]
+    fn fitted_image_size_preserves_aspect_and_extract_images_reads_dimensions() {
+        assert_eq!(fitted_image_size(1920.0, 1080.0, 360.0, 220.0), (360.0, 202.5));
+        assert_eq!(fitted_image_size(100.0, 400.0, 360.0, 220.0), (55.0, 220.0));
+        assert_eq!(fitted_image_size(120.0, 80.0, 360.0, 220.0), (120.0, 80.0));
+
+        let img = image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 100, 50, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode png");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        let msg = json!({
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "check this" },
+                { "type": "image", "mimeType": "image/png", "data": b64 }
+            ]
+        });
+        let items = build_items(&[msg]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].images.len(), 1);
+        assert_eq!((items[0].images[0].width, items[0].images[0].height), (64.0, 32.0));
     }
 }

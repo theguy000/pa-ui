@@ -24,7 +24,6 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::thinking_level_label;
 use serde_json::{json, Value};
-use std::path::Path;
 use std::sync::Arc;
 
 /// Shared max width for both the transcript column and the composer band so their
@@ -48,29 +47,79 @@ pub(crate) struct Attachment {
     pub(crate) mime: String,
     pub(crate) base64: String,
     pub(crate) image: Arc<Image>,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 impl Attachment {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
-        let (mime, format) = if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+        let (mime, format, bytes) = if bytes
+            .starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
         {
-            ("image/png", ImageFormat::Png)
+            ("image/png", ImageFormat::Png, bytes)
         } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            ("image/jpeg", ImageFormat::Jpeg)
+            ("image/jpeg", ImageFormat::Jpeg, bytes)
         } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-            ("image/webp", ImageFormat::Webp)
+            ("image/webp", ImageFormat::Webp, bytes)
         } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-            ("image/gif", ImageFormat::Gif)
+            ("image/gif", ImageFormat::Gif, bytes)
+        } else if bytes.starts_with(b"BM") {
+            // Windows clipboard screenshots arrive as CF_DIB/BMP; transcode to PNG for LLM APIs.
+            let decoded =
+                image::load_from_memory_with_format(&bytes, image::ImageFormat::Bmp).ok()?;
+            let mut png_bytes = Vec::new();
+            decoded
+                .write_to(
+                    &mut std::io::Cursor::new(&mut png_bytes),
+                    image::ImageFormat::Png,
+                )
+                .ok()?;
+            ("image/png", ImageFormat::Png, png_bytes)
         } else {
             return None;
         };
+        let (width, height) = crate::transcript::image_dimensions(&bytes);
         let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         let image = Arc::new(Image::from_bytes(format, bytes));
         Some(Self {
             mime: mime.to_string(),
             base64,
             image,
+            width,
+            height,
         })
+    }
+
+    pub(crate) fn from_clipboard_item(item: &ClipboardItem) -> Vec<Self> {
+        let mut out = Vec::new();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::Image(img) => {
+                    if let Some(att) = Self::from_bytes(img.bytes.clone()) {
+                        out.push(att);
+                    }
+                }
+                ClipboardEntry::ExternalPaths(paths) => {
+                    for path in paths.paths() {
+                        if let Ok(bytes) = std::fs::read(path) {
+                            if let Some(att) = Self::from_bytes(bytes) {
+                                out.push(att);
+                            }
+                        }
+                    }
+                }
+                ClipboardEntry::String(_) => {}
+            }
+        }
+        out
+    }
+
+    pub(crate) fn to_transcript_image(&self) -> crate::transcript::TranscriptImage {
+        crate::transcript::TranscriptImage {
+            image: self.image.clone(),
+            width: self.width,
+            height: self.height,
+        }
     }
 
     pub(crate) fn block(&self) -> Value {
@@ -79,49 +128,6 @@ impl Attachment {
             "data": self.base64,
             "mimeType": self.mime,
         })
-    }
-}
-
-pub(crate) fn pick_image_files() -> Vec<Attachment> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let script = "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; \
-             $d=New-Object System.Windows.Forms.OpenFileDialog; \
-             $d.Multiselect=$true; \
-             $d.Filter='Images|*.png;*.jpg;*.jpeg;*.webp;*.gif|All files|*.*'; \
-             if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { \
-                 $d.FileNames | ForEach-Object { Write-Output $_ } }";
-        let Ok(output) = std::process::Command::new("powershell")
-            .args([
-                "-STA",
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                script,
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-        else {
-            return Vec::new();
-        };
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .filter_map(|line| std::fs::read(Path::new(line)).ok())
-            .filter_map(Attachment::from_bytes)
-            .collect()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Vec::new()
     }
 }
 
@@ -310,7 +316,6 @@ impl PaApp {
             return;
         }
 
-        let mut command_notice: Option<&'static str> = None;
         let mut slash_cmd_kind: Option<&'static str> = None;
         if self.composer_model.attachments().is_empty() {
             match slash_dispatch(&text) {
@@ -320,11 +325,6 @@ impl PaApp {
                         .trim()
                         .strip_prefix('/')
                         .and_then(|s| s.split_whitespace().next());
-                    command_notice = match cmd {
-                        Some("compact") => Some("Compacting…"),
-                        Some("refine") => Some("Refining…"),
-                        _ => None,
-                    };
                     slash_cmd_kind = match cmd {
                         Some("compact") => Some("compact"),
                         Some("refine") => Some("refine"),
@@ -395,7 +395,6 @@ impl PaApp {
                         .find(|it| it.kind == ItemKind::Assistant && !it.raw_body.is_empty())
                     {
                         self.copy_text(last.raw_body.clone(), cx);
-                        self.notice = Some("Copied last reply".into());
                     }
                     cx.notify();
                     return;
@@ -406,8 +405,10 @@ impl PaApp {
                 }
                 SlashAction::NotWired(name) => {
                     self.set_composer_text("", window, cx);
-                    self.notice =
-                        Some(format!("/{name} is not available in the desktop app").into());
+                    self.dev_errors.push(
+                        "slash",
+                        format!("/{name} is not available in the desktop app"),
+                    );
                     cx.notify();
                     return;
                 }
@@ -415,7 +416,7 @@ impl PaApp {
         }
 
         let held = self.composer_model.take_attachments();
-        let preview_images: Vec<Arc<Image>> = held.iter().map(|a| a.image.clone()).collect();
+        let preview_images: Vec<crate::transcript::TranscriptImage> = held.iter().map(Attachment::to_transcript_image).collect();
         let wire_images: Vec<Value> = held.iter().map(Attachment::block).collect();
 
         if let Some((lane, slot, expected)) = self.composer_model.take_edit_queue() {
@@ -429,9 +430,6 @@ impl PaApp {
                     images: wire_images,
                 });
                 self.set_composer_text("", window, cx);
-                if self.notice.as_deref() == Some("Editing queued message · Esc to cancel") {
-                    self.notice = None;
-                }
                 self.sync_stop_target(cx);
                 cx.notify();
                 return;
@@ -471,9 +469,7 @@ impl PaApp {
             self.list_state.set_follow_mode(FollowMode::Tail);
         }
 
-        if let Some(note) = command_notice {
-            self.notice = Some(note.into());
-        }
+
         if !self.is_streaming {
             self.composer_model.set_pending_slash(slash_cmd_kind);
             self.composer_model.set_busy_label("Waiting", false);
@@ -915,14 +911,27 @@ impl PaApp {
                                 div()
                                     .w_full()
                                     .min_h(px(COMPOSER_MIN_HEIGHT))
-                                    .child(match self.composer_model.explicit_height() {
-                                        Some(h) => Textarea::new(&self.composer)
-                                            .h(px(h.max(COMPOSER_MIN_HEIGHT)))
+                                    .child({
+                                        let view = cx.entity();
+                                        let ta = Textarea::new(&self.composer)
                                             .appearance(false)
-                                            .bordered(false),
-                                        None => Textarea::new(&self.composer)
-                                            .appearance(false)
-                                            .bordered(false),
+                                            .bordered(false)
+                                            .on_paste(move |item, _, cx| {
+                                                let found = Attachment::from_clipboard_item(item);
+                                                if found.is_empty() {
+                                                    return false;
+                                                }
+                                                view.update(cx, |this, cx| {
+                                                    this.composer_model.push_attachments(found);
+                                                    this.sync_stop_target(cx);
+                                                    cx.notify();
+                                                });
+                                                true
+                                            });
+                                        match self.composer_model.explicit_height() {
+                                            Some(h) => ta.h(px(h.max(COMPOSER_MIN_HEIGHT))),
+                                            None => ta,
+                                        }
                                     }),
                             ),
                     )
@@ -953,23 +962,49 @@ impl PaApp {
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         cx.stop_propagation();
-                                        let tx = this.attach_tx.clone();
-                                        std::thread::spawn(move || {
-                                            let picked = pick_image_files();
-                                            let _ = tx.try_send(picked);
+                                        let rx = cx.prompt_for_paths(PathPromptOptions {
+                                            files: true,
+                                            directories: false,
+                                            multiple: true,
+                                            prompt: Some("Attach images".into()),
                                         });
+                                        let tx = this.attach_tx.clone();
+                                        cx.spawn(async move |_, cx| {
+                                            let Ok(Ok(Some(paths))) = rx.await else {
+                                                return;
+                                            };
+                                            let picked = cx
+                                                .background_spawn(async move {
+                                                    paths
+                                                        .into_iter()
+                                                        .filter_map(|p| std::fs::read(p).ok())
+                                                        .filter_map(Attachment::from_bytes)
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .await;
+                                            if !picked.is_empty() {
+                                                let _ = tx.try_send(picked);
+                                            }
+                                        })
+                                        .detach();
                                     })),
                             )
                             .child(self.render_activity_chip())
-                            .when_some(self.notice.clone(), |row, note| {
+                            .when(self.composer_model.is_editing_queue(), |row| {
                                 row.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(p.quiet_ink)
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .child(note),
+                                    h_flex()
+                                        .gap(px(4.))
+                                        .px(px(6.))
+                                        .h(px(20.))
+                                        .rounded(px(5.))
+                                        .bg(p.sidebar_row_selected)
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .text_size(px(10.5))
+                                                .text_color(p.quiet_ink)
+                                                .child("Editing queued · Esc"),
+                                        ),
                                 )
                             })
                             .child(div().flex_1())
@@ -1308,5 +1343,26 @@ mod tests {
         let (st, fu) = parse_action_update_lanes(&ev);
         assert_eq!(st, vec!["fix tests"]);
         assert_eq!(fu, vec!["then commit", "and push"]);
+    }
+
+    #[::core::prelude::v1::test]
+    fn clipboard_paste_transcodes_windows_bmp_to_png_with_dimensions() {
+        let img = image::RgbaImage::from_pixel(40, 20, image::Rgba([12, 34, 56, 255]));
+        let mut bmp = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .expect("encode bmp");
+
+        let item = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::Image(Image::from_bytes(ImageFormat::Bmp, bmp)),
+                ClipboardEntry::String(ClipboardString::new("ignored caption".into())),
+            ],
+        };
+        let found = Attachment::from_clipboard_item(&item);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].mime, "image/png");
+        assert_eq!((found[0].width, found[0].height), (40.0, 20.0));
+        assert!(found[0].image.bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 }

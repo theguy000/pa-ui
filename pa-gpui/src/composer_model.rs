@@ -192,6 +192,10 @@ impl ComposerModel {
         self.editing_queue = None;
     }
 
+    pub(crate) fn is_editing_queue(&self) -> bool {
+        self.editing_queue.is_some()
+    }
+
     // --- Busy strip & Send/Stop morph ---
 
     pub(crate) fn set_pending_slash(&mut self, cmd: Option<&'static str>) {

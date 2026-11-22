@@ -3,6 +3,7 @@ mod assets;
 mod composer;
 mod composer_model;
 mod daemon;
+mod dev_errors;
 mod diff_git;
 mod diff_model;
 mod diff_view;

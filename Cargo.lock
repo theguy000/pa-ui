@@ -4486,6 +4486,7 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "gpui-kit",
+ "image",
  "pa-client",
  "raw-window-handle",
  "serde",
