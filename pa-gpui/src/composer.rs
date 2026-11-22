@@ -536,11 +536,12 @@ impl PaApp {
                 .h_full()
                 .items_center()
                 .gap(px(5.))
-                .child(svg().path(icon_path).size(px(13.5)).text_color(ink))
+                .child(svg().path(icon_path).size(px(13.)).text_color(ink))
                 .child(
                     div()
+                        .pb(px(1.5))
                         .text_size(px(11.5))
-                        .line_height(px(14.))
+                        .line_height(px(11.5))
                         .text_color(ink)
                         .child(count.to_string()),
                 )
