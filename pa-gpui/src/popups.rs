@@ -1,7 +1,7 @@
-//! Floating popups module: queue panel, model & effort ladder menu,
+﻿//! Floating popups module: queue panel, model & effort ladder menu,
 //! context card popover, settings menu, session actions menu, and model label helpers.
 
-use crate::app::PaApp;
+use crate::app::{PaApp, ProvidersEditMode, SettingsTab};
 use crate::daemon::{DaemonCmd, ExportKind};
 use crate::roster::ModelPickEffect;
 use crate::sidebar::RenameTarget;
@@ -181,7 +181,7 @@ impl PaApp {
                                             );
                                             this.set_composer_text(exp_edit.clone(), window, cx);
                                             this.notice = Some(
-                                                "Editing queued message · Esc to cancel".into(),
+                                                "Editing queued message Â· Esc to cancel".into(),
                                             );
                                             this.open_popup = OpenPopup::None;
                                             let focus = this.composer.read(cx).focus_handle(cx);
@@ -226,7 +226,7 @@ impl PaApp {
 
                 if !queued_follow_up.is_empty() {
                     let fu_header = if queued_steer.is_empty() {
-                        format!("{header_label} · runs next")
+                        format!("{header_label} Â· runs next")
                     } else {
                         "runs next".to_string()
                     };
@@ -281,7 +281,7 @@ impl PaApp {
                                             );
                                             this.set_composer_text(exp_edit.clone(), window, cx);
                                             this.notice = Some(
-                                                "Editing queued message · Esc to cancel".into(),
+                                                "Editing queued message Â· Esc to cancel".into(),
                                             );
                                             this.open_popup = OpenPopup::None;
                                             let focus = this.composer.read(cx).focus_handle(cx);
@@ -854,7 +854,7 @@ impl PaApp {
                     .child(self.render_context_card_content())
                     .into_any_element(),
             ),
-            OpenPopup::SettingsMenu => Some(self.render_settings_popup(cx)),
+            OpenPopup::SettingsMenu => Some(self.render_settings_popup(window, cx)),
             OpenPopup::ExportResult {
                 kind,
                 primary,
@@ -1085,7 +1085,7 @@ impl PaApp {
             }))
     }
 
-    fn render_settings_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_settings_popup(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette();
         let dark = self.settings.dark_mode;
         let backdrop: Hsla = if dark {
@@ -1287,15 +1287,22 @@ impl PaApp {
                                     .flex_1()
                                     .px(px(10.))
                                     .gap(px(2.))
-                                    .child(
+                                    .child({
+                                        let active = self.settings_tab == SettingsTab::General;
                                         h_flex()
                                             .id("settings-nav-general")
                                             .h(px(34.))
                                             .px(px(10.))
                                             .rounded(px(8.))
-                                            .bg(p.sidebar_row_selected)
+                                            .cursor_pointer()
+                                            .when(active, |d| d.bg(p.sidebar_row_selected))
+                                            .when(!active, |d| d.hover(|h| h.bg(p.sidebar_row_hover)))
                                             .items_center()
                                             .gap(px(9.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_tab = SettingsTab::General;
+                                                cx.notify();
+                                            }))
                                             .child(
                                                 div()
                                                     .size(px(16.))
@@ -1306,7 +1313,7 @@ impl PaApp {
                                                         svg()
                                                             .path(crate::assets::ICON_SWATCH_BOOK_PATH)
                                                             .size(px(14.))
-                                                            .text_color(p.ink),
+                                                            .text_color(if active { p.ink } else { p.quiet_ink }),
                                                     ),
                                             )
                                             .child(
@@ -1314,10 +1321,51 @@ impl PaApp {
                                                     .text_size(px(13.))
                                                     .line_height(px(16.))
                                                     .font_medium()
-                                                    .text_color(p.ink)
+                                                    .text_color(if active { p.ink } else { p.quiet_ink })
                                                     .child("General"),
-                                            ),
-                                    ),
+                                            )
+                                    })
+                                    .child({
+                                        let active = self.settings_tab == SettingsTab::Providers;
+                                        h_flex()
+                                            .id("settings-nav-providers")
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .cursor_pointer()
+                                            .when(active, |d| d.bg(p.sidebar_row_selected))
+                                            .when(!active, |d| d.hover(|h| h.bg(p.sidebar_row_hover)))
+                                            .items_center()
+                                            .gap(px(9.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_tab = SettingsTab::Providers;
+                                                this.providers_mode = ProvidersEditMode::List;
+                                                this.providers_status = None;
+                                                this.refresh_providers_snapshot();
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .size(px(16.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(
+                                                        svg()
+                                                            .path(crate::assets::ICON_PROVIDERS_PATH)
+                                                            .size(px(14.))
+                                                            .text_color(if active { p.ink } else { p.quiet_ink }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .line_height(px(16.))
+                                                    .font_medium()
+                                                    .text_color(if active { p.ink } else { p.quiet_ink })
+                                                    .child("Providers"),
+                                            )
+                                    }),
                             ),
                     )
                     .child(
@@ -1333,23 +1381,151 @@ impl PaApp {
                                 h_flex()
                                     .w_full()
                                     .h(px(52.))
-                                    .pl(px(28.))
+                                    .pl(if self.settings_tab == SettingsTab::Providers
+                                        && !matches!(self.providers_mode, ProvidersEditMode::List)
+                                    {
+                                        px(18.)
+                                    } else {
+                                        px(28.)
+                                    })
                                     .pr(px(14.))
                                     .border_b_1()
                                     .border_color(p.sidebar_group_edge)
                                     .items_center()
                                     .justify_between()
                                     .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_semibold()
-                                            .text_color(p.ink)
-                                            .child("General"),
+                                        h_flex()
+                                            .gap(px(8.))
+                                            .items_center()
+                                            .when(
+                                                self.settings_tab == SettingsTab::Providers
+                                                    && !matches!(
+                                                        self.providers_mode,
+                                                        ProvidersEditMode::List
+                                                    ),
+                                                |d| {
+                                                    d.child(
+                                                        div()
+                                                            .id("settings-prov-back-btn")
+                                                            .size(px(28.))
+                                                            .rounded(px(7.))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .cursor_pointer()
+                                                            .hover(|h| h.bg(p.sidebar_row_hover))
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                if let ProvidersEditMode::EditCustom {
+                                                                    model_editor_open,
+                                                                    editing_model_idx,
+                                                                    ..
+                                                                } = &mut this.providers_mode
+                                                                {
+                                                                    if *model_editor_open {
+                                                                        *model_editor_open = false;
+                                                                        *editing_model_idx = None;
+                                                                        this.providers_status = None;
+                                                                        cx.notify();
+                                                                        return;
+                                                                    }
+                                                                }
+                                                                this.providers_mode =
+                                                                    ProvidersEditMode::List;
+                                                                this.providers_status = None;
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                Icon::new(IconName::ChevronLeft)
+                                                                    .size(px(15.))
+                                                                    .text_color(p.ink),
+                                                            ),
+                                                    )
+                                                },
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(15.))
+                                                    .font_semibold()
+                                                    .text_color(p.ink)
+                                                    .child(match self.settings_tab {
+                                                        SettingsTab::General => {
+                                                            "General".to_string()
+                                                        }
+                                                        SettingsTab::Providers => {
+                                                            match &self.providers_mode {
+                                                                ProvidersEditMode::List => {
+                                                                    "Providers".to_string()
+                                                                }
+                                                                ProvidersEditMode::EditBuiltin {
+                                                                    display_name,
+                                                                    ..
+                                                                } => display_name.clone(),
+                                                                ProvidersEditMode::EditCustom {
+                                                                    old_id,
+                                                                    model_editor_open,
+                                                                    editing_model_idx,
+                                                                    ..
+                                                                } => {
+                                                                    if *model_editor_open {
+                                                                        if editing_model_idx
+                                                                            .is_some()
+                                                                        {
+                                                                            "Edit Model".to_string()
+                                                                        } else {
+                                                                            "Add Model".to_string()
+                                                                        }
+                                                                    } else if old_id.is_some() {
+                                                                        "Edit Custom Endpoint"
+                                                                            .to_string()
+                                                                    } else {
+                                                                        "New Custom Endpoint"
+                                                                            .to_string()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }),
+                                            ),
                                     )
-                                    .child(self.modal_close_button("settings-close-btn", cx)),
+                                    .child(
+                                        h_flex()
+                                            .gap(px(8.))
+                                            .items_center()
+                                            .when(
+                                                self.settings_tab == SettingsTab::Providers
+                                                    && matches!(
+                                                        self.providers_mode,
+                                                        ProvidersEditMode::List
+                                                    ),
+                                                |d| {
+                                                    d.child(
+                                                        div()
+                                                            .id("providers-add-custom-btn")
+                                                            .px(px(11.))
+                                                            .py(px(5.))
+                                                            .rounded(px(7.))
+                                                            .bg(p.composer_send_fill)
+                                                            .cursor_pointer()
+                                                            .hover(|h| h.opacity(0.9))
+                                                            .text_xs()
+                                                            .font_medium()
+                                                            .text_color(p.composer_send_mark)
+                                                            .child("+ Custom Endpoint")
+                                                            .on_click(cx.listener(
+                                                                |this, _, window, cx| {
+                                                                    this.open_custom_endpoint_editor(
+                                                                        None, window, cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                    )
+                                                },
+                                            )
+                                            .child(self.modal_close_button("settings-close-btn", cx)),
+                                    ),
                             )
-                            .child(
-                                v_flex()
+                            .child(match self.settings_tab {
+                                SettingsTab::General => v_flex()
                                     .id("settings-general-body")
                                     .flex_1()
                                     .overflow_y_scrollbar()
@@ -1416,12 +1592,17 @@ impl PaApp {
                                                             })),
                                                     ),
                                             ),
-                                    ),
-                            ),
+                                    )
+                                    .into_any_element(),
+                                SettingsTab::Providers => {
+                                    self.render_providers_settings_body(window, cx)
+                                }
+                            }),
                     ),
             )
             .into_any_element()
     }
+
 
     fn render_export_result_popup(
         &self,
@@ -1639,6 +1820,7 @@ impl PaApp {
             )
             .into_any_element()
     }
+
 }
 
 #[cfg(test)]

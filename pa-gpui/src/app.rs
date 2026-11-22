@@ -2,6 +2,11 @@ use crate::composer::{parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WID
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
 use crate::popups::OpenPopup;
+use crate::providers::{
+    delete_custom_endpoint, fetch_models_for_endpoint, load_snapshot, remove_builtin_auth,
+    save_builtin_config, upsert_custom_endpoint, AuthKind, BuiltinProviderRow, CustomEndpointRow,
+    ModelDefinition, ProviderConfig, ProviderSnapshot,
+};
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
 use crate::sidebar::RenameTarget;
@@ -30,6 +35,34 @@ const DEHYDRATE_RADIUS: usize = 50;
 const MAX_TAIL_ITEMS: usize = 220;
 const KEEP_TAIL_ITEMS: usize = 140;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsTab {
+    General,
+    Providers,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ProvidersEditMode {
+    List,
+    EditBuiltin {
+        id: String,
+        display_name: String,
+        env_var: Option<&'static str>,
+        is_oauth: bool,
+    },
+    EditCustom {
+        old_id: Option<String>,
+        api: String,
+        headers: Vec<(Entity<InputState>, Entity<InputState>)>,
+        models: Vec<ModelDefinition>,
+        fetched_models: Vec<ModelDefinition>,
+        model_editor_open: bool,
+        editing_model_idx: Option<usize>,
+        model_reasoning: bool,
+        model_images: bool,
+    },
+}
+
 pub struct PaApp {
     pub(crate) bridge: DaemonBridge,
     pub(crate) status: SharedString,
@@ -50,6 +83,12 @@ pub struct PaApp {
     pub(crate) anim_epoch: Instant,
     pub(crate) anim_phase_ms: u64,
     pub(crate) settings: AppSettings,
+    pub(crate) settings_tab: SettingsTab,
+    pub(crate) providers_snapshot: ProviderSnapshot,
+    pub(crate) providers_mode: ProvidersEditMode,
+    pub(crate) providers_more_open: bool,
+    pub(crate) providers_fetching_models: bool,
+    pub(crate) providers_status: Option<(bool, String)>,
     pub(crate) search_open: bool,
     pub(crate) find_open: bool,
     pub(crate) find_index: usize,
@@ -58,14 +97,24 @@ pub struct PaApp {
     pub(crate) hovered_model: Option<(String, String, f32)>,
     pub(crate) model_menu_scroll: ScrollHandle,
     pub(crate) attach_tx: async_channel::Sender<Vec<Attachment>>,
+    pub(crate) fetch_models_tx: async_channel::Sender<Result<Vec<ModelDefinition>, String>>,
     pub(crate) list_state: ListState,
     pub(crate) search_input: Entity<InputState>,
     pub(crate) find_input: Entity<InputState>,
     pub(crate) rename_input: Entity<InputState>,
+    pub(crate) prov_id_input: Entity<InputState>,
+    pub(crate) prov_name_input: Entity<InputState>,
+    pub(crate) prov_url_input: Entity<InputState>,
+    pub(crate) prov_key_input: Entity<InputState>,
+    pub(crate) prov_model_id_input: Entity<InputState>,
+    pub(crate) prov_model_name_input: Entity<InputState>,
+    pub(crate) prov_model_ctx_input: Entity<InputState>,
+    pub(crate) prov_model_max_input: Entity<InputState>,
     pub(crate) composer: Entity<TextareaState>,
     _subscriptions: Vec<Subscription>,
     _daemon_task: Task<()>,
     _attach_task: Task<()>,
+    _fetch_models_task: Task<()>,
 }
 
 impl PaApp {
@@ -74,6 +123,14 @@ impl PaApp {
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
         let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in transcript…"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("New session name…"));
+        let prov_id_input = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. my_gateway"));
+        let prov_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. My Gateway"));
+        let prov_url_input = cx.new(|cx| InputState::new(window, cx).placeholder("https://api.example.com/v1"));
+        let prov_key_input = cx.new(|cx| InputState::new(window, cx).placeholder("API key or env var (optional for local)"));
+        let prov_model_id_input = cx.new(|cx| InputState::new(window, cx).placeholder("Model ID (e.g. gpt-4o)"));
+        let prov_model_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Display name (optional)"));
+        let prov_model_ctx_input = cx.new(|cx| InputState::new(window, cx).placeholder("128000"));
+        let prov_model_max_input = cx.new(|cx| InputState::new(window, cx).placeholder("16384"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("Ask anything… (/ for commands · Shift+Enter for newline)")
@@ -180,6 +237,52 @@ impl PaApp {
             }
         });
 
+        let (fetch_models_tx, fetch_models_rx) =
+            async_channel::unbounded::<Result<Vec<ModelDefinition>, String>>();
+        let weak_fetch = cx.entity().downgrade();
+        let fetch_models_task = cx.spawn(async move |_this, cx| {
+            while let Ok(res) = fetch_models_rx.recv().await {
+                let keep_going = weak_fetch
+                    .update(cx, |this, cx| {
+                        this.providers_fetching_models = false;
+                        match res {
+                            Ok(fetched) => {
+                                if let ProvidersEditMode::EditCustom {
+                                    models,
+                                    fetched_models,
+                                    ..
+                                } = &mut this.providers_mode
+                                {
+                                    let available: Vec<ModelDefinition> = fetched
+                                        .into_iter()
+                                        .filter(|m| !models.iter().any(|e| e.id == m.id))
+                                        .collect();
+                                    if available.is_empty() {
+                                        fetched_models.clear();
+                                        this.providers_status = Some((
+                                            false,
+                                            "No additional models found on this endpoint."
+                                                .to_string(),
+                                        ));
+                                    } else {
+                                        *fetched_models = available;
+                                        this.providers_status = None;
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                this.providers_status = Some((true, err));
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !keep_going {
+                    break;
+                }
+            }
+        });
+
         // Top alignment keeps short transcripts anchored to the top of the pane while
         // FollowMode::Tail pins overflowing and streaming transcripts to the bottom.
         // 600px overdraw pre-measures items well before they enter the viewport to avoid jumps.
@@ -212,6 +315,12 @@ impl PaApp {
             anim_epoch: Instant::now(),
             anim_phase_ms: 0,
             settings,
+            settings_tab: SettingsTab::General,
+            providers_snapshot: ProviderSnapshot::default(),
+            providers_mode: ProvidersEditMode::List,
+            providers_more_open: false,
+            providers_fetching_models: false,
+            providers_status: None,
             search_open: false,
             find_open: false,
             find_index: 0,
@@ -220,19 +329,522 @@ impl PaApp {
             hovered_model: None,
             model_menu_scroll: ScrollHandle::new(),
             attach_tx,
+            fetch_models_tx,
             list_state,
             search_input,
             find_input,
             rename_input,
+            prov_id_input,
+            prov_name_input,
+            prov_url_input,
+            prov_key_input,
+            prov_model_id_input,
+            prov_model_name_input,
+            prov_model_ctx_input,
+            prov_model_max_input,
             composer,
             _subscriptions: vec![sub_composer, sub_search, sub_find, sub_rename],
             _daemon_task: daemon_task,
             _attach_task: attach_task,
+            _fetch_models_task: fetch_models_task,
         }
     }
 
     pub(crate) fn palette(&self) -> PaPalette {
         PaPalette::for_mode(self.settings.dark_mode)
+    }
+
+    pub(crate) fn refresh_providers_snapshot(&mut self) {
+        self.providers_snapshot = load_snapshot();
+    }
+
+    pub(crate) fn refresh_daemon_models(&self) {
+        let session = self.roster.active_id().map(str::to_string);
+        let _ = self.bridge.tx.send(DaemonCmd::RefreshModels { session });
+    }
+
+    pub(crate) fn open_builtin_provider_editor(
+        &mut self,
+        row: &BuiltinProviderRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.providers_status = None;
+        let current_key = match &row.auth {
+            AuthKind::ApiKey(k) => k.clone(),
+            _ => String::new(),
+        };
+        let is_oauth = matches!(row.auth, AuthKind::OAuth);
+        let current_url = row.base_url_override.clone().unwrap_or_default();
+        self.prov_key_input.update(cx, |input, cx| {
+            input.set_value(current_key, window, cx);
+        });
+        self.prov_url_input.update(cx, |input, cx| {
+            input.set_value(current_url, window, cx);
+        });
+        self.providers_mode = ProvidersEditMode::EditBuiltin {
+            id: row.id.clone(),
+            display_name: row.display_name.clone(),
+            env_var: row.env_var,
+            is_oauth,
+        };
+        cx.notify();
+    }
+
+    pub(crate) fn open_custom_endpoint_editor(
+        &mut self,
+        existing: Option<&CustomEndpointRow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.providers_status = None;
+        let (old_id, id_val, name_val, api, url_val, key_val, header_pairs, models) =
+            if let Some(row) = existing {
+                let pairs: Vec<(String, String)> = row
+                    .config
+                    .headers
+                    .as_ref()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default();
+                (
+                    Some(row.id.clone()),
+                    row.id.clone(),
+                    row.config.name.clone().unwrap_or_default(),
+                    row.config
+                        .api
+                        .clone()
+                        .unwrap_or_else(|| "openai-completions".to_string()),
+                    row.config.base_url.clone().unwrap_or_default(),
+                    row.config.api_key.clone().unwrap_or_default(),
+                    pairs,
+                    row.config.models.clone().unwrap_or_default(),
+                )
+            } else {
+                (
+                    None,
+                    String::new(),
+                    String::new(),
+                    "openai-completions".to_string(),
+                    String::new(),
+                    String::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            };
+
+        let headers = header_pairs
+            .into_iter()
+            .map(|(k, v)| {
+                let ki = cx.new(|cx| {
+                    let mut s = InputState::new(window, cx).placeholder("Header name");
+                    s.set_value(k, window, cx);
+                    s
+                });
+                let vi = cx.new(|cx| {
+                    let mut s = InputState::new(window, cx).placeholder("Header value");
+                    s.set_value(v, window, cx);
+                    s
+                });
+                (ki, vi)
+            })
+            .collect();
+
+        self.prov_id_input
+            .update(cx, |input, cx| input.set_value(id_val, window, cx));
+        self.prov_name_input
+            .update(cx, |input, cx| input.set_value(name_val, window, cx));
+        self.prov_url_input
+            .update(cx, |input, cx| input.set_value(url_val, window, cx));
+        self.prov_key_input
+            .update(cx, |input, cx| input.set_value(key_val, window, cx));
+
+        self.providers_mode = ProvidersEditMode::EditCustom {
+            old_id,
+            api,
+            headers,
+            models,
+            fetched_models: Vec::new(),
+            model_editor_open: false,
+            editing_model_idx: None,
+            model_reasoning: true,
+            model_images: true,
+        };
+        self.clear_model_inputs(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn add_header_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ki = cx.new(|cx| InputState::new(window, cx).placeholder("Header name"));
+        let vi = cx.new(|cx| InputState::new(window, cx).placeholder("Header value"));
+        if let ProvidersEditMode::EditCustom { headers, .. } = &mut self.providers_mode {
+            headers.push((ki, vi));
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn remove_header_row(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if let ProvidersEditMode::EditCustom { headers, .. } = &mut self.providers_mode {
+            if idx < headers.len() {
+                headers.remove(idx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn add_fetched_model(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let ProvidersEditMode::EditCustom {
+            models,
+            fetched_models,
+            ..
+        } = &mut self.providers_mode
+        {
+            if let Some(pos) = fetched_models.iter().position(|m| m.id == id) {
+                let model = fetched_models.remove(pos);
+                if !models.iter().any(|m| m.id == model.id) {
+                    models.push(model);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn clear_fetched_models(&mut self, cx: &mut Context<Self>) {
+        if let ProvidersEditMode::EditCustom { fetched_models, .. } = &mut self.providers_mode {
+            fetched_models.clear();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn trigger_fetch_models(&mut self, cx: &mut Context<Self>) {
+        if self.providers_fetching_models {
+            return;
+        }
+        let ProvidersEditMode::EditCustom {
+            api,
+            headers: header_inputs,
+            ..
+        } = &self.providers_mode
+        else {
+            return;
+        };
+        let api = api.clone();
+        let base_url = self.prov_url_input.read(cx).value().trim().to_string();
+        let api_key = self.prov_key_input.read(cx).value().trim().to_string();
+        let mut headers = std::collections::BTreeMap::new();
+        for (ki, vi) in header_inputs {
+            let k = ki.read(cx).value().trim().to_string();
+            let v = vi.read(cx).value().trim().to_string();
+            if !k.is_empty() {
+                headers.insert(k, v);
+            }
+        }
+        self.providers_fetching_models = true;
+        self.providers_status = None;
+        let tx = self.fetch_models_tx.clone();
+        std::thread::spawn(move || {
+            let res = fetch_models_for_endpoint(&api, &base_url, &api_key, &headers);
+            let _ = tx.try_send(res);
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn open_new_model_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.providers_status = None;
+        self.clear_model_inputs(window, cx);
+        if let ProvidersEditMode::EditCustom {
+            model_editor_open,
+            editing_model_idx,
+            model_reasoning,
+            model_images,
+            ..
+        } = &mut self.providers_mode
+        {
+            *model_editor_open = true;
+            *editing_model_idx = None;
+            *model_reasoning = true;
+            *model_images = true;
+        }
+        cx.notify();
+    }
+
+    fn clear_model_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prov_model_id_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.prov_model_name_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.prov_model_ctx_input
+            .update(cx, |input, cx| input.set_value("128000", window, cx));
+        self.prov_model_max_input
+            .update(cx, |input, cx| input.set_value("16384", window, cx));
+    }
+
+    pub(crate) fn load_model_draft(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let model = match &self.providers_mode {
+            ProvidersEditMode::EditCustom { models, .. } => models.get(idx).cloned(),
+            _ => None,
+        };
+        let Some(m) = model else {
+            return;
+        };
+        let reasoning = m.reasoning.unwrap_or(false);
+        let images = m
+            .input
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|s| s == "image"));
+        self.prov_model_id_input
+            .update(cx, |i, cx| i.set_value(m.id.clone(), window, cx));
+        self.prov_model_name_input.update(cx, |i, cx| {
+            i.set_value(m.name.clone().unwrap_or_default(), window, cx)
+        });
+        self.prov_model_ctx_input.update(cx, |i, cx| {
+            i.set_value(
+                m.context_window.unwrap_or(128000).to_string(),
+                window,
+                cx,
+            )
+        });
+        self.prov_model_max_input.update(cx, |i, cx| {
+            i.set_value(m.max_tokens.unwrap_or(16384).to_string(), window, cx)
+        });
+        if let ProvidersEditMode::EditCustom {
+            model_editor_open,
+            editing_model_idx,
+            model_reasoning,
+            model_images,
+            ..
+        } = &mut self.providers_mode
+        {
+            *model_editor_open = true;
+            *editing_model_idx = Some(idx);
+            *model_reasoning = reasoning;
+            *model_images = images;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn commit_model_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mid = self.prov_model_id_input.read(cx).value().trim().to_string();
+        if mid.is_empty() {
+            self.providers_status = Some((true, "Model ID is required.".to_string()));
+            cx.notify();
+            return;
+        }
+        let mname = self.prov_model_name_input.read(cx).value().trim().to_string();
+        let ctx: u64 = self
+            .prov_model_ctx_input
+            .read(cx)
+            .value()
+            .trim()
+            .parse()
+            .unwrap_or(128000)
+            .max(1);
+        let max_tok: u64 = self
+            .prov_model_max_input
+            .read(cx)
+            .value()
+            .trim()
+            .parse()
+            .unwrap_or(16384)
+            .max(1);
+
+        if let ProvidersEditMode::EditCustom {
+            models,
+            model_editor_open,
+            editing_model_idx,
+            model_reasoning,
+            model_images,
+            ..
+        } = &mut self.providers_mode
+        {
+            let mut input_modalities = vec!["text".to_string()];
+            if *model_images {
+                input_modalities.push("image".to_string());
+            }
+            let existing_extra = editing_model_idx
+                .and_then(|idx| models.get(idx))
+                .map(|m| m.extra.clone())
+                .unwrap_or_default();
+            let def = ModelDefinition {
+                id: mid,
+                name: if mname.is_empty() { None } else { Some(mname) },
+                api: None,
+                reasoning: Some(*model_reasoning),
+                input: Some(input_modalities),
+                context_window: Some(ctx),
+                max_tokens: Some(max_tok),
+                extra: existing_extra,
+            };
+            if let Some(idx) = editing_model_idx.take() {
+                if idx < models.len() {
+                    models[idx] = def;
+                } else {
+                    models.push(def);
+                }
+            } else if let Some(pos) = models.iter().position(|m| m.id == def.id) {
+                models[pos] = def;
+            } else {
+                models.push(def);
+            }
+            *model_editor_open = false;
+            *model_reasoning = true;
+            *model_images = true;
+        }
+        self.providers_status = None;
+        self.clear_model_inputs(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn remove_model_draft(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let ProvidersEditMode::EditCustom {
+            models,
+            editing_model_idx,
+            ..
+        } = &mut self.providers_mode
+        {
+            if idx < models.len() {
+                models.remove(idx);
+            }
+            if *editing_model_idx == Some(idx) {
+                *editing_model_idx = None;
+                self.clear_model_inputs(window, cx);
+            } else if let Some(cur) = editing_model_idx {
+                if *cur > idx {
+                    *cur -= 1;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn save_builtin_provider(&mut self, cx: &mut Context<Self>) {
+        let ProvidersEditMode::EditBuiltin {
+            id,
+            display_name,
+            is_oauth,
+            ..
+        } = &self.providers_mode
+        else {
+            return;
+        };
+        let key_val = self.prov_key_input.read(cx).value().to_string();
+        let url_val = self.prov_url_input.read(cx).value().to_string();
+        let api_key_arg = if *is_oauth && key_val.trim().is_empty() {
+            None
+        } else {
+            Some(key_val.as_str())
+        };
+        match save_builtin_config(id, api_key_arg, Some(url_val.as_str())) {
+            Ok(()) => {
+                self.providers_status = Some((false, format!("Saved {display_name}.")));
+                self.providers_mode = ProvidersEditMode::List;
+                self.refresh_providers_snapshot();
+                self.refresh_daemon_models();
+            }
+            Err(err) => {
+                self.providers_status = Some((true, err));
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn remove_builtin_provider_auth(&mut self, id: &str, cx: &mut Context<Self>) {
+        match remove_builtin_auth(id) {
+            Ok(()) => {
+                self.providers_status = None;
+                self.providers_mode = ProvidersEditMode::List;
+                self.refresh_providers_snapshot();
+                self.refresh_daemon_models();
+            }
+            Err(err) => {
+                self.providers_status = Some((true, err));
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn save_custom_endpoint(&mut self, cx: &mut Context<Self>) {
+        let ProvidersEditMode::EditCustom {
+            old_id,
+            api,
+            headers: header_inputs,
+            models,
+            ..
+        } = &self.providers_mode
+        else {
+            return;
+        };
+        let new_id = self.prov_id_input.read(cx).value().trim().to_string();
+        let name = self.prov_name_input.read(cx).value().trim().to_string();
+        let url = self.prov_url_input.read(cx).value().trim().to_string();
+        let key = self.prov_key_input.read(cx).value().trim().to_string();
+        let mut hdr_map = std::collections::BTreeMap::new();
+        for (ki, vi) in header_inputs {
+            let k = ki.read(cx).value().trim().to_string();
+            let v = vi.read(cx).value().trim().to_string();
+            if !k.is_empty() {
+                hdr_map.insert(k, v);
+            }
+        }
+        let headers = if hdr_map.is_empty() {
+            None
+        } else {
+            Some(hdr_map)
+        };
+
+        let existing_extra = old_id
+            .as_deref()
+            .and_then(|oid| self.providers_snapshot.custom.iter().find(|c| c.id == oid))
+            .map(|c| c.config.extra.clone())
+            .unwrap_or_default();
+
+        let cfg = ProviderConfig {
+            name: if name.is_empty() { None } else { Some(name) },
+            base_url: Some(url),
+            api_key: if key.is_empty() { None } else { Some(key) },
+            api: Some(api.clone()),
+            headers,
+            auth_header: None,
+            models: Some(models.clone()),
+            extra: existing_extra,
+        };
+
+        match upsert_custom_endpoint(old_id.as_deref(), &new_id, cfg) {
+            Ok(()) => {
+                self.providers_status = Some((false, format!("Saved Custom Endpoint '{new_id}'.")));
+                self.providers_mode = ProvidersEditMode::List;
+                self.refresh_providers_snapshot();
+                self.refresh_daemon_models();
+            }
+            Err(err) => {
+                self.providers_status = Some((true, err));
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn delete_custom_endpoint_entry(&mut self, id: &str, cx: &mut Context<Self>) {
+        match delete_custom_endpoint(id) {
+            Ok(()) => {
+                self.providers_status = None;
+                self.providers_mode = ProvidersEditMode::List;
+                self.refresh_providers_snapshot();
+                self.refresh_daemon_models();
+            }
+            Err(err) => {
+                self.providers_status = Some((true, err));
+            }
+        }
+        cx.notify();
     }
 
     pub(crate) fn sync_stop_target(&mut self, cx: &Context<Self>) {

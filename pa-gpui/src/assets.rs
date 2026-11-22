@@ -17,6 +17,7 @@ pub const ICON_HEARTBEAT_PATH: &str = "icons/pa-heartbeat.svg";
 pub const ICON_SHELLS_PATH: &str = "icons/pa-shells.svg";
 pub const ICON_SEND_PATH: &str = "icons/pa-send.svg";
 pub const ICON_SWATCH_BOOK_PATH: &str = "icons/pa-swatch-book.svg";
+pub const ICON_PROVIDERS_PATH: &str = "icons/pa-providers.svg";
 pub const ICON_CLOSE_PATH: &str = "icons/pa-close.svg";
 
 // Exact pa-ui shipped dark-theme 6-facet brand mark (pa-ui/ui/icons.slint + theme/tests.rs)
@@ -53,6 +54,9 @@ const ICON_SEND_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
 // Lucide swatch-book (General settings tab icon)
 const ICON_SWATCH_BOOK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2Z"/><path d="M16.7 13H19a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7"/><path d="M7 17h.01"/><path d="m11 8 2.3-2.3a2.4 2.4 0 0 1 3.404.004L18.6 7.6a2.4 2.4 0 0 1 .026 3.434L9.9 19.8"/></svg>"##;
 
+// Tri-Nodes (Providers settings tab icon)
+const ICON_PROVIDERS_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 5v2.5"/><path d="M18.1 15.5 15.9 14.2"/><path d="M5.9 15.5 8.1 14.2"/><circle cx="12" cy="3.2" r="1.6"/><circle cx="19.6" cy="16.4" r="1.6"/><circle cx="4.4" cy="16.4" r="1.6"/></svg>"##;
+
 // Symmetric 12x12 modal close X (exact 8px margin inside 28x28 button)
 const ICON_CLOSE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 2.5L9.5 9.5M9.5 2.5L2.5 9.5"/></svg>"##;
 
@@ -76,6 +80,7 @@ impl AssetSource for AppAssets {
             ICON_SHELLS_PATH => Ok(Some(Cow::Borrowed(ICON_SHELLS_SVG.as_bytes()))),
             ICON_SEND_PATH => Ok(Some(Cow::Borrowed(ICON_SEND_SVG.as_bytes()))),
             ICON_SWATCH_BOOK_PATH => Ok(Some(Cow::Borrowed(ICON_SWATCH_BOOK_SVG.as_bytes()))),
+            ICON_PROVIDERS_PATH => Ok(Some(Cow::Borrowed(ICON_PROVIDERS_SVG.as_bytes()))),
             ICON_CLOSE_PATH => Ok(Some(Cow::Borrowed(ICON_CLOSE_SVG.as_bytes()))),
             _ => KitAssets.load(path),
         }

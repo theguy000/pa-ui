@@ -170,6 +170,7 @@ impl PaApp {
                                 this.open_popup = if this.open_popup == OpenPopup::SettingsMenu {
                                     OpenPopup::None
                                 } else {
+                                    this.refresh_providers_snapshot();
                                     OpenPopup::SettingsMenu
                                 };
                                 cx.notify();

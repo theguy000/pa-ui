@@ -338,6 +338,7 @@ impl PaApp {
                     return;
                 }
                 SlashAction::Settings => {
+                    self.refresh_providers_snapshot();
                     self.open_popup = OpenPopup::SettingsMenu;
                     self.set_composer_text("", window, cx);
                     cx.notify();

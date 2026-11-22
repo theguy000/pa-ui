@@ -4,6 +4,7 @@ mod composer;
 mod composer_model;
 mod daemon;
 mod popups;
+mod providers;
 mod roster;
 mod settings;
 mod sidebar;

@@ -62,6 +62,7 @@ pub enum DaemonCmd {
         level: String,
         switch: bool,
     },
+    RefreshModels { session: Option<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -687,6 +688,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         }
                         if let Ok(sessions) = pa_client::list_sessions(&client) {
                             let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                        }
+                    }
+                    DaemonCmd::RefreshModels { session } => {
+                        let sid = session.as_deref().unwrap_or("");
+                        if let Ok(models) = pa_client::model_catalog(&client, sid) {
+                            let _ = ev_tx.try_send(DaemonEvent::Models(models));
                         }
                     }
                 }
