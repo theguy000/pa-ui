@@ -18,6 +18,7 @@ use crate::transcript::{
     start_tool_call, TranscriptItem,
 };
 use gpui_kit::component::{
+    diff::{DiffEvent, DiffMode, DiffState},
     h_flex,
     input::{IndentInline, InputEvent, InputState, MoveDown, MoveUp, TextareaState},
     scroll::ScrollableElement as _,
@@ -71,6 +72,7 @@ pub struct PaApp {
     pub(crate) roster: SessionRoster,
     pub(crate) composer_model: ComposerModel,
     pub(crate) diff_model: DiffModel,
+    pub(crate) diff_state: Entity<DiffState>,
     pub(crate) renaming: Option<RenameTarget>,
     pub(crate) items: Vec<TranscriptItem>,
     pub(crate) next_item_id: usize,
@@ -297,6 +299,26 @@ impl PaApp {
             });
         });
 
+        let initial_diff_mode = if settings.diff_split {
+            DiffMode::Split
+        } else {
+            DiffMode::Unified
+        };
+        let diff_state =
+            cx.new(|cx| DiffState::new(Vec::new(), cx).with_mode(initial_diff_mode));
+        cx.subscribe(&diff_state, |this, _, event: &DiffEvent, cx| match event {
+            DiffEvent::FileExpanded(path) => {
+                this.diff_model.set_file_collapsed(path.as_ref(), false);
+                cx.notify();
+            }
+            DiffEvent::FileCollapsed(path) => {
+                this.diff_model.set_file_collapsed(path.as_ref(), true);
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
+
         Self {
             bridge,
             status: "Connecting…".into(),
@@ -304,6 +326,7 @@ impl PaApp {
             roster: SessionRoster::new(),
             composer_model: ComposerModel::new(),
             diff_model: DiffModel::new(settings.diff_width),
+            diff_state,
             renaming: None,
             items: Vec::new(),
             next_item_id: 1,
@@ -380,7 +403,11 @@ impl PaApp {
             self.diff_model.cancel_drag();
         }
         self.settings.save();
-        cx.notify();
+        if self.settings.right_open {
+            self.refresh_diff(cx);
+        } else {
+            cx.notify();
+        }
     }
 
     pub(crate) fn begin_right_column_drag(
@@ -933,6 +960,7 @@ impl PaApp {
         self.list_state.set_follow_mode(FollowMode::Tail);
         self.notice = None;
         self.sync_stop_target(cx);
+        self.sync_diff_for_active_session(cx);
         let focus = self.composer.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
         cx.notify();
@@ -1062,6 +1090,7 @@ impl PaApp {
                 self.roster.set_active_id(Some(new_sid));
                 self.notice = None;
                 self.sync_stop_target(cx);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::Sessions(rows) => {
                 if let Some(auto_sid) = self.roster.apply_sessions(rows) {
@@ -1071,6 +1100,7 @@ impl PaApp {
                     self.is_streaming = streaming;
                 }
                 self.sync_stop_target(cx);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::Messages {
                 session,
@@ -1097,6 +1127,7 @@ impl PaApp {
                 self.list_state
                     .reset_with_uniform_height(self.items.len(), px(44.));
                 self.list_state.set_follow_mode(FollowMode::Tail);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::TailRefresh {
                 session,

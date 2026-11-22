@@ -664,6 +664,7 @@ impl PaApp {
                             .bridge
                             .tx
                             .send(DaemonCmd::SelectSession(click_key.clone()));
+                        this.sync_diff_for_active_session(cx);
                         cx.notify();
                     })),
             );
@@ -672,67 +673,4 @@ impl PaApp {
         card
     }
 
-    pub(crate) fn render_right_column(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !self.settings.right_open {
-            return None;
-        }
-        let p = self.palette();
-        let width = self.right_column_width(window);
-        let handle_active = self.diff_model.is_dragging() || self.diff_model.is_handle_hovered();
-        let edge_color = if handle_active {
-            p.composer_edge_focus
-        } else {
-            p.sidebar_group_edge
-        };
-        Some(
-            h_flex()
-                .id("right-diff-column")
-                .relative()
-                .w(px(width))
-                .h_full()
-                .flex_shrink_0()
-                .bg(p.window_surface)
-                .child(
-                    div()
-                        .id("diff-resize-handle")
-                        .w(px(5.))
-                        .h_full()
-                        .flex_shrink_0()
-                        .cursor_col_resize()
-                        .flex()
-                        .justify_start()
-                        .child(div().w(px(1.)).h_full().bg(edge_color))
-                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                            if this.diff_model.is_handle_hovered() != *hovered {
-                                this.diff_model.set_handle_hovered(*hovered);
-                                cx.notify();
-                            }
-                        }))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                window.prevent_default();
-                                if ev.click_count >= 2 {
-                                    this.reset_right_column_width(cx);
-                                    return;
-                                }
-                                this.begin_right_column_drag(ev.position.x.as_f32(), window, cx);
-                            }),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .overflow_hidden(),
-                )
-                .into_any_element(),
-        )
-    }
 }
