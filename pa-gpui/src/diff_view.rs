@@ -55,12 +55,6 @@ impl PaApp {
     }
 
     pub(crate) fn sync_diff_for_active_session(&mut self, cx: &mut Context<Self>) {
-        if matches!(
-            self.open_popup,
-            OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
-        ) {
-            self.open_popup = OpenPopup::None;
-        }
         if !self.settings.right_open {
             return;
         }
@@ -77,6 +71,12 @@ impl PaApp {
             requested_base.as_deref(),
         ) {
             return;
+        }
+        if matches!(
+            self.open_popup,
+            OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+        ) {
+            self.open_popup = OpenPopup::None;
         }
         self.refresh_diff(cx);
     }
@@ -182,7 +182,7 @@ impl PaApp {
 
     pub(crate) fn on_diff_file_expanded(&mut self, path: &str, cx: &mut Context<Self>) {
         self.diff_model.set_file_collapsed(path, false);
-        self.maybe_load_deferred_file(path, false, cx);
+        self.maybe_load_deferred_file(path, true, cx);
         cx.notify();
     }
 
@@ -192,7 +192,7 @@ impl PaApp {
         scroll_after: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some((generation, repo_root, base_ref, untracked)) =
+        let Some((generation, repo_root, base_ref, old_path, untracked)) =
             self.diff_model.begin_deferred_file_load(path)
         else {
             return;
@@ -203,7 +203,13 @@ impl PaApp {
             let bg_path = owned_path.clone();
             let loaded_file = cx
                 .background_spawn(async move {
-                    load_single_file_diff(&repo_root, &base_ref, &bg_path, untracked)
+                    load_single_file_diff(
+                        &repo_root,
+                        &base_ref,
+                        &bg_path,
+                        old_path.as_deref(),
+                        untracked,
+                    )
                 })
                 .await;
             let _ = this.update(cx, |app, cx| {
@@ -888,17 +894,19 @@ impl PaApp {
             DiffViewStatus::Ready => {
                 // Deferred files use a zero-hunk placeholder so `gpui-kit` omits default `+ / -`;
                 // supply accurate numstat counts and lazy/loading status via `header_suffix`.
-                let deferred_meta: HashMap<String, (usize, usize, bool)> = self
+                let file_meta: HashMap<String, (usize, usize, bool, bool, bool)> = self
                     .diff_model
                     .summaries()
                     .iter()
-                    .filter(|s| s.deferred)
+                    .filter(|s| s.deferred || s.truncated)
                     .map(|s| {
                         (
                             s.path.clone(),
                             (
                                 s.additions,
                                 s.deletions,
+                                s.deferred,
+                                s.truncated,
                                 self.diff_model.is_file_loading(&s.path),
                             ),
                         )
@@ -918,8 +926,8 @@ impl PaApp {
                         Diff::new(&self.diff_state)
                             .soft_wrap(self.settings.diff_wrap)
                             .header_suffix(move |file, _, _| {
-                                let Some(&(add, del, loading)) =
-                                    deferred_meta.get(file.path().as_ref())
+                                let Some(&(add, del, deferred, truncated, loading)) =
+                                    file_meta.get(file.path().as_ref())
                                 else {
                                     return div().into_any_element();
                                 };
@@ -927,17 +935,26 @@ impl PaApp {
                                     .gap(px(6.))
                                     .items_center()
                                     .text_size(px(11.))
-                                    .when(add > 0, |r| {
+                                    .when(deferred && add > 0, |r| {
                                         r.child(div().text_color(tag_idle).child(format!("+{add}")))
                                     })
-                                    .when(del > 0, |r| {
+                                    .when(deferred && del > 0, |r| {
                                         r.child(div().text_color(danger).child(format!("-{del}")))
                                     })
-                                    .child(
-                                        div()
-                                            .text_color(if loading { working } else { quiet_ink })
-                                            .child(if loading { "Loading…" } else { "Lazy" }),
-                                    )
+                                    .when(truncated, |r| {
+                                        r.child(div().text_color(quiet_ink).child("256K preview"))
+                                    })
+                                    .when(deferred, |r| {
+                                        r.child(
+                                            div()
+                                                .text_color(if loading {
+                                                    working
+                                                } else {
+                                                    quiet_ink
+                                                })
+                                                .child(if loading { "Loading…" } else { "Lazy" }),
+                                        )
+                                    })
                                     .into_any_element()
                             })
                             .size_full(),

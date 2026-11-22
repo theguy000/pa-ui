@@ -38,7 +38,6 @@ pub(crate) struct LoadedDiff {
     pub(crate) base_ref: String,
     pub(crate) base_branch: Option<String>,
     pub(crate) on_base_branch: bool,
-    pub(crate) current_branch: Option<String>,
     pub(crate) branches: Vec<String>,
     pub(crate) worktrees: Vec<WorktreeEntry>,
     pub(crate) files: Vec<DiffFile>,
@@ -189,21 +188,14 @@ fn is_probably_binary(bytes: &[u8]) -> bool {
 
 fn synthesize_deferred_placeholder(
     path: &str,
-    old_path: Option<&str>,
     additions: usize,
     deletions: usize,
 ) -> Option<DiffFile> {
     let git_path = path.replace('\\', "/");
-    let mut patch = format!("diff --git a/{p} b/{p}\n", p = git_path);
-    if let Some(old) = old_path {
-        let old_git = old.replace('\\', "/");
-        if old_git != git_path {
-            patch.push_str(&format!("rename from {old_git}\nrename to {git_path}\n"));
-        }
-    }
-    patch.push_str(&format!(
-        "Large or generated file (+{additions} -{deletions}) — loading diff on demand\n"
-    ));
+    let patch = format!(
+        "diff --git a/{p} b/{p}\nLarge or generated file (+{additions} -{deletions}) — loading diff on demand\n",
+        p = git_path
+    );
     let opts = DiffParseOptions::new().truncated_hunks(true);
     DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()
 }
@@ -273,7 +265,7 @@ fn load_untracked_entry(
         let text = decode_text_capped(&buf, truncated);
         let line_count = count_text_lines(&text);
         if should_defer_file(&git_path, line_count, 0) {
-            let placeholder = synthesize_deferred_placeholder(&git_path, None, line_count, 0)?;
+            let placeholder = synthesize_deferred_placeholder(&git_path, line_count, 0)?;
             let summary = DiffFileSummary {
                 path: git_path,
                 old_path: None,
@@ -338,10 +330,10 @@ fn synthesize_added_file_patch(git_path: &str, text: &str) -> String {
 fn fetch_tracked_patches(
     repo_root: &Path,
     base_ref: &str,
-    paths: &[&str],
+    entries: &[&NumstatEntry],
 ) -> Result<Vec<DiffFile>, String> {
     let mut out_files = Vec::new();
-    for chunk in paths.chunks(EAGER_DIFF_PATH_CHUNK) {
+    for chunk in entries.chunks(EAGER_DIFF_PATH_CHUNK) {
         let mut args = vec![
             "-c",
             "core.quotepath=false",
@@ -352,7 +344,12 @@ fn fetch_tracked_patches(
             "--unified=3",
             "--",
         ];
-        args.extend_from_slice(chunk);
+        for entry in chunk {
+            args.push(entry.path.as_str());
+            if let Some(old) = entry.old_path.as_deref() {
+                args.push(old);
+            }
+        }
         let output = run_git(repo_root, &args)
             .map_err(|err| format!("Failed to run git diff: {err}"))?;
         if !output.status.success() {
@@ -373,12 +370,20 @@ pub(crate) fn load_single_file_diff(
     repo_root: &Path,
     base_ref: &str,
     path: &str,
+    old_path: Option<&str>,
     untracked: bool,
 ) -> Option<DiffFile> {
     if untracked {
         return build_untracked_diff_file(repo_root, path).map(|(df, _)| df);
     }
-    let files = fetch_tracked_patches(repo_root, base_ref, &[path]).ok()?;
+    let entry = NumstatEntry {
+        path: path.to_string(),
+        old_path: old_path.map(str::to_string),
+        additions: 0,
+        deletions: 0,
+        binary: false,
+    };
+    let files = fetch_tracked_patches(repo_root, base_ref, &[&entry]).ok()?;
     files.into_iter().next()
 }
 
@@ -453,17 +458,16 @@ pub(crate) fn detect_base_branch(repo_root: &Path) -> Option<String> {
     if let Ok(out) = run_git(
         repo_root,
         &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-    ) {
-        if out.status.success() {
-            let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if let Some(short) = full.strip_prefix("refs/remotes/origin/") {
-                if git_commit_ref_exists(repo_root, short) {
-                    return Some(short.to_string());
-                }
-                let remote_ref = format!("origin/{short}");
-                if git_commit_ref_exists(repo_root, &remote_ref) {
-                    return Some(remote_ref);
-                }
+    ) && out.status.success()
+    {
+        let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if let Some(short) = full.strip_prefix("refs/remotes/origin/") {
+            if git_commit_ref_exists(repo_root, short) {
+                return Some(short.to_string());
+            }
+            let remote_ref = format!("origin/{short}");
+            if git_commit_ref_exists(repo_root, &remote_ref) {
+                return Some(remote_ref);
             }
         }
     }
@@ -474,10 +478,10 @@ pub(crate) fn detect_base_branch(repo_root: &Path) -> Option<String> {
         }
     }
 
-    if let Some(cur) = current_branch_name(repo_root) {
-        if git_commit_ref_exists(repo_root, &cur) {
-            return Some(cur);
-        }
+    if let Some(cur) = current_branch_name(repo_root)
+        && git_commit_ref_exists(repo_root, &cur)
+    {
+        return Some(cur);
     }
 
     list_branches(repo_root).into_iter().next()
@@ -493,21 +497,21 @@ pub(crate) fn parse_worktree_list_porcelain(stdout: &str) -> Vec<WorktreeEntry> 
                  path: &mut Option<PathBuf>,
                  branch: &mut Option<String>,
                  is_bare: &mut bool| {
-        if let Some(p) = path.take() {
-            if !*is_bare {
-                let label = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| p.to_string_lossy().into_owned());
-                let is_main = out.is_empty();
-                out.push(WorktreeEntry {
-                    path: p,
-                    label,
-                    branch: branch.take(),
-                    is_main,
-                });
-            }
+        if let Some(p) = path.take()
+            && !*is_bare
+        {
+            let label = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned());
+            let is_main = out.is_empty();
+            out.push(WorktreeEntry {
+                path: p,
+                label,
+                branch: branch.take(),
+                is_main,
+            });
         }
         *branch = None;
         *is_bare = false;
@@ -585,7 +589,6 @@ pub(crate) fn load_diff_for_scope(
             };
             let mut outcome = load_diff_against_base(repo_root, base_ref);
             if let DiffLoadOutcome::Loaded(ref mut loaded) = outcome {
-                loaded.current_branch = current_branch;
                 loaded.worktrees = worktrees;
             }
             outcome
@@ -614,7 +617,6 @@ pub(crate) fn load_diff_for_scope(
             if let DiffLoadOutcome::Loaded(ref mut loaded) = outcome {
                 loaded.base_branch = base_branch;
                 loaded.on_base_branch = on_base_branch;
-                loaded.current_branch = current_branch;
                 loaded.branches = branches;
                 loaded.worktrees = worktrees;
             }
@@ -623,6 +625,7 @@ pub(crate) fn load_diff_for_scope(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
     load_diff_for_scope(cwd, DiffScope::Uncommitted, None)
 }
@@ -655,20 +658,15 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
     }
 
     let entries = parse_numstat_z(&numstat_out.stdout);
-    let mut eager_paths = Vec::new();
-    for entry in &entries {
-        if !should_defer_file(&entry.path, entry.additions, entry.deletions) {
-            eager_paths.push(entry.path.as_str());
-            if let Some(old) = entry.old_path.as_deref() {
-                eager_paths.push(old);
-            }
-        }
-    }
+    let eager_entries: Vec<&NumstatEntry> = entries
+        .iter()
+        .filter(|entry| !should_defer_file(&entry.path, entry.additions, entry.deletions))
+        .collect();
 
-    let eager_files = if eager_paths.is_empty() {
+    let eager_files = if eager_entries.is_empty() {
         Vec::new()
     } else {
-        match fetch_tracked_patches(&repo_root, &base_ref, &eager_paths) {
+        match fetch_tracked_patches(&repo_root, &base_ref, &eager_entries) {
             Ok(files) => files,
             Err(err) => return DiffLoadOutcome::Error(err),
         }
@@ -683,12 +681,9 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
     let mut summaries = Vec::with_capacity(entries.len());
     for entry in entries {
         if should_defer_file(&entry.path, entry.additions, entry.deletions) {
-            if let Some(placeholder) = synthesize_deferred_placeholder(
-                &entry.path,
-                entry.old_path.as_deref(),
-                entry.additions,
-                entry.deletions,
-            ) {
+            if let Some(placeholder) =
+                synthesize_deferred_placeholder(&entry.path, entry.additions, entry.deletions)
+            {
                 summaries.push(DiffFileSummary {
                     path: entry.path,
                     old_path: entry.old_path,
@@ -718,17 +713,16 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
             "--exclude-standard",
             "-z",
         ],
-    ) {
-        if untracked_out.status.success() {
-            for raw in untracked_out.stdout.split(|&b| b == 0) {
-                if raw.is_empty() {
-                    continue;
-                }
-                let rel = String::from_utf8_lossy(raw);
-                if let Some((df, summary)) = load_untracked_entry(&repo_root, &rel) {
-                    summaries.push(summary);
-                    files.push(df);
-                }
+    ) && untracked_out.status.success()
+    {
+        for raw in untracked_out.stdout.split(|&b| b == 0) {
+            if raw.is_empty() {
+                continue;
+            }
+            let rel = String::from_utf8_lossy(raw);
+            if let Some((df, summary)) = load_untracked_entry(&repo_root, &rel) {
+                summaries.push(summary);
+                files.push(df);
             }
         }
     }
@@ -741,7 +735,6 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
         base_ref,
         base_branch: None,
         on_base_branch: false,
-        current_branch: None,
         branches: Vec::new(),
         worktrees: Vec::new(),
         files,
@@ -957,18 +950,66 @@ mod tests {
         assert_eq!(min_s.additions, 2);
         assert_eq!(min_f.additions(), 0);
 
-        // On-demand single-file loads fetch the real patches.
-        let lock_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "Cargo.lock", false)
-            .expect("on-demand tracked lockfile");
+        let lock_loaded =
+            load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "Cargo.lock", None, false)
+                .expect("on-demand tracked lockfile");
         assert_eq!(lock_loaded.additions(), 1);
 
-        let big_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "big.txt", false)
-            .expect("on-demand large file");
+        let big_loaded =
+            load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "big.txt", None, false)
+                .expect("on-demand large file");
         assert_eq!(big_loaded.additions(), 1_600);
 
-        let min_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "bundle.min.js", true)
-            .expect("on-demand untracked minified file");
+        let min_loaded = load_single_file_diff(
+            &loaded.repo_root,
+            &loaded.base_ref,
+            "bundle.min.js",
+            None,
+            true,
+        )
+        .expect("on-demand untracked minified file");
         assert_eq!(min_loaded.additions(), 2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn deferred_renamed_file_preserves_old_path_and_loads_on_demand() {
+        let root = make_temp_dir("deferred-rename");
+        init_repo(&root);
+        let body: String = (0..50).map(|i| format!("row-{i}
+")).collect();
+        fs::write(root.join("old.min.js"), &body).unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+
+        git(&root, &["mv", "old.min.js", "new.min.js"]);
+        fs::write(root.join("new.min.js"), format!("{body}row-50
+")).unwrap();
+
+        let DiffLoadOutcome::Loaded(loaded) =
+            load_diff_for_scope(&root, DiffScope::Uncommitted, None)
+        else {
+            panic!("expected Loaded diff");
+        };
+        let summary = loaded
+            .summaries
+            .iter()
+            .find(|s| s.path == "new.min.js")
+            .expect("renamed summary");
+        assert!(summary.deferred);
+        assert_eq!(summary.old_path.as_deref(), Some("old.min.js"));
+
+        let df = load_single_file_diff(
+            &loaded.repo_root,
+            &loaded.base_ref,
+            &summary.path,
+            summary.old_path.as_deref(),
+            summary.untracked,
+        )
+        .expect("load renamed deferred diff");
+        assert_eq!(df.original_path().map(|p| p.as_ref()), Some("old.min.js"));
+        assert_eq!(df.additions(), 1);
 
         let _ = fs::remove_dir_all(&root);
     }

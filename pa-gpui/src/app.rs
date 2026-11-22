@@ -406,7 +406,7 @@ impl PaApp {
     pub(crate) fn toggle_right_column(&mut self, cx: &mut Context<Self>) {
         self.settings.right_open = !self.settings.right_open;
         if !self.settings.right_open {
-            self.diff_model.cancel_drag();
+            self.diff_model.cancel_pending_on_close();
             if matches!(
                 self.open_popup,
                 OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu

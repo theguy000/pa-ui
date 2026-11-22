@@ -54,14 +54,13 @@ pub(crate) struct DiffModel {
     base_ref: Option<String>,
     base_branch: Option<String>,
     on_base_branch: bool,
-    current_branch: Option<String>,
     branches: Vec<String>,
     worktrees: Vec<WorktreeEntry>,
     summaries: Vec<DiffFileSummary>,
     loading_paths: HashSet<String>,
     total_additions: usize,
     total_deletions: usize,
-    // Files start collapsed by default; store only paths the user explicitly expanded per session.
+    // Files start collapsed by default; store only paths the reader explicitly expanded per session.
     expanded_by_session: HashMap<String, HashSet<String>>,
     selected_worktree_by_session: HashMap<String, PathBuf>,
     selected_base_by_session: HashMap<String, String>,
@@ -88,7 +87,6 @@ impl DiffModel {
             base_ref: None,
             base_branch: None,
             on_base_branch: false,
-            current_branch: None,
             branches: Vec::new(),
             worktrees: Vec::new(),
             summaries: Vec::new(),
@@ -101,6 +99,7 @@ impl DiffModel {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn width(&self) -> f32 {
         self.width
     }
@@ -150,8 +149,12 @@ impl DiffModel {
         }
     }
 
-    pub(crate) fn cancel_drag(&mut self) {
+    pub(crate) fn cancel_pending_on_close(&mut self) {
         self.dragging = false;
+        self.loading = false;
+        self.generation = self.generation.wrapping_add(1);
+        self.debounce_seq = self.debounce_seq.wrapping_add(1);
+        self.loading_paths.clear();
     }
 
     pub(crate) fn reset_width(&mut self) -> f32 {
@@ -222,12 +225,10 @@ impl DiffModel {
         session_key: Option<&str>,
         session_cwd: Option<&str>,
     ) -> Option<String> {
-        if let Some(key) = session_key {
-            if let Some(wt) = self.selected_worktree_by_session.get(key) {
-                if wt.exists() {
-                    return Some(wt.to_string_lossy().into_owned());
-                }
-            }
+        if let Some(key) = session_key
+            && let Some(wt) = self.selected_worktree_by_session.get(key)
+        {
+            return Some(wt.to_string_lossy().into_owned());
         }
         session_cwd.map(str::to_string)
     }
@@ -289,7 +290,6 @@ impl DiffModel {
         self.base_ref = None;
         self.base_branch = None;
         self.on_base_branch = false;
-        self.current_branch = None;
         self.branches.clear();
         self.worktrees.clear();
         self.summaries.clear();
@@ -325,7 +325,6 @@ impl DiffModel {
             self.base_ref = None;
             self.base_branch = None;
             self.on_base_branch = false;
-            self.current_branch = None;
             self.branches.clear();
             self.worktrees.clear();
             self.summaries.clear();
@@ -356,7 +355,6 @@ impl DiffModel {
                 self.base_ref = None;
                 self.base_branch = None;
                 self.on_base_branch = false;
-                self.current_branch = None;
                 self.branches.clear();
                 self.worktrees.clear();
                 self.summaries.clear();
@@ -370,7 +368,6 @@ impl DiffModel {
                 self.base_ref = None;
                 self.base_branch = None;
                 self.on_base_branch = false;
-                self.current_branch = None;
                 self.branches.clear();
                 self.worktrees.clear();
                 self.summaries.clear();
@@ -384,7 +381,6 @@ impl DiffModel {
                 self.base_ref = Some(loaded.base_ref.clone());
                 self.base_branch = loaded.base_branch.clone();
                 self.on_base_branch = loaded.on_base_branch;
-                self.current_branch = loaded.current_branch.clone();
                 self.branches = loaded.branches.clone();
                 self.worktrees = loaded.worktrees.clone();
                 self.summaries = loaded.summaries.clone();
@@ -401,20 +397,21 @@ impl DiffModel {
     }
 
     /// If `path` is currently deferred and not already loading, marks it in-flight and returns
-    /// `(generation, repo_root, base_ref, untracked)`.
+    /// `(generation, repo_root, base_ref, old_path, untracked)`.
     pub(crate) fn begin_deferred_file_load(
         &mut self,
         path: &str,
-    ) -> Option<(u64, PathBuf, String, bool)> {
+    ) -> Option<(u64, PathBuf, String, Option<String>, bool)> {
         let summary = self.summaries.iter().find(|s| s.path == path)?;
         if !summary.deferred || self.loading_paths.contains(path) {
             return None;
         }
         let repo_root = self.repo_root.clone()?;
         let base_ref = self.base_ref.clone()?;
+        let old_path = summary.old_path.clone();
         let untracked = summary.untracked;
         self.loading_paths.insert(path.to_string());
-        Some((self.generation, repo_root, base_ref, untracked))
+        Some((self.generation, repo_root, base_ref, old_path, untracked))
     }
 
     /// Completes an on-demand single-file load if its generation still matches.
@@ -471,7 +468,6 @@ impl DiffModel {
         }
     }
 
-    /// Expands the clicked jump-list file in per-session memory.
     pub(crate) fn expand_for_jump(&mut self, path: &str) {
         self.set_file_collapsed(path, false);
     }
@@ -539,7 +535,6 @@ mod tests {
             base_ref: "HEAD".into(),
             base_branch: None,
             on_base_branch: false,
-            current_branch: None,
             branches: Vec::new(),
             worktrees: Vec::new(),
             files: Vec::new(),
@@ -659,7 +654,7 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn closed_panel_gates_debounced_refresh_and_latest_seq_wins() {
+    fn closed_right_column_gates_debounced_refresh_and_latest_seq_wins() {
         let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
         assert_eq!(model.begin_debounced_refresh(false), None);
 
@@ -689,18 +684,17 @@ mod tests {
             .expect("gen 1");
 
         assert!(model.begin_deferred_file_load("src/lib.rs").is_none());
-        let (load_gen, root, base_ref, untracked) = model
+        let (load_gen, root, base_ref, old_path, untracked) = model
             .begin_deferred_file_load("Cargo.lock")
             .expect("deferred file should begin loading");
         assert_eq!(load_gen, g1);
         assert_eq!(root, PathBuf::from("/repo"));
         assert_eq!(base_ref, "HEAD");
+        assert_eq!(old_path, None);
         assert!(!untracked);
         assert!(model.is_file_loading("Cargo.lock"));
-        // Duplicate request while already in flight is ignored.
         assert!(model.begin_deferred_file_load("Cargo.lock").is_none());
 
-        // Advancing generation makes earlier deferred completion stale.
         let (g2, _) = model.begin_load(
             Some("s1".into()),
             Some("/repo".into()),
@@ -713,7 +707,7 @@ mod tests {
         model
             .apply_load_outcome(g2, &sample_loaded(&[("Cargo.lock", true)]))
             .expect("gen 2");
-        let (load_gen2, _, _, _) = model.begin_deferred_file_load("Cargo.lock").unwrap();
+        let (load_gen2, _, _, _, _) = model.begin_deferred_file_load("Cargo.lock").unwrap();
         assert_eq!(
             model.finish_deferred_file_load(load_gen2, "Cargo.lock", true),
             Some(0)
@@ -729,7 +723,6 @@ mod tests {
         let _ = std::fs::create_dir_all(&temp_wt_a);
         let temp_wt_a_str = temp_wt_a.to_string_lossy().into_owned();
 
-        // Session A starts on its own cwd; user switches to linked worktree A and picks base `develop`.
         assert_eq!(
             model.effective_cwd(Some("sess-a"), Some("/cwd-a")).as_deref(),
             Some("/cwd-a")
@@ -745,14 +738,12 @@ mod tests {
             Some("develop")
         );
 
-        // Session B stays independent on its own cwd and default base.
         assert_eq!(
             model.effective_cwd(Some("sess-b"), Some("/cwd-b")).as_deref(),
             Some("/cwd-b")
         );
         assert_eq!(model.requested_base_for_session(Some("sess-b")), None);
 
-        // Switching back to Session A remembers its worktree and base branch.
         assert_eq!(
             model.effective_cwd(Some("sess-a"), Some("/cwd-a")).as_deref(),
             Some(temp_wt_a_str.as_str())
@@ -761,8 +752,6 @@ mod tests {
             model.requested_base_for_session(Some("sess-a")),
             Some("develop")
         );
-
-        // `matches_target` invalidates when scope changes between Uncommitted and Branch.
         let (g, _) = model.begin_load(
             Some("sess-a".into()),
             Some(temp_wt_a_str.clone()),
