@@ -1,8 +1,10 @@
 //! Read-only Git diff right column: header controls, collapsible jump list,
-//! background loader orchestration, and `gpui-kit` virtualized `Diff` view.
+//! background loader orchestration, lazy single-file expansion, and `gpui-kit` `Diff` view.
 
 use crate::app::PaApp;
-use crate::diff_git::{load_uncommitted_diff, DiffFileSummary, DiffLoadOutcome};
+use crate::diff_git::{
+    load_single_file_diff, load_uncommitted_diff, DiffFileSummary, DiffLoadOutcome,
+};
 use crate::diff_model::DiffViewStatus;
 use crate::sidebar::session_key;
 use gpui_kit::component::{
@@ -12,7 +14,11 @@ use gpui_kit::component::{
     v_flex, Icon, IconName,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+
+const DIFF_REFRESH_DEBOUNCE_MS: u64 = 350;
 
 fn split_dir_and_name(path: &str) -> (&str, &str) {
     match path.rsplit_once('/') {
@@ -54,6 +60,35 @@ impl PaApp {
         self.refresh_diff(cx);
     }
 
+    pub(crate) fn schedule_debounced_diff_refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(seq) = self
+            .diff_model
+            .begin_debounced_refresh(self.settings.right_open)
+        else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(DIFF_REFRESH_DEBOUNCE_MS))
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app
+                    .diff_model
+                    .should_fire_debounced_refresh(seq, app.settings.right_open)
+                {
+                    app.refresh_diff(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn on_window_focused(&mut self, cx: &mut Context<Self>) {
+        if self.settings.right_open {
+            self.refresh_diff(cx);
+        }
+    }
+
     pub(crate) fn refresh_diff(&mut self, cx: &mut Context<Self>) {
         if !self.settings.right_open {
             return;
@@ -82,7 +117,8 @@ impl PaApp {
                 .background_spawn(async move { load_uncommitted_diff(&cwd_path) })
                 .await;
             let _ = this.update(cx, |app, cx| {
-                let Some(expanded_paths) = app.diff_model.apply_load_outcome(generation, &outcome) else {
+                let Some(expanded_paths) = app.diff_model.apply_load_outcome(generation, &outcome)
+                else {
                     return;
                 };
                 match outcome {
@@ -92,18 +128,84 @@ impl PaApp {
                             state.set_all_files_collapsed(true, cx);
                             if !expanded_paths.is_empty() {
                                 state.set_files_collapsed(
-                                    expanded_paths.into_iter().map(SharedString::from),
+                                    expanded_paths.iter().cloned().map(SharedString::from),
                                     false,
                                     cx,
                                 );
                             }
                         });
+                        for path in expanded_paths {
+                            app.maybe_load_deferred_file(&path, false, cx);
+                        }
                     }
                     DiffLoadOutcome::NotAGitRepo | DiffLoadOutcome::Error(_) => {
                         app.diff_state.update(cx, |state, cx| {
                             state.set_files(Vec::new(), cx);
                         });
                     }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn on_diff_file_expanded(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.diff_model.set_file_collapsed(path, false);
+        self.maybe_load_deferred_file(path, false, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn maybe_load_deferred_file(
+        &mut self,
+        path: &str,
+        scroll_after: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((generation, repo_root, base_ref, untracked)) =
+            self.diff_model.begin_deferred_file_load(path)
+        else {
+            return;
+        };
+        let owned_path = path.to_string();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let bg_path = owned_path.clone();
+            let loaded_file = cx
+                .background_spawn(async move {
+                    load_single_file_diff(&repo_root, &base_ref, &bg_path, untracked)
+                })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                let Some(ix) = app.diff_model.finish_deferred_file_load(
+                    generation,
+                    &owned_path,
+                    loaded_file.is_some(),
+                ) else {
+                    cx.notify();
+                    return;
+                };
+                if let Some(df) = loaded_file {
+                    let expanded_paths = app.diff_model.expanded_paths_for_current_files();
+                    let target_path = owned_path.clone();
+                    app.diff_state.update(cx, |state, cx| {
+                        let mut files = state.files().to_vec();
+                        if ix < files.len() {
+                            files[ix] = df;
+                            state.set_files(files, cx);
+                            state.set_all_files_collapsed(true, cx);
+                            if !expanded_paths.is_empty() {
+                                state.set_files_collapsed(
+                                    expanded_paths.into_iter().map(SharedString::from),
+                                    false,
+                                    cx,
+                                );
+                            }
+                            if scroll_after {
+                                state.scroll_to_file(&target_path, cx);
+                            }
+                        }
+                    });
                 }
                 cx.notify();
             });
@@ -139,6 +241,11 @@ impl PaApp {
         self.diff_state.update(cx, |state, cx| {
             state.set_all_files_collapsed(collapse, cx);
         });
+        if !collapse {
+            for path in self.diff_model.deferred_paths() {
+                self.maybe_load_deferred_file(&path, false, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -149,6 +256,7 @@ impl PaApp {
             state.set_file_collapsed(&owned, false, cx);
             state.scroll_to_file(&owned, cx);
         });
+        self.maybe_load_deferred_file(path, true, cx);
         cx.notify();
     }
 
@@ -232,7 +340,7 @@ impl PaApp {
         let is_wrap = self.settings.diff_wrap;
 
         let pill = |id: &'static str, label: &'static str, active: bool| {
-            let mut el = div()
+            div()
                 .id(id)
                 .h(px(22.))
                 .px(px(7.))
@@ -248,9 +356,8 @@ impl PaApp {
                 } else {
                     Hsla::transparent_black()
                 })
-                .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink));
-            el = el.child(label);
-            el
+                .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
+                .child(label)
         };
 
         let files_label = if file_count == 1 {
@@ -450,6 +557,8 @@ impl PaApp {
         let binary = summary.binary;
         let untracked = summary.untracked;
         let truncated = summary.truncated;
+        let deferred = summary.deferred;
+        let loading = self.diff_model.is_file_loading(&summary.path);
 
         h_flex()
             .id(("diff-jump-row", ix))
@@ -496,6 +605,12 @@ impl PaApp {
                     .gap(px(4.))
                     .items_center()
                     .text_size(px(11.))
+                    .when(loading, |row| {
+                        row.child(div().text_color(p.working).child("…"))
+                    })
+                    .when(deferred && !loading, |row| {
+                        row.child(div().text_color(p.quiet_ink).child("lazy"))
+                    })
                     .when(untracked, |row| {
                         row.child(div().text_color(p.working).child("U"))
                     })
@@ -519,17 +634,65 @@ impl PaApp {
     fn render_diff_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette();
         match self.diff_model.status() {
-            DiffViewStatus::Ready => div()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .overflow_hidden()
-                .child(
-                    Diff::new(&self.diff_state)
-                        .soft_wrap(self.settings.diff_wrap)
-                        .size_full(),
-                )
-                .into_any_element(),
+            DiffViewStatus::Ready => {
+                // Deferred files use a zero-hunk placeholder so `gpui-kit` omits default `+ / -`;
+                // supply accurate numstat counts and lazy/loading status via `header_suffix`.
+                let deferred_meta: HashMap<String, (usize, usize, bool)> = self
+                    .diff_model
+                    .summaries()
+                    .iter()
+                    .filter(|s| s.deferred)
+                    .map(|s| {
+                        (
+                            s.path.clone(),
+                            (
+                                s.additions,
+                                s.deletions,
+                                self.diff_model.is_file_loading(&s.path),
+                            ),
+                        )
+                    })
+                    .collect();
+                let quiet_ink = p.quiet_ink;
+                let tag_idle = p.tag_idle;
+                let danger = p.danger;
+                let working = p.working;
+
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(
+                        Diff::new(&self.diff_state)
+                            .soft_wrap(self.settings.diff_wrap)
+                            .header_suffix(move |file, _, _| {
+                                let Some(&(add, del, loading)) =
+                                    deferred_meta.get(file.path().as_ref())
+                                else {
+                                    return div().into_any_element();
+                                };
+                                h_flex()
+                                    .gap(px(6.))
+                                    .items_center()
+                                    .text_size(px(11.))
+                                    .when(add > 0, |r| {
+                                        r.child(div().text_color(tag_idle).child(format!("+{add}")))
+                                    })
+                                    .when(del > 0, |r| {
+                                        r.child(div().text_color(danger).child(format!("-{del}")))
+                                    })
+                                    .child(
+                                        div()
+                                            .text_color(if loading { working } else { quiet_ink })
+                                            .child(if loading { "Loading…" } else { "Lazy" }),
+                                    )
+                                    .into_any_element()
+                            })
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
             DiffViewStatus::NotAGitRepo => v_flex()
                 .flex_1()
                 .w_full()

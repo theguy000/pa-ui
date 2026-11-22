@@ -308,14 +308,20 @@ impl PaApp {
             cx.new(|cx| DiffState::new(Vec::new(), cx).with_mode(initial_diff_mode));
         cx.subscribe(&diff_state, |this, _, event: &DiffEvent, cx| match event {
             DiffEvent::FileExpanded(path) => {
-                this.diff_model.set_file_collapsed(path.as_ref(), false);
-                cx.notify();
+                this.on_diff_file_expanded(path.as_ref(), cx);
             }
             DiffEvent::FileCollapsed(path) => {
                 this.diff_model.set_file_collapsed(path.as_ref(), true);
                 cx.notify();
             }
             _ => {}
+        })
+        .detach();
+
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.on_window_focused(cx);
+            }
         })
         .detach();
 
@@ -1457,6 +1463,7 @@ impl PaApp {
                 if self.is_streaming {
                     self.composer_model.set_busy_label("Waiting", false);
                 }
+                self.schedule_debounced_diff_refresh(cx);
             }
             "auto_retry_start" => {
                 self.is_streaming = true;
@@ -1559,6 +1566,7 @@ impl PaApp {
                 if let Some(sid) = self.roster.active_id().map(str::to_string) {
                     let _ = self.bridge.tx.send(DaemonCmd::ReloadTranscript(sid));
                 }
+                self.schedule_debounced_diff_refresh(cx);
             }
             "session_updated" => {
                 let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);

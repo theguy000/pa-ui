@@ -1,13 +1,16 @@
 //! Synchronous Git diff loader meant to run on background threads.
 
 use gpui_kit::component::diff::{DiffFile, DiffParseOptions};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 pub(crate) const UNTRACKED_MAX_BYTES: u64 = 256 * 1024;
+pub(crate) const LARGE_DIFF_LINE_THRESHOLD: usize = 1_500;
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const EAGER_DIFF_PATH_CHUNK: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiffFileSummary {
@@ -18,10 +21,12 @@ pub(crate) struct DiffFileSummary {
     pub(crate) binary: bool,
     pub(crate) untracked: bool,
     pub(crate) truncated: bool,
+    pub(crate) deferred: bool,
 }
 
 pub(crate) struct LoadedDiff {
     pub(crate) repo_root: PathBuf,
+    pub(crate) base_ref: String,
     pub(crate) files: Vec<DiffFile>,
     pub(crate) summaries: Vec<DiffFileSummary>,
     pub(crate) total_additions: usize,
@@ -32,6 +37,31 @@ pub(crate) enum DiffLoadOutcome {
     NotAGitRepo,
     Loaded(LoadedDiff),
     Error(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NumstatEntry {
+    path: String,
+    old_path: Option<String>,
+    additions: usize,
+    deletions: usize,
+    binary: bool,
+}
+
+pub(crate) fn is_lock_or_generated_path(path: &str) -> bool {
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    if matches!(
+        file_name,
+        "Cargo.lock" | "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
+    ) {
+        return true;
+    }
+    let lower = file_name.to_ascii_lowercase();
+    lower.contains(".min.")
+}
+
+pub(crate) fn should_defer_file(path: &str, additions: usize, deletions: usize) -> bool {
+    is_lock_or_generated_path(path) || additions.saturating_add(deletions) > LARGE_DIFF_LINE_THRESHOLD
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> std::io::Result<Output> {
@@ -72,6 +102,47 @@ fn has_head_commit(repo_root: &Path) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
+fn parse_numstat_z(stdout: &[u8]) -> Vec<NumstatEntry> {
+    let mut entries = Vec::new();
+    let mut parts = stdout.split(|&b| b == 0).peekable();
+    while let Some(raw) = parts.next() {
+        if raw.is_empty() {
+            continue;
+        }
+        let line = String::from_utf8_lossy(raw);
+        let mut cols = line.splitn(3, '\t');
+        let (Some(add_s), Some(del_s), Some(path_col)) = (cols.next(), cols.next(), cols.next())
+        else {
+            continue;
+        };
+        let binary = add_s == "-" || del_s == "-";
+        let additions = if binary { 0 } else { add_s.parse().unwrap_or(0) };
+        let deletions = if binary { 0 } else { del_s.parse().unwrap_or(0) };
+        let (old_path, path) = if path_col.is_empty() {
+            // `git diff --numstat -z` encodes renames/copies as `add\tdel\t\0old\0new\0`.
+            let Some(old_raw) = parts.next() else {
+                break;
+            };
+            let Some(new_raw) = parts.next() else {
+                break;
+            };
+            let old_s = String::from_utf8_lossy(old_raw).into_owned();
+            let new_s = String::from_utf8_lossy(new_raw).into_owned();
+            (Some(old_s), new_s)
+        } else {
+            (None, path_col.to_string())
+        };
+        entries.push(NumstatEntry {
+            path,
+            old_path,
+            additions,
+            deletions,
+            binary,
+        });
+    }
+    entries
+}
+
 fn parse_patch_resilient(patch: &str) -> Vec<DiffFile> {
     if patch.trim().is_empty() {
         return Vec::new();
@@ -80,7 +151,6 @@ fn parse_patch_resilient(patch: &str) -> Vec<DiffFile> {
     if let Ok(files) = DiffFile::parse_with(patch, opts) {
         return files;
     }
-    // Fall back to per-file parsing if any single file block has an unsupported header/hunk.
     let mut out = Vec::new();
     let mut start = 0usize;
     let bytes = patch.as_bytes();
@@ -103,7 +173,28 @@ fn is_probably_binary(bytes: &[u8]) -> bool {
     sample.contains(&0)
 }
 
-fn build_untracked_diff_file(repo_root: &Path, rel_path: &str) -> Option<(DiffFile, bool)> {
+fn synthesize_deferred_placeholder(
+    path: &str,
+    old_path: Option<&str>,
+    additions: usize,
+    deletions: usize,
+) -> Option<DiffFile> {
+    let git_path = path.replace('\\', "/");
+    let mut patch = format!("diff --git a/{p} b/{p}\n", p = git_path);
+    if let Some(old) = old_path {
+        let old_git = old.replace('\\', "/");
+        if old_git != git_path {
+            patch.push_str(&format!("rename from {old_git}\nrename to {git_path}\n"));
+        }
+    }
+    patch.push_str(&format!(
+        "Large or generated file (+{additions} -{deletions}) — loading diff on demand\n"
+    ));
+    let opts = DiffParseOptions::new().truncated_hunks(true);
+    DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()
+}
+
+fn read_untracked_bytes(repo_root: &Path, rel_path: &str) -> Option<(Vec<u8>, bool)> {
     let full = repo_root.join(rel_path);
     let mut file = File::open(&full).ok()?;
     let limit = UNTRACKED_MAX_BYTES as usize;
@@ -116,7 +207,31 @@ fn build_untracked_diff_file(repo_root: &Path, rel_path: &str) -> Option<(DiffFi
     if truncated {
         buf.truncate(limit);
     }
+    Some((buf, truncated))
+}
 
+fn count_text_lines(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let count = text.bytes().filter(|&b| b == b'\n').count();
+    if text.ends_with('\n') {
+        count
+    } else {
+        count + 1
+    }
+}
+
+fn decode_text_capped(buf: &[u8], truncated: bool) -> String {
+    match std::str::from_utf8(buf) {
+        Ok(s) => s.to_string(),
+        Err(err) if truncated => String::from_utf8_lossy(&buf[..err.valid_up_to()]).into_owned(),
+        Err(_) => String::from_utf8_lossy(buf).into_owned(),
+    }
+}
+
+fn build_untracked_diff_file(repo_root: &Path, rel_path: &str) -> Option<(DiffFile, bool)> {
+    let (buf, truncated) = read_untracked_bytes(repo_root, rel_path)?;
     let git_path = rel_path.replace('\\', "/");
     let patch = if is_probably_binary(&buf) {
         format!(
@@ -124,20 +239,54 @@ fn build_untracked_diff_file(repo_root: &Path, rel_path: &str) -> Option<(DiffFi
             p = git_path
         )
     } else {
-        // Trim any partial UTF-8 sequence caused by the byte cap.
-        let text = match std::str::from_utf8(&buf) {
-            Ok(s) => s.to_string(),
-            Err(err) if truncated => {
-                String::from_utf8_lossy(&buf[..err.valid_up_to()]).into_owned()
-            }
-            Err(_) => String::from_utf8_lossy(&buf).into_owned(),
-        };
+        let text = decode_text_capped(&buf, truncated);
         synthesize_added_file_patch(&git_path, &text)
     };
 
     let opts = DiffParseOptions::new().truncated_hunks(true);
     let parsed = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
     Some((parsed, truncated))
+}
+
+fn load_untracked_entry(
+    repo_root: &Path,
+    rel_path: &str,
+) -> Option<(DiffFile, DiffFileSummary)> {
+    let (buf, truncated) = read_untracked_bytes(repo_root, rel_path)?;
+    let git_path = rel_path.replace('\\', "/");
+    let binary = is_probably_binary(&buf);
+    if !binary {
+        let text = decode_text_capped(&buf, truncated);
+        let line_count = count_text_lines(&text);
+        if should_defer_file(&git_path, line_count, 0) {
+            let placeholder = synthesize_deferred_placeholder(&git_path, None, line_count, 0)?;
+            let summary = DiffFileSummary {
+                path: git_path,
+                old_path: None,
+                additions: line_count,
+                deletions: 0,
+                binary: false,
+                untracked: true,
+                truncated,
+                deferred: true,
+            };
+            return Some((placeholder, summary));
+        }
+        let patch = synthesize_added_file_patch(&git_path, &text);
+        let opts = DiffParseOptions::new().truncated_hunks(true);
+        let df = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
+        let summary = summary_from_diff_file(&df, true, truncated, false);
+        return Some((df, summary));
+    }
+
+    let patch = format!(
+        "diff --git a/{p} b/{p}\nnew file mode 100644\nBinary files /dev/null and b/{p} differ\n",
+        p = git_path
+    );
+    let opts = DiffParseOptions::new().truncated_hunks(true);
+    let df = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
+    let summary = summary_from_diff_file(&df, true, truncated, false);
+    Some((df, summary))
 }
 
 fn synthesize_added_file_patch(git_path: &str, text: &str) -> String {
@@ -172,20 +321,14 @@ fn synthesize_added_file_patch(git_path: &str, text: &str) -> String {
     patch
 }
 
-pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
-    let Some(repo_root) = resolve_worktree_root(cwd) else {
-        return DiffLoadOutcome::NotAGitRepo;
-    };
-
-    let base_ref = if has_head_commit(&repo_root) {
-        "HEAD"
-    } else {
-        EMPTY_TREE_OID
-    };
-
-    let diff_out = match run_git(
-        &repo_root,
-        &[
+fn fetch_tracked_patches(
+    repo_root: &Path,
+    base_ref: &str,
+    paths: &[&str],
+) -> Result<Vec<DiffFile>, String> {
+    let mut out_files = Vec::new();
+    for chunk in paths.chunks(EAGER_DIFF_PATH_CHUNK) {
+        let mut args = vec![
             "-c",
             "core.quotepath=false",
             "diff",
@@ -193,13 +336,72 @@ pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
             "--no-ext-diff",
             "--no-color",
             "--unified=3",
+            "--",
+        ];
+        args.extend_from_slice(chunk);
+        let output = run_git(repo_root, &args)
+            .map_err(|err| format!("Failed to run git diff: {err}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "git diff failed".into()
+            } else {
+                stderr
+            });
+        }
+        let patch = String::from_utf8_lossy(&output.stdout);
+        out_files.extend(parse_patch_resilient(&patch));
+    }
+    Ok(out_files)
+}
+
+pub(crate) fn load_single_file_diff(
+    repo_root: &Path,
+    base_ref: &str,
+    path: &str,
+    untracked: bool,
+) -> Option<DiffFile> {
+    if untracked {
+        return build_untracked_diff_file(repo_root, path).map(|(df, _)| df);
+    }
+    let files = fetch_tracked_patches(repo_root, base_ref, &[path]).ok()?;
+    files.into_iter().next()
+}
+
+pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
+    let Some(repo_root) = resolve_worktree_root(cwd) else {
+        return DiffLoadOutcome::NotAGitRepo;
+    };
+
+    let base_ref = if has_head_commit(&repo_root) {
+        "HEAD".to_string()
+    } else {
+        EMPTY_TREE_OID.to_string()
+    };
+
+    load_diff_against_base(repo_root, base_ref)
+}
+
+pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> DiffLoadOutcome {
+    let numstat_out = match run_git(
+        &repo_root,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            &base_ref,
+            "--numstat",
+            "--no-ext-diff",
+            "-z",
         ],
     ) {
         Ok(out) => out,
         Err(err) => return DiffLoadOutcome::Error(format!("Failed to run git diff: {err}")),
     };
-    if !diff_out.status.success() {
-        let stderr = String::from_utf8_lossy(&diff_out.stderr).trim().to_string();
+    if !numstat_out.status.success() {
+        let stderr = String::from_utf8_lossy(&numstat_out.stderr)
+            .trim()
+            .to_string();
         return DiffLoadOutcome::Error(if stderr.is_empty() {
             "git diff failed".into()
         } else {
@@ -207,11 +409,58 @@ pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
         });
     }
 
-    let tracked_patch = String::from_utf8_lossy(&diff_out.stdout);
-    let mut files = parse_patch_resilient(&tracked_patch);
-    let mut summaries = Vec::with_capacity(files.len());
-    for file in &files {
-        summaries.push(summary_from_diff_file(file, false, false));
+    let entries = parse_numstat_z(&numstat_out.stdout);
+    let mut eager_paths = Vec::new();
+    for entry in &entries {
+        if !should_defer_file(&entry.path, entry.additions, entry.deletions) {
+            eager_paths.push(entry.path.as_str());
+            if let Some(old) = entry.old_path.as_deref() {
+                eager_paths.push(old);
+            }
+        }
+    }
+
+    let eager_files = if eager_paths.is_empty() {
+        Vec::new()
+    } else {
+        match fetch_tracked_patches(&repo_root, &base_ref, &eager_paths) {
+            Ok(files) => files,
+            Err(err) => return DiffLoadOutcome::Error(err),
+        }
+    };
+
+    let mut eager_map: HashMap<String, DiffFile> = HashMap::with_capacity(eager_files.len());
+    for df in eager_files {
+        eager_map.insert(df.path().to_string(), df);
+    }
+
+    let mut files = Vec::with_capacity(entries.len());
+    let mut summaries = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if should_defer_file(&entry.path, entry.additions, entry.deletions) {
+            if let Some(placeholder) = synthesize_deferred_placeholder(
+                &entry.path,
+                entry.old_path.as_deref(),
+                entry.additions,
+                entry.deletions,
+            ) {
+                summaries.push(DiffFileSummary {
+                    path: entry.path,
+                    old_path: entry.old_path,
+                    additions: entry.additions,
+                    deletions: entry.deletions,
+                    binary: entry.binary,
+                    untracked: false,
+                    truncated: false,
+                    deferred: true,
+                });
+                files.push(placeholder);
+            }
+        } else if let Some(df) = eager_map.remove(&entry.path) {
+            let summary = summary_from_diff_file(&df, false, false, false);
+            summaries.push(summary);
+            files.push(df);
+        }
     }
 
     if let Ok(untracked_out) = run_git(
@@ -231,8 +480,8 @@ pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
                     continue;
                 }
                 let rel = String::from_utf8_lossy(raw);
-                if let Some((df, truncated)) = build_untracked_diff_file(&repo_root, &rel) {
-                    summaries.push(summary_from_diff_file(&df, true, truncated));
+                if let Some((df, summary)) = load_untracked_entry(&repo_root, &rel) {
+                    summaries.push(summary);
                     files.push(df);
                 }
             }
@@ -244,6 +493,7 @@ pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
 
     DiffLoadOutcome::Loaded(LoadedDiff {
         repo_root,
+        base_ref,
         files,
         summaries,
         total_additions,
@@ -255,6 +505,7 @@ fn summary_from_diff_file(
     file: &DiffFile,
     untracked: bool,
     truncated: bool,
+    deferred: bool,
 ) -> DiffFileSummary {
     let path = file.path().to_string();
     let old_path = file
@@ -269,6 +520,7 @@ fn summary_from_diff_file(
         binary: file.is_binary(),
         untracked,
         truncated,
+        deferred,
     }
 }
 
@@ -317,6 +569,21 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn deferral_detects_lockfiles_minified_and_large_line_threshold() {
+        assert!(is_lock_or_generated_path("Cargo.lock"));
+        assert!(is_lock_or_generated_path("web/package-lock.json"));
+        assert!(is_lock_or_generated_path("pnpm-lock.yaml"));
+        assert!(is_lock_or_generated_path("yarn.lock"));
+        assert!(is_lock_or_generated_path("dist/app.min.js"));
+        assert!(is_lock_or_generated_path("static/theme.MIN.css"));
+        assert!(!is_lock_or_generated_path("src/main.rs"));
+
+        assert!(!should_defer_file("src/main.rs", 1000, 500));
+        assert!(should_defer_file("src/main.rs", 1000, 501));
+        assert!(should_defer_file("Cargo.lock", 1, 0));
+    }
+
+    #[::core::prelude::v1::test]
     fn resolves_nested_cwd_and_loads_uncommitted_untracked_cap_and_binary() {
         let root = make_temp_dir("uncommitted");
         init_repo(&root);
@@ -328,7 +595,6 @@ mod tests {
         git(&root, &["add", "."]);
         git(&root, &["commit", "-q", "-m", "initial"]);
 
-        // Modify tracked text + tracked binary + add untracked text, large (>256 KB) untracked, untracked binary.
         fs::write(
             root.join("src/lib.rs"),
             "pub fn a() -> i32 { 2 }\npub fn b() -> i32 { 3 }\n",
@@ -336,7 +602,9 @@ mod tests {
         .unwrap();
         fs::write(root.join("icon.bin"), [0u8, 9, 8, 7, 6, 5]).unwrap();
         fs::write(root.join("notes.txt"), "hello\nworld\n").unwrap();
-        let big = "0123456789abcdef\n".repeat(20_000); // ~340 KB > 256 KB
+        // ~340 KB with ~1,000 long lines (>256 KB cap, under 1,500-line deferral threshold)
+        let long_line = format!("{}\n", "x".repeat(350));
+        let big = long_line.repeat(1_000);
         fs::write(root.join("huge.txt"), big).unwrap();
         fs::write(root.join("blob.dat"), [0x89u8, b'P', b'N', b'G', 0x00, 0x01]).unwrap();
 
@@ -359,19 +627,19 @@ mod tests {
 
         let lib = by_path("src/lib.rs");
         assert_eq!((lib.additions, lib.deletions), (2, 1));
-        assert!(!lib.binary && !lib.untracked);
+        assert!(!lib.binary && !lib.untracked && !lib.deferred);
 
         let icon = by_path("icon.bin");
         assert!(icon.binary);
         assert_eq!((icon.additions, icon.deletions), (0, 0));
 
         let notes = by_path("notes.txt");
-        assert!(notes.untracked && !notes.binary && !notes.truncated);
+        assert!(notes.untracked && !notes.binary && !notes.truncated && !notes.deferred);
         assert_eq!((notes.additions, notes.deletions), (2, 0));
 
         let huge = by_path("huge.txt");
         assert!(huge.untracked && huge.truncated && !huge.binary);
-        assert!(huge.additions > 1000 && huge.additions < 20_000);
+        assert!(huge.additions > 500 && huge.additions < 1_000);
 
         let blob = by_path("blob.dat");
         assert!(blob.untracked && blob.binary);
@@ -385,6 +653,72 @@ mod tests {
             loaded.total_deletions,
             loaded.summaries.iter().map(|s| s.deletions).sum::<usize>()
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn deferred_lockfile_and_large_file_skip_initial_patch_and_load_on_demand() {
+        let root = make_temp_dir("deferred");
+        init_repo(&root);
+
+        fs::write(root.join("src_small.rs"), "fn a() {}\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "version = 3\n").unwrap();
+        fs::write(root.join("big.txt"), "seed\n").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "initial"]);
+
+        fs::write(root.join("src_small.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "version = 3\nname = \"demo\"\n").unwrap();
+        let big_body: String = (0..1_600).map(|i| format!("line-{i}\n")).collect();
+        fs::write(root.join("big.txt"), big_body).unwrap();
+        fs::write(root.join("bundle.min.js"), "var a=1;\nvar b=2;\n").unwrap();
+
+        let DiffLoadOutcome::Loaded(loaded) = load_uncommitted_diff(&root) else {
+            panic!("expected Loaded diff");
+        };
+
+        let find = |p: &str| {
+            let ix = loaded
+                .summaries
+                .iter()
+                .position(|s| s.path == p)
+                .unwrap_or_else(|| panic!("missing {p}"));
+            (&loaded.summaries[ix], &loaded.files[ix])
+        };
+
+        let (small_s, small_f) = find("src_small.rs");
+        assert!(!small_s.deferred);
+        assert_eq!(small_f.additions(), 1);
+
+        let (lock_s, lock_f) = find("Cargo.lock");
+        assert!(lock_s.deferred);
+        assert_eq!(lock_s.additions, 1);
+        assert_eq!(lock_f.additions(), 0); // placeholder has no patch lines yet
+
+        let (big_s, big_f) = find("big.txt");
+        assert!(big_s.deferred);
+        assert_eq!(big_s.additions, 1_600);
+        assert_eq!(big_s.deletions, 1);
+        assert_eq!(big_f.additions(), 0);
+
+        let (min_s, min_f) = find("bundle.min.js");
+        assert!(min_s.deferred && min_s.untracked);
+        assert_eq!(min_s.additions, 2);
+        assert_eq!(min_f.additions(), 0);
+
+        // On-demand single-file loads fetch the real patches.
+        let lock_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "Cargo.lock", false)
+            .expect("on-demand tracked lockfile");
+        assert_eq!(lock_loaded.additions(), 1);
+
+        let big_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "big.txt", false)
+            .expect("on-demand large file");
+        assert_eq!(big_loaded.additions(), 1_600);
+
+        let min_loaded = load_single_file_diff(&loaded.repo_root, &loaded.base_ref, "bundle.min.js", true)
+            .expect("on-demand untracked minified file");
+        assert_eq!(min_loaded.additions(), 2);
 
         let _ = fs::remove_dir_all(&root);
     }

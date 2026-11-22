@@ -44,10 +44,13 @@ pub(crate) struct DiffModel {
     status: DiffViewStatus,
     loading: bool,
     generation: u64,
+    debounce_seq: u64,
     session_key: Option<String>,
     cwd: Option<String>,
     repo_root: Option<PathBuf>,
+    base_ref: Option<String>,
     summaries: Vec<DiffFileSummary>,
+    loading_paths: HashSet<String>,
     total_additions: usize,
     total_deletions: usize,
     // Files start collapsed by default; store only paths the user explicitly expanded per session.
@@ -66,10 +69,13 @@ impl DiffModel {
             status: DiffViewStatus::Idle,
             loading: false,
             generation: 0,
+            debounce_seq: 0,
             session_key: None,
             cwd: None,
             repo_root: None,
+            base_ref: None,
             summaries: Vec::new(),
+            loading_paths: HashSet::new(),
             total_additions: 0,
             total_deletions: 0,
             expanded_by_session: HashMap::new(),
@@ -147,6 +153,10 @@ impl DiffModel {
         &self.summaries
     }
 
+    pub(crate) fn is_file_loading(&self, path: &str) -> bool {
+        self.loading_paths.contains(path)
+    }
+
     pub(crate) fn total_additions(&self) -> usize {
         self.total_additions
     }
@@ -161,13 +171,29 @@ impl DiffModel {
             && self.status != DiffViewStatus::Idle
     }
 
+    /// Gates debounced turn/tool completion refreshes on the right column being open.
+    /// Returns `None` when closed so zero timers or git work are spawned.
+    pub(crate) fn begin_debounced_refresh(&mut self, right_open: bool) -> Option<u64> {
+        if !right_open {
+            return None;
+        }
+        self.debounce_seq = self.debounce_seq.wrapping_add(1);
+        Some(self.debounce_seq)
+    }
+
+    pub(crate) fn should_fire_debounced_refresh(&self, seq: u64, right_open: bool) -> bool {
+        right_open && seq == self.debounce_seq
+    }
+
     pub(crate) fn mark_not_a_git_repo(&mut self, session_key: Option<String>, cwd: Option<String>) {
         self.generation = self.generation.wrapping_add(1);
         self.loading = false;
         self.session_key = session_key;
         self.cwd = cwd;
         self.repo_root = None;
+        self.base_ref = None;
         self.summaries.clear();
+        self.loading_paths.clear();
         self.total_additions = 0;
         self.total_deletions = 0;
         self.status = DiffViewStatus::NotAGitRepo;
@@ -183,10 +209,12 @@ impl DiffModel {
         let switched = self.session_key != session_key || self.cwd != cwd;
         self.generation = self.generation.wrapping_add(1);
         self.loading = true;
+        self.loading_paths.clear();
         self.session_key = session_key;
         self.cwd = cwd;
         if switched || matches!(self.status, DiffViewStatus::Idle | DiffViewStatus::NotAGitRepo) {
             self.repo_root = None;
+            self.base_ref = None;
             self.summaries.clear();
             self.total_additions = 0;
             self.total_deletions = 0;
@@ -208,9 +236,11 @@ impl DiffModel {
             return None;
         }
         self.loading = false;
+        self.loading_paths.clear();
         match outcome {
             DiffLoadOutcome::NotAGitRepo => {
                 self.repo_root = None;
+                self.base_ref = None;
                 self.summaries.clear();
                 self.total_additions = 0;
                 self.total_deletions = 0;
@@ -219,6 +249,7 @@ impl DiffModel {
             }
             DiffLoadOutcome::Error(msg) => {
                 self.repo_root = None;
+                self.base_ref = None;
                 self.summaries.clear();
                 self.total_additions = 0;
                 self.total_deletions = 0;
@@ -227,6 +258,7 @@ impl DiffModel {
             }
             DiffLoadOutcome::Loaded(loaded) => {
                 self.repo_root = Some(loaded.repo_root.clone());
+                self.base_ref = Some(loaded.base_ref.clone());
                 self.summaries = loaded.summaries.clone();
                 self.total_additions = loaded.total_additions;
                 self.total_deletions = loaded.total_deletions;
@@ -238,6 +270,52 @@ impl DiffModel {
                 Some(self.expanded_paths_for_current_files())
             }
         }
+    }
+
+    /// If `path` is currently deferred and not already loading, marks it in-flight and returns
+    /// `(generation, repo_root, base_ref, untracked)`.
+    pub(crate) fn begin_deferred_file_load(
+        &mut self,
+        path: &str,
+    ) -> Option<(u64, PathBuf, String, bool)> {
+        let summary = self.summaries.iter().find(|s| s.path == path)?;
+        if !summary.deferred || self.loading_paths.contains(path) {
+            return None;
+        }
+        let repo_root = self.repo_root.clone()?;
+        let base_ref = self.base_ref.clone()?;
+        let untracked = summary.untracked;
+        self.loading_paths.insert(path.to_string());
+        Some((self.generation, repo_root, base_ref, untracked))
+    }
+
+    /// Completes an on-demand single-file load if its generation still matches.
+    /// Returns the file's index in `summaries` when the caller should splice the loaded `DiffFile`.
+    pub(crate) fn finish_deferred_file_load(
+        &mut self,
+        generation: u64,
+        path: &str,
+        succeeded: bool,
+    ) -> Option<usize> {
+        if generation != self.generation {
+            return None;
+        }
+        self.loading_paths.remove(path);
+        let ix = self.summaries.iter().position(|s| s.path == path)?;
+        if succeeded {
+            self.summaries[ix].deferred = false;
+            Some(ix)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn deferred_paths(&self) -> Vec<String> {
+        self.summaries
+            .iter()
+            .filter(|s| s.deferred)
+            .map(|s| s.path.clone())
+            .collect()
     }
 
     pub(crate) fn is_file_expanded(&self, path: &str) -> bool {
@@ -314,10 +392,10 @@ mod tests {
     use super::*;
     use crate::diff_git::LoadedDiff;
 
-    fn sample_loaded(paths: &[&str]) -> DiffLoadOutcome {
+    fn sample_loaded(paths: &[(&str, bool)]) -> DiffLoadOutcome {
         let summaries = paths
             .iter()
-            .map(|p| DiffFileSummary {
+            .map(|(p, deferred)| DiffFileSummary {
                 path: (*p).to_string(),
                 old_path: None,
                 additions: 3,
@@ -325,10 +403,12 @@ mod tests {
                 binary: false,
                 untracked: false,
                 truncated: false,
+                deferred: *deferred,
             })
             .collect::<Vec<_>>();
         DiffLoadOutcome::Loaded(LoadedDiff {
             repo_root: PathBuf::from("/repo"),
+            base_ref: "HEAD".into(),
             files: Vec::new(),
             total_additions: summaries.len() * 3,
             total_deletions: summaries.len(),
@@ -383,50 +463,104 @@ mod tests {
     fn files_start_collapsed_jump_expands_and_memory_is_per_session() {
         let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
 
-        // Even a single changed file starts collapsed by default.
         let (g1, clear1) = model.begin_load(Some("sess-1".into()), Some("/repo-a".into()));
         assert!(clear1);
         let expanded1 = model
-            .apply_load_outcome(g1, &sample_loaded(&["src/main.rs"]))
+            .apply_load_outcome(g1, &sample_loaded(&[("src/main.rs", false)]))
             .expect("current gen");
         assert!(expanded1.is_empty());
         assert!(!model.is_file_expanded("src/main.rs"));
         assert!(!model.all_expanded());
 
-        // Clicking a file in the jump list expands it.
         model.expand_for_jump("src/main.rs");
         assert!(model.is_file_expanded("src/main.rs"));
         assert!(model.all_expanded());
 
-        // Switching to session 2 clears stale data and starts collapsed.
         let (g2, clear2) = model.begin_load(Some("sess-2".into()), Some("/repo-b".into()));
         assert!(clear2);
         assert!(model.summaries().is_empty());
-        // Stale generation from session 1 is ignored.
         assert!(model
-            .apply_load_outcome(g1, &sample_loaded(&["stale.rs"]))
+            .apply_load_outcome(g1, &sample_loaded(&[("stale.rs", false)]))
             .is_none());
         let expanded2 = model
-            .apply_load_outcome(g2, &sample_loaded(&["src/main.rs", "README.md"]))
+            .apply_load_outcome(
+                g2,
+                &sample_loaded(&[("src/main.rs", false), ("README.md", false)]),
+            )
             .expect("gen 2");
         assert!(expanded2.is_empty());
         assert!(!model.is_file_expanded("src/main.rs"));
 
-        // Switching back to session 1 restores src/main.rs expanded while new file stays collapsed.
         let (g3, clear3) = model.begin_load(Some("sess-1".into()), Some("/repo-a".into()));
         assert!(clear3);
         let expanded3 = model
-            .apply_load_outcome(g3, &sample_loaded(&["src/main.rs", "src/new.rs"]))
+            .apply_load_outcome(
+                g3,
+                &sample_loaded(&[("src/main.rs", false), ("src/new.rs", false)]),
+            )
             .expect("gen 3");
         assert_eq!(expanded3, vec!["src/main.rs"]);
         assert!(model.is_file_expanded("src/main.rs"));
         assert!(!model.is_file_expanded("src/new.rs"));
 
-        // Expand all / collapse all toggle cleanly.
         model.set_all_collapsed(false);
         assert!(model.all_expanded());
         model.set_all_collapsed(true);
         assert!(!model.all_expanded());
         assert!(!model.is_file_expanded("src/main.rs"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn closed_panel_gates_debounced_refresh_and_latest_seq_wins() {
+        let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
+        assert_eq!(model.begin_debounced_refresh(false), None);
+
+        let seq1 = model.begin_debounced_refresh(true).expect("open");
+        assert!(model.should_fire_debounced_refresh(seq1, true));
+        assert!(!model.should_fire_debounced_refresh(seq1, false));
+
+        let seq2 = model.begin_debounced_refresh(true).expect("open");
+        assert!(!model.should_fire_debounced_refresh(seq1, true));
+        assert!(model.should_fire_debounced_refresh(seq2, true));
+    }
+
+    #[::core::prelude::v1::test]
+    fn deferred_file_load_tracks_inflight_and_discards_stale_generation() {
+        let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
+        let (g1, _) = model.begin_load(Some("s1".into()), Some("/repo".into()));
+        model
+            .apply_load_outcome(
+                g1,
+                &sample_loaded(&[("src/lib.rs", false), ("Cargo.lock", true)]),
+            )
+            .expect("gen 1");
+
+        assert!(model.begin_deferred_file_load("src/lib.rs").is_none());
+        let (load_gen, root, base_ref, untracked) = model
+            .begin_deferred_file_load("Cargo.lock")
+            .expect("deferred file should begin loading");
+        assert_eq!(load_gen, g1);
+        assert_eq!(root, PathBuf::from("/repo"));
+        assert_eq!(base_ref, "HEAD");
+        assert!(!untracked);
+        assert!(model.is_file_loading("Cargo.lock"));
+        // Duplicate request while already in flight is ignored.
+        assert!(model.begin_deferred_file_load("Cargo.lock").is_none());
+
+        // Advancing generation makes earlier deferred completion stale.
+        let (g2, _) = model.begin_load(Some("s1".into()), Some("/repo".into()));
+        assert!(!model.is_file_loading("Cargo.lock"));
+        assert_eq!(model.finish_deferred_file_load(load_gen, "Cargo.lock", true), None);
+
+        model
+            .apply_load_outcome(g2, &sample_loaded(&[("Cargo.lock", true)]))
+            .expect("gen 2");
+        let (load_gen2, _, _, _) = model.begin_deferred_file_load("Cargo.lock").unwrap();
+        assert_eq!(
+            model.finish_deferred_file_load(load_gen2, "Cargo.lock", true),
+            Some(0)
+        );
+        assert!(!model.summaries()[0].deferred);
+        assert!(!model.is_file_loading("Cargo.lock"));
     }
 }
