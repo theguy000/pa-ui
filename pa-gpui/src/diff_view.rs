@@ -3,9 +3,11 @@
 
 use crate::app::PaApp;
 use crate::diff_git::{
-    load_single_file_diff, load_uncommitted_diff, DiffFileSummary, DiffLoadOutcome,
+    load_diff_for_scope, load_single_file_diff, DiffFileSummary, DiffLoadOutcome,
 };
 use crate::diff_model::DiffViewStatus;
+use crate::popups::OpenPopup;
+use crate::settings::DiffScope;
 use crate::sidebar::session_key;
 use gpui_kit::component::{
     diff::{Diff, DiffMode},
@@ -46,15 +48,34 @@ impl PaApp {
         let key = session_key(row);
         let cwd = row.cwd.trim();
         let cwd_opt = (!cwd.is_empty()).then(|| cwd.to_string());
-        (Some(key), cwd_opt)
+        let effective = self
+            .diff_model
+            .effective_cwd(Some(key.as_str()), cwd_opt.as_deref());
+        (Some(key), effective)
     }
 
     pub(crate) fn sync_diff_for_active_session(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.open_popup,
+            OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+        ) {
+            self.open_popup = OpenPopup::None;
+        }
         if !self.settings.right_open {
             return;
         }
         let (key, cwd) = self.active_diff_target();
-        if self.diff_model.matches_target(key.as_deref(), cwd.as_deref()) {
+        let scope = self.settings.diff_scope;
+        let requested_base = self
+            .diff_model
+            .requested_base_for_session(key.as_deref())
+            .map(str::to_string);
+        if self.diff_model.matches_target(
+            key.as_deref(),
+            cwd.as_deref(),
+            scope,
+            requested_base.as_deref(),
+        ) {
             return;
         }
         self.refresh_diff(cx);
@@ -103,7 +124,14 @@ impl PaApp {
             return;
         };
 
-        let (generation, clear_existing) = self.diff_model.begin_load(key, cwd);
+        let scope = self.settings.diff_scope;
+        let requested_base = self
+            .diff_model
+            .requested_base_for_session(key.as_deref())
+            .map(str::to_string);
+        let (generation, clear_existing) =
+            self.diff_model
+                .begin_load(key, cwd, scope, requested_base.clone());
         if clear_existing {
             self.diff_state.update(cx, |state, cx| {
                 state.set_files(Vec::new(), cx);
@@ -114,7 +142,9 @@ impl PaApp {
         let cwd_path = PathBuf::from(cwd_str);
         cx.spawn(async move |this, cx| {
             let outcome = cx
-                .background_spawn(async move { load_uncommitted_diff(&cwd_path) })
+                .background_spawn(async move {
+                    load_diff_for_scope(&cwd_path, scope, requested_base.as_deref())
+                })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 let Some(expanded_paths) = app.diff_model.apply_load_outcome(generation, &outcome)
@@ -211,6 +241,32 @@ impl PaApp {
             });
         })
         .detach();
+    }
+
+    pub(crate) fn set_diff_scope(&mut self, scope: DiffScope, cx: &mut Context<Self>) {
+        if self.settings.diff_scope == scope {
+            return;
+        }
+        self.settings.diff_scope = scope;
+        self.settings.save();
+        if scope == DiffScope::Uncommitted && self.open_popup == OpenPopup::DiffBaseBranchMenu {
+            self.open_popup = OpenPopup::None;
+        }
+        self.refresh_diff(cx);
+    }
+
+    pub(crate) fn select_diff_base_branch(&mut self, branch: String, cx: &mut Context<Self>) {
+        let (key, _) = self.active_diff_target();
+        self.diff_model.set_selected_base(key.as_deref(), branch);
+        self.open_popup = OpenPopup::None;
+        self.refresh_diff(cx);
+    }
+
+    pub(crate) fn select_diff_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let (key, _) = self.active_diff_target();
+        self.diff_model.set_selected_worktree(key.as_deref(), path);
+        self.open_popup = OpenPopup::None;
+        self.refresh_diff(cx);
     }
 
     pub(crate) fn toggle_diff_split(&mut self, cx: &mut Context<Self>) {
@@ -338,6 +394,17 @@ impl PaApp {
         let has_files = file_count > 0;
         let is_split = self.settings.diff_split;
         let is_wrap = self.settings.diff_wrap;
+        let scope = self.settings.diff_scope;
+        let is_branch = scope == DiffScope::Branch;
+        let base_branch = self.diff_model.base_branch().map(str::to_string);
+        let on_base = self.diff_model.on_base_branch();
+        let has_multi_wt = self.diff_model.has_multiple_worktrees();
+        let active_wt_label = self
+            .diff_model
+            .active_worktree()
+            .map(|wt| wt.branch.as_deref().unwrap_or(&wt.label).to_string());
+        let branch_menu_open = self.open_popup == OpenPopup::DiffBaseBranchMenu;
+        let wt_menu_open = self.open_popup == OpenPopup::DiffWorktreeMenu;
 
         let pill = |id: &'static str, label: &'static str, active: bool| {
             div()
@@ -366,105 +433,289 @@ impl PaApp {
             format!("{file_count} files")
         };
 
-        h_flex()
+        v_flex()
             .w_full()
-            .h(px(36.))
             .flex_shrink_0()
-            .px(px(10.))
-            .gap(px(6.))
-            .items_center()
-            .justify_between()
             .border_b_1()
             .border_color(p.sidebar_group_edge)
             .child(
                 h_flex()
-                    .min_w_0()
-                    .gap(px(8.))
+                    .w_full()
+                    .h(px(34.))
+                    .px(px(10.))
+                    .gap(px(6.))
                     .items_center()
-                    .when(has_files, |row| {
-                        row.child(
-                            div()
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.ink)
-                                .child(files_label.clone()),
-                        )
-                        .child(
-                            h_flex()
-                                .gap(px(5.))
-                                .text_size(px(11.5))
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(div().text_color(p.tag_idle).child(format!("+{additions}")))
-                                .child(div().text_color(p.danger).child(format!("-{deletions}"))),
-                        )
-                    })
-                    .when(!has_files, |row| {
-                        row.child(
-                            div()
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.quiet_ink)
-                                .child("Changes"),
-                        )
-                    }),
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .flex_shrink_0()
+                                    .p(px(2.))
+                                    .gap(px(1.))
+                                    .rounded(px(6.))
+                                    .bg(p.sidebar_group_surface)
+                                    .border_1()
+                                    .border_color(p.sidebar_group_edge)
+                                    .child(
+                                        pill("diff-scope-uncommitted", "Uncommitted", !is_branch)
+                                            .h(px(20.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.set_diff_scope(DiffScope::Uncommitted, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        pill("diff-scope-branch", "Branch", is_branch)
+                                            .h(px(20.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.set_diff_scope(DiffScope::Branch, cx);
+                                            })),
+                                    ),
+                            )
+                            .when_some(
+                                is_branch.then_some(base_branch.clone()).flatten(),
+                                |row, base| {
+                                    let base_pill_label = base.clone();
+                                    let on_base_text = format!("On {base}");
+                                    row.child(
+                                        h_flex()
+                                            .id("diff-base-branch-btn")
+                                            .h(px(22.))
+                                            .px(px(7.))
+                                            .gap(px(3.))
+                                            .min_w_0()
+                                            .rounded(px(5.))
+                                            .border_1()
+                                            .border_color(if branch_menu_open {
+                                                p.working
+                                            } else {
+                                                p.sidebar_group_edge
+                                            })
+                                            .bg(if branch_menu_open {
+                                                p.sidebar_row_selected
+                                            } else {
+                                                Hsla::transparent_black()
+                                            })
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .hover(move |s| s.bg(p.sidebar_row_hover))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.open_popup =
+                                                    if this.open_popup
+                                                        == OpenPopup::DiffBaseBranchMenu
+                                                    {
+                                                        OpenPopup::None
+                                                    } else {
+                                                        OpenPopup::DiffBaseBranchMenu
+                                                    };
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_size(px(11.))
+                                                    .text_color(p.ink)
+                                                    .child(base_pill_label),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ChevronDown)
+                                                    .size(px(11.))
+                                                    .text_color(p.quiet_ink),
+                                            ),
+                                    )
+                                    .when(on_base, |r| {
+                                        r.child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(11.))
+                                                .text_color(p.quiet_ink)
+                                                .child(on_base_text),
+                                        )
+                                    })
+                                },
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap(px(4.))
+                            .items_center()
+                            .when_some(
+                                has_multi_wt.then_some(active_wt_label).flatten(),
+                                |row, wt_label| {
+                                    row.child(
+                                        h_flex()
+                                            .id("diff-worktree-btn")
+                                            .h(px(22.))
+                                            .px(px(7.))
+                                            .gap(px(3.))
+                                            .max_w(px(120.))
+                                            .rounded(px(5.))
+                                            .border_1()
+                                            .border_color(if wt_menu_open {
+                                                p.working
+                                            } else {
+                                                p.sidebar_group_edge
+                                            })
+                                            .bg(if wt_menu_open {
+                                                p.sidebar_row_selected
+                                            } else {
+                                                Hsla::transparent_black()
+                                            })
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .hover(move |s| s.bg(p.sidebar_row_hover))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.open_popup =
+                                                    if this.open_popup
+                                                        == OpenPopup::DiffWorktreeMenu
+                                                    {
+                                                        OpenPopup::None
+                                                    } else {
+                                                        OpenPopup::DiffWorktreeMenu
+                                                    };
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_size(px(11.))
+                                                    .text_color(p.ink)
+                                                    .child(wt_label),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ChevronDown)
+                                                    .size(px(11.))
+                                                    .text_color(p.quiet_ink),
+                                            ),
+                                    )
+                                },
+                            )
+                            .child(
+                                div()
+                                    .id("diff-refresh-btn")
+                                    .size(px(22.))
+                                    .rounded(px(5.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .text_color(if self.diff_model.is_loading() {
+                                        p.working
+                                    } else {
+                                        p.quiet_ink
+                                    })
+                                    .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
+                                    .child(Icon::new(IconName::RefreshCw).size(px(12.5)))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.refresh_diff(cx);
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 h_flex()
-                    .flex_shrink_0()
-                    .gap(px(2.))
+                    .w_full()
+                    .h(px(30.))
+                    .px(px(10.))
+                    .gap(px(6.))
                     .items_center()
-                    .when(has_files, |row| {
-                        row.child(
-                            pill(
-                                "diff-expand-toggle",
-                                if all_expanded { "Collapse" } else { "Expand" },
-                                false,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.toggle_diff_expand_all(cx);
-                            })),
-                        )
-                    })
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(p.sidebar_group_edge)
                     .child(
-                        pill(
-                            "diff-mode-toggle",
-                            if is_split { "Split" } else { "Unified" },
-                            is_split,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.toggle_diff_split(cx);
-                        })),
-                    )
-                    .child(
-                        pill("diff-wrap-toggle", "Wrap", is_wrap).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.toggle_diff_wrap(cx);
-                            },
-                        )),
-                    )
-                    .child(
-                        div()
-                            .id("diff-refresh-btn")
-                            .size(px(22.))
-                            .rounded(px(5.))
-                            .flex()
+                        h_flex()
+                            .min_w_0()
+                            .gap(px(8.))
                             .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .text_color(if self.diff_model.is_loading() {
-                                p.working
-                            } else {
-                                p.quiet_ink
+                            .when(has_files, |row| {
+                                row.child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(p.ink)
+                                        .child(files_label.clone()),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap(px(5.))
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(
+                                            div()
+                                                .text_color(p.tag_idle)
+                                                .child(format!("+{additions}")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(p.danger)
+                                                .child(format!("-{deletions}")),
+                                        ),
+                                )
                             })
-                            .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
-                            .child(Icon::new(IconName::RefreshCw).size(px(12.5)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.refresh_diff(cx);
-                            })),
+                            .when(!has_files, |row| {
+                                row.child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(p.quiet_ink)
+                                        .child(if is_branch {
+                                            "Branch changes"
+                                        } else {
+                                            "Changes"
+                                        }),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap(px(2.))
+                            .items_center()
+                            .when(has_files, |row| {
+                                row.child(
+                                    pill(
+                                        "diff-expand-toggle",
+                                        if all_expanded { "Collapse" } else { "Expand" },
+                                        false,
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.toggle_diff_expand_all(cx);
+                                    })),
+                                )
+                            })
+                            .child(
+                                pill(
+                                    "diff-mode-toggle",
+                                    if is_split { "Split" } else { "Unified" },
+                                    is_split,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_diff_split(cx);
+                                })),
+                            )
+                            .child(
+                                pill("diff-wrap-toggle", "Wrap", is_wrap).on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.toggle_diff_wrap(cx);
+                                    },
+                                )),
+                            ),
                     ),
             )
     }
@@ -706,19 +957,34 @@ impl PaApp {
                         .child("Not a git repository"),
                 )
                 .into_any_element(),
-            DiffViewStatus::Empty => v_flex()
-                .flex_1()
-                .w_full()
-                .items_center()
-                .justify_center()
-                .px(px(20.))
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .text_color(p.quiet_ink)
-                        .child("No uncommitted changes"),
-                )
-                .into_any_element(),
+            DiffViewStatus::Empty => {
+                let empty_msg = match (
+                    self.settings.diff_scope,
+                    self.diff_model.base_branch(),
+                    self.diff_model.on_base_branch(),
+                ) {
+                    (DiffScope::Branch, Some(base), true) => {
+                        format!("On {base} · no uncommitted changes")
+                    }
+                    (DiffScope::Branch, Some(base), false) => {
+                        format!("No changes against {base}")
+                    }
+                    _ => "No uncommitted changes".to_string(),
+                };
+                v_flex()
+                    .flex_1()
+                    .w_full()
+                    .items_center()
+                    .justify_center()
+                    .px(px(20.))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(p.quiet_ink)
+                            .child(empty_msg),
+                    )
+                    .into_any_element()
+            }
             DiffViewStatus::Idle | DiffViewStatus::Loading => v_flex()
                 .flex_1()
                 .w_full()

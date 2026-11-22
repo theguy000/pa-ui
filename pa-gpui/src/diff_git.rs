@@ -1,8 +1,9 @@
 //! Synchronous Git diff loader meant to run on background threads.
 
+use crate::settings::DiffScope;
 use gpui_kit::component::diff::{DiffFile, DiffParseOptions};
-use std::collections::HashMap;
-use std::fs::File;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -11,6 +12,14 @@ pub(crate) const UNTRACKED_MAX_BYTES: u64 = 256 * 1024;
 pub(crate) const LARGE_DIFF_LINE_THRESHOLD: usize = 1_500;
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const EAGER_DIFF_PATH_CHUNK: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorktreeEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) label: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) is_main: bool,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiffFileSummary {
@@ -27,6 +36,11 @@ pub(crate) struct DiffFileSummary {
 pub(crate) struct LoadedDiff {
     pub(crate) repo_root: PathBuf,
     pub(crate) base_ref: String,
+    pub(crate) base_branch: Option<String>,
+    pub(crate) on_base_branch: bool,
+    pub(crate) current_branch: Option<String>,
+    pub(crate) branches: Vec<String>,
+    pub(crate) worktrees: Vec<WorktreeEntry>,
     pub(crate) files: Vec<DiffFile>,
     pub(crate) summaries: Vec<DiffFileSummary>,
     pub(crate) total_additions: usize,
@@ -368,18 +382,249 @@ pub(crate) fn load_single_file_diff(
     files.into_iter().next()
 }
 
-pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
+pub(crate) fn same_worktree_path(a: &Path, b: &Path) -> bool {
+    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
+        return ca == cb;
+    }
+    let norm = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        #[cfg(target_os = "windows")]
+        {
+            s.to_ascii_lowercase()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            s
+        }
+    };
+    norm(a) == norm(b)
+}
+
+fn git_commit_ref_exists(repo_root: &Path, rev: &str) -> bool {
+    let target = format!("{rev}^{{commit}}");
+    run_git(repo_root, &["rev-parse", "--verify", "--quiet", &target])
+        .is_ok_and(|out| out.status.success())
+}
+
+pub(crate) fn current_branch_name(repo_root: &Path) -> Option<String> {
+    let out = run_git(repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+pub(crate) fn is_on_base_branch(current_branch: Option<&str>, base_branch: &str) -> bool {
+    let base_short = base_branch.strip_prefix("origin/").unwrap_or(base_branch);
+    current_branch.is_some_and(|cur| cur == base_branch || cur == base_short)
+}
+
+pub(crate) fn list_branches(repo_root: &Path) -> Vec<String> {
+    let Ok(out) = run_git(
+        repo_root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    let mut branches = Vec::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let name = line.trim();
+        if name.is_empty() || name == "origin" || name == "origin/HEAD" {
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            branches.push(name.to_string());
+        }
+    }
+    branches
+}
+
+pub(crate) fn detect_base_branch(repo_root: &Path) -> Option<String> {
+    if let Ok(out) = run_git(
+        repo_root,
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    ) {
+        if out.status.success() {
+            let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if let Some(short) = full.strip_prefix("refs/remotes/origin/") {
+                if git_commit_ref_exists(repo_root, short) {
+                    return Some(short.to_string());
+                }
+                let remote_ref = format!("origin/{short}");
+                if git_commit_ref_exists(repo_root, &remote_ref) {
+                    return Some(remote_ref);
+                }
+            }
+        }
+    }
+
+    for candidate in ["main", "origin/main", "master", "origin/master"] {
+        if git_commit_ref_exists(repo_root, candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+
+    if let Some(cur) = current_branch_name(repo_root) {
+        if git_commit_ref_exists(repo_root, &cur) {
+            return Some(cur);
+        }
+    }
+
+    list_branches(repo_root).into_iter().next()
+}
+
+pub(crate) fn parse_worktree_list_porcelain(stdout: &str) -> Vec<WorktreeEntry> {
+    let mut out = Vec::new();
+    let mut path: Option<PathBuf> = None;
+    let mut branch: Option<String> = None;
+    let mut is_bare = false;
+
+    let flush = |out: &mut Vec<WorktreeEntry>,
+                 path: &mut Option<PathBuf>,
+                 branch: &mut Option<String>,
+                 is_bare: &mut bool| {
+        if let Some(p) = path.take() {
+            if !*is_bare {
+                let label = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| p.to_string_lossy().into_owned());
+                let is_main = out.is_empty();
+                out.push(WorktreeEntry {
+                    path: p,
+                    label,
+                    branch: branch.take(),
+                    is_main,
+                });
+            }
+        }
+        *branch = None;
+        *is_bare = false;
+    };
+
+    for raw_line in stdout.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            flush(&mut out, &mut path, &mut branch, &mut is_bare);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            flush(&mut out, &mut path, &mut branch, &mut is_bare);
+            path = Some(PathBuf::from(rest.trim()));
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            let b = rest.trim();
+            branch = Some(b.strip_prefix("refs/heads/").unwrap_or(b).to_string());
+        } else if line == "bare" {
+            is_bare = true;
+        }
+    }
+    flush(&mut out, &mut path, &mut branch, &mut is_bare);
+    out
+}
+
+pub(crate) fn list_linked_worktrees(repo_root: &Path) -> Vec<WorktreeEntry> {
+    let Ok(out) = run_git(repo_root, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    parse_worktree_list_porcelain(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn resolve_merge_base(repo_root: &Path, base_branch: &str) -> Result<String, String> {
+    if !has_head_commit(repo_root) {
+        return Ok(EMPTY_TREE_OID.to_string());
+    }
+    let out = run_git(repo_root, &["merge-base", "HEAD", base_branch])
+        .map_err(|err| format!("Failed to run git merge-base: {err}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("Failed to find merge-base with {base_branch}")
+        } else {
+            stderr
+        });
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if sha.is_empty() {
+        Err(format!("Empty merge-base for {base_branch}"))
+    } else {
+        Ok(sha)
+    }
+}
+
+pub(crate) fn load_diff_for_scope(
+    cwd: &Path,
+    scope: DiffScope,
+    requested_base: Option<&str>,
+) -> DiffLoadOutcome {
     let Some(repo_root) = resolve_worktree_root(cwd) else {
         return DiffLoadOutcome::NotAGitRepo;
     };
+    let worktrees = list_linked_worktrees(&repo_root);
+    let current_branch = current_branch_name(&repo_root);
 
-    let base_ref = if has_head_commit(&repo_root) {
-        "HEAD".to_string()
-    } else {
-        EMPTY_TREE_OID.to_string()
-    };
+    match scope {
+        DiffScope::Uncommitted => {
+            let base_ref = if has_head_commit(&repo_root) {
+                "HEAD".to_string()
+            } else {
+                EMPTY_TREE_OID.to_string()
+            };
+            let mut outcome = load_diff_against_base(repo_root, base_ref);
+            if let DiffLoadOutcome::Loaded(ref mut loaded) = outcome {
+                loaded.current_branch = current_branch;
+                loaded.worktrees = worktrees;
+            }
+            outcome
+        }
+        DiffScope::Branch => {
+            let branches = list_branches(&repo_root);
+            let selected_base = requested_base
+                .map(str::trim)
+                .filter(|b| !b.is_empty() && git_commit_ref_exists(&repo_root, b))
+                .map(str::to_string)
+                .or_else(|| detect_base_branch(&repo_root));
 
-    load_diff_against_base(repo_root, base_ref)
+            let (base_ref, base_branch, on_base_branch) = match selected_base {
+                Some(base_name) => {
+                    let on_base = is_on_base_branch(current_branch.as_deref(), &base_name);
+                    let merge_base = match resolve_merge_base(&repo_root, &base_name) {
+                        Ok(sha) => sha,
+                        Err(err) => return DiffLoadOutcome::Error(err),
+                    };
+                    (merge_base, Some(base_name), on_base)
+                }
+                None => (EMPTY_TREE_OID.to_string(), None, false),
+            };
+
+            let mut outcome = load_diff_against_base(repo_root, base_ref);
+            if let DiffLoadOutcome::Loaded(ref mut loaded) = outcome {
+                loaded.base_branch = base_branch;
+                loaded.on_base_branch = on_base_branch;
+                loaded.current_branch = current_branch;
+                loaded.branches = branches;
+                loaded.worktrees = worktrees;
+            }
+            outcome
+        }
+    }
+}
+
+pub(crate) fn load_uncommitted_diff(cwd: &Path) -> DiffLoadOutcome {
+    load_diff_for_scope(cwd, DiffScope::Uncommitted, None)
 }
 
 pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> DiffLoadOutcome {
@@ -494,6 +739,11 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
     DiffLoadOutcome::Loaded(LoadedDiff {
         repo_root,
         base_ref,
+        base_branch: None,
+        on_base_branch: false,
+        current_branch: None,
+        branches: Vec::new(),
+        worktrees: Vec::new(),
         files,
         summaries,
         total_additions,
@@ -738,5 +988,136 @@ mod tests {
         assert!(paths.contains(&"staged.txt"));
         assert!(paths.contains(&"untracked.txt"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn base_branch_fallback_prefers_origin_head_then_main_then_master() {
+        let root = make_temp_dir("base-fallback");
+        init_repo(&root);
+        git(&root, &["checkout", "-q", "-b", "master"]);
+        fs::write(root.join("a.txt"), "base
+").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "master init"]);
+        assert_eq!(detect_base_branch(&root).as_deref(), Some("master"));
+
+        git(&root, &["branch", "main"]);
+        assert_eq!(detect_base_branch(&root).as_deref(), Some("main"));
+
+        git(&root, &["branch", "develop"]);
+        let dev_sha = String::from_utf8_lossy(
+            &run_git(&root, &["rev-parse", "develop"]).unwrap().stdout,
+        )
+        .trim()
+        .to_string();
+        git(
+            &root,
+            &["update-ref", "refs/remotes/origin/develop", &dev_sha],
+        );
+        git(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        );
+        assert_eq!(detect_base_branch(&root).as_deref(), Some("develop"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn branch_diff_uses_merge_base_working_tree_and_detects_on_base() {
+        let root = make_temp_dir("branch-diff");
+        init_repo(&root);
+        git(&root, &["checkout", "-q", "-b", "main"]);
+        fs::write(root.join("shared.txt"), "v1
+").unwrap();
+        fs::write(root.join("main_only.txt"), "a
+").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "main base"]);
+
+        let DiffLoadOutcome::Loaded(on_main) =
+            load_diff_for_scope(&root, DiffScope::Branch, None)
+        else {
+            panic!("expected Loaded on main");
+        };
+        assert_eq!(on_main.base_branch.as_deref(), Some("main"));
+        assert!(on_main.on_base_branch);
+        assert!(on_main.summaries.is_empty());
+
+        git(&root, &["checkout", "-q", "-b", "feat/work"]);
+        fs::write(root.join("committed.txt"), "c1
+c2
+").unwrap();
+        git(&root, &["add", "committed.txt"]);
+        git(&root, &["commit", "-q", "-m", "branch commit"]);
+
+        // Advance main after branch point so merge-base differs from main tip.
+        git(&root, &["checkout", "-q", "main"]);
+        fs::write(root.join("main_only.txt"), "a
+b
+").unwrap();
+        git(&root, &["add", "main_only.txt"]);
+        git(&root, &["commit", "-q", "-m", "advance main"]);
+
+        git(&root, &["checkout", "-q", "feat/work"]);
+        fs::write(root.join("shared.txt"), "v1
+v2
+").unwrap();
+        fs::write(root.join("scratch.txt"), "untracked
+").unwrap();
+
+        let DiffLoadOutcome::Loaded(feat_diff) =
+            load_diff_for_scope(&root, DiffScope::Branch, None)
+        else {
+            panic!("expected Loaded on feature branch");
+        };
+        assert_eq!(feat_diff.base_branch.as_deref(), Some("main"));
+        assert!(!feat_diff.on_base_branch);
+        assert!(feat_diff.branches.contains(&"main".to_string()));
+        assert!(feat_diff.branches.contains(&"feat/work".to_string()));
+
+        let paths: Vec<&str> = feat_diff
+            .summaries
+            .iter()
+            .map(|s| s.path.as_str())
+            .collect();
+        assert!(paths.contains(&"committed.txt"));
+        assert!(paths.contains(&"shared.txt"));
+        assert!(paths.contains(&"scratch.txt"));
+        assert!(!paths.contains(&"main_only.txt"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn linked_worktree_enumeration_lists_multiple_worktrees() {
+        let root = make_temp_dir("wt-main");
+        let wt_sibling = make_temp_dir("wt-sibling");
+        let _ = fs::remove_dir_all(&wt_sibling);
+        init_repo(&root);
+        git(&root, &["checkout", "-q", "-b", "main"]);
+        fs::write(root.join("readme.txt"), "hello
+").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+
+        let wt_str = wt_sibling.to_string_lossy().into_owned();
+        git(&root, &["worktree", "add", "-q", "-b", "feat/side", &wt_str]);
+
+        let worktrees = list_linked_worktrees(&root);
+        assert_eq!(worktrees.len(), 2);
+        assert!(worktrees[0].is_main);
+        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+        assert!(!worktrees[1].is_main);
+        assert_eq!(worktrees[1].branch.as_deref(), Some("feat/side"));
+        assert!(same_worktree_path(&worktrees[1].path, &wt_sibling));
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &wt_str]);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&wt_sibling);
     }
 }

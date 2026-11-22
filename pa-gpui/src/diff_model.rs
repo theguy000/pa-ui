@@ -1,6 +1,7 @@
-use crate::diff_git::{DiffFileSummary, DiffLoadOutcome};
+use crate::diff_git::{same_worktree_path, DiffFileSummary, DiffLoadOutcome, WorktreeEntry};
+use crate::settings::DiffScope;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) const DIFF_DEFAULT_WIDTH: f32 = 480.0;
 pub(crate) const DIFF_MIN_WIDTH: f32 = 280.0;
@@ -47,14 +48,23 @@ pub(crate) struct DiffModel {
     debounce_seq: u64,
     session_key: Option<String>,
     cwd: Option<String>,
+    scope: Option<DiffScope>,
+    requested_base: Option<String>,
     repo_root: Option<PathBuf>,
     base_ref: Option<String>,
+    base_branch: Option<String>,
+    on_base_branch: bool,
+    current_branch: Option<String>,
+    branches: Vec<String>,
+    worktrees: Vec<WorktreeEntry>,
     summaries: Vec<DiffFileSummary>,
     loading_paths: HashSet<String>,
     total_additions: usize,
     total_deletions: usize,
     // Files start collapsed by default; store only paths the user explicitly expanded per session.
     expanded_by_session: HashMap<String, HashSet<String>>,
+    selected_worktree_by_session: HashMap<String, PathBuf>,
+    selected_base_by_session: HashMap<String, String>,
 }
 
 impl DiffModel {
@@ -72,13 +82,22 @@ impl DiffModel {
             debounce_seq: 0,
             session_key: None,
             cwd: None,
+            scope: None,
+            requested_base: None,
             repo_root: None,
             base_ref: None,
+            base_branch: None,
+            on_base_branch: false,
+            current_branch: None,
+            branches: Vec::new(),
+            worktrees: Vec::new(),
             summaries: Vec::new(),
             loading_paths: HashSet::new(),
             total_additions: 0,
             total_deletions: 0,
             expanded_by_session: HashMap::new(),
+            selected_worktree_by_session: HashMap::new(),
+            selected_base_by_session: HashMap::new(),
         }
     }
 
@@ -165,9 +184,83 @@ impl DiffModel {
         self.total_deletions
     }
 
-    pub(crate) fn matches_target(&self, session_key: Option<&str>, cwd: Option<&str>) -> bool {
+    pub(crate) fn base_branch(&self) -> Option<&str> {
+        self.base_branch.as_deref()
+    }
+
+    pub(crate) fn on_base_branch(&self) -> bool {
+        self.on_base_branch
+    }
+
+    pub(crate) fn branches(&self) -> &[String] {
+        &self.branches
+    }
+
+    pub(crate) fn worktrees(&self) -> &[WorktreeEntry] {
+        &self.worktrees
+    }
+
+    pub(crate) fn has_multiple_worktrees(&self) -> bool {
+        self.worktrees.len() > 1
+    }
+
+    pub(crate) fn active_worktree(&self) -> Option<&WorktreeEntry> {
+        let root = self.repo_root.as_deref()?;
+        self.worktrees
+            .iter()
+            .find(|wt| same_worktree_path(&wt.path, root))
+    }
+
+    pub(crate) fn is_active_worktree(&self, path: &Path) -> bool {
+        self.repo_root
+            .as_deref()
+            .is_some_and(|root| same_worktree_path(root, path))
+    }
+
+    pub(crate) fn effective_cwd(
+        &self,
+        session_key: Option<&str>,
+        session_cwd: Option<&str>,
+    ) -> Option<String> {
+        if let Some(key) = session_key {
+            if let Some(wt) = self.selected_worktree_by_session.get(key) {
+                if wt.exists() {
+                    return Some(wt.to_string_lossy().into_owned());
+                }
+            }
+        }
+        session_cwd.map(str::to_string)
+    }
+
+    pub(crate) fn set_selected_worktree(&mut self, session_key: Option<&str>, path: PathBuf) {
+        if let Some(key) = session_key {
+            self.selected_worktree_by_session
+                .insert(key.to_string(), path);
+        }
+    }
+
+    pub(crate) fn requested_base_for_session(&self, session_key: Option<&str>) -> Option<&str> {
+        session_key.and_then(|key| self.selected_base_by_session.get(key).map(String::as_str))
+    }
+
+    pub(crate) fn set_selected_base(&mut self, session_key: Option<&str>, branch: String) {
+        if let Some(key) = session_key {
+            self.selected_base_by_session
+                .insert(key.to_string(), branch);
+        }
+    }
+
+    pub(crate) fn matches_target(
+        &self,
+        session_key: Option<&str>,
+        cwd: Option<&str>,
+        scope: DiffScope,
+        requested_base: Option<&str>,
+    ) -> bool {
         self.session_key.as_deref() == session_key
             && self.cwd.as_deref() == cwd
+            && self.scope == Some(scope)
+            && self.requested_base.as_deref() == requested_base
             && self.status != DiffViewStatus::Idle
     }
 
@@ -190,8 +283,15 @@ impl DiffModel {
         self.loading = false;
         self.session_key = session_key;
         self.cwd = cwd;
+        self.scope = None;
+        self.requested_base = None;
         self.repo_root = None;
         self.base_ref = None;
+        self.base_branch = None;
+        self.on_base_branch = false;
+        self.current_branch = None;
+        self.branches.clear();
+        self.worktrees.clear();
         self.summaries.clear();
         self.loading_paths.clear();
         self.total_additions = 0;
@@ -199,22 +299,35 @@ impl DiffModel {
         self.status = DiffViewStatus::NotAGitRepo;
     }
 
-    /// Starts a load generation for `(session_key, cwd)`. Returns `(generation, clear_existing)`
-    /// where `clear_existing` is true when switching sessions/directories so no stale diff remains.
+    /// Starts a load generation for `(session_key, cwd, scope, requested_base)`. Returns
+    /// `(generation, clear_existing)` where `clear_existing` is true when switching targets so no
+    /// stale diff remains.
     pub(crate) fn begin_load(
         &mut self,
         session_key: Option<String>,
         cwd: Option<String>,
+        scope: DiffScope,
+        requested_base: Option<String>,
     ) -> (u64, bool) {
-        let switched = self.session_key != session_key || self.cwd != cwd;
+        let switched = self.session_key != session_key
+            || self.cwd != cwd
+            || self.scope != Some(scope)
+            || self.requested_base != requested_base;
         self.generation = self.generation.wrapping_add(1);
         self.loading = true;
         self.loading_paths.clear();
         self.session_key = session_key;
         self.cwd = cwd;
+        self.scope = Some(scope);
+        self.requested_base = requested_base;
         if switched || matches!(self.status, DiffViewStatus::Idle | DiffViewStatus::NotAGitRepo) {
             self.repo_root = None;
             self.base_ref = None;
+            self.base_branch = None;
+            self.on_base_branch = false;
+            self.current_branch = None;
+            self.branches.clear();
+            self.worktrees.clear();
             self.summaries.clear();
             self.total_additions = 0;
             self.total_deletions = 0;
@@ -241,6 +354,11 @@ impl DiffModel {
             DiffLoadOutcome::NotAGitRepo => {
                 self.repo_root = None;
                 self.base_ref = None;
+                self.base_branch = None;
+                self.on_base_branch = false;
+                self.current_branch = None;
+                self.branches.clear();
+                self.worktrees.clear();
                 self.summaries.clear();
                 self.total_additions = 0;
                 self.total_deletions = 0;
@@ -250,6 +368,11 @@ impl DiffModel {
             DiffLoadOutcome::Error(msg) => {
                 self.repo_root = None;
                 self.base_ref = None;
+                self.base_branch = None;
+                self.on_base_branch = false;
+                self.current_branch = None;
+                self.branches.clear();
+                self.worktrees.clear();
                 self.summaries.clear();
                 self.total_additions = 0;
                 self.total_deletions = 0;
@@ -259,6 +382,11 @@ impl DiffModel {
             DiffLoadOutcome::Loaded(loaded) => {
                 self.repo_root = Some(loaded.repo_root.clone());
                 self.base_ref = Some(loaded.base_ref.clone());
+                self.base_branch = loaded.base_branch.clone();
+                self.on_base_branch = loaded.on_base_branch;
+                self.current_branch = loaded.current_branch.clone();
+                self.branches = loaded.branches.clone();
+                self.worktrees = loaded.worktrees.clone();
                 self.summaries = loaded.summaries.clone();
                 self.total_additions = loaded.total_additions;
                 self.total_deletions = loaded.total_deletions;
@@ -409,6 +537,11 @@ mod tests {
         DiffLoadOutcome::Loaded(LoadedDiff {
             repo_root: PathBuf::from("/repo"),
             base_ref: "HEAD".into(),
+            base_branch: None,
+            on_base_branch: false,
+            current_branch: None,
+            branches: Vec::new(),
+            worktrees: Vec::new(),
             files: Vec::new(),
             total_additions: summaries.len() * 3,
             total_deletions: summaries.len(),
@@ -463,7 +596,12 @@ mod tests {
     fn files_start_collapsed_jump_expands_and_memory_is_per_session() {
         let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
 
-        let (g1, clear1) = model.begin_load(Some("sess-1".into()), Some("/repo-a".into()));
+        let (g1, clear1) = model.begin_load(
+            Some("sess-1".into()),
+            Some("/repo-a".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
         assert!(clear1);
         let expanded1 = model
             .apply_load_outcome(g1, &sample_loaded(&[("src/main.rs", false)]))
@@ -476,7 +614,12 @@ mod tests {
         assert!(model.is_file_expanded("src/main.rs"));
         assert!(model.all_expanded());
 
-        let (g2, clear2) = model.begin_load(Some("sess-2".into()), Some("/repo-b".into()));
+        let (g2, clear2) = model.begin_load(
+            Some("sess-2".into()),
+            Some("/repo-b".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
         assert!(clear2);
         assert!(model.summaries().is_empty());
         assert!(model
@@ -491,7 +634,12 @@ mod tests {
         assert!(expanded2.is_empty());
         assert!(!model.is_file_expanded("src/main.rs"));
 
-        let (g3, clear3) = model.begin_load(Some("sess-1".into()), Some("/repo-a".into()));
+        let (g3, clear3) = model.begin_load(
+            Some("sess-1".into()),
+            Some("/repo-a".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
         assert!(clear3);
         let expanded3 = model
             .apply_load_outcome(
@@ -527,7 +675,12 @@ mod tests {
     #[::core::prelude::v1::test]
     fn deferred_file_load_tracks_inflight_and_discards_stale_generation() {
         let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
-        let (g1, _) = model.begin_load(Some("s1".into()), Some("/repo".into()));
+        let (g1, _) = model.begin_load(
+            Some("s1".into()),
+            Some("/repo".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
         model
             .apply_load_outcome(
                 g1,
@@ -548,7 +701,12 @@ mod tests {
         assert!(model.begin_deferred_file_load("Cargo.lock").is_none());
 
         // Advancing generation makes earlier deferred completion stale.
-        let (g2, _) = model.begin_load(Some("s1".into()), Some("/repo".into()));
+        let (g2, _) = model.begin_load(
+            Some("s1".into()),
+            Some("/repo".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
         assert!(!model.is_file_loading("Cargo.lock"));
         assert_eq!(model.finish_deferred_file_load(load_gen, "Cargo.lock", true), None);
 
@@ -562,5 +720,69 @@ mod tests {
         );
         assert!(!model.summaries()[0].deferred);
         assert!(!model.is_file_loading("Cargo.lock"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn per_session_worktree_and_base_memory_persists_across_session_switches() {
+        let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
+        let temp_wt_a = std::env::temp_dir().join(format!("pa-wt-a-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_wt_a);
+        let temp_wt_a_str = temp_wt_a.to_string_lossy().into_owned();
+
+        // Session A starts on its own cwd; user switches to linked worktree A and picks base `develop`.
+        assert_eq!(
+            model.effective_cwd(Some("sess-a"), Some("/cwd-a")).as_deref(),
+            Some("/cwd-a")
+        );
+        model.set_selected_worktree(Some("sess-a"), temp_wt_a.clone());
+        model.set_selected_base(Some("sess-a"), "develop".into());
+        assert_eq!(
+            model.effective_cwd(Some("sess-a"), Some("/cwd-a")).as_deref(),
+            Some(temp_wt_a_str.as_str())
+        );
+        assert_eq!(
+            model.requested_base_for_session(Some("sess-a")),
+            Some("develop")
+        );
+
+        // Session B stays independent on its own cwd and default base.
+        assert_eq!(
+            model.effective_cwd(Some("sess-b"), Some("/cwd-b")).as_deref(),
+            Some("/cwd-b")
+        );
+        assert_eq!(model.requested_base_for_session(Some("sess-b")), None);
+
+        // Switching back to Session A remembers its worktree and base branch.
+        assert_eq!(
+            model.effective_cwd(Some("sess-a"), Some("/cwd-a")).as_deref(),
+            Some(temp_wt_a_str.as_str())
+        );
+        assert_eq!(
+            model.requested_base_for_session(Some("sess-a")),
+            Some("develop")
+        );
+
+        // `matches_target` invalidates when scope changes between Uncommitted and Branch.
+        let (g, _) = model.begin_load(
+            Some("sess-a".into()),
+            Some(temp_wt_a_str.clone()),
+            DiffScope::Uncommitted,
+            Some("develop".into()),
+        );
+        model.apply_load_outcome(g, &sample_loaded(&[("a.rs", false)]));
+        assert!(model.matches_target(
+            Some("sess-a"),
+            Some(temp_wt_a_str.as_str()),
+            DiffScope::Uncommitted,
+            Some("develop"),
+        ));
+        assert!(!model.matches_target(
+            Some("sess-a"),
+            Some(temp_wt_a_str.as_str()),
+            DiffScope::Branch,
+            Some("develop"),
+        ));
+
+        let _ = std::fs::remove_dir_all(&temp_wt_a);
     }
 }

@@ -407,6 +407,12 @@ impl PaApp {
         self.settings.right_open = !self.settings.right_open;
         if !self.settings.right_open {
             self.diff_model.cancel_drag();
+            if matches!(
+                self.open_popup,
+                OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+            ) {
+                self.open_popup = OpenPopup::None;
+            }
         }
         self.settings.save();
         if self.settings.right_open {

@@ -17,6 +17,8 @@ pub(crate) enum OpenPopup {
     None,
     ModelMenu,
     SettingsMenu,
+    DiffBaseBranchMenu,
+    DiffWorktreeMenu,
     ExportResult {
         kind: ExportKind,
         primary: String,
@@ -854,6 +856,8 @@ impl PaApp {
                     .into_any_element(),
             ),
             OpenPopup::SettingsMenu => Some(self.render_settings_popup(window, cx)),
+            OpenPopup::DiffBaseBranchMenu => Some(self.render_diff_base_branch_popup(window, cx)),
+            OpenPopup::DiffWorktreeMenu => Some(self.render_diff_worktree_popup(cx)),
             OpenPopup::ExportResult {
                 kind,
                 primary,
@@ -1082,6 +1086,183 @@ impl PaApp {
                 this.open_popup = OpenPopup::None;
                 cx.notify();
             }))
+    }
+
+    fn render_diff_base_branch_popup(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let viewport_w = window.viewport_size().width.as_f32();
+        let right_w = self.right_column_width(window);
+        let left_x = (viewport_w - right_w + 12.).clamp(12., (viewport_w - 240.).max(12.));
+        let active_base = self.diff_model.base_branch();
+        let branches = self.diff_model.branches();
+
+        let mut list = v_flex()
+            .id("diff-branch-menu-list")
+            .w_full()
+            .max_h(px(280.))
+            .overflow_y_scrollbar()
+            .gap(px(2.));
+        if branches.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .text_size(px(11.5))
+                    .text_color(p.quiet_ink)
+                    .child("No branches found"),
+            );
+        } else {
+            for (ix, branch) in branches.iter().enumerate() {
+                let selected = active_base == Some(branch.as_str());
+                let branch_click = branch.clone();
+                list = list.child(
+                    h_flex()
+                        .id(("diff-branch-opt", ix))
+                        .w_full()
+                        .h(px(26.))
+                        .px(px(8.))
+                        .gap(px(6.))
+                        .rounded(px(6.))
+                        .items_center()
+                        .justify_between()
+                        .cursor_pointer()
+                        .bg(if selected {
+                            p.sidebar_row_selected
+                        } else {
+                            Hsla::transparent_black()
+                        })
+                        .hover(|s| s.bg(p.sidebar_row_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.select_diff_base_branch(branch_click.clone(), cx);
+                        }))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.))
+                                .text_color(p.ink)
+                                .child(branch.clone()),
+                        )
+                        .when(selected, |row| {
+                            row.child(
+                                Icon::new(IconName::Check)
+                                    .size(px(12.))
+                                    .text_color(p.working),
+                            )
+                        }),
+                );
+            }
+        }
+
+        v_flex()
+            .id("floating-diff-branch-menu")
+            .absolute()
+            .top(px(68.))
+            .left(px(left_x))
+            .w(px(220.))
+            .p(px(6.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
+            .shadow_lg()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(list)
+            .into_any_element()
+    }
+
+    fn render_diff_worktree_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        let worktrees = self.diff_model.worktrees();
+
+        let mut list = v_flex()
+            .id("diff-worktree-menu-list")
+            .w_full()
+            .max_h(px(280.))
+            .overflow_y_scrollbar()
+            .gap(px(2.));
+        for (ix, wt) in worktrees.iter().enumerate() {
+            let selected = self.diff_model.is_active_worktree(&wt.path);
+            let path_click = wt.path.clone();
+            let title = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
+            let subtitle = if wt.branch.is_some() {
+                wt.label.clone()
+            } else {
+                String::new()
+            };
+            list = list.child(
+                h_flex()
+                    .id(("diff-wt-opt", ix))
+                    .w_full()
+                    .px(px(8.))
+                    .py(px(5.))
+                    .gap(px(6.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .bg(if selected {
+                        p.sidebar_row_selected
+                    } else {
+                        Hsla::transparent_black()
+                    })
+                    .hover(|s| s.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.select_diff_worktree(path_click.clone(), cx);
+                    }))
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .flex_1()
+                            .gap(px(1.))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(p.ink)
+                                    .child(title),
+                            )
+                            .when(!subtitle.is_empty(), |col| {
+                                col.child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(10.5))
+                                        .text_color(p.quiet_ink)
+                                        .child(subtitle),
+                                )
+                            }),
+                    )
+                    .when(selected, |row| {
+                        row.child(
+                            Icon::new(IconName::Check)
+                                .size(px(12.))
+                                .text_color(p.working),
+                        )
+                    }),
+            );
+        }
+
+        v_flex()
+            .id("floating-diff-worktree-menu")
+            .absolute()
+            .top(px(68.))
+            .right(px(12.))
+            .w(px(240.))
+            .p(px(6.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
+            .shadow_lg()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(list)
+            .into_any_element()
     }
 
     fn render_settings_popup(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
