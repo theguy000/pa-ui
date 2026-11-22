@@ -16,6 +16,8 @@ pub const ICON_SUBAGENTS_PATH: &str = "icons/pa-subagents.svg";
 pub const ICON_HEARTBEAT_PATH: &str = "icons/pa-heartbeat.svg";
 pub const ICON_SHELLS_PATH: &str = "icons/pa-shells.svg";
 pub const ICON_SEND_PATH: &str = "icons/pa-send.svg";
+pub const ICON_SWATCH_BOOK_PATH: &str = "icons/pa-swatch-book.svg";
+pub const ICON_CLOSE_PATH: &str = "icons/pa-close.svg";
 
 // Exact pa-ui shipped dark-theme 6-facet brand mark (pa-ui/ui/icons.slint + theme/tests.rs)
 const PRIME_AGENT_MARK_DARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="13.5 16 74 74" width="64" height="64"><path fill="#aeaead" d="M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z"/><path fill="#828381" d="M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z"/><path fill="#595a58" d="M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z"/><path fill="#626361" d="M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z"/><path fill="#323330" d="M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z"/><path fill="#ffffff" d="M 28 16.5 L 28 33.22 L 73 41.5 L 50 16.5 Z"/></svg>"##;
@@ -48,6 +50,12 @@ const ICON_SHELLS_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBo
 // Exact pa-ui IconSend (centered 12x12 up-arrow)
 const ICON_SEND_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M 6 10.2 L 6 2 M 2.4 5.6 L 6 2 L 9.6 5.6"/></svg>"##;
 
+// Lucide swatch-book (General settings tab icon)
+const ICON_SWATCH_BOOK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2Z"/><path d="M16.7 13H19a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7"/><path d="M7 17h.01"/><path d="m11 8 2.3-2.3a2.4 2.4 0 0 1 3.404.004L18.6 7.6a2.4 2.4 0 0 1 .026 3.434L9.9 19.8"/></svg>"##;
+
+// Symmetric 12x12 modal close X (exact 8px margin inside 28x28 button)
+const ICON_CLOSE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 2.5L9.5 9.5M9.5 2.5L2.5 9.5"/></svg>"##;
+
 pub struct AppAssets;
 
 impl AssetSource for AppAssets {
@@ -67,6 +75,8 @@ impl AssetSource for AppAssets {
             ICON_HEARTBEAT_PATH => Ok(Some(Cow::Borrowed(ICON_HEARTBEAT_SVG.as_bytes()))),
             ICON_SHELLS_PATH => Ok(Some(Cow::Borrowed(ICON_SHELLS_SVG.as_bytes()))),
             ICON_SEND_PATH => Ok(Some(Cow::Borrowed(ICON_SEND_SVG.as_bytes()))),
+            ICON_SWATCH_BOOK_PATH => Ok(Some(Cow::Borrowed(ICON_SWATCH_BOOK_SVG.as_bytes()))),
+            ICON_CLOSE_PATH => Ok(Some(Cow::Borrowed(ICON_CLOSE_SVG.as_bytes()))),
             _ => KitAssets.load(path),
         }
     }

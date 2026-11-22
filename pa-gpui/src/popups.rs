@@ -2,7 +2,7 @@
 //! context card popover, settings menu, session actions menu, and model label helpers.
 
 use crate::app::PaApp;
-use crate::daemon::DaemonCmd;
+use crate::daemon::{DaemonCmd, ExportKind};
 use crate::roster::ModelPickEffect;
 use crate::sidebar::RenameTarget;
 use gpui_kit::component::{
@@ -18,6 +18,12 @@ pub(crate) enum OpenPopup {
     None,
     ModelMenu,
     SettingsMenu,
+    ExportResult {
+        kind: ExportKind,
+        primary: String,
+        secondary: Option<String>,
+        copied: Option<&'static str>,
+    },
     ContextCard,
     QueuePanel,
     SessionMenu {
@@ -843,113 +849,24 @@ impl PaApp {
                 )
             }
             OpenPopup::ContextCard => Some(
-                div()
-                    .id("floating-ctx-card")
-                    .absolute()
-                    .bottom(px(dock_popup_bottom))
-                    .right(px(menu_right))
-                    .w(px(236.))
+                self.dock_popup_surface("floating-ctx-card", dock_popup_bottom, menu_right, 236.)
                     .p_3()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(p.panel_edge)
-                    .bg(p.panel_surface)
-                    .shadow_lg()
-                    .on_click(|_, _, cx| cx.stop_propagation())
                     .child(self.render_context_card_content())
                     .into_any_element(),
             ),
-            OpenPopup::SettingsMenu => Some(
-                div()
-                    .id("floating-settings-menu")
-                    .absolute()
-                    .top(px(36.))
-                    .right(px(16.))
-                    .w(px(210.))
-                    .p_2()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(p.panel_edge)
-                    .bg(p.panel_surface)
-                    .shadow_lg()
-                    .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .text_size(px(10.5))
-                                    .font_semibold()
-                                    .text_color(p.quiet_ink)
-                                    .child("APPEARANCE"),
-                            )
-                            .child(
-                                h_flex()
-                                    .id("set-theme-toggle")
-                                    .px_2()
-                                    .py_1p5()
-                                    .rounded(px(6.))
-                                    .justify_between()
-                                    .items_center()
-                                    .cursor_pointer()
-                                    .hover(|d| d.bg(p.sidebar_row_hover))
-                                    .child(div().text_xs().text_color(p.ink).child("Theme"))
-                                    .child(div().text_xs().text_color(p.quiet_ink).child(
-                                        if self.settings.dark_mode {
-                                            "Dark"
-                                        } else {
-                                            "Light"
-                                        },
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.settings.dark_mode = !this.settings.dark_mode;
-                                        this.settings.save();
-                                        Theme::change(
-                                            if this.settings.dark_mode {
-                                                ThemeMode::Dark
-                                            } else {
-                                                ThemeMode::Light
-                                            },
-                                            Some(window),
-                                            cx,
-                                        );
-                                        this.sync_slash_decorations(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                h_flex()
-                                    .id("set-export-html")
-                                    .px_2()
-                                    .py_1p5()
-                                    .rounded(px(6.))
-                                    .items_center()
-                                    .cursor_pointer()
-                                    .hover(|d| d.bg(p.sidebar_row_hover))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(p.ink)
-                                            .child("Export session HTML"),
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(sid) =
-                                            this.roster.active_id().map(str::to_string)
-                                        {
-                                            let _ = this
-                                                .bridge
-                                                .tx
-                                                .send(DaemonCmd::ExportHtml { session: sid });
-                                        }
-                                        this.open_popup = OpenPopup::None;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .into_any_element(),
-            ),
+            OpenPopup::SettingsMenu => Some(self.render_settings_popup(cx)),
+            OpenPopup::ExportResult {
+                kind,
+                primary,
+                secondary,
+                copied,
+            } => Some(self.render_export_result_popup(
+                *kind,
+                primary.clone(),
+                secondary.clone(),
+                *copied,
+                cx,
+            )),
             OpenPopup::SessionMenu {
                 key,
                 id,
@@ -961,20 +878,23 @@ impl PaApp {
                 let key_ren = key.clone();
                 let id_ren = id.clone();
                 let id_c = id.clone();
+                let id_html = id.clone();
+                let id_gist = id.clone();
                 let file_ren = file.clone();
                 let file_del = file.clone();
                 let name_c = name.clone();
                 let resident = *is_resident;
                 let top_y = *anchor_y as f32;
                 let can_rename = (resident && !id_ren.is_empty()) || !file_ren.is_empty();
+                let can_export = !id.is_empty();
                 Some(
                     div()
                         .id("floating-session-menu")
                         .absolute()
                         .top(px(top_y))
                         .left(px(248.))
-                        .w(px(190.))
-                        .p_1p5()
+                        .w(px(210.))
+                        .p(px(6.))
                         .rounded(px(10.))
                         .border_1()
                         .border_color(p.panel_edge)
@@ -983,19 +903,10 @@ impl PaApp {
                         .on_click(|_, _, cx| cx.stop_propagation())
                         .child(
                             v_flex()
-                                .gap_0p5()
+                                .gap(px(2.))
                                 .when(can_rename, |col| {
                                     col.child(
-                                        h_flex()
-                                            .id("sm-rename")
-                                            .px_2()
-                                            .py_1()
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .hover(|d| d.bg(p.sidebar_row_hover))
-                                            .text_xs()
-                                            .text_color(p.ink)
-                                            .child("Rename")
+                                        self.dock_popup_row("sm-rename", "Rename", "")
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 cx.stop_propagation();
                                                 this.start_rename(
@@ -1012,18 +923,51 @@ impl PaApp {
                                             })),
                                     )
                                 })
+                                .when(can_export, |col| {
+                                    col.child(
+                                        div()
+                                            .my(px(2.))
+                                            .h(px(1.))
+                                            .w_full()
+                                            .bg(p.sidebar_group_edge),
+                                    )
+                                    .child(
+                                        self.dock_popup_row("sm-export-html", "Export HTML", ".html")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                let _ = this.bridge.tx.send(DaemonCmd::ExportHtml {
+                                                    session: id_html.clone(),
+                                                });
+                                                this.open_popup = OpenPopup::None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        self.dock_popup_row(
+                                            "sm-export-gist",
+                                            "Share secret Gist",
+                                            "gh gist",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            let _ = this.bridge.tx.send(DaemonCmd::ExportGist {
+                                                session: id_gist.clone(),
+                                            });
+                                            this.open_popup = OpenPopup::None;
+                                            cx.notify();
+                                        })),
+                                    )
+                                })
                                 .when(resident, |col| {
                                     col.child(
-                                        h_flex()
-                                            .id("sm-stop")
-                                            .px_2()
-                                            .py_1()
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .hover(|d| d.bg(p.sidebar_row_hover))
-                                            .text_xs()
-                                            .text_color(p.ink)
-                                            .child("Stop")
+                                        div()
+                                            .my(px(2.))
+                                            .h(px(1.))
+                                            .w_full()
+                                            .bg(p.sidebar_group_edge),
+                                    )
+                                    .child(
+                                        self.dock_popup_row("sm-stop", "Stop", "")
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.roster.mark_stopped(&id_c);
                                                 let _ = this.bridge.tx.send(DaemonCmd::MarkDone {
@@ -1038,12 +982,13 @@ impl PaApp {
                                     col.child(
                                         h_flex()
                                             .id("sm-delete")
-                                            .px_2()
-                                            .py_1()
-                                            .rounded(px(6.))
+                                            .h(px(26.))
+                                            .px(px(8.))
+                                            .rounded(px(5.))
+                                            .items_center()
                                             .cursor_pointer()
                                             .hover(|d| d.bg(p.danger_surface))
-                                            .text_xs()
+                                            .text_size(px(11.5))
                                             .text_color(p.danger)
                                             .child("Delete session")
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1061,6 +1006,638 @@ impl PaApp {
                 )
             }
         }
+    }
+
+    fn dock_popup_surface(
+        &self,
+        id: &'static str,
+        bottom: f32,
+        right: f32,
+        width: f32,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        div()
+            .id(id)
+            .absolute()
+            .bottom(px(bottom))
+            .right(px(right))
+            .w(px(width))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(p.panel_edge)
+            .bg(p.panel_surface)
+            .shadow_lg()
+            .on_click(|_, _, cx| cx.stop_propagation())
+    }
+
+    fn dock_popup_row(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        detail: &'static str,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        h_flex()
+            .id(id)
+            .h(px(26.))
+            .px(px(8.))
+            .rounded(px(5.))
+            .justify_between()
+            .items_center()
+            .cursor_pointer()
+            .hover(move |d| d.bg(p.sidebar_row_hover))
+            .child(
+                div()
+                    .text_size(px(11.5))
+                    .text_color(p.ink)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(p.sidebar_group_empty_ink)
+                    .child(detail),
+            )
+    }
+
+    fn modal_close_button(&self, id: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        div()
+            .id(id)
+            .size(px(28.))
+            .rounded(px(8.))
+            .bg(p.sidebar_row_hover)
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .text_color(p.quiet_ink)
+            .hover(move |d| d.bg(p.sidebar_row_selected).text_color(p.ink))
+            .child(
+                svg()
+                    .path(crate::assets::ICON_CLOSE_PATH)
+                    .size(px(12.))
+                    .text_color(p.ink),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.open_popup = OpenPopup::None;
+                cx.notify();
+            }))
+    }
+
+    fn render_settings_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        let dark = self.settings.dark_mode;
+        let backdrop: Hsla = if dark {
+            rgba(0x00000088).into()
+        } else {
+            rgba(0x00000038).into()
+        };
+
+        let theme_card = |id: &'static str,
+                          label: &'static str,
+                          is_dark_card: bool,
+                          selected: bool| {
+            let preview_bg: Hsla = if is_dark_card {
+                rgb(0x09090b).into()
+            } else {
+                rgb(0xf4f4f5).into()
+            };
+            let preview_canvas: Hsla = if is_dark_card {
+                rgb(0x111114).into()
+            } else {
+                rgb(0xffffff).into()
+            };
+            let preview_chip: Hsla = if is_dark_card {
+                rgb(0x232329).into()
+            } else {
+                rgb(0xe4e4e7).into()
+            };
+            let preview_edge: Hsla = if is_dark_card {
+                rgb(0x27272e).into()
+            } else {
+                rgb(0xd4d4d8).into()
+            };
+
+            v_flex()
+                .id(id)
+                .flex_1()
+                .p(px(10.))
+                .gap(px(10.))
+                .rounded(px(12.))
+                .border_1()
+                .cursor_pointer()
+                .when(selected, |d| {
+                    d.border_color(p.ink).bg(p.sidebar_row_selected)
+                })
+                .when(!selected, |d| {
+                    d.border_color(p.sidebar_group_edge)
+                        .bg(p.sidebar_group_surface)
+                        .hover(|h| h.bg(p.sidebar_row_hover).border_color(p.panel_edge))
+                })
+                .child(
+                    h_flex()
+                        .w_full()
+                        .h(px(74.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(preview_edge)
+                        .bg(preview_bg)
+                        .overflow_hidden()
+                        .child(
+                            v_flex()
+                                .w(px(36.))
+                                .h_full()
+                                .p(px(6.))
+                                .gap(px(4.))
+                                .rounded_tl(px(7.))
+                                .rounded_bl(px(7.))
+                                .border_r_1()
+                                .border_color(preview_edge)
+                                .child(div().w_full().h(px(6.)).rounded(px(2.)).bg(preview_chip))
+                                .child(div().w(px(18.)).h(px(4.)).rounded(px(2.)).bg(preview_chip))
+                                .child(div().w(px(22.)).h(px(4.)).rounded(px(2.)).bg(preview_chip)),
+                        )
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .h_full()
+                                .rounded_tr(px(7.))
+                                .rounded_br(px(7.))
+                                .bg(preview_canvas)
+                                .p(px(7.))
+                                .justify_between()
+                                .child(
+                                    v_flex()
+                                        .gap(px(4.))
+                                        .child(
+                                            div()
+                                                .w(px(64.))
+                                                .h(px(6.))
+                                                .rounded(px(3.))
+                                                .bg(preview_chip),
+                                        )
+                                        .child(
+                                            div()
+                                                .w(px(44.))
+                                                .h(px(5.))
+                                                .rounded(px(2.5))
+                                                .bg(preview_chip)
+                                                .opacity(0.65),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h(px(16.))
+                                        .rounded(px(5.))
+                                        .border_1()
+                                        .border_color(preview_edge)
+                                        .bg(preview_bg),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .px(px(2.))
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_medium()
+                                .text_color(if selected { p.ink } else { p.quiet_ink })
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .size(px(16.))
+                                .rounded_full()
+                                .border_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(selected, |d| {
+                                    d.border_color(p.composer_send_fill)
+                                        .bg(p.composer_send_fill)
+                                        .child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(10.))
+                                                .text_color(p.composer_send_mark),
+                                        )
+                                })
+                                .when(!selected, |d| d.border_color(p.panel_edge)),
+                        ),
+                )
+        };
+
+        div()
+            .id("floating-settings-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(backdrop)
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_8()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.open_popup = OpenPopup::None;
+                cx.notify();
+            }))
+            .child(
+                h_flex()
+                    .id("floating-settings-menu")
+                    .w(px(740.))
+                    .max_w_full()
+                    .h(px(480.))
+                    .max_h_full()
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(p.panel_edge)
+                    .bg(p.transcript_surface)
+                    .shadow_2xl()
+                    .overflow_hidden()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        v_flex()
+                            .w(px(208.))
+                            .h_full()
+                            .rounded_tl(px(15.))
+                            .rounded_bl(px(15.))
+                            .bg(p.window_surface)
+                            .border_r_1()
+                            .border_color(p.sidebar_group_edge)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h(px(52.))
+                                    .px(px(18.))
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .font_semibold()
+                                            .text_color(p.quiet_ink)
+                                            .child("Settings"),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .px(px(10.))
+                                    .gap(px(2.))
+                                    .child(
+                                        h_flex()
+                                            .id("settings-nav-general")
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .bg(p.sidebar_row_selected)
+                                            .items_center()
+                                            .gap(px(9.))
+                                            .child(
+                                                div()
+                                                    .size(px(16.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(
+                                                        svg()
+                                                            .path(crate::assets::ICON_SWATCH_BOOK_PATH)
+                                                            .size(px(14.))
+                                                            .text_color(p.ink),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .line_height(px(16.))
+                                                    .font_medium()
+                                                    .text_color(p.ink)
+                                                    .child("General"),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .rounded_tr(px(15.))
+                            .rounded_br(px(15.))
+                            .bg(p.transcript_surface)
+                            .overflow_hidden()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h(px(52.))
+                                    .pl(px(28.))
+                                    .pr(px(14.))
+                                    .border_b_1()
+                                    .border_color(p.sidebar_group_edge)
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(15.))
+                                            .font_semibold()
+                                            .text_color(p.ink)
+                                            .child("General"),
+                                    )
+                                    .child(self.modal_close_button("settings-close-btn", cx)),
+                            )
+                            .child(
+                                v_flex()
+                                    .id("settings-general-body")
+                                    .flex_1()
+                                    .overflow_y_scrollbar()
+                                    .px(px(28.))
+                                    .py(px(22.))
+                                    .gap(px(20.))
+                                    .child(
+                                        v_flex()
+                                            .gap(px(12.))
+                                            .child(
+                                                v_flex()
+                                                    .gap(px(3.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_semibold()
+                                                            .text_color(p.ink)
+                                                            .child("Appearance"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(p.quiet_ink)
+                                                            .child(
+                                                                "Choose how Prime Agent looks on this device",
+                                                            ),
+                                                    ),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .w_full()
+                                                    .max_w(px(360.))
+                                                    .gap(px(14.))
+                                                    .child(
+                                                        theme_card("set-theme-dark", "Dark", true, dark)
+                                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                                if !this.settings.dark_mode {
+                                                                    this.settings.dark_mode = true;
+                                                                    this.settings.save();
+                                                                    Theme::change(
+                                                                        ThemeMode::Dark,
+                                                                        Some(window),
+                                                                        cx,
+                                                                    );
+                                                                    this.sync_slash_decorations(cx);
+                                                                    cx.notify();
+                                                                }
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        theme_card("set-theme-light", "Light", false, !dark)
+                                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                                if this.settings.dark_mode {
+                                                                    this.settings.dark_mode = false;
+                                                                    this.settings.save();
+                                                                    Theme::change(
+                                                                        ThemeMode::Light,
+                                                                        Some(window),
+                                                                        cx,
+                                                                    );
+                                                                    this.sync_slash_decorations(cx);
+                                                                    cx.notify();
+                                                                }
+                                                            })),
+                                                    ),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_export_result_popup(
+        &self,
+        kind: ExportKind,
+        primary: String,
+        secondary: Option<String>,
+        copied: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let backdrop: Hsla = if self.settings.dark_mode {
+            rgba(0x00000088).into()
+        } else {
+            rgba(0x00000038).into()
+        };
+
+        let title = match kind {
+            ExportKind::Html => "Exported HTML",
+            ExportKind::Gist => "Secret Gist Created",
+        };
+        let primary_label = match kind {
+            ExportKind::Html => "File path",
+            ExportKind::Gist => "Share URL",
+        };
+
+        let render_value_row = |label: &'static str,
+                                value: String,
+                                tag: &'static str,
+                                is_url: bool,
+                                cx: &mut Context<Self>| {
+            let is_copied = copied == Some(tag);
+            let copy_val = value.clone();
+            let open_val = value.clone();
+
+            v_flex()
+                .w_full()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_medium()
+                        .text_color(p.quiet_ink)
+                        .child(label),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(8.))
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(34.))
+                                .px(px(11.))
+                                .rounded(px(9.))
+                                .border_1()
+                                .border_color(p.sidebar_group_edge)
+                                .bg(p.window_surface)
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .text_xs()
+                                        .text_color(p.ink)
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(value),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .id(SharedString::from(format!("export-copy-{tag}")))
+                                .h(px(34.))
+                                .px(px(12.))
+                                .rounded(px(9.))
+                                .border_1()
+                                .border_color(if is_copied {
+                                    p.tag_idle
+                                } else {
+                                    p.sidebar_group_edge
+                                })
+                                .bg(p.sidebar_new_fill)
+                                .hover(|d| {
+                                    d.bg(p.sidebar_new_fill_hover)
+                                        .border_color(p.panel_edge)
+                                })
+                                .items_center()
+                                .gap(px(6.))
+                                .cursor_pointer()
+                                .text_xs()
+                                .font_medium()
+                                .text_color(if is_copied { p.tag_idle } else { p.ink })
+                                .child(
+                                    Icon::new(if is_copied {
+                                        IconName::Check
+                                    } else {
+                                        IconName::Copy
+                                    })
+                                    .size(px(12.5))
+                                    .text_color(if is_copied { p.tag_idle } else { p.ink }),
+                                )
+                                .child(if is_copied { "Copied" } else { "Copy" })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        copy_val.clone(),
+                                    ));
+                                    if let OpenPopup::ExportResult { copied, .. } =
+                                        &mut this.open_popup
+                                    {
+                                        *copied = Some(tag);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .id(SharedString::from(format!("export-open-{tag}")))
+                                .h(px(34.))
+                                .px(px(12.))
+                                .rounded(px(9.))
+                                .border_1()
+                                .border_color(p.sidebar_group_edge)
+                                .bg(p.sidebar_new_fill)
+                                .hover(|d| {
+                                    d.bg(p.sidebar_new_fill_hover)
+                                        .border_color(p.panel_edge)
+                                })
+                                .items_center()
+                                .cursor_pointer()
+                                .text_xs()
+                                .font_medium()
+                                .text_color(p.ink)
+                                .child("Open")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.stop_propagation();
+                                    let target = if is_url {
+                                        open_val.clone()
+                                    } else {
+                                        format!("file:///{}", open_val.replace('\\', "/"))
+                                    };
+                                    cx.open_url(&target);
+                                })),
+                        ),
+                )
+        };
+
+        let primary_row = render_value_row(
+            primary_label,
+            primary,
+            "primary",
+            kind == ExportKind::Gist,
+            cx,
+        );
+        let secondary_row = secondary.map(|url| {
+            render_value_row("Gist URL", url, "secondary", true, cx)
+        });
+
+        div()
+            .id("floating-export-result-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(backdrop)
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.open_popup = OpenPopup::None;
+                cx.notify();
+            }))
+            .child(
+                v_flex()
+                    .id("floating-export-result-modal")
+                    .w(px(520.))
+                    .max_w_full()
+                    .rounded(px(16.))
+                    .border_1()
+                    .border_color(p.panel_edge)
+                    .bg(p.transcript_surface)
+                    .shadow_2xl()
+                    .overflow_hidden()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(52.))
+                            .pl(px(22.))
+                            .pr(px(14.))
+                            .border_b_1()
+                            .border_color(p.sidebar_group_edge)
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(14.5))
+                                    .font_semibold()
+                                    .text_color(p.ink)
+                                    .child(title),
+                            )
+                            .child(self.modal_close_button("export-result-close-btn", cx)),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .px(px(22.))
+                            .py(px(20.))
+                            .gap(px(16.))
+                            .child(primary_row)
+                            .children(secondary_row),
+                    ),
+            )
+            .into_any_element()
     }
 }
 

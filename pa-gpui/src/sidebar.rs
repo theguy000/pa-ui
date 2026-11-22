@@ -161,6 +161,10 @@ impl PaApp {
                                     .size(px(14.))
                                     .text_color(p.quiet_ink),
                             )
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.open_popup = if this.open_popup == OpenPopup::SettingsMenu {
@@ -191,6 +195,10 @@ impl PaApp {
                                 .size(px(14.))
                                 .text_color(p.quiet_ink),
                             )
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.settings.right_open = !this.settings.right_open;
@@ -665,88 +673,18 @@ impl PaApp {
         card
     }
 
-    pub(crate) fn render_right_column(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_right_column(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.settings.right_open {
             return None;
         }
         let p = self.palette();
-        let active_name = self
-            .roster
-            .active_session()
-            .map(|s| {
-                if !s.name.trim().is_empty() {
-                    s.name.clone()
-                } else {
-                    session_key(s)
-                }
-            })
-            .unwrap_or_else(|| "No session".to_string());
-
         Some(
             v_flex()
                 .w(px(300.))
                 .h_full()
                 .bg(p.window_surface)
-                .px_4()
-                .py_3()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(p.quiet_ink)
-                        .child("SESSION"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .font_semibold()
-                        .text_color(p.ink)
-                        .child(active_name),
-                )
-                .child(
-                    div()
-                        .p_3()
-                        .rounded(px(10.))
-                        .border_1()
-                        .border_color(p.sidebar_group_edge)
-                        .bg(p.sidebar_group_surface)
-                        .child(self.render_context_card_content()),
-                )
-                .when(self.roster.active_id().is_some(), |col| {
-                    col.child(
-                        h_flex()
-                            .id("right-export")
-                            .h(px(30.))
-                            .px_3()
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(p.sidebar_group_edge)
-                            .bg(p.sidebar_new_fill)
-                            .hover(|d| d.bg(p.sidebar_new_fill_hover))
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .text_xs()
-                            .text_color(p.ink)
-                            .child("Export HTML")
-                            .on_click(cx.listener(|this, _, _, _| {
-                                if let Some(sid) = this.roster.active_id().map(str::to_string) {
-                                    let _ = this
-                                        .bridge
-                                        .tx
-                                        .send(DaemonCmd::ExportHtml { session: sid });
-                                }
-                            })),
-                    )
-                })
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(p.quiet_ink)
-                        .child(self.status.clone()),
-                )
+                .border_l_1()
+                .border_color(p.sidebar_group_edge)
                 .into_any_element(),
         )
     }

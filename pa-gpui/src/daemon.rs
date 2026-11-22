@@ -53,6 +53,7 @@ pub enum DaemonCmd {
         images: Vec<Value>,
     },
     ExportHtml { session: String },
+    ExportGist { session: String },
     SetModel { session: String, provider: String, model_id: String },
     SetModelAndThinking {
         session: String,
@@ -61,6 +62,12 @@ pub enum DaemonCmd {
         level: String,
         switch: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportKind {
+    Html,
+    Gist,
 }
 
 #[derive(Debug)]
@@ -93,6 +100,11 @@ pub enum DaemonEvent {
     Queue { session: String, steer: Vec<String>, follow_up: Vec<String> },
     Activity { session: String, subagents: usize, shells: usize, heartbeats: usize },
     Notice(String),
+    ExportResult {
+        kind: ExportKind,
+        primary: String,
+        secondary: Option<String>,
+    },
     LiveFrame(Value),
     Error(String),
 }
@@ -537,8 +549,67 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         let out_str = out.to_string_lossy().to_string();
                         match pa_client::export_html(&client, &session, &out_str) {
                             Ok(path) => {
-                                let _ = ev_tx
-                                    .try_send(DaemonEvent::Notice(format!("Exported: {path}")));
+                                let _ = ev_tx.try_send(DaemonEvent::ExportResult {
+                                    kind: ExportKind::Html,
+                                    primary: path,
+                                    secondary: None,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::ExportGist { session } => {
+                        let out = std::env::temp_dir().join("session.html");
+                        let out_str = out.to_string_lossy().to_string();
+                        match pa_client::export_html(&client, &session, &out_str) {
+                            Ok(path) => {
+                                match std::process::Command::new("gh")
+                                    .args(["gist", "create", &path, "--desc", "Prime Agent Session"])
+                                    .output()
+                                {
+                                    Ok(out) if out.status.success() => {
+                                        let gist_url = String::from_utf8_lossy(&out.stdout)
+                                            .lines()
+                                            .rev()
+                                            .find(|l| !l.trim().is_empty())
+                                            .unwrap_or("")
+                                            .trim()
+                                            .to_string();
+                                        let gist_id = gist_url
+                                            .rsplit('/')
+                                            .next()
+                                            .filter(|s| !s.is_empty());
+                                        let (primary, secondary) = match gist_id {
+                                            Some(id) if !gist_url.is_empty() => (
+                                                format!("https://pi.dev/session/#{id}"),
+                                                Some(gist_url),
+                                            ),
+                                            _ => (gist_url, None),
+                                        };
+                                        let _ = ev_tx.try_send(DaemonEvent::ExportResult {
+                                            kind: ExportKind::Gist,
+                                            primary,
+                                            secondary,
+                                        });
+                                    }
+                                    Ok(out) => {
+                                        let stderr = String::from_utf8_lossy(&out.stderr)
+                                            .trim()
+                                            .to_string();
+                                        let _ = ev_tx.try_send(DaemonEvent::Error(if stderr.is_empty() {
+                                            "gh gist create failed".to_string()
+                                        } else {
+                                            stderr
+                                        }));
+                                    }
+                                    Err(err) => {
+                                        let _ = ev_tx.try_send(DaemonEvent::Error(format!(
+                                            "Failed to run gh CLI: {err}"
+                                        )));
+                                    }
+                                }
                             }
                             Err(err) => {
                                 let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));

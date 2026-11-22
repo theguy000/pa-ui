@@ -587,6 +587,21 @@ impl PaApp {
             DaemonEvent::Notice(msg) => {
                 self.notice = Some(msg.into());
             }
+            DaemonEvent::ExportResult {
+                kind,
+                primary,
+                secondary,
+            } => {
+                if !primary.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(primary.clone()));
+                }
+                self.open_popup = OpenPopup::ExportResult {
+                    kind,
+                    primary,
+                    secondary,
+                    copied: Some("primary"),
+                };
+            }
             DaemonEvent::LiveFrame(frame) => {
                 self.handle_live_frame(&frame, cx);
             }
