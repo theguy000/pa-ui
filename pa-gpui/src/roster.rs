@@ -46,6 +46,7 @@ pub(crate) struct SessionRoster {
     stats: Option<SessionStats>,
     draft_chat: bool,
     draft_model_picked: bool,
+    draft_cwd: Option<String>,
     subagent_count: usize,
     heartbeat_count: usize,
     shell_count: usize,
@@ -61,6 +62,7 @@ impl SessionRoster {
             stats: None,
             draft_chat: false,
             draft_model_picked: false,
+            draft_cwd: None,
             subagent_count: 0,
             heartbeat_count: 0,
             shell_count: 0,
@@ -77,6 +79,21 @@ impl SessionRoster {
 
     pub(crate) fn is_draft(&self) -> bool {
         self.draft_chat
+    }
+
+    pub(crate) fn draft_cwd(&self) -> Option<&str> {
+        self.draft_cwd.as_deref()
+    }
+
+    pub(crate) fn set_draft_cwd(&mut self, cwd: Option<String>) {
+        self.draft_cwd = cwd.and_then(|raw| {
+            let trimmed = raw.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+    }
+
+    pub(crate) fn take_draft_cwd(&mut self) -> Option<String> {
+        self.draft_cwd.take()
     }
 
     pub(crate) fn models(&self) -> &[ModelEntry] {
@@ -164,6 +181,7 @@ impl SessionRoster {
         let cur = self.current_model();
         self.draft_chat = true;
         self.draft_model_picked = false;
+        self.draft_cwd = None;
         self.active_session_id = None;
         self.stats = None;
         self.subagent_count = 0;
@@ -184,11 +202,13 @@ impl SessionRoster {
     pub(crate) fn clear_draft(&mut self) {
         self.draft_chat = false;
         self.draft_model_picked = false;
+        self.draft_cwd = None;
     }
 
     pub(crate) fn select_session_optimistic(&mut self, key: &str) {
         self.draft_chat = false;
         self.draft_model_picked = false;
+        self.draft_cwd = None;
         if let Some(row) = self.sessions.iter_mut().find(|s| session_key(s) == key) {
             if !row.is_resident() || row.lifecycle == "archived" {
                 row.worker_state = "ready".into();
@@ -463,5 +483,22 @@ mod tests {
         let (model, _level) = roster.consume_draft_model_for_start();
         assert_eq!(model, Some(("openai".into(), "gpt-5".into())));
         assert!(!roster.is_draft());
+    }
+
+    #[::core::prelude::v1::test]
+    fn draft_cwd_is_set_taken_on_start_and_cleared_on_session_switch() {
+        let mut roster = SessionRoster::new();
+        roster.begin_draft();
+        assert_eq!(roster.draft_cwd(), None);
+
+        roster.set_draft_cwd(Some("  /repo/demo  ".into()));
+        assert_eq!(roster.draft_cwd(), Some("/repo/demo"));
+        assert_eq!(roster.take_draft_cwd().as_deref(), Some("/repo/demo"));
+        assert_eq!(roster.draft_cwd(), None);
+
+        roster.begin_draft();
+        roster.set_draft_cwd(Some("/repo/other".into()));
+        roster.select_session_optimistic("sess-1");
+        assert_eq!(roster.draft_cwd(), None);
     }
 }

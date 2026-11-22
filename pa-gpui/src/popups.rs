@@ -1107,7 +1107,7 @@ impl PaApp {
         v_flex()
             .id(id)
             .absolute()
-            .top(px(68.))
+            .top(px(74.))
             .when_some(left_x, |box_, x| box_.left(px(x)))
             .when(left_x.is_none(), |box_| box_.right(px(12.)))
             .w(px(width))

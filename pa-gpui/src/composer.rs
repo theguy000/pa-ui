@@ -481,12 +481,14 @@ impl PaApp {
 
         if self.roster.is_draft() || self.roster.active_id().is_none() {
             let (model, level) = self.roster.consume_draft_model_for_start();
+            let cwd = self.roster.take_draft_cwd();
             self.is_streaming = true;
             let _ = self.bridge.tx.send(DaemonCmd::StartChat {
                 text,
                 images: wire_images,
                 model,
                 level,
+                cwd,
             });
             self.set_composer_text("", window, cx);
             self.sync_stop_target(cx);
@@ -517,6 +519,111 @@ impl PaApp {
         self.set_composer_text("", window, cx);
         self.sync_stop_target(cx);
         cx.notify();
+    }
+
+    fn render_draft_folder_chip(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        let selected_cwd = self.roster.draft_cwd().map(str::to_string);
+        let label = selected_cwd
+            .as_deref()
+            .map(|raw| {
+                std::path::Path::new(raw)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(raw)
+                    .to_string()
+            })
+            .unwrap_or_else(|| "Folder".to_string());
+        let has_folder = selected_cwd.is_some();
+
+        h_flex()
+            .id("draft-folder-chip")
+            .h(px(26.))
+            .max_w(px(220.))
+            .pl(px(9.))
+            .pr(px(if has_folder { 5. } else { 9. }))
+            .gap(px(5.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(if has_folder {
+                p.composer_edge_focus
+            } else {
+                p.composer_edge
+            })
+            .bg(if has_folder {
+                p.sidebar_group_surface
+            } else {
+                Hsla::transparent_black()
+            })
+            .items_center()
+            .cursor_pointer()
+            .hover(move |s| s.bg(p.sidebar_row_hover))
+            .on_click(cx.listener(|_this, _, _, cx| {
+                cx.stop_propagation();
+                let rx = cx.prompt_for_paths(PathPromptOptions {
+                    files: false,
+                    directories: true,
+                    multiple: false,
+                    prompt: Some("Choose session folder".into()),
+                });
+                cx.spawn(async move |this, cx| {
+                    if let Ok(Ok(Some(paths))) = rx.await {
+                        if let Some(dir) = paths.into_iter().next() {
+                            let dir_str = dir.to_string_lossy().to_string();
+                            let _ = this.update(cx, |this, cx| {
+                                this.roster.set_draft_cwd(Some(dir_str));
+                                this.sync_diff_for_active_session(cx);
+                                cx.notify();
+                            });
+                        }
+                    }
+                })
+                .detach();
+            }))
+            .child(
+                Icon::new(if has_folder {
+                    IconName::FolderOpen
+                } else {
+                    IconName::Folder
+                })
+                .size(px(12.5))
+                .text_color(if has_folder { p.working } else { p.quiet_ink }),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(11.5))
+                    .line_height(px(14.))
+                    .text_color(if has_folder { p.ink } else { p.quiet_ink })
+                    .child(label),
+            )
+            .when(has_folder, |chip| {
+                chip.child(
+                    div()
+                        .id("draft-folder-clear")
+                        .size(px(16.))
+                        .rounded(px(4.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(p.sidebar_row_selected))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(px(9.5))
+                                .text_color(p.quiet_ink),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.roster.set_draft_cwd(None);
+                            this.sync_diff_for_active_session(cx);
+                            cx.notify();
+                        })),
+                )
+            })
+            .into_any_element()
     }
 
     pub(crate) fn render_activity_chip(&self) -> impl IntoElement {
@@ -947,7 +1054,13 @@ impl PaApp {
                                         });
                                     })),
                             )
-                            .child(self.render_activity_chip())
+                            .child(
+                                if self.roster.is_draft() || self.roster.active_id().is_none() {
+                                    self.render_draft_folder_chip(cx)
+                                } else {
+                                    self.render_activity_chip().into_any_element()
+                                },
+                            )
                             .when_some(self.notice.clone(), |row, note| {
                                 row.child(
                                     div()

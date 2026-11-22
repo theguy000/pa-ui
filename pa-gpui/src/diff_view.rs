@@ -10,7 +10,9 @@ use crate::popups::OpenPopup;
 use crate::settings::DiffScope;
 use crate::sidebar::session_key;
 use gpui_kit::component::{
-    diff::{Diff, DiffMode},
+    diff::{
+        Diff, DiffChangeIndicator, DiffFileStatus, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
+    },
     h_flex,
     scroll::ScrollableElement as _,
     v_flex, Icon, IconName,
@@ -40,7 +42,8 @@ impl PaApp {
 
     pub(crate) fn active_diff_target(&self) -> (Option<String>, Option<String>) {
         if self.roster.is_draft() {
-            return (None, None);
+            let cwd = self.roster.draft_cwd().map(str::to_string);
+            return (cwd.as_ref().map(|_| "__draft__".to_string()), cwd);
         }
         let Some(row) = self.roster.active_session() else {
             return (None, None);
@@ -184,6 +187,19 @@ impl PaApp {
         self.diff_model.set_file_collapsed(path, false);
         self.maybe_load_deferred_file(path, true, cx);
         cx.notify();
+    }
+
+    pub(crate) fn toggle_diff_file_collapsed(&mut self, path: &str, cx: &mut Context<Self>) {
+        let next_collapsed = !self.diff_state.read(cx).is_file_collapsed(path);
+        self.diff_state.update(cx, |state, cx| {
+            state.set_file_collapsed(path, next_collapsed, cx);
+        });
+        if next_collapsed {
+            self.diff_model.set_file_collapsed(path, true);
+            cx.notify();
+        } else {
+            self.on_diff_file_expanded(path, cx);
+        }
     }
 
     pub(crate) fn maybe_load_deferred_file(
@@ -384,7 +400,7 @@ impl PaApp {
                         .overflow_hidden()
                         .child(self.render_diff_header(cx))
                         .children(self.render_diff_jump_list(cx))
-                        .child(self.render_diff_body(cx)),
+                        .child(self.render_diff_body(window, cx)),
                 )
                 .into_any_element(),
         )
@@ -400,6 +416,7 @@ impl PaApp {
         let has_files = file_count > 0;
         let is_split = self.settings.diff_split;
         let is_wrap = self.settings.diff_wrap;
+        let jump_collapsed = self.settings.diff_jump_collapsed;
         let scope = self.settings.diff_scope;
         let is_branch = scope == DiffScope::Branch;
         let base_branch = self.diff_model.base_branch().map(str::to_string);
@@ -411,13 +428,47 @@ impl PaApp {
             .map(|wt| wt.branch.as_deref().unwrap_or(&wt.label).to_string());
         let branch_menu_open = self.open_popup == OpenPopup::DiffBaseBranchMenu;
         let wt_menu_open = self.open_popup == OpenPopup::DiffWorktreeMenu;
+        let in_git_repo = !matches!(self.diff_model.status(), DiffViewStatus::NotAGitRepo);
 
-        let pill = |id: &'static str, label: &'static str, active: bool| {
+        let seg_btn = |id: &'static str, label: &'static str, active: bool| {
+            div()
+                .id(id)
+                .h(px(21.))
+                .px(px(8.))
+                .rounded(px(5.))
+                .flex()
+                .items_center()
+                .text_size(px(11.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .text_color(if active { p.ink } else { p.quiet_ink })
+                .bg(if active {
+                    p.sidebar_row_selected
+                } else {
+                    Hsla::transparent_black()
+                })
+                .hover(move |s| {
+                    if active {
+                        s
+                    } else {
+                        s.bg(p.sidebar_row_hover).text_color(p.ink)
+                    }
+                })
+                .child(label)
+        };
+
+        let toolbar_btn = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
                 .h(px(22.))
                 .px(px(7.))
                 .rounded(px(5.))
+                .border_1()
+                .border_color(if active {
+                    p.composer_edge
+                } else {
+                    Hsla::transparent_black()
+                })
                 .flex()
                 .items_center()
                 .text_size(px(11.))
@@ -447,8 +498,8 @@ impl PaApp {
             .child(
                 h_flex()
                     .w_full()
-                    .h(px(34.))
-                    .px(px(10.))
+                    .h(px(38.))
+                    .px(px(12.))
                     .gap(px(6.))
                     .items_center()
                     .justify_between()
@@ -463,21 +514,19 @@ impl PaApp {
                                     .flex_shrink_0()
                                     .p(px(2.))
                                     .gap(px(1.))
-                                    .rounded(px(6.))
+                                    .rounded(px(7.))
                                     .bg(p.sidebar_group_surface)
                                     .border_1()
                                     .border_color(p.sidebar_group_edge)
                                     .child(
-                                        pill("diff-scope-uncommitted", "Uncommitted", !is_branch)
-                                            .h(px(20.))
+                                        seg_btn("diff-scope-uncommitted", "Uncommitted", !is_branch)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 this.set_diff_scope(DiffScope::Uncommitted, cx);
                                             })),
                                     )
                                     .child(
-                                        pill("diff-scope-branch", "Branch", is_branch)
-                                            .h(px(20.))
+                                        seg_btn("diff-scope-branch", "Branch", is_branch)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 this.set_diff_scope(DiffScope::Branch, cx);
@@ -485,18 +534,20 @@ impl PaApp {
                                     ),
                             )
                             .when_some(
-                                is_branch.then_some(base_branch.clone()).flatten(),
+                                (in_git_repo && is_branch)
+                                    .then_some(base_branch.clone())
+                                    .flatten(),
                                 |row, base| {
-                                    let base_pill_label = base.clone();
+                                    let base_pill_label = format!("vs {base}");
                                     let on_base_text = format!("On {base}");
                                     row.child(
                                         h_flex()
                                             .id("diff-base-branch-btn")
-                                            .h(px(22.))
-                                            .px(px(7.))
-                                            .gap(px(3.))
+                                            .h(px(24.))
+                                            .px(px(8.))
+                                            .gap(px(4.))
                                             .min_w_0()
-                                            .rounded(px(5.))
+                                            .rounded(px(6.))
                                             .border_1()
                                             .border_color(if branch_menu_open {
                                                 p.working
@@ -506,21 +557,20 @@ impl PaApp {
                                             .bg(if branch_menu_open {
                                                 p.sidebar_row_selected
                                             } else {
-                                                Hsla::transparent_black()
+                                                p.sidebar_group_surface
                                             })
                                             .items_center()
                                             .cursor_pointer()
                                             .hover(move |s| s.bg(p.sidebar_row_hover))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
-                                                this.open_popup =
-                                                    if this.open_popup
-                                                        == OpenPopup::DiffBaseBranchMenu
-                                                    {
-                                                        OpenPopup::None
-                                                    } else {
-                                                        OpenPopup::DiffBaseBranchMenu
-                                                    };
+                                                this.open_popup = if this.open_popup
+                                                    == OpenPopup::DiffBaseBranchMenu
+                                                {
+                                                    OpenPopup::None
+                                                } else {
+                                                    OpenPopup::DiffBaseBranchMenu
+                                                };
                                                 cx.notify();
                                             }))
                                             .child(
@@ -542,7 +592,11 @@ impl PaApp {
                                             div()
                                                 .min_w_0()
                                                 .truncate()
-                                                .text_size(px(11.))
+                                                .px(px(6.))
+                                                .py(px(2.))
+                                                .rounded(px(4.))
+                                                .bg(p.sidebar_group_surface)
+                                                .text_size(px(10.5))
                                                 .text_color(p.quiet_ink)
                                                 .child(on_base_text),
                                         )
@@ -553,19 +607,21 @@ impl PaApp {
                     .child(
                         h_flex()
                             .flex_shrink_0()
-                            .gap(px(4.))
+                            .gap(px(5.))
                             .items_center()
                             .when_some(
-                                has_multi_wt.then_some(active_wt_label).flatten(),
+                                (in_git_repo && has_multi_wt)
+                                    .then_some(active_wt_label)
+                                    .flatten(),
                                 |row, wt_label| {
                                     row.child(
                                         h_flex()
                                             .id("diff-worktree-btn")
-                                            .h(px(22.))
-                                            .px(px(7.))
-                                            .gap(px(3.))
-                                            .max_w(px(120.))
-                                            .rounded(px(5.))
+                                            .h(px(24.))
+                                            .px(px(8.))
+                                            .gap(px(4.))
+                                            .max_w(px(130.))
+                                            .rounded(px(6.))
                                             .border_1()
                                             .border_color(if wt_menu_open {
                                                 p.working
@@ -575,21 +631,20 @@ impl PaApp {
                                             .bg(if wt_menu_open {
                                                 p.sidebar_row_selected
                                             } else {
-                                                Hsla::transparent_black()
+                                                p.sidebar_group_surface
                                             })
                                             .items_center()
                                             .cursor_pointer()
                                             .hover(move |s| s.bg(p.sidebar_row_hover))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
-                                                this.open_popup =
-                                                    if this.open_popup
-                                                        == OpenPopup::DiffWorktreeMenu
-                                                    {
-                                                        OpenPopup::None
-                                                    } else {
-                                                        OpenPopup::DiffWorktreeMenu
-                                                    };
+                                                this.open_popup = if this.open_popup
+                                                    == OpenPopup::DiffWorktreeMenu
+                                                {
+                                                    OpenPopup::None
+                                                } else {
+                                                    OpenPopup::DiffWorktreeMenu
+                                                };
                                                 cx.notify();
                                             }))
                                             .child(
@@ -611,8 +666,8 @@ impl PaApp {
                             .child(
                                 div()
                                     .id("diff-refresh-btn")
-                                    .size(px(22.))
-                                    .rounded(px(5.))
+                                    .size(px(24.))
+                                    .rounded(px(6.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -631,23 +686,41 @@ impl PaApp {
                             ),
                     ),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .h(px(30.))
-                    .px(px(10.))
-                    .gap(px(6.))
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(p.sidebar_group_edge)
-                    .child(
-                        h_flex()
-                            .min_w_0()
-                            .gap(px(8.))
-                            .items_center()
-                            .when(has_files, |row| {
-                                row.child(
+            .when(has_files, |col| {
+                col.child(
+                    h_flex()
+                        .w_full()
+                        .h(px(32.))
+                        .px(px(12.))
+                        .pb(px(4.))
+                        .gap(px(8.))
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .id("diff-jump-toggle")
+                                .h(px(24.))
+                                .px(px(6.))
+                                .ml(px(-6.))
+                                .gap(px(5.))
+                                .rounded(px(5.))
+                                .items_center()
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(p.sidebar_row_hover))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_diff_jump_collapsed(cx);
+                                }))
+                                .child(
+                                    Icon::new(if jump_collapsed {
+                                        IconName::ChevronRight
+                                    } else {
+                                        IconName::ChevronDown
+                                    })
+                                    .size(px(12.))
+                                    .text_color(p.quiet_ink),
+                                )
+                                .child(
                                     div()
                                         .text_size(px(11.5))
                                         .font_weight(FontWeight::MEDIUM)
@@ -656,43 +729,32 @@ impl PaApp {
                                 )
                                 .child(
                                     h_flex()
-                                        .gap(px(5.))
+                                        .gap(px(4.))
                                         .text_size(px(11.))
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child(
-                                            div()
-                                                .text_color(p.tag_idle)
-                                                .child(format!("+{additions}")),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_color(p.danger)
-                                                .child(format!("-{deletions}")),
-                                        ),
-                                )
-                            })
-                            .when(!has_files, |row| {
-                                row.child(
-                                    div()
-                                        .text_size(px(11.5))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(p.quiet_ink)
-                                        .child(if is_branch {
-                                            "Branch changes"
-                                        } else {
-                                            "Changes"
+                                        .when(additions > 0, |s| {
+                                            s.child(
+                                                div()
+                                                    .text_color(p.tag_idle)
+                                                    .child(format!("+{additions}")),
+                                            )
+                                        })
+                                        .when(deletions > 0, |s| {
+                                            s.child(
+                                                div()
+                                                    .text_color(p.danger)
+                                                    .child(format!("-{deletions}")),
+                                            )
                                         }),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_shrink_0()
-                            .gap(px(2.))
-                            .items_center()
-                            .when(has_files, |row| {
-                                row.child(
-                                    pill(
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .gap(px(4.))
+                                .items_center()
+                                .child(
+                                    toolbar_btn(
                                         "diff-expand-toggle",
                                         if all_expanded { "Collapse" } else { "Expand" },
                                         false,
@@ -702,37 +764,68 @@ impl PaApp {
                                         this.toggle_diff_expand_all(cx);
                                     })),
                                 )
-                            })
-                            .child(
-                                pill(
-                                    "diff-mode-toggle",
-                                    if is_split { "Split" } else { "Unified" },
-                                    is_split,
+                                .child(
+                                    h_flex()
+                                        .p(px(1.5))
+                                        .gap(px(1.))
+                                        .rounded(px(6.))
+                                        .bg(p.sidebar_group_surface)
+                                        .border_1()
+                                        .border_color(p.sidebar_group_edge)
+                                        .child(
+                                            seg_btn("diff-mode-unified", "Unified", !is_split)
+                                                .h(px(19.))
+                                                .px(px(6.))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    if this.settings.diff_split {
+                                                        this.toggle_diff_split(cx);
+                                                    }
+                                                })),
+                                        )
+                                        .child(
+                                            seg_btn("diff-mode-split", "Split", is_split)
+                                                .h(px(19.))
+                                                .px(px(6.))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    if !this.settings.diff_split {
+                                                        this.toggle_diff_split(cx);
+                                                    }
+                                                })),
+                                        ),
                                 )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_diff_split(cx);
-                                })),
-                            )
-                            .child(
-                                pill("diff-wrap-toggle", "Wrap", is_wrap).on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.toggle_diff_wrap(cx);
-                                    },
-                                )),
-                            ),
-                    ),
-            )
+                                .child(
+                                    toolbar_btn("diff-wrap-toggle", "Wrap", is_wrap).on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.toggle_diff_wrap(cx);
+                                        }),
+                                    ),
+                                ),
+                        ),
+                )
+            })
     }
 
     fn render_diff_jump_list(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let summaries = self.diff_model.summaries();
-        if summaries.is_empty() {
+        if summaries.is_empty() || self.settings.diff_jump_collapsed {
             return None;
         }
         let p = self.palette();
-        let collapsed = self.settings.diff_jump_collapsed;
+
+        let mut rows = v_flex()
+            .id("diff-jump-rows")
+            .w_full()
+            .max_h(px(168.))
+            .overflow_y_scrollbar()
+            .px(px(8.))
+            .py(px(6.))
+            .gap(px(2.));
+        for (ix, summary) in summaries.iter().enumerate() {
+            rows = rows.child(self.render_jump_row(ix, summary, cx));
+        }
 
         Some(
             v_flex()
@@ -741,56 +834,7 @@ impl PaApp {
                 .border_b_1()
                 .border_color(p.sidebar_group_edge)
                 .bg(p.sidebar_group_surface)
-                .child(
-                    h_flex()
-                        .id("diff-jump-toggle")
-                        .w_full()
-                        .h(px(26.))
-                        .px(px(8.))
-                        .gap(px(5.))
-                        .items_center()
-                        .cursor_pointer()
-                        .text_color(p.quiet_ink)
-                        .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.toggle_diff_jump_collapsed(cx);
-                        }))
-                        .child(
-                            Icon::new(if collapsed {
-                                IconName::ChevronRight
-                            } else {
-                                IconName::ChevronDown
-                            })
-                            .size(px(12.)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .child("Files"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(p.sidebar_group_empty_ink)
-                                .child(format!("{}", summaries.len())),
-                        ),
-                )
-                .when(!collapsed, |col| {
-                    let mut rows = v_flex()
-                        .id("diff-jump-rows")
-                        .w_full()
-                        .max_h(px(180.))
-                        .overflow_y_scrollbar()
-                        .px(px(4.))
-                        .pb(px(4.))
-                        .gap(px(1.));
-                    for (ix, summary) in summaries.iter().enumerate() {
-                        rows = rows.child(self.render_jump_row(ix, summary, cx));
-                    }
-                    col.child(rows)
-                })
+                .child(rows)
                 .into_any_element(),
         )
     }
@@ -806,7 +850,7 @@ impl PaApp {
         let dir_label = if dir.is_empty() {
             String::new()
         } else {
-            format!("{dir}/")
+            dir.to_string()
         };
         let path_click = summary.path.clone();
         let additions = summary.additions;
@@ -816,14 +860,23 @@ impl PaApp {
         let truncated = summary.truncated;
         let deferred = summary.deferred;
         let loading = self.diff_model.is_file_loading(&summary.path);
+        let dot_color = if untracked || (additions > 0 && deletions == 0 && summary.old_path.is_none()) {
+            p.tag_idle
+        } else if additions == 0 && deletions > 0 {
+            p.danger
+        } else if summary.old_path.is_some() {
+            p.quiet_ink
+        } else {
+            p.working
+        };
 
         h_flex()
             .id(("diff-jump-row", ix))
             .w_full()
-            .h(px(24.))
-            .px(px(6.))
-            .gap(px(6.))
-            .rounded(px(4.))
+            .h(px(26.))
+            .px(px(8.))
+            .gap(px(7.))
+            .rounded(px(6.))
             .items_center()
             .justify_between()
             .cursor_pointer()
@@ -836,12 +889,20 @@ impl PaApp {
                 h_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(4.))
+                    .gap(px(6.))
                     .items_center()
                     .child(
                         div()
+                            .size(px(6.))
+                            .rounded_full()
                             .flex_shrink_0()
-                            .text_size(px(11.5))
+                            .bg(dot_color),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(p.ink)
                             .child(name.to_string()),
                     )
@@ -859,63 +920,167 @@ impl PaApp {
             .child(
                 h_flex()
                     .flex_shrink_0()
-                    .gap(px(4.))
+                    .gap(px(5.))
                     .items_center()
                     .text_size(px(11.))
                     .when(loading, |row| {
                         row.child(div().text_color(p.working).child("…"))
                     })
                     .when(deferred && !loading, |row| {
-                        row.child(div().text_color(p.quiet_ink).child("lazy"))
-                    })
-                    .when(untracked, |row| {
-                        row.child(div().text_color(p.working).child("U"))
+                        row.child(
+                            div()
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .bg(p.sidebar_row_hover)
+                                .text_size(px(10.))
+                                .text_color(p.quiet_ink)
+                                .child("lazy"),
+                        )
                     })
                     .when(truncated, |row| {
-                        row.child(div().text_color(p.quiet_ink).child("256K"))
+                        row.child(
+                            div()
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .bg(p.sidebar_row_hover)
+                                .text_size(px(10.))
+                                .text_color(p.quiet_ink)
+                                .child("256K"),
+                        )
                     })
                     .when(binary, |row| {
-                        row.child(div().text_color(p.quiet_ink).child("bin"))
+                        row.child(
+                            div()
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .bg(p.sidebar_row_hover)
+                                .text_size(px(10.))
+                                .text_color(p.quiet_ink)
+                                .child("bin"),
+                        )
                     })
                     .when(!binary, |row| {
                         row.when(additions > 0, |r| {
-                            r.child(div().text_color(p.tag_idle).child(format!("+{additions}")))
+                            r.child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.tag_idle)
+                                    .child(format!("+{additions}")),
+                            )
                         })
                         .when(deletions > 0, |r| {
-                            r.child(div().text_color(p.danger).child(format!("-{deletions}")))
+                            r.child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.danger)
+                                    .child(format!("-{deletions}")),
+                            )
                         })
                     }),
             )
     }
 
-    fn render_diff_body(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_diff_empty_state(
+        &self,
+        icon: IconName,
+        icon_color: Hsla,
+        title: String,
+        subtitle: Option<String>,
+        action: Option<AnyElement>,
+    ) -> AnyElement {
         let p = self.palette();
+        v_flex()
+            .flex_1()
+            .w_full()
+            .items_center()
+            .justify_center()
+            .gap(px(10.))
+            .px(px(28.))
+            .child(
+                div()
+                    .size(px(36.))
+                    .rounded(px(10.))
+                    .bg(p.sidebar_group_surface)
+                    .border_1()
+                    .border_color(p.sidebar_group_edge)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(Icon::new(icon).size(px(16.)).text_color(icon_color)),
+            )
+            .child(
+                v_flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.ink)
+                            .child(title),
+                    )
+                    .when_some(subtitle, |col, hint| {
+                        col.child(
+                            div()
+                                .max_w(px(240.))
+                                .text_center()
+                                .text_size(px(11.5))
+                                .text_color(p.quiet_ink)
+                                .child(hint),
+                        )
+                    }),
+            )
+            .children(action)
+            .into_any_element()
+    }
+
+    fn render_diff_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        let header_visible_w = (self.right_column_width(window) - 52.).max(180.);
         match self.diff_model.status() {
             DiffViewStatus::Ready => {
-                // Deferred files use a zero-hunk placeholder so `gpui-kit` omits default `+ / -`;
-                // supply accurate numstat counts and lazy/loading status via `header_suffix`.
-                let file_meta: HashMap<String, (usize, usize, bool, bool, bool)> = self
+                #[derive(Clone, Copy)]
+                struct HeaderMeta {
+                    additions: usize,
+                    deletions: usize,
+                    untracked: bool,
+                    deferred: bool,
+                    truncated: bool,
+                    binary: bool,
+                    loading: bool,
+                }
+
+                let file_meta: HashMap<String, HeaderMeta> = self
                     .diff_model
                     .summaries()
                     .iter()
-                    .filter(|s| s.deferred || s.truncated)
                     .map(|s| {
                         (
                             s.path.clone(),
-                            (
-                                s.additions,
-                                s.deletions,
-                                s.deferred,
-                                s.truncated,
-                                self.diff_model.is_file_loading(&s.path),
-                            ),
+                            HeaderMeta {
+                                additions: s.additions,
+                                deletions: s.deletions,
+                                untracked: s.untracked,
+                                deferred: s.deferred,
+                                truncated: s.truncated,
+                                binary: s.binary,
+                                loading: self.diff_model.is_file_loading(&s.path),
+                            },
                         )
                     })
                     .collect();
+
+                let app_entity = cx.entity().clone();
+                let ink = p.ink;
                 let quiet_ink = p.quiet_ink;
                 let tag_idle = p.tag_idle;
                 let danger = p.danger;
                 let working = p.working;
+                let row_hover = p.sidebar_row_hover;
+                let row_selected = p.sidebar_row_selected;
 
                 div()
                     .flex_1()
@@ -924,129 +1089,265 @@ impl PaApp {
                     .overflow_hidden()
                     .child(
                         Diff::new(&self.diff_state)
+                            .border_0()
+                            .bg(p.window_surface)
                             .soft_wrap(self.settings.diff_wrap)
-                            .header_suffix(move |file, _, _| {
-                                let Some(&(add, del, deferred, truncated, loading)) =
-                                    file_meta.get(file.path().as_ref())
-                                else {
-                                    return div().into_any_element();
+                            .hover_highlight(DiffHoverHighlight::Line)
+                            .change_indicator(DiffChangeIndicator::Bars)
+                            .hunk_separator(DiffHunkSeparator::LineInfo)
+                            .header(move |file, _, _| {
+                                let path = file.path().clone();
+                                let meta = file_meta.get(path.as_ref()).copied();
+                                let (dir, name) = split_dir_and_name(path.as_ref());
+                                let name_owned = name.to_string();
+                                let subtitle = match (file.original_path(), file.modified_path()) {
+                                    (Some(old), Some(new)) if old != new => {
+                                        format!("from {old}")
+                                    }
+                                    _ => dir.to_string(),
                                 };
+
+                                let (badge, badge_ink, badge_bg) = if meta.is_some_and(|m| m.untracked) {
+                                    ("U", tag_idle, tag_idle.opacity(0.14))
+                                } else {
+                                    match file.status() {
+                                        DiffFileStatus::Added => {
+                                            ("A", tag_idle, tag_idle.opacity(0.14))
+                                        }
+                                        DiffFileStatus::Deleted => {
+                                            ("D", danger, danger.opacity(0.14))
+                                        }
+                                        DiffFileStatus::Renamed | DiffFileStatus::Copied => {
+                                            ("R", quiet_ink, row_selected)
+                                        }
+                                        DiffFileStatus::Conflicted => {
+                                            ("!", working, working.opacity(0.16))
+                                        }
+                                        _ => ("M", working, working.opacity(0.14)),
+                                    }
+                                };
+
+                                let add = meta.map_or(file.additions(), |m| m.additions);
+                                let del = meta.map_or(file.deletions(), |m| m.deletions);
+                                let binary = meta.map_or(file.is_binary(), |m| m.binary);
+                                let deferred = meta.is_some_and(|m| m.deferred);
+                                let truncated = meta.is_some_and(|m| m.truncated);
+                                let loading = meta.is_some_and(|m| m.loading);
+                                let app_click = app_entity.clone();
+                                let path_click = path.clone();
+
                                 h_flex()
-                                    .gap(px(6.))
+                                    .w(px(header_visible_w))
+                                    .min_w_0()
+                                    .px(px(4.))
+                                    .py(px(3.))
+                                    .gap(px(7.))
+                                    .rounded(px(5.))
                                     .items_center()
-                                    .text_size(px(11.))
-                                    .when(deferred && add > 0, |r| {
-                                        r.child(div().text_color(tag_idle).child(format!("+{add}")))
+                                    .justify_between()
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(row_hover))
+                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        app_click.update(cx, |this, cx| {
+                                            this.toggle_diff_file_collapsed(path_click.as_ref(), cx);
+                                        });
                                     })
-                                    .when(deferred && del > 0, |r| {
-                                        r.child(div().text_color(danger).child(format!("-{del}")))
-                                    })
-                                    .when(truncated, |r| {
-                                        r.child(div().text_color(quiet_ink).child("256K preview"))
-                                    })
-                                    .when(deferred, |r| {
-                                        r.child(
-                                            div()
-                                                .text_color(if loading {
-                                                    working
-                                                } else {
-                                                    quiet_ink
-                                                })
-                                                .child(if loading { "Loading…" } else { "Lazy" }),
-                                        )
-                                    })
-                                    .into_any_element()
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap(px(6.))
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .size(px(16.))
+                                                    .rounded(px(4.))
+                                                    .flex_shrink_0()
+                                                    .bg(badge_bg)
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_size(px(9.5))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(badge_ink)
+                                                    .child(badge),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(ink)
+                                                    .child(name_owned),
+                                            )
+                                            .when(!subtitle.is_empty(), |row| {
+                                                row.child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(11.))
+                                                        .text_color(quiet_ink)
+                                                        .child(subtitle),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .flex_shrink_0()
+                                            .gap(px(5.))
+                                            .items_center()
+                                            .text_size(px(11.))
+                                            .when(truncated, |r| {
+                                                r.child(
+                                                    div()
+                                                        .px(px(5.))
+                                                        .py(px(1.))
+                                                        .rounded(px(4.))
+                                                        .bg(row_hover)
+                                                        .text_size(px(10.))
+                                                        .text_color(quiet_ink)
+                                                        .child("256K preview"),
+                                                )
+                                            })
+                                            .when(deferred, |r| {
+                                                r.child(
+                                                    div()
+                                                        .px(px(5.))
+                                                        .py(px(1.))
+                                                        .rounded(px(4.))
+                                                        .bg(row_hover)
+                                                        .text_size(px(10.))
+                                                        .text_color(if loading {
+                                                            working
+                                                        } else {
+                                                            quiet_ink
+                                                        })
+                                                        .child(if loading {
+                                                            "Loading…"
+                                                        } else {
+                                                            "Lazy"
+                                                        }),
+                                                )
+                                            })
+                                            .when(binary, |r| {
+                                                r.child(
+                                                    div()
+                                                        .px(px(5.))
+                                                        .py(px(1.))
+                                                        .rounded(px(4.))
+                                                        .bg(row_hover)
+                                                        .text_size(px(10.))
+                                                        .text_color(quiet_ink)
+                                                        .child("Binary"),
+                                                )
+                                            })
+                                            .when(!binary && add > 0, |r| {
+                                                r.child(
+                                                    div()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(tag_idle)
+                                                        .child(format!("+{add}")),
+                                                )
+                                            })
+                                            .when(!binary && del > 0, |r| {
+                                                r.child(
+                                                    div()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(danger)
+                                                        .child(format!("-{del}")),
+                                                )
+                                            }),
+                                    )
                             })
                             .size_full(),
                     )
                     .into_any_element()
             }
-            DiffViewStatus::NotAGitRepo => v_flex()
-                .flex_1()
-                .w_full()
-                .items_center()
-                .justify_center()
-                .px(px(20.))
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .text_color(p.quiet_ink)
-                        .child("Not a git repository"),
+            DiffViewStatus::NotAGitRepo => {
+                let (title, hint) =
+                    if self.roster.is_draft() && self.roster.draft_cwd().is_none() {
+                        (
+                            "Choose a folder".to_string(),
+                            "Pick a git folder in the composer below to preview diffs".to_string(),
+                        )
+                    } else {
+                        (
+                            "Not a git repository".to_string(),
+                            "Start a new session in a git folder to inspect diffs".to_string(),
+                        )
+                    };
+                self.render_diff_empty_state(
+                    IconName::Folder,
+                    p.quiet_ink,
+                    title,
+                    Some(hint),
+                    None,
                 )
-                .into_any_element(),
+            }
             DiffViewStatus::Empty => {
-                let empty_msg = match (
+                let (title, hint) = match (
                     self.settings.diff_scope,
                     self.diff_model.base_branch(),
                     self.diff_model.on_base_branch(),
                 ) {
-                    (DiffScope::Branch, Some(base), true) => {
-                        format!("On {base} · no uncommitted changes")
-                    }
-                    (DiffScope::Branch, Some(base), false) => {
-                        format!("No changes against {base}")
-                    }
-                    _ => "No uncommitted changes".to_string(),
+                    (DiffScope::Branch, Some(base), true) => (
+                        format!("On {base}"),
+                        "No uncommitted changes in this working tree".to_string(),
+                    ),
+                    (DiffScope::Branch, Some(base), false) => (
+                        format!("No changes against {base}"),
+                        "Your branch matches the base commit".to_string(),
+                    ),
+                    _ => (
+                        "Working tree clean".to_string(),
+                        "Edits made in this session will appear here".to_string(),
+                    ),
                 };
-                v_flex()
-                    .flex_1()
-                    .w_full()
-                    .items_center()
-                    .justify_center()
-                    .px(px(20.))
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .text_color(p.quiet_ink)
-                            .child(empty_msg),
-                    )
-                    .into_any_element()
+                self.render_diff_empty_state(
+                    IconName::CircleCheck,
+                    p.tag_idle,
+                    title,
+                    Some(hint),
+                    None,
+                )
             }
-            DiffViewStatus::Idle | DiffViewStatus::Loading => v_flex()
-                .flex_1()
-                .w_full()
-                .items_center()
-                .justify_center()
-                .px(px(20.))
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .text_color(p.quiet_ink)
-                        .child("Loading changes..."),
+            DiffViewStatus::Idle | DiffViewStatus::Loading => self.render_diff_empty_state(
+                IconName::RefreshCw,
+                p.working,
+                "Loading changes...".to_string(),
+                None,
+                None,
+            ),
+            DiffViewStatus::Error(msg) => {
+                let retry = div()
+                    .id("diff-retry-btn")
+                    .mt(px(2.))
+                    .px(px(12.))
+                    .py(px(5.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(p.sidebar_group_edge)
+                    .bg(p.sidebar_group_surface)
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.ink)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(p.sidebar_row_hover))
+                    .child("Retry")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.refresh_diff(cx);
+                    }))
+                    .into_any_element();
+                self.render_diff_empty_state(
+                    IconName::TriangleAlert,
+                    p.danger,
+                    "Could not load diff".to_string(),
+                    Some(msg.clone()),
+                    Some(retry),
                 )
-                .into_any_element(),
-            DiffViewStatus::Error(msg) => v_flex()
-                .flex_1()
-                .w_full()
-                .items_center()
-                .justify_center()
-                .gap(px(8.))
-                .px(px(20.))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(p.danger)
-                        .child(msg.clone()),
-                )
-                .child(
-                    div()
-                        .id("diff-retry-btn")
-                        .px(px(10.))
-                        .py(px(4.))
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(p.sidebar_group_edge)
-                        .text_size(px(11.5))
-                        .text_color(p.ink)
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(p.sidebar_row_hover))
-                        .child("Retry")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.refresh_diff(cx);
-                        })),
-                )
-                .into_any_element(),
+            }
         }
     }
 }

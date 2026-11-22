@@ -126,6 +126,7 @@ pub fn apply_theme(mode: gpui_kit::component::ThemeMode, window: Option<&mut Win
     Theme::change(mode, window, cx);
     let p = PaPalette::for_mode(mode.is_dark());
     Theme::update(cx, |theme| {
+        theme.mono_font_size = px(12.);
         theme.colors.background = p.window_surface;
         theme.colors.foreground = p.ink;
         theme.colors.border = p.transcript_cell_edge;
