@@ -716,7 +716,7 @@ pub fn start_tool_call(
         variant,
         verb: verb.into(),
         title: summary.into(),
-        meta: "running…".into(),
+        meta: "running".into(),
         body_md: None,
         raw_body: raw_code,
         output: None,
@@ -775,7 +775,7 @@ pub fn settle_all(items: &mut [TranscriptItem]) {
         if it.kind == ItemKind::Thinking {
             it.title = "Thought".into();
         }
-        if it.kind == ItemKind::ToolCall && it.meta == "running…" {
+        if it.kind == ItemKind::ToolCall && it.meta == "running" {
             it.meta = SharedString::default();
         }
     }

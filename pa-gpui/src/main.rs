@@ -1,9 +1,16 @@
 mod app;
 mod assets;
+mod composer;
+mod composer_model;
 mod daemon;
+mod popups;
+mod roster;
 mod settings;
+mod sidebar;
+mod slash;
 mod theme;
 mod transcript;
+mod transcript_view;
 
 use app::PaApp;
 use assets::AppAssets;
