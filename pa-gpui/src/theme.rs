@@ -116,3 +116,34 @@ impl PaPalette {
         }
     }
 }
+
+pub fn apply_theme(dark: bool, window: Option<&mut Window>, cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeMode};
+
+    Theme::change(
+        if dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        },
+        window,
+        cx,
+    );
+    let p = PaPalette::for_mode(dark);
+    let theme = Theme::global_mut(cx);
+    theme.colors.background = p.window_surface;
+    theme.colors.foreground = p.ink;
+    theme.colors.border = p.transcript_cell_edge;
+    theme.colors.muted = p.sidebar_group_surface;
+    theme.colors.muted_foreground = p.quiet_ink;
+    theme.colors.list_hover = p.sidebar_row_hover;
+    theme.colors.success = p.tag_idle;
+    theme.colors.danger = p.danger;
+    theme.colors.warning = p.working;
+    theme.colors.selection = if dark {
+        rgba(0xffffff24).into()
+    } else {
+        rgba(0x00000018).into()
+    };
+    theme.mono_font_family = "Cascadia Code".into();
+}

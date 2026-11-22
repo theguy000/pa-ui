@@ -3,6 +3,7 @@ mod assets;
 mod composer;
 mod composer_model;
 mod daemon;
+mod diff_model;
 mod popups;
 mod providers;
 mod roster;
@@ -15,7 +16,7 @@ mod transcript_view;
 
 use app::PaApp;
 use assets::AppAssets;
-use gpui_kit::component::{Theme, ThemeMode, TitleBar};
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 use settings::AppSettings;
 
@@ -36,15 +37,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         let initial_settings = AppSettings::load();
-        Theme::change(
-            if initial_settings.dark_mode {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            None,
-            cx,
-        );
+        theme::apply_theme(initial_settings.dark_mode, None, cx);
 
         let mut window_options = TitleBar::window_options();
         window_options.window_bounds = Some(WindowBounds::centered(size(px(1240.), px(840.)), cx));

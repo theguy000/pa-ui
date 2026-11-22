@@ -202,9 +202,7 @@ impl PaApp {
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.settings.right_open = !this.settings.right_open;
-                                this.settings.save();
-                                cx.notify();
+                                this.toggle_right_sidebar(cx);
                             })),
                     ),
             )
@@ -674,18 +672,75 @@ impl PaApp {
         card
     }
 
-    pub(crate) fn render_right_column(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_right_column(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.settings.right_open {
             return None;
         }
         let p = self.palette();
+        let width = self.right_sidebar_width(window);
+        let handle_active = self.diff_model.is_dragging() || self.diff_model.is_handle_hovered();
+        let edge_color = if handle_active {
+            p.composer_edge_focus
+        } else {
+            p.sidebar_group_edge
+        };
         Some(
-            v_flex()
-                .w(px(300.))
+            h_flex()
+                .id("right-diff-column")
+                .relative()
+                .w(px(width))
                 .h_full()
+                .flex_shrink_0()
                 .bg(p.window_surface)
-                .border_l_1()
-                .border_color(p.sidebar_group_edge)
+                .child(
+                    div()
+                        .id("diff-resize-handle")
+                        .w(px(5.))
+                        .h_full()
+                        .flex_shrink_0()
+                        .cursor_col_resize()
+                        .flex()
+                        .justify_start()
+                        .child(div().w(px(1.)).h_full().bg(edge_color))
+                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                            if this.diff_model.is_handle_hovered() != *hovered {
+                                this.diff_model.set_handle_hovered(*hovered);
+                                cx.notify();
+                            }
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                if ev.click_count >= 2 {
+                                    let width = this.diff_model.reset_width();
+                                    this.settings.diff_width = width;
+                                    this.settings.save();
+                                    cx.notify();
+                                    return;
+                                }
+                                let viewport_w = window.viewport_size().width.as_f32();
+                                let sidebar_w = this.sidebar_width();
+                                this.diff_model.begin_drag(
+                                    ev.position.x.as_f32(),
+                                    viewport_w,
+                                    sidebar_w,
+                                );
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .overflow_hidden(),
+                )
                 .into_any_element(),
         )
     }

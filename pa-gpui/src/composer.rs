@@ -1136,16 +1136,8 @@ impl PaApp {
     /// Compute `(left_edge_px, right_inset_px)` of the centered composer column in window coordinates.
     pub(crate) fn composer_column_insets(&self, window: &Window) -> (f32, f32) {
         let viewport_w = window.viewport_size().width.as_f32();
-        let sidebar_w = if self.settings.sidebar_open {
-            244.0
-        } else {
-            44.0
-        };
-        let right_w = if self.settings.right_open {
-            300.0
-        } else {
-            0.0
-        };
+        let sidebar_w = self.sidebar_width();
+        let right_w = self.right_sidebar_width(window);
         let center_w = (viewport_w - sidebar_w - right_w).max(0.0);
         let col_w = (center_w - 48.0).clamp(0.0, CHAT_COLUMN_MAX_WIDTH);
         let gutter = ((center_w - col_w) * 0.5).max(24.0);

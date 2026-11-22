@@ -1,6 +1,7 @@
 use crate::composer::{parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH};
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
+use crate::diff_model::DiffModel;
 use crate::popups::OpenPopup;
 use crate::providers::{
     delete_custom_endpoint, fetch_models_for_endpoint, load_snapshot, remove_builtin_auth,
@@ -69,6 +70,7 @@ pub struct PaApp {
     pub(crate) notice: Option<SharedString>,
     pub(crate) roster: SessionRoster,
     pub(crate) composer_model: ComposerModel,
+    pub(crate) diff_model: DiffModel,
     pub(crate) renaming: Option<RenameTarget>,
     pub(crate) items: Vec<TranscriptItem>,
     pub(crate) next_item_id: usize,
@@ -301,6 +303,7 @@ impl PaApp {
             notice: None,
             roster: SessionRoster::new(),
             composer_model: ComposerModel::new(),
+            diff_model: DiffModel::new(settings.diff_width),
             renaming: None,
             items: Vec::new(),
             next_item_id: 1,
@@ -352,6 +355,29 @@ impl PaApp {
 
     pub(crate) fn palette(&self) -> PaPalette {
         PaPalette::for_mode(self.settings.dark_mode)
+    }
+
+    pub(crate) fn sidebar_width(&self) -> f32 {
+        if self.settings.sidebar_open {
+            244.0
+        } else {
+            44.0
+        }
+    }
+
+    pub(crate) fn right_sidebar_width(&self, window: &Window) -> f32 {
+        if !self.settings.right_open {
+            return 0.0;
+        }
+        let viewport_w = window.viewport_size().width.as_f32();
+        self.diff_model
+            .effective_width(viewport_w, self.sidebar_width())
+    }
+
+    pub(crate) fn toggle_right_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.settings.right_open = !self.settings.right_open;
+        self.settings.save();
+        cx.notify();
     }
 
     pub(crate) fn refresh_providers_snapshot(&mut self) {
@@ -1558,7 +1584,7 @@ impl Render for PaApp {
             .size_full()
             .bg(p.window_surface)
             .text_color(p.ink)
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 if this.composer_model.is_dragging() {
                     if ev.pressed_button != Some(MouseButton::Left) {
                         this.composer_model.end_drag();
@@ -1566,6 +1592,24 @@ impl Render for PaApp {
                         return;
                     }
                     if this.composer_model.update_drag(ev.position.y.as_f32()) {
+                        cx.notify();
+                    }
+                }
+                if this.diff_model.is_dragging() {
+                    if ev.pressed_button != Some(MouseButton::Left) {
+                        if let Some(width) = this.diff_model.end_drag() {
+                            this.settings.diff_width = width;
+                            this.settings.save();
+                        }
+                        cx.notify();
+                        return;
+                    }
+                    let viewport_w = window.viewport_size().width.as_f32();
+                    let sidebar_w = this.sidebar_width();
+                    if this
+                        .diff_model
+                        .update_drag(ev.position.x.as_f32(), viewport_w, sidebar_w)
+                    {
                         cx.notify();
                     }
                 }
@@ -1589,7 +1633,13 @@ impl Render for PaApp {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.composer_model.end_drag() {
+                    let mut changed = this.composer_model.end_drag();
+                    if let Some(width) = this.diff_model.end_drag() {
+                        this.settings.diff_width = width;
+                        this.settings.save();
+                        changed = true;
+                    }
+                    if changed {
                         cx.notify();
                     }
                 }),
@@ -1604,7 +1654,9 @@ impl Render for PaApp {
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let key = ev.keystroke.key.as_str();
                 let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
-                if ctrl && key == "b" {
+                if ctrl && ev.keystroke.modifiers.shift && key.eq_ignore_ascii_case("b") {
+                    this.toggle_right_sidebar(cx);
+                } else if ctrl && key.eq_ignore_ascii_case("b") {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
                     this.rail_mark_hovered = false;
                     this.settings.save();
@@ -1769,7 +1821,7 @@ impl Render for PaApp {
                                     )
                                     .child(self.render_composer_band(window, cx)),
                             )
-                            .children(self.render_right_column(cx)),
+                            .children(self.render_right_column(window, cx)),
                     ),
             )
             .children(self.render_floating_popups(window, cx))

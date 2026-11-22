@@ -6,8 +6,7 @@ use crate::daemon::{DaemonCmd, ExportKind};
 use crate::roster::ModelPickEffect;
 use crate::sidebar::RenameTarget;
 use gpui_kit::component::{
-    h_flex, scroll::ScrollableElement as _, v_flex, Icon, IconName, StyledExt as _, Theme,
-    ThemeMode,
+    h_flex, scroll::ScrollableElement as _, v_flex, Icon, IconName, StyledExt as _,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::{clamp_level, thinking_level_label, ModelEntry};
@@ -1565,8 +1564,8 @@ impl PaApp {
                                                                 if !this.settings.dark_mode {
                                                                     this.settings.dark_mode = true;
                                                                     this.settings.save();
-                                                                    Theme::change(
-                                                                        ThemeMode::Dark,
+                                                                    crate::theme::apply_theme(
+                                                                        true,
                                                                         Some(window),
                                                                         cx,
                                                                     );
@@ -1581,8 +1580,8 @@ impl PaApp {
                                                                 if this.settings.dark_mode {
                                                                     this.settings.dark_mode = false;
                                                                     this.settings.save();
-                                                                    Theme::change(
-                                                                        ThemeMode::Light,
+                                                                    crate::theme::apply_theme(
+                                                                        false,
                                                                         Some(window),
                                                                         cx,
                                                                     );
