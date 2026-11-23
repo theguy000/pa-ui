@@ -28,17 +28,21 @@ _Avoid_: cache, database, history, backend
 
 ### Workspace
 
-**Startup folder**:
-The folder a session begins in, chosen when the session starts; it may be a Git repository, a worktree, or an ordinary folder.
-_Avoid_: session cwd, initial dir, base folder
-
-**Active workspace**:
-The folder a session is currently working in, together with its Git worktree and branch when inside a repository. It starts at the startup folder, follows the most recent substantive work, and falls back to the startup folder when its folder is gone.
-_Avoid_: active cwd, current repo, detected folder, live cwd
+**Workspace**:
+A registered working folder — either a Git repository or a plain folder — that sessions bind to and that owns a shared workspace continual harness.
+_Avoid_: project, repo folder, root dir, active workspace
 
 **Worktree**:
-One Git working tree of a repository, either the main checkout or a linked worktree, identified by its root folder and current branch or detached HEAD.
+One Git working tree of a Git workspace, either the main checkout or a linked worktree, identified by its root folder and current branch or detached HEAD.
 _Avoid_: checkout, branch folder, git dir
+
+**Scratch session**:
+A session not bound to any workspace, using only global and session harness scopes.
+_Avoid_: unbound session, home session, general chat
+
+**Harness scope**:
+One of the three continual harness layers — global, workspace, or session — where more specific scopes override broader ones.
+_Avoid_: memory tier, harness level
 
 ### What the reader sees
 
