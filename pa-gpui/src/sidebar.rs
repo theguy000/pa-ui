@@ -504,6 +504,7 @@ impl PaApp {
         let p = self.palette();
         v_flex()
             .w(px(44.))
+            .flex_shrink_0()
             .h_full()
             .bg(p.sidebar_surface)
             .pt(px(4.))
@@ -599,6 +600,7 @@ impl PaApp {
 
         v_flex()
             .w(px(244.))
+            .flex_shrink_0()
             .h_full()
             .bg(p.sidebar_surface)
             .px(px(10.))

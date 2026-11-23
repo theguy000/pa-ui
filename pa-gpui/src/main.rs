@@ -52,6 +52,7 @@ fn main() {
 
         let mut window_options = TitleBar::window_options();
         window_options.window_bounds = Some(WindowBounds::centered(size(px(1240.), px(840.)), cx));
+        window_options.window_min_size = Some(size(px(244.0 + composer::CHAT_COLUMN_MIN_WIDTH + 4.0), px(520.0)));
         window_options.inactive_frame_interval = None;
         window_options.low_power_frame_interval = None;
         window_options.thermal_frame_interval = None;

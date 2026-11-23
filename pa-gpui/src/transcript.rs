@@ -646,7 +646,18 @@ fn settle_thinking(items: &mut [TranscriptItem]) {
     }
 }
 
-pub fn append_text_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &mut App) {
+fn alloc_id(next_id: &mut usize) -> usize {
+    let id = *next_id;
+    *next_id = next_id.wrapping_add(1);
+    id
+}
+
+pub fn append_text_delta(
+    items: &mut Vec<TranscriptItem>,
+    next_id: &mut usize,
+    delta: &str,
+    cx: &mut App,
+) {
     if delta.is_empty() {
         return;
     }
@@ -664,10 +675,10 @@ pub fn append_text_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &mut 
             return;
         }
     }
-    let next_id = items.last().map_or(0, |i| i.id + 1);
+    let id = alloc_id(next_id);
     let md = cx.new(|cx| TextViewState::markdown(delta, cx));
     items.push(TranscriptItem {
-        id: next_id,
+        id,
         entry_id: None,
         call_id: None,
         kind: ItemKind::Assistant,
@@ -686,7 +697,12 @@ pub fn append_text_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &mut 
     });
 }
 
-pub fn append_thinking_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &mut App) {
+pub fn append_thinking_delta(
+    items: &mut Vec<TranscriptItem>,
+    next_id: &mut usize,
+    delta: &str,
+    cx: &mut App,
+) {
     if delta.is_empty() {
         return;
     }
@@ -703,9 +719,9 @@ pub fn append_thinking_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &
             return;
         }
     }
-    let next_id = items.last().map_or(0, |i| i.id + 1);
+    let id = alloc_id(next_id);
     items.push(TranscriptItem {
-        id: next_id,
+        id,
         entry_id: None,
         call_id: None,
         kind: ItemKind::Thinking,
@@ -726,15 +742,16 @@ pub fn append_thinking_delta(items: &mut Vec<TranscriptItem>, delta: &str, cx: &
 
 pub fn start_tool_call(
     items: &mut Vec<TranscriptItem>,
+    next_id: &mut usize,
     call_id: String,
     name: &str,
     args: &Value,
 ) {
     settle_thinking(items);
     let (variant, verb, summary, raw_code) = classify_tool_call(name, args, None);
-    let next_id = items.last().map_or(0, |i| i.id + 1);
+    let id = alloc_id(next_id);
     items.push(TranscriptItem {
-        id: next_id,
+        id,
         entry_id: None,
         call_id: Some(call_id),
         kind: ItemKind::ToolCall,
@@ -1232,10 +1249,56 @@ mod tests {
             failed: false,
             fingerprint: 0,
         }];
-        start_tool_call(&mut items, "c1".into(), "python_repl", &json!({"code": "1+1"}));
+        let mut next_id = 10;
+        start_tool_call(
+            &mut items,
+            &mut next_id,
+            "c1".into(),
+            "python_repl",
+            &json!({"code": "1+1"}),
+        );
         assert!(!items[0].active);
         assert_eq!(items[0].title.as_ref(), "Thought");
         assert!(items[1].active);
+        assert_eq!(items[1].id, 10);
+        assert_eq!(next_id, 11);
+    }
+
+    #[::core::prelude::v1::test]
+    fn live_tool_call_advances_shared_id_counter_preventing_custom_card_collision() {
+        let mut next_id = 50usize;
+        let mut items = vec![TranscriptItem {
+            id: 49,
+            entry_id: Some("u1".into()),
+            call_id: None,
+            kind: ItemKind::User,
+            variant: CardVariant::None,
+            verb: SharedString::default(),
+            title: "You".into(),
+            meta: SharedString::default(),
+            body_md: None,
+            raw_body: "check".into(),
+            output: None,
+            images: Vec::new(),
+            expanded: true,
+            active: false,
+            failed: false,
+            fingerprint: 1,
+        }];
+        start_tool_call(
+            &mut items,
+            &mut next_id,
+            "c1".into(),
+            "python_repl",
+            &json!({"code": "print(1)"}),
+        );
+        // Subsequent custom card (e.g. provider_retry_outcome) allocates from the same counter.
+        let retry_id = next_id;
+        next_id = next_id.wrapping_add(1);
+        assert_ne!(items[1].id, retry_id);
+        assert_eq!(items[1].id, 50);
+        assert_eq!(retry_id, 51);
+        assert_eq!(next_id, 52);
     }
 
     #[::core::prelude::v1::test]

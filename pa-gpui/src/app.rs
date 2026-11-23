@@ -1,4 +1,6 @@
-use crate::composer::{parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH};
+use crate::composer::{
+    parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH, CHAT_COLUMN_MIN_WIDTH,
+};
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
 use crate::dev_errors::{is_dev_environment, DevErrorLog};
@@ -1245,6 +1247,7 @@ impl PaApp {
                                     && prev.title == next.title
                                     && prev.meta == next.meta
                                     && prev.raw_body == next.raw_body
+                                    && prev.output == next.output
                                     && prev.failed == next.failed
                             });
                     if same_visual_rows {
@@ -1256,14 +1259,22 @@ impl PaApp {
                         return;
                     }
                     // Preserve expanded state & already-hydrated TextViewState entities when
-                    // replacing an in-flight item with its settled copy.
+                    // replacing an in-flight item with its settled copy (match by call_id first
+                    // so inserted error/retry rows never drop a tool card's open state).
                     for (offset, new_item) in tail.iter_mut().enumerate() {
-                        if let Some(prev) = self.items.get_mut(ex_at + offset) {
-                            if prev.kind == new_item.kind && prev.call_id == new_item.call_id {
-                                new_item.expanded = prev.expanded;
-                                if prev.raw_body == new_item.raw_body {
-                                    new_item.body_md = prev.body_md.take();
-                                }
+                        let prev = if let Some(cid) = new_item.call_id.as_deref() {
+                            self.items[ex_at..old_len]
+                                .iter_mut()
+                                .find(|p| p.kind == new_item.kind && p.call_id.as_deref() == Some(cid))
+                        } else {
+                            self.items
+                                .get_mut(ex_at + offset)
+                                .filter(|p| p.kind == new_item.kind && p.call_id == new_item.call_id)
+                        };
+                        if let Some(prev) = prev {
+                            new_item.expanded = prev.expanded;
+                            if prev.raw_body == new_item.raw_body && prev.output == new_item.output {
+                                new_item.body_md = prev.body_md.take();
                             }
                         }
                         hydrate_markdown(new_item, cx);
@@ -1478,11 +1489,11 @@ impl PaApp {
                 if let Some(delta) = delta_ev.get("delta").and_then(Value::as_str) {
                     if delta_kind.starts_with("text_delta") {
                         let old_len = self.items.len();
-                        append_text_delta(&mut self.items, delta, cx);
+                        append_text_delta(&mut self.items, &mut self.next_item_id, delta, cx);
                         self.sync_list_after_tail_update(old_len);
                     } else if delta_kind.starts_with("thinking_delta") {
                         let old_len = self.items.len();
-                        append_thinking_delta(&mut self.items, delta, cx);
+                        append_thinking_delta(&mut self.items, &mut self.next_item_id, delta, cx);
                         self.sync_list_after_tail_update(old_len);
                     }
                 }
@@ -1502,7 +1513,7 @@ impl PaApp {
                     .unwrap_or("tool");
                 let args = event.get("args").unwrap_or(&Value::Null);
                 let old_len = self.items.len();
-                start_tool_call(&mut self.items, cid, name, args);
+                start_tool_call(&mut self.items, &mut self.next_item_id, cid, name, args);
                 self.sync_list_after_tail_update(old_len);
             }
             "tool_execution_end" => {
@@ -1543,6 +1554,19 @@ impl PaApp {
                 self.is_streaming = true;
                 self.composer_model.set_busy_label("Retrying", false);
                 self.sync_stop_target(cx);
+            }
+            "auto_retry_end" => {
+                if event.get("success").and_then(Value::as_bool) == Some(false) {
+                    self.is_streaming = false;
+                    self.composer_model.set_pending_slash(None);
+                    settle_all(&mut self.items);
+                    self.sync_stop_target(cx);
+                    if let Some(sid) = self.roster.active_id().map(str::to_string) {
+                        let _ = self.bridge.tx.send(DaemonCmd::ReloadTranscript(sid));
+                    }
+                } else {
+                    self.composer_model.set_busy_label("Waiting", false);
+                }
             }
             "session_action_update" => {
                 let (steer, follow_up) = parse_action_update_lanes(event);
@@ -1845,10 +1869,12 @@ impl Render for PaApp {
                                     .relative()
                                     .flex_1()
                                     .h_full()
-                                    .min_w_0()
+                                    .min_w(px(CHAT_COLUMN_MIN_WIDTH))
                                     .bg(p.transcript_surface)
                                     .rounded_tl(px(10.))
-                                    .when(self.settings.right_open, |s| s.rounded_tr(px(10.)))
+                                    .when(self.right_column_width(window) > 0.0, |s| {
+                                        s.rounded_tr(px(10.))
+                                    })
                                     .overflow_hidden()
                                     .children(self.render_find_bar(window, cx))
                                     .child(

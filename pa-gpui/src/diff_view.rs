@@ -490,6 +490,9 @@ impl PaApp {
         }
         let p = self.palette();
         let width = self.right_column_width(window);
+        if width <= 0.0 {
+            return None;
+        }
         let handle_active = self.diff_model.is_dragging() || self.diff_model.is_handle_hovered();
         let edge_color = if handle_active {
             p.composer_edge_focus

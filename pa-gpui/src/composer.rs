@@ -30,6 +30,10 @@ use std::sync::Arc;
 /// left/right edges stay locked together on wide displays.
 pub const CHAT_COLUMN_MAX_WIDTH: f32 = 860.0;
 
+/// Minimum width of the chat sheet (band padding + composer controls + breathing space)
+/// so the composer bottom dock never cramps or collapses its buttons.
+pub const CHAT_COLUMN_MIN_WIDTH: f32 = 512.0;
+
 /// Unified minimum height for the composer input in both default auto-grow mode
 /// and interactive drag-resize mode so dragging never jumps from the default area.
 pub const COMPOSER_MIN_HEIGHT: f32 = 44.0;
@@ -535,14 +539,22 @@ impl PaApp {
             let ink = if count > 0 { p.working } else { p.quiet_ink };
             h_flex()
                 .h_full()
+                .flex_shrink_0()
                 .items_center()
                 .gap(px(5.))
-                .child(svg().path(icon_path).size(px(13.)).text_color(ink))
+                .child(
+                    svg()
+                        .path(icon_path)
+                        .size(px(13.))
+                        .flex_shrink_0()
+                        .text_color(ink),
+                )
                 .child(
                     div()
                         .pb(px(1.5))
                         .text_size(px(11.5))
                         .line_height(px(11.5))
+                        .whitespace_nowrap()
                         .text_color(ink)
                         .child(count.to_string()),
                 )
@@ -551,6 +563,7 @@ impl PaApp {
         let (subagent_count, heartbeat_count, shell_count) = self.roster.activity_counts();
         h_flex()
             .h(px(26.))
+            .flex_shrink_0()
             .px(px(10.))
             .gap(px(12.))
             .rounded(px(7.))
@@ -950,6 +963,7 @@ impl PaApp {
                                 div()
                                     .id("attach-btn")
                                     .size(px(26.))
+                                    .flex_shrink_0()
                                     .rounded(px(7.))
                                     .bg(p.composer_attach_fill)
                                     .hover(|d| d.bg(p.sidebar_row_selected))
@@ -960,6 +974,7 @@ impl PaApp {
                                     .child(
                                         Icon::new(IconName::Plus)
                                             .size(px(13.))
+                                            .flex_shrink_0()
                                             .text_color(p.quiet_ink),
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -995,6 +1010,7 @@ impl PaApp {
                             .when(self.composer_model.is_editing_queue(), |row| {
                                 row.child(
                                     h_flex()
+                                        .flex_shrink_0()
                                         .gap(px(4.))
                                         .px(px(6.))
                                         .h(px(20.))
@@ -1004,16 +1020,18 @@ impl PaApp {
                                         .child(
                                             div()
                                                 .text_size(px(10.5))
+                                                .whitespace_nowrap()
                                                 .text_color(p.quiet_ink)
                                                 .child("Editing queued · Esc"),
                                         ),
                                 )
                             })
-                            .child(div().flex_1())
+                            .child(div().flex_1().min_w(px(12.)))
                             .child(
                                 div()
                                     .id("ctx-ring-btn")
                                     .h(px(26.))
+                                    .flex_shrink_0()
                                     .px(px(9.))
                                     .rounded(px(7.))
                                     .border_1()
@@ -1029,6 +1047,7 @@ impl PaApp {
                                     .hover(|d| d.bg(p.sidebar_row_hover))
                                     .text_size(px(11.5))
                                     .line_height(px(14.))
+                                    .whitespace_nowrap()
                                     .text_color(p.quiet_ink)
                                     .child(ctx_pct)
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1046,6 +1065,8 @@ impl PaApp {
                                 h_flex()
                                     .id("model-chip-btn")
                                     .h(px(26.))
+                                    .min_w_0()
+                                    .overflow_hidden()
                                     .px(px(10.))
                                     .gap(px(6.))
                                     .rounded(px(7.))
@@ -1060,6 +1081,10 @@ impl PaApp {
                                     .hover(|d| d.bg(p.sidebar_row_hover))
                                     .child(
                                         div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
                                             .text_size(px(11.5))
                                             .line_height(px(14.))
                                             .text_color(p.quiet_ink)
@@ -1068,6 +1093,8 @@ impl PaApp {
                                     .when_some(effort_badge, |chip, eff| {
                                         chip.child(
                                             div()
+                                                .flex_shrink_0()
+                                                .whitespace_nowrap()
                                                 .text_size(px(11.))
                                                 .line_height(px(14.))
                                                 .text_color(p.working)
@@ -1081,6 +1108,7 @@ impl PaApp {
                                             IconName::ChevronDown
                                         })
                                         .size(px(11.5))
+                                        .flex_shrink_0()
                                         .text_color(p.quiet_ink),
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
