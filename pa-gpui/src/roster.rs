@@ -181,7 +181,27 @@ impl SessionRoster {
         }
     }
 
+    pub(crate) fn set_workspace_binding(
+        &mut self,
+        session: &str,
+        binding: Option<pa_client::WorkspaceBinding>,
+    ) {
+        if let Some(row) = self
+            .sessions
+            .iter_mut()
+            .find(|r| r.id == session || r.session_id == session || r.session_file == session)
+        {
+            if let Some(ref b) = binding {
+                row.cwd = b.worktree_path.clone();
+            }
+            row.workspace_binding = binding;
+        }
+    }
+
     pub(crate) fn apply_session_state(&mut self, session: &str, state: SessionState) {
+        if let Some(binding) = state.workspace_binding.clone() {
+            self.set_workspace_binding(session, Some(binding));
+        }
         if self.active_session_id.as_deref() == Some(session) {
             self.session_state = Some(state);
         }
@@ -579,6 +599,7 @@ mod tests {
                 model_id: "gpt-5".into(),
                 thinking_level: "low".into(),
                 is_streaming: false,
+                workspace_binding: None,
             },
         );
         roster.apply_stats(

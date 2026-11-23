@@ -42,7 +42,21 @@ impl PaApp {
     }
 
     pub(crate) fn active_diff_target(&self) -> (Option<String>, Option<String>) {
+        if let Some((peek_path, _)) = self.workspace_ui.diff_peek.as_ref() {
+            return (Some(format!("__peek__:{peek_path}")), Some(peek_path.clone()));
+        }
         if self.roster.is_draft_or_empty() {
+            if let Some(wt) = self.workspace_ui.draft_worktree_path.as_ref() {
+                return (Some("__draft__".to_string()), Some(wt.clone()));
+            }
+            if let Some(ws) = self
+                .workspace_ui
+                .draft_workspace_id
+                .as_deref()
+                .and_then(|id| self.workspace_ui.workspace_by_id(id))
+            {
+                return (Some("__draft__".to_string()), Some(ws.root_path.clone()));
+            }
             let cwd = self
                 .roster
                 .draft_cwd()
@@ -56,7 +70,12 @@ impl PaApp {
             return (sid, cwd);
         };
         let key = session_key(row);
-        let cwd = row.cwd.trim();
+        let bound_wt = row
+            .workspace_binding
+            .as_ref()
+            .map(|b| b.worktree_path.as_str())
+            .filter(|s| !s.trim().is_empty());
+        let cwd = bound_wt.unwrap_or_else(|| row.cwd.trim());
         let cwd_opt = (!cwd.is_empty()).then(|| cwd.to_string());
         let effective = self
             .diff_model
@@ -83,6 +102,7 @@ impl PaApp {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn refresh_recent_project_worktrees(&mut self, cx: &mut Context<Self>) {
         let folders = self.settings.recent_folders.clone();
         if folders.is_empty() {
@@ -110,6 +130,7 @@ impl PaApp {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_draft_folder(&mut self, cx: &mut Context<Self>) {
         self.diff_model.bump_draft_folder_generation();
         self.open_popup = OpenPopup::None;
@@ -162,6 +183,7 @@ impl PaApp {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pick_draft_folder(&mut self, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
         cx.notify();
@@ -207,7 +229,7 @@ impl PaApp {
         }
         if matches!(
             self.open_popup,
-            OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+            OpenPopup::DiffBaseBranchMenu
         ) {
             self.open_popup = OpenPopup::None;
         }
@@ -238,6 +260,14 @@ impl PaApp {
     }
 
     pub(crate) fn on_window_focused(&mut self, cx: &mut Context<Self>) {
+        if !self.roster.is_draft_or_empty() {
+            if let Some(sid) = self.roster.active_id().map(str::to_string) {
+                let _ = self
+                    .bridge
+                    .tx
+                    .send(crate::daemon::DaemonCmd::RefreshSessionWorkspace { session: sid });
+            }
+        }
         if self.settings.right_open {
             self.refresh_diff(cx);
         }
@@ -414,6 +444,7 @@ impl PaApp {
         self.refresh_diff(cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn select_diff_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
         if self.roster.is_draft_or_empty() {
@@ -544,6 +575,7 @@ impl PaApp {
                         .h_full()
                         .overflow_hidden()
                         .child(self.render_diff_header(cx))
+                        .children(self.render_diff_peek_banner(cx))
                         .children(self.render_diff_jump_list(cx))
                         .child(self.render_diff_body(window, cx)),
                 )

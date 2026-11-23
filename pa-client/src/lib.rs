@@ -11,8 +11,16 @@ mod models;
 mod wire;
 
 pub mod commands;
+pub mod workspace;
+
 pub use activity::*;
 pub use models::*;
+pub use pa_types::daemon::{
+    BranchInfo, HarnessEntryWire, HarnessKindWire, HarnessScopeWire,
+    RefinementHistoryItemWire, WorkspaceBinding, WorkspaceKind, WorkspaceRecord,
+    WorktreeInfo,
+};
+pub use workspace::*;
 #[cfg(test)]
 use models::supported_levels;
 use pa_types::daemon::agent_roster::{classify_session_roster_status, AgentRosterStatus};
@@ -336,6 +344,19 @@ fn event_frame(event: wire::daemon_client::DaemonClientEvent) -> Option<Frame> {
         wire::daemon_client::DaemonClientEvent::ModelCatalogChanged => {
             Some(json!({"type": "model_catalog_changed"}))
         }
+        wire::daemon_client::DaemonClientEvent::WorkspacesChanged => {
+            Some(json!({"type": "workspaces_changed"}))
+        }
+        wire::daemon_client::DaemonClientEvent::HarnessChanged {
+            scope,
+            workspace_id,
+            active_session_id,
+        } => Some(json!({
+            "type": "harness_changed",
+            "scope": scope,
+            "workspaceId": workspace_id,
+            "activeSessionId": active_session_id,
+        })),
         wire::daemon_client::DaemonClientEvent::SessionBinding {
             previous_active_session_id,
             active_session_id,
@@ -390,6 +411,7 @@ pub struct SessionRow {
     pub depth: u64,
     pub last_activity: String,
     pub modified: String,
+    pub workspace_binding: Option<WorkspaceBinding>,
 }
 
 impl SessionRow {
@@ -554,6 +576,9 @@ impl SessionRow {
             depth: value.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0),
             last_activity: text("lastActivityAt"),
             modified: text("modified"),
+            workspace_binding: value
+                .get("workspaceBinding")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
         }
     }
 }
@@ -1542,6 +1567,7 @@ pub struct SessionState {
     /// `off | minimal | low | medium | high | xhigh | max`
     pub thinking_level: String,
     pub is_streaming: bool,
+    pub workspace_binding: Option<WorkspaceBinding>,
 }
 
 impl SessionState {
@@ -1567,6 +1593,9 @@ impl SessionState {
                 .get("isStreaming")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            workspace_binding: value
+                .get("workspaceBinding")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
         }
     }
 }

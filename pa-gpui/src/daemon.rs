@@ -1,5 +1,9 @@
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
-use pa_client::{Client, ModelEntry, SessionExtra, SessionRow, SessionState, SessionStats};
+use pa_client::{
+    BranchInfo, Client, HarnessEntryWire, HarnessKindWire, HarnessScopeWire, ModelEntry,
+    RefinementHistoryItemWire, SessionExtra, SessionRow, SessionState, SessionStats,
+    WorkspaceBinding, WorkspaceRecord, WorktreeInfo,
+};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -27,6 +31,8 @@ pub enum DaemonCmd {
         model: Option<(String, String)>,
         level: Option<String>,
         cwd: Option<String>,
+        workspace_id: Option<String>,
+        worktree_path: Option<String>,
     },
     SendPrompt {
         session: String,
@@ -70,6 +76,52 @@ pub enum DaemonCmd {
         switch: bool,
     },
     RefreshModels { session: Option<String> },
+    RefreshWorkspaces,
+    RegisterWorkspace { path: String, name: Option<String> },
+    RelinkWorkspace { workspace_id: String, new_path: String },
+    DeleteWorkspace { workspace_id: String, delete_harness: bool },
+    LoadWorktrees { workspace_id: String },
+    CreateWorktree { workspace_id: String, name: String, base_branch: Option<String> },
+    LoadBranches { worktree_path: String },
+    SwitchBranch { worktree_path: String, branch: String, active_session_id: Option<String> },
+    CreateBranch { worktree_path: String, branch: String, start_point: Option<String>, active_session_id: Option<String> },
+    BindSessionWorkspace { session: String, workspace_id: Option<String>, worktree_path: Option<String> },
+    SwitchSessionWorktree { session: String, worktree_path: String },
+    RefreshSessionWorkspace { session: String },
+    HarnessList {
+        scope: Option<HarnessScopeWire>,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+        kind: Option<HarnessKindWire>,
+        query: Option<String>,
+    },
+    HarnessUpsert {
+        scope: HarnessScopeWire,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+        entry_id: Option<String>,
+        kind: HarnessKindWire,
+        title: String,
+        content: String,
+        path: Option<String>,
+    },
+    HarnessDelete {
+        scope: HarnessScopeWire,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+        kind: HarnessKindWire,
+        entry_id: String,
+    },
+    HarnessHistory {
+        scope: Option<HarnessScopeWire>,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+    },
+    HarnessRollback {
+        refinement_id: String,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +173,43 @@ pub enum DaemonEvent {
         primary: String,
         secondary: Option<String>,
     },
+    WorkspacesLoaded {
+        workspaces: Vec<WorkspaceRecord>,
+        worktree_root: String,
+    },
+    WorkspaceRegistered {
+        workspace: WorkspaceRecord,
+        binding: WorkspaceBinding,
+    },
+    WorkspaceRelinked(WorkspaceRecord),
+    WorkspaceDeleted(String),
+    WorktreesLoaded {
+        workspace_id: String,
+        worktrees: Vec<WorktreeInfo>,
+    },
+    WorktreeCreated {
+        workspace_id: String,
+        worktree: WorktreeInfo,
+    },
+    BranchesLoaded {
+        worktree_path: String,
+        branches: Vec<BranchInfo>,
+    },
+    BranchSwitched {
+        worktree_path: String,
+        branch: String,
+    },
+    WorkspaceBindingUpdated {
+        session: String,
+        binding: Option<WorkspaceBinding>,
+    },
+    HarnessEntriesLoaded {
+        entries: Vec<HarnessEntryWire>,
+    },
+    HarnessEntrySaved(HarnessEntryWire),
+    HarnessEntryDeleted { entry_id: String },
+    HarnessHistoryLoaded(Vec<RefinementHistoryItemWire>),
+    HarnessRolledBack,
     LiveFrame(Value),
     Error(String),
 }
@@ -317,6 +406,13 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
             pending_cmds: VecDeque::new(),
         };
 
+        if let Ok((workspaces, worktree_root)) = pa_client::list_workspaces(&client) {
+            let _ = ev_tx.try_send(DaemonEvent::WorkspacesLoaded {
+                workspaces,
+                worktree_root,
+            });
+        }
+
         if let Ok(sessions) = pa_client::list_sessions(&client) {
             let first_id = sessions.first().map(|s| {
                 if !s.id.is_empty() {
@@ -432,6 +528,8 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         model,
                         level,
                         cwd,
+                        workspace_id,
+                        worktree_path,
                     } => {
                         let mut config = serde_json::Map::new();
                         if let Some((provider, model_id)) = model {
@@ -447,6 +545,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         let mut create = json!({});
                         if !config.is_empty() {
                             create["config"] = Value::Object(config);
+                        }
+                        if let Some(ws_id) = workspace_id {
+                            create["workspaceId"] = Value::String(ws_id);
+                        }
+                        if let Some(wt_path) = worktree_path {
+                            create["worktreePath"] = Value::String(wt_path);
                         }
                         if let Some((prev_active, _)) = ws.current_attached.take() {
                             pa_client::detach_session(&client, &prev_active);
@@ -857,6 +961,336 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         let sid = session.as_deref().unwrap_or("");
                         if let Ok(models) = pa_client::model_catalog(&client, sid) {
                             let _ = ev_tx.try_send(DaemonEvent::Models(models));
+                        }
+                    }
+                    DaemonCmd::RefreshWorkspaces => {
+                        match pa_client::list_workspaces(&client) {
+                            Ok((workspaces, worktree_root)) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspacesLoaded {
+                                    workspaces,
+                                    worktree_root,
+                                });
+                            }
+                            Err(err) if !err.to_string().contains("Unknown daemon command") => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    DaemonCmd::RegisterWorkspace { path, name } => {
+                        match pa_client::register_workspace(&client, &path, name.as_deref()) {
+                            Ok((workspace, binding)) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspaceRegistered {
+                                    workspace,
+                                    binding,
+                                });
+                                if let Ok((workspaces, worktree_root)) = pa_client::list_workspaces(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::WorkspacesLoaded {
+                                        workspaces,
+                                        worktree_root,
+                                    });
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::RelinkWorkspace { workspace_id, new_path } => {
+                        match pa_client::relink_workspace(&client, &workspace_id, &new_path) {
+                            Ok(workspace) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspaceRelinked(workspace));
+                                if let Ok((workspaces, worktree_root)) = pa_client::list_workspaces(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::WorkspacesLoaded {
+                                        workspaces,
+                                        worktree_root,
+                                    });
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::DeleteWorkspace { workspace_id, delete_harness } => {
+                        match pa_client::delete_workspace(&client, &workspace_id, delete_harness) {
+                            Ok(_) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspaceDeleted(workspace_id));
+                                if let Ok((workspaces, worktree_root)) = pa_client::list_workspaces(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::WorkspacesLoaded {
+                                        workspaces,
+                                        worktree_root,
+                                    });
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::LoadWorktrees { workspace_id } => {
+                        match pa_client::list_worktrees(&client, &workspace_id) {
+                            Ok(worktrees) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorktreesLoaded {
+                                    workspace_id,
+                                    worktrees,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::CreateWorktree { workspace_id, name, base_branch } => {
+                        match pa_client::create_worktree(
+                            &client,
+                            &workspace_id,
+                            &name,
+                            base_branch.as_deref(),
+                        ) {
+                            Ok(worktree) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorktreeCreated {
+                                    workspace_id: workspace_id.clone(),
+                                    worktree,
+                                });
+                                if let Ok(worktrees) = pa_client::list_worktrees(&client, &workspace_id) {
+                                    let _ = ev_tx.try_send(DaemonEvent::WorktreesLoaded {
+                                        workspace_id,
+                                        worktrees,
+                                    });
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::LoadBranches { worktree_path } => {
+                        match pa_client::list_branches(&client, &worktree_path) {
+                            Ok(branches) => {
+                                let _ = ev_tx.try_send(DaemonEvent::BranchesLoaded {
+                                    worktree_path,
+                                    branches,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::SwitchBranch { worktree_path, branch, active_session_id } => {
+                        match pa_client::switch_branch(
+                            &client,
+                            &worktree_path,
+                            &branch,
+                            active_session_id.as_deref(),
+                        ) {
+                            Ok(current) => {
+                                let _ = ev_tx.try_send(DaemonEvent::BranchSwitched {
+                                    worktree_path: worktree_path.clone(),
+                                    branch: current,
+                                });
+                                if let Ok(branches) = pa_client::list_branches(&client, &worktree_path) {
+                                    let _ = ev_tx.try_send(DaemonEvent::BranchesLoaded {
+                                        worktree_path,
+                                        branches,
+                                    });
+                                }
+                                if let Ok(sessions) = pa_client::list_sessions(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::CreateBranch { worktree_path, branch, start_point, active_session_id } => {
+                        match pa_client::create_branch(
+                            &client,
+                            &worktree_path,
+                            &branch,
+                            start_point.as_deref(),
+                            active_session_id.as_deref(),
+                        ) {
+                            Ok(current) => {
+                                let _ = ev_tx.try_send(DaemonEvent::BranchSwitched {
+                                    worktree_path: worktree_path.clone(),
+                                    branch: current,
+                                });
+                                if let Ok(branches) = pa_client::list_branches(&client, &worktree_path) {
+                                    let _ = ev_tx.try_send(DaemonEvent::BranchesLoaded {
+                                        worktree_path,
+                                        branches,
+                                    });
+                                }
+                                if let Ok(sessions) = pa_client::list_sessions(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::BindSessionWorkspace { session, workspace_id, worktree_path } => {
+                        match pa_client::bind_session_workspace(
+                            &client,
+                            &session,
+                            workspace_id.as_deref(),
+                            worktree_path.as_deref(),
+                        ) {
+                            Ok(binding) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspaceBindingUpdated {
+                                    session,
+                                    binding,
+                                });
+                                if let Ok(sessions) = pa_client::list_sessions(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::SwitchSessionWorktree { session, worktree_path } => {
+                        match pa_client::switch_session_worktree(&client, &session, &worktree_path) {
+                            Ok(binding) => {
+                                let _ = ev_tx.try_send(DaemonEvent::WorkspaceBindingUpdated {
+                                    session,
+                                    binding,
+                                });
+                                if let Ok(sessions) = pa_client::list_sessions(&client) {
+                                    let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                                }
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::RefreshSessionWorkspace { session } => {
+                        if let Ok(binding) = pa_client::refresh_session_workspace(&client, &session) {
+                            let _ = ev_tx.try_send(DaemonEvent::WorkspaceBindingUpdated {
+                                session,
+                                binding,
+                            });
+                        }
+                    }
+                    DaemonCmd::HarnessList {
+                        scope,
+                        workspace_id,
+                        active_session_id,
+                        kind,
+                        query,
+                    } => {
+                        match pa_client::harness_list(
+                            &client,
+                            scope,
+                            workspace_id.as_deref(),
+                            active_session_id.as_deref(),
+                            kind,
+                            query.as_deref(),
+                        ) {
+                            Ok(entries) => {
+                                let _ = ev_tx.try_send(DaemonEvent::HarnessEntriesLoaded { entries });
+                            }
+                            Err(err) if !err.to_string().contains("Unknown daemon command") => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    DaemonCmd::HarnessUpsert {
+                        scope,
+                        workspace_id,
+                        active_session_id,
+                        entry_id,
+                        kind,
+                        title,
+                        content,
+                        path,
+                    } => {
+                        match pa_client::harness_upsert(
+                            &client,
+                            scope,
+                            workspace_id.as_deref(),
+                            active_session_id.as_deref(),
+                            entry_id.as_deref(),
+                            kind,
+                            &title,
+                            &content,
+                            path.as_deref(),
+                        ) {
+                            Ok(entry) => {
+                                let _ = ev_tx.try_send(DaemonEvent::HarnessEntrySaved(entry));
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::HarnessDelete {
+                        scope,
+                        workspace_id,
+                        active_session_id,
+                        kind,
+                        entry_id,
+                    } => {
+                        match pa_client::harness_delete(
+                            &client,
+                            scope,
+                            workspace_id.as_deref(),
+                            active_session_id.as_deref(),
+                            kind,
+                            &entry_id,
+                        ) {
+                            Ok(_) => {
+                                let _ = ev_tx.try_send(DaemonEvent::HarnessEntryDeleted { entry_id });
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
+                    DaemonCmd::HarnessHistory {
+                        scope,
+                        workspace_id,
+                        active_session_id,
+                    } => {
+                        match pa_client::harness_history(
+                            &client,
+                            scope,
+                            workspace_id.as_deref(),
+                            active_session_id.as_deref(),
+                        ) {
+                            Ok(items) => {
+                                let _ = ev_tx.try_send(DaemonEvent::HarnessHistoryLoaded(items));
+                            }
+                            Err(err) if !err.to_string().contains("Unknown daemon command") => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    DaemonCmd::HarnessRollback {
+                        refinement_id,
+                        workspace_id,
+                        active_session_id,
+                    } => {
+                        match pa_client::harness_rollback(
+                            &client,
+                            &refinement_id,
+                            workspace_id.as_deref(),
+                            active_session_id.as_deref(),
+                        ) {
+                            Ok(_) => {
+                                let _ = ev_tx.try_send(DaemonEvent::HarnessRolledBack);
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            }
                         }
                     }
                 }

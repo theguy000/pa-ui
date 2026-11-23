@@ -100,6 +100,14 @@ pub enum DaemonClientEvent {
     /// `model_catalog_changed`: a background daemon-side catalog refresh
     /// changed the served snapshot. Rust-only extension (no TS counterpart).
     ModelCatalogChanged,
+    /// `workspaces_changed`: the daemon-global workspace registry or worktrees changed.
+    WorkspacesChanged,
+    /// `harness_changed`: a continual harness scope changed on disk.
+    HarnessChanged {
+        scope: String,
+        workspace_id: Option<String>,
+        active_session_id: Option<String>,
+    },
     /// `session_binding`: the supervisor rebound a session to a new active id; the view
     /// re-attaches.
     SessionBinding {
@@ -211,6 +219,22 @@ pub(crate) fn client_event_from_value(value: &Value) -> Option<DaemonClientEvent
         }),
         "heartbeats_changed" => Some(DaemonClientEvent::HeartbeatsChanged),
         "model_catalog_changed" => Some(DaemonClientEvent::ModelCatalogChanged),
+        "workspaces_changed" => Some(DaemonClientEvent::WorkspacesChanged),
+        "harness_changed" => Some(DaemonClientEvent::HarnessChanged {
+            scope: value
+                .get("scope")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            workspace_id: value
+                .get("workspaceId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            active_session_id: value
+                .get("activeSessionId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }),
         "session_binding" => Some(DaemonClientEvent::SessionBinding {
             previous_active_session_id: value
                 .get("previousActiveSessionId")

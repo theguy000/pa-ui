@@ -223,10 +223,12 @@ impl DiffModel {
         &self.worktrees
     }
 
+    #[allow(dead_code)]
     pub(crate) fn has_multiple_worktrees(&self) -> bool {
         self.worktrees.len() > 1
     }
 
+    #[allow(dead_code)]
     pub(crate) fn active_worktree(&self) -> Option<&WorktreeEntry> {
         let root = self.repo_root.as_deref()?;
         self.worktrees
@@ -234,6 +236,7 @@ impl DiffModel {
             .find(|wt| same_worktree_path(&wt.path, root))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn main_worktree_label(&self) -> Option<&str> {
         self.worktrees
             .iter()
@@ -242,6 +245,7 @@ impl DiffModel {
             .map(|wt| wt.label.as_str())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_recent_worktrees_probe(&mut self) -> u64 {
         self.recent_probe_generation = self.recent_probe_generation.wrapping_add(1);
         self.recent_probe_generation
@@ -256,6 +260,7 @@ impl DiffModel {
         generation == self.draft_folder_generation
     }
 
+    #[allow(dead_code)]
     pub(crate) fn apply_recent_worktrees(
         &mut self,
         generation: u64,
@@ -268,6 +273,7 @@ impl DiffModel {
         true
     }
 
+    #[allow(dead_code)]
     pub(crate) fn worktrees_for_project(&self, project_path: &str) -> &[WorktreeEntry] {
         self.recent_worktrees
             .get(project_path)
@@ -275,10 +281,12 @@ impl DiffModel {
             .unwrap_or(&[])
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_project_expanded(&self, project_path: &str) -> bool {
         self.expanded_projects.contains(project_path)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn toggle_project_expanded(&mut self, project_path: &str) {
         if !self.expanded_projects.remove(project_path) {
             self.expanded_projects.insert(project_path.to_string());
@@ -322,6 +330,7 @@ impl DiffModel {
         true
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_active_worktree(&self, path: &Path) -> bool {
         self.repo_root
             .as_deref()
@@ -341,6 +350,7 @@ impl DiffModel {
         session_cwd.map(str::to_string)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_selected_worktree(&mut self, session_key: Option<&str>, path: PathBuf) {
         if let Some(key) = session_key {
             self.selected_worktree_by_session
