@@ -1,8 +1,8 @@
 //! Sidebar & window chrome module: custom TitleBar, collapsed icon rail,
-//! grouped session list (Active / Idle / Done), inline rename, and right inspector column.
+//! grouped session list (Active / Idle / Done), inline rename, and title bar.
 
 use crate::app::PaApp;
-use crate::assets::{PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
+use crate::assets::{ICON_GIT_BRANCH_PATH, PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
 use crate::daemon::DaemonCmd;
 use crate::popups::OpenPopup;
 use gpui_kit::component::{
@@ -28,6 +28,38 @@ pub(crate) enum SidebarGroup {
     Active,
     Idle,
     Done,
+}
+
+pub(crate) fn display_folder_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    if let Some(home_path) = home {
+        let home_str = home_path.to_string_lossy();
+        let same_home = {
+            #[cfg(windows)]
+            {
+                trimmed.trim_end_matches(['\\', '/']).eq_ignore_ascii_case(home_str.trim_end_matches(['\\', '/']))
+            }
+            #[cfg(not(windows))]
+            {
+                trimmed.trim_end_matches('/') == home_str.trim_end_matches('/')
+            }
+        };
+        if same_home {
+            return "~".to_string();
+        }
+    }
+    std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(trimmed)
+        .to_string()
 }
 
 pub(crate) fn session_key(row: &SessionRow) -> String {
@@ -129,9 +161,211 @@ impl PaApp {
             )
     }
 
+    fn render_titlebar_context(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let p = self.palette();
+        let is_draft = self.roster.is_draft_or_empty();
+        let (_, active_cwd) = self.active_diff_target();
+        let main_repo_label = self.diff_model.main_worktree_label().map(str::to_string);
+        let active_wt = self.diff_model.active_worktree().cloned();
+        let has_multi_wt = self.diff_model.has_multiple_worktrees();
+
+        let folder_label = main_repo_label.or_else(|| {
+            active_cwd
+                .as_deref()
+                .map(display_folder_name)
+                .filter(|s| !s.is_empty())
+        });
+
+        if !is_draft && folder_label.is_none() {
+            return None;
+        }
+
+        let folder_menu_open = self.open_popup == OpenPopup::FolderMenu;
+        let wt_menu_open = self.open_popup == OpenPopup::DiffWorktreeMenu;
+        let has_folder = folder_label.is_some();
+        let folder_text = folder_label.unwrap_or_else(|| "Choose folder".to_string());
+
+        let folder_el: AnyElement = if is_draft {
+            h_flex()
+                .id("tb-folder-btn")
+                .h(px(22.))
+                .px(px(6.))
+                .gap(px(5.))
+                .max_w(px(220.))
+                .rounded(px(5.))
+                .bg(if folder_menu_open {
+                    p.sidebar_row_selected
+                } else {
+                    Hsla::transparent_black()
+                })
+                .items_center()
+                .cursor_pointer()
+                .hover(move |s| s.bg(p.sidebar_row_hover))
+                .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    if this.open_popup == OpenPopup::FolderMenu {
+                        this.open_popup = OpenPopup::None;
+                    } else {
+                        this.open_popup = OpenPopup::FolderMenu;
+                        this.refresh_recent_project_worktrees(cx);
+                    }
+                    cx.notify();
+                }))
+                .child(
+                    Icon::new(if has_folder {
+                        IconName::FolderOpen
+                    } else {
+                        IconName::Folder
+                    })
+                    .size(px(12.))
+                    .text_color(p.quiet_ink),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if has_folder { p.ink } else { p.quiet_ink })
+                        .child(folder_text),
+                )
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(px(10.5))
+                        .text_color(p.quiet_ink),
+                )
+                .into_any_element()
+        } else {
+            h_flex()
+                .id("tb-folder-label")
+                .h(px(22.))
+                .px(px(4.))
+                .gap(px(5.))
+                .max_w(px(210.))
+                .items_center()
+                .child(
+                    Icon::new(IconName::Folder)
+                        .size(px(12.))
+                        .text_color(p.quiet_ink),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.ink)
+                        .child(folder_text),
+                )
+                .into_any_element()
+        };
+
+        let worktree_el: Option<AnyElement> = active_wt.map(|wt| {
+            let wt_label = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
+            if has_multi_wt {
+                h_flex()
+                    .id("tb-worktree-btn")
+                    .h(px(22.))
+                    .px(px(6.))
+                    .gap(px(5.))
+                    .max_w(px(210.))
+                    .rounded(px(5.))
+                    .bg(if wt_menu_open {
+                        p.sidebar_row_selected
+                    } else {
+                        Hsla::transparent_black()
+                    })
+                    .items_center()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(p.sidebar_row_hover))
+                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.open_popup = if this.open_popup == OpenPopup::DiffWorktreeMenu {
+                            OpenPopup::None
+                        } else {
+                            OpenPopup::DiffWorktreeMenu
+                        };
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path(ICON_GIT_BRANCH_PATH)
+                            .size(px(11.5))
+                            .flex_shrink_0()
+                            .text_color(p.quiet_ink),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(p.quiet_ink)
+                            .child(wt_label),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(px(10.5))
+                            .text_color(p.quiet_ink),
+                    )
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .id("tb-worktree-badge")
+                    .h(px(22.))
+                    .px(px(4.))
+                    .gap(px(4.))
+                    .max_w(px(180.))
+                    .items_center()
+                    .child(
+                        svg()
+                            .path(ICON_GIT_BRANCH_PATH)
+                            .size(px(11.))
+                            .flex_shrink_0()
+                            .text_color(p.quiet_ink),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(p.quiet_ink)
+                            .child(wt_label),
+                    )
+                    .into_any_element()
+            }
+        });
+
+        Some(
+            h_flex()
+                .min_w_0()
+                .gap(px(5.))
+                .items_center()
+                .child(folder_el)
+                .when_some(worktree_el, |row, wt_el| {
+                    row.child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(p.sidebar_group_empty_ink)
+                            .child("/"),
+                    )
+                    .child(wt_el)
+                })
+                .into_any_element(),
+        )
+    }
+
     pub(crate) fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
         let settings_open = self.open_popup == OpenPopup::SettingsMenu;
+        let left_offset = if self.settings.sidebar_open { 246. } else { 46. };
 
         TitleBar::new()
             .h(px(32.))
@@ -141,10 +375,12 @@ impl PaApp {
                 h_flex()
                     .w_full()
                     .h_full()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(4.))
+                    .pl(px(left_offset))
                     .pr(px(8.))
+                    .gap(px(4.))
+                    .items_center()
+                    .children(self.render_titlebar_context(cx))
+                    .child(div().flex_1().h_full())
                     .child(
                         div()
                             .id("tb-settings")
@@ -202,9 +438,7 @@ impl PaApp {
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.settings.right_open = !this.settings.right_open;
-                                this.settings.save();
-                                cx.notify();
+                                this.toggle_right_column(cx);
                             })),
                     ),
             )
@@ -674,19 +908,4 @@ impl PaApp {
         card
     }
 
-    pub(crate) fn render_right_column(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.settings.right_open {
-            return None;
-        }
-        let p = self.palette();
-        Some(
-            v_flex()
-                .w(px(300.))
-                .h_full()
-                .bg(p.window_surface)
-                .border_l_1()
-                .border_color(p.sidebar_group_edge)
-                .into_any_element(),
-        )
-    }
 }

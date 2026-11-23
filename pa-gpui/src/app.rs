@@ -1,6 +1,7 @@
 use crate::composer::{parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH};
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
+use crate::diff_model::DiffModel;
 use crate::popups::OpenPopup;
 use crate::providers::{
     delete_custom_endpoint, fetch_models_for_endpoint, load_snapshot, remove_builtin_auth,
@@ -17,6 +18,7 @@ use crate::transcript::{
     start_tool_call, TranscriptItem,
 };
 use gpui_kit::component::{
+    diff::{DiffEvent, DiffMode, DiffState},
     h_flex,
     input::{IndentInline, InputEvent, InputState, MoveDown, MoveUp, TextareaState},
     scroll::ScrollableElement as _,
@@ -69,6 +71,8 @@ pub struct PaApp {
     pub(crate) notice: Option<SharedString>,
     pub(crate) roster: SessionRoster,
     pub(crate) composer_model: ComposerModel,
+    pub(crate) diff_model: DiffModel,
+    pub(crate) diff_state: Entity<DiffState>,
     pub(crate) renaming: Option<RenameTarget>,
     pub(crate) items: Vec<TranscriptItem>,
     pub(crate) next_item_id: usize,
@@ -295,12 +299,43 @@ impl PaApp {
             });
         });
 
+        let initial_diff_mode = if settings.diff_split {
+            DiffMode::Split
+        } else {
+            DiffMode::Unified
+        };
+        let diff_state =
+            cx.new(|cx| DiffState::new(Vec::new(), cx).with_mode(initial_diff_mode));
+        cx.subscribe(&diff_state, |this, _, event: &DiffEvent, cx| match event {
+            DiffEvent::FileExpanded(path) => {
+                this.on_diff_file_expanded(path.as_ref(), cx);
+            }
+            DiffEvent::FileCollapsed(path) => {
+                this.diff_model.set_file_collapsed(path.as_ref(), true);
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
+
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.on_window_focused(cx);
+            }
+        })
+        .detach();
+
+        let mut roster = SessionRoster::new();
+        roster.set_draft_cwd(settings.last_folder.clone());
+
         Self {
             bridge,
             status: "Connecting…".into(),
             notice: None,
-            roster: SessionRoster::new(),
+            roster,
             composer_model: ComposerModel::new(),
+            diff_model: DiffModel::new(settings.diff_width),
+            diff_state,
             renaming: None,
             items: Vec::new(),
             next_item_id: 1,
@@ -352,6 +387,70 @@ impl PaApp {
 
     pub(crate) fn palette(&self) -> PaPalette {
         PaPalette::for_mode(self.settings.dark_mode)
+    }
+
+    pub(crate) fn sidebar_width(&self) -> f32 {
+        if self.settings.sidebar_open {
+            244.0
+        } else {
+            44.0
+        }
+    }
+
+    pub(crate) fn right_column_width(&self, window: &Window) -> f32 {
+        if !self.settings.right_open {
+            return 0.0;
+        }
+        let viewport_w = window.viewport_size().width.as_f32();
+        self.diff_model
+            .effective_width(viewport_w, self.sidebar_width())
+    }
+
+    pub(crate) fn toggle_right_column(&mut self, cx: &mut Context<Self>) {
+        self.settings.right_open = !self.settings.right_open;
+        if !self.settings.right_open {
+            self.diff_model.cancel_pending_on_close();
+            if matches!(
+                self.open_popup,
+                OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+            ) {
+                self.open_popup = OpenPopup::None;
+            }
+        }
+        self.settings.save();
+        if self.settings.right_open {
+            self.refresh_diff(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn begin_right_column_drag(
+        &mut self,
+        mouse_x: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport_w = window.viewport_size().width.as_f32();
+        let sidebar_w = self.sidebar_width();
+        self.diff_model.begin_drag(mouse_x, viewport_w, sidebar_w);
+        cx.notify();
+    }
+
+    pub(crate) fn finish_right_column_drag(&mut self) -> bool {
+        if let Some(width) = self.diff_model.end_drag() {
+            self.settings.diff_width = width;
+            self.settings.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn reset_right_column_width(&mut self, cx: &mut Context<Self>) {
+        self.settings.diff_width = self.diff_model.reset_width();
+        self.settings.save();
+        cx.notify();
     }
 
     pub(crate) fn refresh_providers_snapshot(&mut self) {
@@ -860,9 +959,16 @@ impl PaApp {
     }
 
     pub(crate) fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let active_cwd = self
+            .roster
+            .active_session()
+            .map(|r| r.cwd.trim().to_string())
+            .filter(|s| !s.is_empty());
         self.open_popup = OpenPopup::None;
         self.hovered_model = None;
         self.roster.begin_draft();
+        let sticky_folder = self.settings.last_folder.clone().or(active_cwd);
+        self.roster.set_draft_cwd(sticky_folder);
         self.is_streaming = false;
         self.composer_model.clear_busy();
         self.composer_model.clear_queues();
@@ -876,6 +982,7 @@ impl PaApp {
         self.list_state.set_follow_mode(FollowMode::Tail);
         self.notice = None;
         self.sync_stop_target(cx);
+        self.sync_diff_for_active_session(cx);
         let focus = self.composer.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
         cx.notify();
@@ -1005,6 +1112,7 @@ impl PaApp {
                 self.roster.set_active_id(Some(new_sid));
                 self.notice = None;
                 self.sync_stop_target(cx);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::Sessions(rows) => {
                 if let Some(auto_sid) = self.roster.apply_sessions(rows) {
@@ -1014,6 +1122,7 @@ impl PaApp {
                     self.is_streaming = streaming;
                 }
                 self.sync_stop_target(cx);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::Messages {
                 session,
@@ -1027,6 +1136,7 @@ impl PaApp {
                     self.composer_model.cancel_edit_queue();
                 }
                 self.roster.clear_draft();
+                self.roster.clear_pending_start_cwd();
                 self.roster.set_active_id(Some(session));
                 self.oldest_entry_id = (!first_entry.is_empty()).then_some(first_entry);
                 self.has_older = more;
@@ -1040,6 +1150,7 @@ impl PaApp {
                 self.list_state
                     .reset_with_uniform_height(self.items.len(), px(44.));
                 self.list_state.set_follow_mode(FollowMode::Tail);
+                self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::TailRefresh {
                 session,
@@ -1369,6 +1480,7 @@ impl PaApp {
                 if self.is_streaming {
                     self.composer_model.set_busy_label("Waiting", false);
                 }
+                self.schedule_debounced_diff_refresh(cx);
             }
             "auto_retry_start" => {
                 self.is_streaming = true;
@@ -1471,6 +1583,7 @@ impl PaApp {
                 if let Some(sid) = self.roster.active_id().map(str::to_string) {
                     let _ = self.bridge.tx.send(DaemonCmd::ReloadTranscript(sid));
                 }
+                self.schedule_debounced_diff_refresh(cx);
             }
             "session_updated" => {
                 let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);
@@ -1558,7 +1671,7 @@ impl Render for PaApp {
             .size_full()
             .bg(p.window_surface)
             .text_color(p.ink)
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 if this.composer_model.is_dragging() {
                     if ev.pressed_button != Some(MouseButton::Left) {
                         this.composer_model.end_drag();
@@ -1566,6 +1679,22 @@ impl Render for PaApp {
                         return;
                     }
                     if this.composer_model.update_drag(ev.position.y.as_f32()) {
+                        cx.notify();
+                    }
+                }
+                if this.diff_model.is_dragging() {
+                    if ev.pressed_button != Some(MouseButton::Left) {
+                        if this.finish_right_column_drag() {
+                            cx.notify();
+                        }
+                        return;
+                    }
+                    let viewport_w = window.viewport_size().width.as_f32();
+                    let sidebar_w = this.sidebar_width();
+                    if this
+                        .diff_model
+                        .update_drag(ev.position.x.as_f32(), viewport_w, sidebar_w)
+                    {
                         cx.notify();
                     }
                 }
@@ -1589,7 +1718,9 @@ impl Render for PaApp {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.composer_model.end_drag() {
+                    let changed =
+                        this.composer_model.end_drag() | this.finish_right_column_drag();
+                    if changed {
                         cx.notify();
                     }
                 }),
@@ -1604,7 +1735,9 @@ impl Render for PaApp {
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let key = ev.keystroke.key.as_str();
                 let ctrl = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
-                if ctrl && key == "b" {
+                if ctrl && ev.keystroke.modifiers.shift && key.eq_ignore_ascii_case("b") {
+                    this.toggle_right_column(cx);
+                } else if ctrl && key.eq_ignore_ascii_case("b") {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
                     this.rail_mark_hovered = false;
                     this.settings.save();
@@ -1769,7 +1902,7 @@ impl Render for PaApp {
                                     )
                                     .child(self.render_composer_band(window, cx)),
                             )
-                            .children(self.render_right_column(cx)),
+                            .children(self.render_right_column(window, cx)),
                     ),
             )
             .children(self.render_floating_popups(window, cx))

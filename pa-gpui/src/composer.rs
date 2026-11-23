@@ -479,14 +479,27 @@ impl PaApp {
             self.composer_model.set_busy_label("Waiting", false);
         }
 
-        if self.roster.is_draft() || self.roster.active_id().is_none() {
+        if self.roster.is_draft_or_empty() {
             let (model, level) = self.roster.consume_draft_model_for_start();
+            let cwd = self.roster.take_draft_cwd();
+            if let Some(ref dir) = cwd {
+                let project = self
+                    .diff_model
+                    .worktrees()
+                    .iter()
+                    .find(|wt| wt.is_main)
+                    .map(|wt| wt.path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| dir.clone());
+                self.settings.record_recent_project(&project, dir);
+                self.settings.save();
+            }
             self.is_streaming = true;
             let _ = self.bridge.tx.send(DaemonCmd::StartChat {
                 text,
                 images: wire_images,
                 model,
                 level,
+                cwd,
             });
             self.set_composer_text("", window, cx);
             self.sync_stop_target(cx);
@@ -1136,16 +1149,8 @@ impl PaApp {
     /// Compute `(left_edge_px, right_inset_px)` of the centered composer column in window coordinates.
     pub(crate) fn composer_column_insets(&self, window: &Window) -> (f32, f32) {
         let viewport_w = window.viewport_size().width.as_f32();
-        let sidebar_w = if self.settings.sidebar_open {
-            244.0
-        } else {
-            44.0
-        };
-        let right_w = if self.settings.right_open {
-            300.0
-        } else {
-            0.0
-        };
+        let sidebar_w = self.sidebar_width();
+        let right_w = self.right_column_width(window);
         let center_w = (viewport_w - sidebar_w - right_w).max(0.0);
         let col_w = (center_w - 48.0).clamp(0.0, CHAT_COLUMN_MAX_WIDTH);
         let gutter = ((center_w - col_w) * 0.5).max(24.0);

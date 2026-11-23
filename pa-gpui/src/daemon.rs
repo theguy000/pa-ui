@@ -20,6 +20,7 @@ pub enum DaemonCmd {
         images: Vec<Value>,
         model: Option<(String, String)>,
         level: Option<String>,
+        cwd: Option<String>,
     },
     SendPrompt {
         session: String,
@@ -313,6 +314,7 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         images,
                         model,
                         level,
+                        cwd,
                     } => {
                         let mut config = serde_json::Map::new();
                         if let Some((provider, model_id)) = model {
@@ -321,6 +323,9 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                         }
                         if let Some(level) = level {
                             config.insert("thinking".into(), Value::String(level));
+                        }
+                        if let Some(cwd) = cwd {
+                            config.insert("cwd".into(), Value::String(cwd));
                         }
                         let mut create = json!({});
                         if !config.is_empty() {
