@@ -26,6 +26,20 @@ _Avoid_: raw type, custom row, notice
 The daemon's record of a session's messages, and the authority on what happened there. The window reconciles toward it rather than trusting the live stream.
 _Avoid_: cache, database, history, backend
 
+### Workspace
+
+**Startup folder**:
+The folder a session begins in, chosen when the session starts; it may be a Git repository, a worktree, or an ordinary folder.
+_Avoid_: session cwd, initial dir, base folder
+
+**Active workspace**:
+The folder a session is currently working in, together with its Git worktree and branch when inside a repository. It starts at the startup folder, follows the most recent substantive work, and falls back to the startup folder when its folder is gone.
+_Avoid_: active cwd, current repo, detected folder, live cwd
+
+**Worktree**:
+One Git working tree of a repository, either the main checkout or a linked worktree, identified by its root folder and current branch or detached HEAD.
+_Avoid_: checkout, branch folder, git dir
+
 ### What the reader sees
 
 **Sidebar**:
