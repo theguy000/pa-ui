@@ -194,24 +194,23 @@ mod tests {
 }
 
 
+fn agent_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("PRIME_AGENT_CODING_AGENT_DIR").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(PathBuf::from(home).join(".prime").join("agent"))
+}
+
 /// Path to `~/.prime/agent/settings.json` (shared with the daemon).
 pub fn agent_settings_path() -> Option<PathBuf> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-    Some(PathBuf::from(home).join(".prime").join("agent").join("settings.json"))
+    Some(agent_dir()?.join("settings.json"))
 }
 
 /// Default worktree root (`~/.prime/agent/worktrees`).
 pub fn default_worktree_root() -> String {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(|h| {
-            PathBuf::from(h)
-                .join(".prime")
-                .join("agent")
-                .join("worktrees")
-                .to_string_lossy()
-                .into_owned()
-        })
+    agent_dir()
+        .map(|d| d.join("worktrees").to_string_lossy().into_owned())
         .unwrap_or_else(|| "~/.prime/agent/worktrees".to_string())
 }
 

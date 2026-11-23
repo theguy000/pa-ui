@@ -67,10 +67,12 @@ impl Client {
             .worker_threads(2)
             .enable_all()
             .build()?;
+        let socket = std::env::var_os("PRIME_AGENT_DAEMON_SOCKET")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(DAEMON_PIPE));
         let (client, mut events) = rt
-            .block_on(wire::daemon_client::DaemonClient::connect(
-                std::path::Path::new(DAEMON_PIPE),
-            ))
+            .block_on(wire::daemon_client::DaemonClient::connect(&socket))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let hello = client.hello().clone();
         let client = std::sync::Arc::new(client);
