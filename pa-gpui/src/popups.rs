@@ -1254,7 +1254,7 @@ impl PaApp {
                     .iter()
                     .any(|wt| crate::diff_git::same_worktree_path(&wt.path, current_draft_path));
             let row_selected = if expanded {
-                exact_selected
+                exact_selected && !child_selected
             } else {
                 exact_selected || child_selected
             };

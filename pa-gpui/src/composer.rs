@@ -479,11 +479,18 @@ impl PaApp {
             self.composer_model.set_busy_label("Waiting", false);
         }
 
-        if self.roster.is_draft() || self.roster.active_id().is_none() {
+        if self.roster.is_draft_or_empty() {
             let (model, level) = self.roster.consume_draft_model_for_start();
             let cwd = self.roster.take_draft_cwd();
             if let Some(ref dir) = cwd {
-                self.settings.last_folder = Some(dir.clone());
+                let project = self
+                    .diff_model
+                    .worktrees()
+                    .iter()
+                    .find(|wt| wt.is_main)
+                    .map(|wt| wt.path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| dir.clone());
+                self.settings.record_recent_project(&project, dir);
                 self.settings.save();
             }
             self.is_streaming = true;

@@ -133,13 +133,15 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn diff_preferences_round_trip_through_json() {
-        let mut settings = AppSettings::default();
-        settings.right_open = true;
-        settings.diff_width = 560.0;
-        settings.diff_scope = DiffScope::Branch;
-        settings.diff_split = true;
-        settings.diff_wrap = true;
-        settings.diff_jump_collapsed = true;
+        let settings = AppSettings {
+            right_open: true,
+            diff_width: 560.0,
+            diff_scope: DiffScope::Branch,
+            diff_split: true,
+            diff_wrap: true,
+            diff_jump_collapsed: true,
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&settings).expect("serialize settings");
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize settings");

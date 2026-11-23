@@ -69,6 +69,7 @@ pub(crate) struct DiffModel {
     recent_worktrees: HashMap<String, Vec<WorktreeEntry>>,
     expanded_projects: HashSet<String>,
     recent_probe_generation: u64,
+    draft_folder_generation: u64,
 }
 
 impl DiffModel {
@@ -106,6 +107,7 @@ impl DiffModel {
             recent_worktrees: HashMap::new(),
             expanded_projects: HashSet::new(),
             recent_probe_generation: 0,
+            draft_folder_generation: 0,
         }
     }
 
@@ -160,11 +162,16 @@ impl DiffModel {
     }
 
     pub(crate) fn cancel_pending_on_close(&mut self) {
+        let was_loading = self.loading;
         self.dragging = false;
         self.loading = false;
         self.generation = self.generation.wrapping_add(1);
         self.debounce_seq = self.debounce_seq.wrapping_add(1);
         self.loading_paths.clear();
+        if was_loading {
+            self.context_generation = self.context_generation.wrapping_add(1);
+            self.context_cwd = None;
+        }
     }
 
     pub(crate) fn reset_width(&mut self) -> f32 {
@@ -235,6 +242,15 @@ impl DiffModel {
     pub(crate) fn begin_recent_worktrees_probe(&mut self) -> u64 {
         self.recent_probe_generation = self.recent_probe_generation.wrapping_add(1);
         self.recent_probe_generation
+    }
+
+    pub(crate) fn bump_draft_folder_generation(&mut self) -> u64 {
+        self.draft_folder_generation = self.draft_folder_generation.wrapping_add(1);
+        self.draft_folder_generation
+    }
+
+    pub(crate) fn is_current_draft_folder_generation(&self, generation: u64) -> bool {
+        generation == self.draft_folder_generation
     }
 
     pub(crate) fn apply_recent_worktrees(
@@ -370,6 +386,8 @@ impl DiffModel {
 
     pub(crate) fn mark_not_a_git_repo(&mut self, session_key: Option<String>, cwd: Option<String>) {
         self.generation = self.generation.wrapping_add(1);
+        self.context_generation = self.context_generation.wrapping_add(1);
+        self.context_cwd = cwd.clone();
         self.loading = false;
         self.session_key = session_key;
         self.cwd = cwd;
@@ -410,6 +428,8 @@ impl DiffModel {
         self.scope = Some(scope);
         self.requested_base = requested_base;
         if switched || matches!(self.status, DiffViewStatus::Idle | DiffViewStatus::NotAGitRepo) {
+            self.context_generation = self.context_generation.wrapping_add(1);
+            self.context_cwd = None;
             self.repo_root = None;
             self.base_ref = None;
             self.base_branch = None;
@@ -440,6 +460,8 @@ impl DiffModel {
         self.loading_paths.clear();
         match outcome {
             DiffLoadOutcome::NotAGitRepo => {
+                self.context_generation = self.context_generation.wrapping_add(1);
+                self.context_cwd = self.cwd.clone();
                 self.repo_root = None;
                 self.base_ref = None;
                 self.base_branch = None;
@@ -453,6 +475,8 @@ impl DiffModel {
                 Some(Vec::new())
             }
             DiffLoadOutcome::Error(msg) => {
+                self.context_generation = self.context_generation.wrapping_add(1);
+                self.context_cwd = None;
                 self.repo_root = None;
                 self.base_ref = None;
                 self.base_branch = None;
@@ -864,5 +888,42 @@ mod tests {
         ));
 
         let _ = std::fs::remove_dir_all(&temp_wt_a);
+    }
+
+    #[::core::prelude::v1::test]
+    fn context_probe_recovers_after_non_git_load_and_ignores_stale_probe() {
+        let mut model = DiffModel::new(DIFF_DEFAULT_WIDTH);
+        let (p1, _) = model
+            .begin_context_probe(Some("/repo-a"))
+            .expect("initial probe for repo-a");
+        assert!(model.apply_context_probe(
+            p1,
+            Some(RepoContext {
+                repo_root: PathBuf::from("/repo-a"),
+                worktrees: vec![WorktreeEntry {
+                    path: PathBuf::from("/repo-a"),
+                    label: "repo-a".into(),
+                    branch: Some("main".into()),
+                    is_main: true,
+                }],
+            }),
+        ));
+        assert!(model.active_worktree().is_some());
+
+        let (g1, _) = model.begin_load(
+            Some("s-home".into()),
+            Some("/home".into()),
+            DiffScope::Uncommitted,
+            None,
+        );
+        assert!(!model.apply_context_probe(p1, None));
+        model.apply_load_outcome(g1, &DiffLoadOutcome::NotAGitRepo);
+        assert!(model.active_worktree().is_none());
+
+        let (p2, path2) = model
+            .begin_context_probe(Some("/repo-a"))
+            .expect("returning to repo-a while closed must re-probe");
+        assert_eq!(path2, PathBuf::from("/repo-a"));
+        assert!(p2 != p1);
     }
 }

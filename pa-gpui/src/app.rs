@@ -325,11 +325,14 @@ impl PaApp {
         })
         .detach();
 
+        let mut roster = SessionRoster::new();
+        roster.set_draft_cwd(settings.last_folder.clone());
+
         Self {
             bridge,
             status: "Connecting…".into(),
             notice: None,
-            roster: SessionRoster::new(),
+            roster,
             composer_model: ComposerModel::new(),
             diff_model: DiffModel::new(settings.diff_width),
             diff_state,
@@ -964,12 +967,7 @@ impl PaApp {
         self.open_popup = OpenPopup::None;
         self.hovered_model = None;
         self.roster.begin_draft();
-        let sticky_folder = self
-            .settings
-            .last_folder
-            .clone()
-            .filter(|p| std::path::Path::new(p).is_dir())
-            .or_else(|| active_cwd.filter(|p| std::path::Path::new(p).is_dir()));
+        let sticky_folder = self.settings.last_folder.clone().or(active_cwd);
         self.roster.set_draft_cwd(sticky_folder);
         self.is_streaming = false;
         self.composer_model.clear_busy();
@@ -1138,6 +1136,7 @@ impl PaApp {
                     self.composer_model.cancel_edit_queue();
                 }
                 self.roster.clear_draft();
+                self.roster.clear_pending_start_cwd();
                 self.roster.set_active_id(Some(session));
                 self.oldest_entry_id = (!first_entry.is_empty()).then_some(first_entry);
                 self.has_older = more;

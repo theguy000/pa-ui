@@ -1,5 +1,5 @@
 //! Sidebar & window chrome module: custom TitleBar, collapsed icon rail,
-//! grouped session list (Active / Idle / Done), inline rename, and right inspector column.
+//! grouped session list (Active / Idle / Done), inline rename, and title bar.
 
 use crate::app::PaApp;
 use crate::assets::{ICON_GIT_BRANCH_PATH, PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
@@ -163,7 +163,7 @@ impl PaApp {
 
     fn render_titlebar_context(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.palette();
-        let is_draft = self.roster.is_draft() || self.roster.active_id().is_none();
+        let is_draft = self.roster.is_draft_or_empty();
         let (_, active_cwd) = self.active_diff_target();
         let main_repo_label = self.diff_model.main_worktree_label().map(str::to_string);
         let active_wt = self.diff_model.active_worktree().cloned();
@@ -900,7 +900,6 @@ impl PaApp {
                             .bridge
                             .tx
                             .send(DaemonCmd::SelectSession(click_key.clone()));
-                        this.sync_diff_for_active_session(cx);
                         cx.notify();
                     })),
             );

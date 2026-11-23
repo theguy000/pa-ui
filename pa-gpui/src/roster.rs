@@ -47,6 +47,7 @@ pub(crate) struct SessionRoster {
     draft_chat: bool,
     draft_model_picked: bool,
     draft_cwd: Option<String>,
+    pending_start_cwd: Option<String>,
     subagent_count: usize,
     heartbeat_count: usize,
     shell_count: usize,
@@ -63,6 +64,7 @@ impl SessionRoster {
             draft_chat: false,
             draft_model_picked: false,
             draft_cwd: None,
+            pending_start_cwd: None,
             subagent_count: 0,
             heartbeat_count: 0,
             shell_count: 0,
@@ -81,8 +83,16 @@ impl SessionRoster {
         self.draft_chat
     }
 
+    pub(crate) fn is_draft_or_empty(&self) -> bool {
+        self.draft_chat || self.active_session_id.is_none()
+    }
+
     pub(crate) fn draft_cwd(&self) -> Option<&str> {
         self.draft_cwd.as_deref()
+    }
+
+    pub(crate) fn pending_start_cwd(&self) -> Option<&str> {
+        self.pending_start_cwd.as_deref()
     }
 
     pub(crate) fn set_draft_cwd(&mut self, cwd: Option<String>) {
@@ -93,7 +103,9 @@ impl SessionRoster {
     }
 
     pub(crate) fn take_draft_cwd(&mut self) -> Option<String> {
-        self.draft_cwd.take()
+        let taken = self.draft_cwd.take();
+        self.pending_start_cwd = taken.clone();
+        taken
     }
 
     pub(crate) fn models(&self) -> &[ModelEntry] {
@@ -117,8 +129,16 @@ impl SessionRoster {
     /// when no session is currently active and the user is not composing a draft chat.
     pub(crate) fn apply_sessions(&mut self, rows: Vec<SessionRow>) -> Option<String> {
         self.sessions = rows;
+        if self.active_session().is_some() {
+            self.pending_start_cwd = None;
+        }
         if self.active_session_id.is_none() && !self.draft_chat {
-            self.sessions.first().map(session_key)
+            let auto = self.sessions.first().map(session_key);
+            if auto.is_some() {
+                self.draft_cwd = None;
+                self.pending_start_cwd = None;
+            }
+            auto
         } else {
             None
         }
@@ -182,6 +202,7 @@ impl SessionRoster {
         self.draft_chat = true;
         self.draft_model_picked = false;
         self.draft_cwd = None;
+        self.pending_start_cwd = None;
         self.active_session_id = None;
         self.stats = None;
         self.subagent_count = 0;
@@ -205,10 +226,15 @@ impl SessionRoster {
         self.draft_cwd = None;
     }
 
+    pub(crate) fn clear_pending_start_cwd(&mut self) {
+        self.pending_start_cwd = None;
+    }
+
     pub(crate) fn select_session_optimistic(&mut self, key: &str) {
         self.draft_chat = false;
         self.draft_model_picked = false;
         self.draft_cwd = None;
+        self.pending_start_cwd = None;
         if let Some(row) = self.sessions.iter_mut().find(|s| session_key(s) == key) {
             if !row.is_resident() || row.lifecycle == "archived" {
                 row.worker_state = "ready".into();

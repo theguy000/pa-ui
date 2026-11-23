@@ -42,12 +42,18 @@ impl PaApp {
     }
 
     pub(crate) fn active_diff_target(&self) -> (Option<String>, Option<String>) {
-        if self.roster.is_draft() {
-            let cwd = self.roster.draft_cwd().map(str::to_string);
+        if self.roster.is_draft_or_empty() {
+            let cwd = self
+                .roster
+                .draft_cwd()
+                .or_else(|| self.roster.pending_start_cwd())
+                .map(str::to_string);
             return (cwd.as_ref().map(|_| "__draft__".to_string()), cwd);
         }
         let Some(row) = self.roster.active_session() else {
-            return (None, None);
+            let sid = self.roster.active_id().map(str::to_string);
+            let cwd = self.roster.pending_start_cwd().map(str::to_string);
+            return (sid, cwd);
         };
         let key = session_key(row);
         let cwd = row.cwd.trim();
@@ -114,6 +120,7 @@ impl PaApp {
         if trimmed.is_empty() {
             return;
         }
+        let folder_gen = self.diff_model.bump_draft_folder_generation();
         self.open_popup = OpenPopup::None;
         self.roster.set_draft_cwd(Some(trimmed.clone()));
         if let Some(project) = project_root {
@@ -132,9 +139,11 @@ impl PaApp {
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
-                    this.settings.record_recent_project(&project, &trimmed);
-                    this.settings.save();
-                    cx.notify();
+                    if this.diff_model.is_current_draft_folder_generation(folder_gen) {
+                        this.settings.record_recent_project(&project, &trimmed);
+                        this.settings.save();
+                        cx.notify();
+                    }
                 });
             })
             .detach();
@@ -158,7 +167,9 @@ impl PaApp {
             {
                 let dir_str = dir.to_string_lossy().to_string();
                 let _ = this.update(cx, |this, cx| {
-                    this.select_draft_folder(dir_str, None, cx);
+                    if this.roster.is_draft_or_empty() {
+                        this.select_draft_folder(dir_str, None, cx);
+                    }
                 });
             }
         })
@@ -395,7 +406,7 @@ impl PaApp {
 
     pub(crate) fn select_diff_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
-        if self.roster.is_draft() || self.roster.active_id().is_none() {
+        if self.roster.is_draft_or_empty() {
             let dir_str = path.to_string_lossy().to_string();
             let main_root = self
                 .diff_model
@@ -1316,7 +1327,7 @@ impl PaApp {
             }
             DiffViewStatus::NotAGitRepo => {
                 let (title, hint) =
-                    if self.roster.is_draft() && self.roster.draft_cwd().is_none() {
+                    if self.roster.is_draft_or_empty() && self.roster.draft_cwd().is_none() {
                         (
                             "Choose a folder".to_string(),
                             "Pick a git folder in the title bar above to preview diffs".to_string(),
@@ -1365,7 +1376,7 @@ impl PaApp {
             DiffViewStatus::Idle | DiffViewStatus::Loading => self.render_diff_empty_state(
                 IconName::RefreshCw,
                 p.working,
-                "Loading changes...".to_string(),
+                "Loading changes…".to_string(),
                 None,
                 None,
             ),

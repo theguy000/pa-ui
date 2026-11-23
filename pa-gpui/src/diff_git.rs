@@ -297,7 +297,7 @@ fn load_untracked_entry(
     );
     let opts = DiffParseOptions::new().truncated_hunks(true);
     let df = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
-    let summary = summary_from_diff_file(&df, true, truncated, false);
+    let summary = summary_from_diff_file(&df, true, false, false);
     Some((df, summary))
 }
 
@@ -394,11 +394,14 @@ pub(crate) fn load_single_file_diff(
 }
 
 pub(crate) fn same_worktree_path(a: &Path, b: &Path) -> bool {
-    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
-        return ca == cb;
-    }
-    let norm = |p: &Path| {
-        let s = p.to_string_lossy().replace('\\', "/");
+    let norm = |p: &Path| -> String {
+        let mut s = p.to_string_lossy().replace('\\', "/");
+        if let Some(stripped) = s.strip_prefix("//?/") {
+            s = stripped.to_string();
+        }
+        while s.len() > 1 && s.ends_with('/') && !s.ends_with(":/") {
+            s.pop();
+        }
         #[cfg(target_os = "windows")]
         {
             s.to_ascii_lowercase()
@@ -549,12 +552,12 @@ pub(crate) fn parse_worktree_list_porcelain(stdout: &str) -> Vec<WorktreeEntry> 
     out
 }
 
-fn path_mtime_secs(path: &Path) -> u64 {
+fn path_mtime_nanos(path: &Path) -> u128 {
     fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0)
 }
 
@@ -576,13 +579,13 @@ fn resolve_worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn worktree_activity_secs(worktree_path: &Path) -> u64 {
-    let mut best = path_mtime_secs(worktree_path);
+fn worktree_activity_nanos(worktree_path: &Path) -> u128 {
+    let mut best = path_mtime_nanos(worktree_path);
     if let Some(git_dir) = resolve_worktree_git_dir(worktree_path) {
         best = best
-            .max(path_mtime_secs(&git_dir.join("index")))
-            .max(path_mtime_secs(&git_dir.join("HEAD")))
-            .max(path_mtime_secs(&git_dir.join("logs").join("HEAD")));
+            .max(path_mtime_nanos(&git_dir.join("index")))
+            .max(path_mtime_nanos(&git_dir.join("HEAD")))
+            .max(path_mtime_nanos(&git_dir.join("logs").join("HEAD")));
     }
     best
 }
@@ -594,11 +597,11 @@ pub(crate) fn list_linked_worktrees(repo_root: &Path) -> Vec<WorktreeEntry> {
     if !out.status.success() {
         return Vec::new();
     }
-    let mut live: Vec<(u64, WorktreeEntry)> =
+    let mut live: Vec<(u128, WorktreeEntry)> =
         parse_worktree_list_porcelain(&String::from_utf8_lossy(&out.stdout))
             .into_iter()
             .filter(|wt| wt.path.is_dir())
-            .map(|wt| (worktree_activity_secs(&wt.path), wt))
+            .map(|wt| (worktree_activity_nanos(&wt.path), wt))
             .collect();
     live.sort_by(|(a_ts, a_wt), (b_ts, b_wt)| {
         b_ts.cmp(a_ts)
@@ -864,7 +867,13 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
-        dir
+        let resolved = fs::canonicalize(&dir).unwrap_or(dir);
+        let raw = resolved.to_string_lossy();
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            PathBuf::from(stripped)
+        } else {
+            resolved
+        }
     }
 
     fn git(dir: &Path, args: &[&str]) {
@@ -1264,5 +1273,59 @@ branch refs/heads/feat/live
         assert!(entries[0].is_main);
         assert_eq!(entries[1].branch.as_deref(), Some("feat/live"));
         assert!(!entries[1].is_main);
+    }
+
+    #[::core::prelude::v1::test]
+    fn same_worktree_path_normalizes_separators_prefix_and_trailing_slash() {
+        assert!(same_worktree_path(
+            Path::new(r"\\?\C:\Users\Demo\repo\"),
+            Path::new("C:/Users/Demo/repo"),
+        ));
+        assert!(same_worktree_path(
+            Path::new("/repos/app/"),
+            Path::new("/repos/app"),
+        ));
+        assert!(!same_worktree_path(
+            Path::new("/repos/app-a"),
+            Path::new("/repos/app-b"),
+        ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn list_linked_worktrees_sorts_most_recently_active_first_and_skips_deleted_dir() {
+        let root = make_temp_dir("wt-recency");
+        let wt_side = root.with_file_name(format!(
+            "{}-side",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let wt_gone = root.with_file_name(format!(
+            "{}-gone",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        init_repo(&root);
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+
+        let side_str = wt_side.to_string_lossy().into_owned();
+        let gone_str = wt_gone.to_string_lossy().into_owned();
+        git(&root, &["worktree", "add", "-q", "-b", "feat/side", &side_str]);
+        git(&root, &["worktree", "add", "-q", "-b", "feat/gone", &gone_str]);
+        let _ = fs::remove_dir_all(&wt_gone);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(wt_side.join("a.txt"), "two\n").unwrap();
+        git(&wt_side, &["add", "a.txt"]);
+
+        let worktrees = list_linked_worktrees(&root);
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].branch.as_deref(), Some("feat/side"));
+        assert!(!worktrees[0].is_main);
+        assert!(worktrees[1].is_main);
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &side_str]);
+        let _ = run_git(&root, &["worktree", "prune"]);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&wt_side);
     }
 }
