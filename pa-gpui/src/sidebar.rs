@@ -743,12 +743,10 @@ impl PaApp {
                 };
                 h_flex()
                     .w_full()
-                    .h(px(30.))
+                    .h(px(28.))
                     .p(px(2.))
                     .gap(px(2.))
                     .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.sidebar_group_edge)
                     .bg(p.sidebar_group_surface)
                     .child(
                         h_flex()
@@ -760,12 +758,6 @@ impl PaApp {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .border_1()
-                            .border_color(if live_on {
-                                p.sidebar_new_edge
-                            } else {
-                                Hsla::transparent_black()
-                            })
                             .when(live_on, |d| d.bg(pill_bg))
                             .hover(move |d| {
                                 if live_on {
@@ -807,12 +799,6 @@ impl PaApp {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .border_1()
-                            .border_color(if done_on {
-                                p.sidebar_new_edge
-                            } else {
-                                Hsla::transparent_black()
-                            })
                             .when(done_on, |d| d.bg(pill_bg))
                             .hover(move |d| {
                                 if done_on {
