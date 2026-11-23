@@ -110,6 +110,16 @@ impl PaApp {
         .detach();
     }
 
+    pub(crate) fn clear_draft_folder(&mut self, cx: &mut Context<Self>) {
+        self.diff_model.bump_draft_folder_generation();
+        self.open_popup = OpenPopup::None;
+        self.roster.set_draft_cwd(None);
+        self.settings.last_folder = None;
+        self.settings.save();
+        self.sync_diff_for_active_session(cx);
+        cx.notify();
+    }
+
     pub(crate) fn select_draft_folder(
         &mut self,
         folder: String,

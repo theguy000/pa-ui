@@ -23,6 +23,12 @@ pub(crate) struct RenameTarget {
     pub(crate) is_resident: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarTab {
+    Live,
+    Done,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SidebarGroup {
     Active,
@@ -725,37 +731,161 @@ impl PaApp {
                         ),
                 )
             })
+            .child({
+                let live_count = active_rows.len() + idle_rows.len();
+                let done_count = done_rows.len();
+                let live_on = self.sidebar_tab == SidebarTab::Live;
+                let done_on = self.sidebar_tab == SidebarTab::Done;
+                h_flex()
+                    .w_full()
+                    .h(px(28.))
+                    .p(px(2.))
+                    .gap(px(2.))
+                    .rounded(px(7.))
+                    .bg(p.sidebar_row_hover)
+                    .child(
+                        h_flex()
+                            .id("sb-tab-live")
+                            .flex_1()
+                            .h_full()
+                            .gap(px(5.))
+                            .rounded(px(5.))
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(live_on, |d| d.bg(p.panel_surface))
+                            .hover(move |d| {
+                                if live_on {
+                                    d
+                                } else {
+                                    d.bg(p.sidebar_row_hover)
+                                }
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.sidebar_tab = SidebarTab::Live;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if live_on { p.ink } else { p.quiet_ink })
+                                    .child("Live"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(live_count.to_string()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .id("sb-tab-done")
+                            .flex_1()
+                            .h_full()
+                            .gap(px(5.))
+                            .rounded(px(5.))
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(done_on, |d| d.bg(p.panel_surface))
+                            .hover(move |d| {
+                                if done_on {
+                                    d
+                                } else {
+                                    d.bg(p.sidebar_row_hover)
+                                }
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.sidebar_tab = SidebarTab::Done;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if done_on { p.ink } else { p.quiet_ink })
+                                    .child("Done"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(done_count.to_string()),
+                            ),
+                    )
+            })
             .child(
                 div()
                     .id("sidebar-scroll")
                     .flex_1()
                     .overflow_y_scrollbar()
-                    .child(
-                        v_flex()
-                            .gap(px(10.))
-                            .pt(px(4.))
-                            .child(self.render_session_group(
-                                SidebarGroup::Active,
-                                "ACTIVE",
-                                &active_rows,
-                                self.settings.active_closed,
-                                cx,
-                            ))
-                            .child(self.render_session_group(
-                                SidebarGroup::Idle,
-                                "IDLE",
-                                &idle_rows,
-                                self.settings.idle_closed,
-                                cx,
-                            ))
-                            .child(self.render_session_group(
-                                SidebarGroup::Done,
-                                "DONE",
-                                &done_rows,
-                                self.settings.done_closed,
-                                cx,
-                            )),
-                    ),
+                    .child(match self.sidebar_tab {
+                        SidebarTab::Live => {
+                            let mut col = v_flex().gap(px(8.)).pt(px(2.));
+                            if active_rows.is_empty() && idle_rows.is_empty() {
+                                col = col.child(
+                                    div()
+                                        .w_full()
+                                        .py(px(24.))
+                                        .flex()
+                                        .justify_center()
+                                        .text_size(px(12.))
+                                        .text_color(p.sidebar_group_empty_ink)
+                                        .child("No live sessions"),
+                                );
+                            } else {
+                                if !active_rows.is_empty() {
+                                    col = col.child(self.render_session_group(
+                                        SidebarGroup::Active,
+                                        "Running",
+                                        &active_rows,
+                                        self.settings.active_closed,
+                                        cx,
+                                    ));
+                                }
+                                if !idle_rows.is_empty() {
+                                    col = col.child(self.render_session_group(
+                                        SidebarGroup::Idle,
+                                        "Idle",
+                                        &idle_rows,
+                                        self.settings.idle_closed,
+                                        cx,
+                                    ));
+                                }
+                            }
+                            col
+                        }
+                        SidebarTab::Done => {
+                            let mut col = v_flex().gap(px(2.)).pt(px(2.));
+                            if done_rows.is_empty() {
+                                col = col.child(
+                                    div()
+                                        .w_full()
+                                        .py(px(24.))
+                                        .flex()
+                                        .justify_center()
+                                        .text_size(px(12.))
+                                        .text_color(p.sidebar_group_empty_ink)
+                                        .child("No finished sessions"),
+                                );
+                            } else {
+                                for (idx, row) in done_rows.iter().enumerate() {
+                                    col = col.child(self.render_session_row(
+                                        SidebarGroup::Done,
+                                        "Done",
+                                        idx,
+                                        row,
+                                        cx,
+                                    ));
+                                }
+                            }
+                            col
+                        }
+                    }),
             )
             .into_any_element()
     }
@@ -776,7 +906,7 @@ impl PaApp {
             .child(
                 h_flex()
                     .id(SharedString::from(format!("grp-hdr-{title}")))
-                    .h(px(26.))
+                    .h(px(24.))
                     .w_full()
                     .px(px(6.))
                     .rounded(px(6.))
@@ -790,7 +920,7 @@ impl PaApp {
                     }))
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(5.))
                             .items_center()
                             .child(
                                 Icon::new(if closed {
@@ -798,34 +928,21 @@ impl PaApp {
                                 } else {
                                     IconName::ChevronDown
                                 })
-                                .size(px(11.))
-                                .text_color(if empty {
-                                    p.sidebar_group_empty_ink
-                                } else {
-                                    p.sidebar_group_ink
-                                }),
+                                .size(px(10.5))
+                                .text_color(p.sidebar_group_empty_ink),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.5))
-                                    .font_semibold()
-                                    .text_color(if empty {
-                                        p.sidebar_group_empty_ink
-                                    } else {
-                                        p.sidebar_group_ink
-                                    })
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.sidebar_group_ink)
                                     .child(title),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .font_medium()
-                            .text_color(if empty {
-                                p.sidebar_group_empty_ink
-                            } else {
-                                p.sidebar_group_ink
-                            })
+                            .text_size(px(10.5))
+                            .text_color(p.sidebar_group_empty_ink)
                             .child(rows.len().to_string()),
                     ),
             );
@@ -835,106 +952,118 @@ impl PaApp {
         }
 
         for (idx, row) in rows.iter().enumerate() {
-            let key = session_key(row);
-            let selected = self.roster.active_id() == Some(key.as_str());
-            let label = {
-                let single: String = row
-                    .name
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if !single.is_empty() {
-                    single
-                } else {
-                    key.chars().take(12).collect()
-                }
-            };
-            let click_key = key.clone();
-            let menu_key = key.clone();
-            let menu_id = row.id.clone();
-            let menu_file = row.session_file.clone();
-            let menu_name = label.clone();
-            let is_resident = row.is_resident();
-            let dot_color = match group_kind {
-                SidebarGroup::Active => Some(p.working),
-                SidebarGroup::Idle => Some(p.tag_idle),
-                SidebarGroup::Done => None,
-            };
-
-            card = card.child(
-                h_flex()
-                    .id((title, idx))
-                    .h(px(28.))
-                    .px(px(7.))
-                    .gap(px(6.))
-                    .items_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .when(selected, |d| d.bg(p.sidebar_row_selected))
-                    .hover(|d| d.bg(p.sidebar_row_hover))
-                    .when_some(dot_color, |d, c| {
-                        d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(px(12.5))
-                            .text_color(if selected { p.ink } else { p.quiet_ink })
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("sess-dots-{title}-{idx}")))
-                            .size(px(22.))
-                            .flex_shrink_0()
-                            .rounded(px(5.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|d| d.bg(p.sidebar_row_selected))
-                            .child(
-                                Icon::new(IconName::Ellipsis)
-                                    .size(px(12.))
-                                    .text_color(p.sidebar_group_empty_ink),
-                            )
-                            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                let already_open = matches!(
-                                    &this.open_popup,
-                                    OpenPopup::SessionMenu { key, .. } if key == &menu_key
-                                );
-                                if already_open {
-                                    this.open_popup = OpenPopup::None;
-                                } else {
-                                    let vp_h = window.viewport_size().height.as_f32();
-                                    let top_y = (ev.position().y.as_f32() - 14.0)
-                                        .clamp(36.0, (vp_h - 140.0).max(36.0))
-                                        .round() as i32;
-                                    this.open_popup = OpenPopup::SessionMenu {
-                                        key: menu_key.clone(),
-                                        id: menu_id.clone(),
-                                        file: menu_file.clone(),
-                                        name: menu_name.clone(),
-                                        is_resident,
-                                        anchor_y: top_y,
-                                    };
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.select_session(click_key.clone(), cx);
-                    })),
-            );
+            card = card.child(self.render_session_row(group_kind, title, idx, row, cx));
         }
 
         card
+    }
+
+    fn render_session_row(
+        &self,
+        group_kind: SidebarGroup,
+        title: &'static str,
+        idx: usize,
+        row: &SessionRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let key = session_key(row);
+        let selected = self.roster.active_id() == Some(key.as_str())
+            || (!row.session_file.is_empty()
+                && self.roster.active_id() == Some(row.session_file.as_str()));
+        let label = {
+            let single: String = row
+                .name
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !single.is_empty() {
+                single
+            } else {
+                key.chars().take(12).collect()
+            }
+        };
+        let click_key = key.clone();
+        let menu_key = key.clone();
+        let menu_id = row.id.clone();
+        let menu_file = row.session_file.clone();
+        let menu_name = label.clone();
+        let is_resident = row.is_resident();
+        let dot_color = match group_kind {
+            SidebarGroup::Active => Some(p.working),
+            SidebarGroup::Idle => Some(p.tag_idle),
+            SidebarGroup::Done => None,
+        };
+
+        h_flex()
+            .id((title, idx))
+            .h(px(28.))
+            .px(px(7.))
+            .gap(px(6.))
+            .items_center()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(p.sidebar_row_selected))
+            .hover(|d| d.bg(p.sidebar_row_hover))
+            .when_some(dot_color, |d, c| {
+                d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(12.5))
+                    .text_color(if selected { p.ink } else { p.quiet_ink })
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("sess-dots-{title}-{idx}")))
+                    .size(px(22.))
+                    .flex_shrink_0()
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_selected))
+                    .child(
+                        Icon::new(IconName::Ellipsis)
+                            .size(px(12.))
+                            .text_color(p.sidebar_group_empty_ink),
+                    )
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        let already_open = matches!(
+                            &this.open_popup,
+                            OpenPopup::SessionMenu { key, .. } if key == &menu_key
+                        );
+                        if already_open {
+                            this.open_popup = OpenPopup::None;
+                        } else {
+                            let vp_h = window.viewport_size().height.as_f32();
+                            let top_y = (ev.position().y.as_f32() - 14.0)
+                                .clamp(36.0, (vp_h - 140.0).max(36.0))
+                                .round() as i32;
+                            this.open_popup = OpenPopup::SessionMenu {
+                                key: menu_key.clone(),
+                                id: menu_id.clone(),
+                                file: menu_file.clone(),
+                                name: menu_name.clone(),
+                                is_resident,
+                                anchor_y: top_y,
+                            };
+                        }
+                        cx.notify();
+                    })),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.select_session(click_key.clone(), cx);
+            }))
     }
 
 }

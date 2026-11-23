@@ -11,7 +11,7 @@ use crate::providers::{
 };
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
-use crate::sidebar::RenameTarget;
+use crate::sidebar::{RenameTarget, SidebarTab};
 use crate::theme::PaPalette;
 use crate::transcript::{
     append_text_delta, append_thinking_delta, build_items, compute_tail_trim,
@@ -89,6 +89,7 @@ pub struct PaApp {
     pub(crate) anim_epoch: Instant,
     pub(crate) anim_phase_ms: u64,
     pub(crate) settings: AppSettings,
+    pub(crate) sidebar_tab: SidebarTab,
     pub(crate) settings_tab: SettingsTab,
     pub(crate) providers_snapshot: ProviderSnapshot,
     pub(crate) providers_mode: ProvidersEditMode,
@@ -353,6 +354,7 @@ impl PaApp {
             anim_epoch: Instant::now(),
             anim_phase_ms: 0,
             settings,
+            sidebar_tab: SidebarTab::Live,
             settings_tab: SettingsTab::General,
             providers_snapshot: ProviderSnapshot::default(),
             providers_mode: ProvidersEditMode::List,

@@ -1240,7 +1240,72 @@ impl PaApp {
         let left_x = if self.settings.sidebar_open { 246. } else { 46. };
         let current_draft = self.roster.draft_cwd().unwrap_or_default();
         let current_draft_path = std::path::Path::new(current_draft);
+        let none_selected = current_draft.is_empty();
         let mut rows: Vec<AnyElement> = Vec::new();
+
+        rows.push(
+            h_flex()
+                .id("none-folder-opt")
+                .w_full()
+                .h(px(26.))
+                .px(px(8.))
+                .gap(px(7.))
+                .rounded(px(6.))
+                .items_center()
+                .justify_between()
+                .cursor_pointer()
+                .bg(if none_selected {
+                    p.sidebar_row_hover
+                } else {
+                    Hsla::transparent_black()
+                })
+                .hover(move |s| s.bg(p.sidebar_row_hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.clear_draft_folder(cx);
+                }))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(7.))
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::Folder)
+                                .size(px(12.))
+                                .text_color(p.quiet_ink),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.5))
+                                .when(none_selected, |d| d.font_weight(FontWeight::MEDIUM))
+                                .text_color(if none_selected { p.ink } else { p.quiet_ink })
+                                .child("None (home folder)"),
+                        ),
+                )
+                .when(none_selected, |r| {
+                    r.child(
+                        Icon::new(IconName::Check)
+                            .size(px(11.))
+                            .text_color(p.working),
+                    )
+                })
+                .into_any_element(),
+        );
+
+        if !self.settings.recent_folders.is_empty() {
+            rows.push(
+                div()
+                    .w_full()
+                    .h(px(1.))
+                    .my(px(3.))
+                    .bg(p.sidebar_group_edge)
+                    .into_any_element(),
+            );
+        }
 
         for (ix, dir) in self.settings.recent_folders.iter().enumerate() {
             let worktrees = self.diff_model.worktrees_for_project(dir);
