@@ -732,7 +732,7 @@ impl PaApp {
                     .overflow_y_scrollbar()
                     .child(
                         v_flex()
-                            .gap(px(8.))
+                            .gap(px(10.))
                             .pt(px(4.))
                             .child(self.render_session_group(
                                 SidebarGroup::Active,
@@ -772,19 +772,6 @@ impl PaApp {
         let empty = rows.is_empty();
         let mut card = v_flex()
             .w_full()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(if empty {
-                p.sidebar_group_empty_edge
-            } else {
-                p.sidebar_group_edge
-            })
-            .bg(if empty {
-                gpui_kit::transparent_black()
-            } else {
-                p.sidebar_group_surface
-            })
-            .p(px(4.))
             .gap(px(2.))
             .child(
                 h_flex()
@@ -942,15 +929,7 @@ impl PaApp {
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.open_popup = OpenPopup::None;
-                        this.hovered_model = None;
-                        this.composer_model.set_pending_slash(None);
-                        this.roster.select_session_optimistic(&click_key);
-                        let _ = this
-                            .bridge
-                            .tx
-                            .send(DaemonCmd::SelectSession(click_key.clone()));
-                        cx.notify();
+                        this.select_session(click_key.clone(), cx);
                     })),
             );
         }

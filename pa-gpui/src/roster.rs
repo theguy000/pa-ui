@@ -122,7 +122,9 @@ impl SessionRoster {
 
     pub(crate) fn active_session(&self) -> Option<&SessionRow> {
         let sid = self.active_session_id.as_deref()?;
-        self.sessions.iter().find(|s| session_key(s) == sid)
+        self.sessions
+            .iter()
+            .find(|s| session_key(s) == sid || (!s.session_file.is_empty() && s.session_file == sid))
     }
 
     /// Update the roster from a daemon snapshot. Returns a session key to auto-select
@@ -226,21 +228,49 @@ impl SessionRoster {
         self.draft_cwd = None;
     }
 
-    pub(crate) fn clear_pending_start_cwd(&mut self) {
-        self.pending_start_cwd = None;
-    }
-
     pub(crate) fn select_session_optimistic(&mut self, key: &str) {
         self.draft_chat = false;
         self.draft_model_picked = false;
         self.draft_cwd = None;
         self.pending_start_cwd = None;
-        if let Some(row) = self.sessions.iter_mut().find(|s| session_key(s) == key) {
-            if !row.is_resident() || row.lifecycle == "archived" {
-                row.worker_state = "ready".into();
-                row.lifecycle = "live".into();
-                row.activity = "idle".into();
-                row.is_session_active = false;
+        if self.active_session_id.as_deref() != Some(key) {
+            self.active_session_id = Some(key.to_string());
+            self.session_state = None;
+            self.stats = None;
+            self.subagent_count = 0;
+            self.heartbeat_count = 0;
+            self.shell_count = 0;
+        }
+    }
+
+    pub(crate) fn rebind_session_id(&mut self, requested: &str, resolved: &str) {
+        self.draft_chat = false;
+        self.draft_model_picked = false;
+        self.draft_cwd = None;
+        self.pending_start_cwd = None;
+        let switched = self.active_session_id.as_deref() != Some(requested)
+            && self.active_session_id.as_deref() != Some(resolved);
+        if switched {
+            self.session_state = None;
+            self.stats = None;
+            self.subagent_count = 0;
+            self.heartbeat_count = 0;
+            self.shell_count = 0;
+        }
+        self.active_session_id = Some(resolved.to_string());
+        if requested != resolved {
+            if let Some(row) = self
+                .sessions
+                .iter_mut()
+                .find(|s| session_key(s) == requested || s.session_file == requested)
+            {
+                row.id = resolved.to_string();
+                if !row.is_resident() || row.lifecycle == "archived" {
+                    row.worker_state = "ready".into();
+                    row.lifecycle = "live".into();
+                    row.activity = "idle".into();
+                    row.is_session_active = false;
+                }
             }
         }
     }
@@ -526,5 +556,53 @@ mod tests {
         roster.set_draft_cwd(Some("/repo/other".into()));
         roster.select_session_optimistic("sess-1");
         assert_eq!(roster.draft_cwd(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn switching_sessions_clears_stale_state_uses_row_model_and_rebinds_archived_id() {
+        let mut roster = SessionRoster::new();
+        let mut s1 = row("s1", "One", "live", "idle", "ready");
+        s1.model_provider = "openai".into();
+        s1.model = "gpt-5".into();
+        let mut s2 = row("", "Archived", "archived", "idle", "");
+        s2.session_file = "/tmp/archived.jsonl".into();
+        s2.model_provider = "anthropic".into();
+        s2.model = "claude-sonnet-4".into();
+        s2.thinking = "high".into();
+
+        let auto = roster.apply_sessions(vec![s1, s2]);
+        roster.set_active_id(auto);
+        roster.apply_session_state(
+            "s1",
+            SessionState {
+                provider: "openai".into(),
+                model_id: "gpt-5".into(),
+                thinking_level: "low".into(),
+                is_streaming: false,
+            },
+        );
+        roster.apply_stats(
+            "s1",
+            SessionStats {
+                context_tokens: 42_000,
+                context_window: 200_000,
+                percent: 21.0,
+                ..SessionStats::default()
+            },
+        );
+        roster.apply_activity(2, 1, 3);
+
+        roster.select_session_optimistic("/tmp/archived.jsonl");
+        assert_eq!(roster.active_id(), Some("/tmp/archived.jsonl"));
+        assert!(roster.stats().is_none());
+        assert_eq!(roster.activity_counts(), (0, 0, 0));
+        let cur = roster.current_model();
+        assert_eq!(cur.provider, "anthropic");
+        assert_eq!(cur.model_id, "claude-sonnet-4");
+        assert_eq!(cur.thinking, "high");
+
+        roster.rebind_session_id("/tmp/archived.jsonl", "s2-live");
+        assert_eq!(roster.active_id(), Some("s2-live"));
+        assert_eq!(roster.active_session().map(|r| r.id.as_str()), Some("s2-live"));
     }
 }

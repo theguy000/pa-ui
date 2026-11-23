@@ -84,6 +84,7 @@ pub struct PaApp {
     pub(crate) last_dehydrate_center: usize,
     pub(crate) scrolled_up: bool,
     pub(crate) is_streaming: bool,
+    pub(crate) session_switch_gen: u64,
     pub(crate) rail_mark_hovered: bool,
     pub(crate) anim_epoch: Instant,
     pub(crate) anim_phase_ms: u64,
@@ -347,6 +348,7 @@ impl PaApp {
             last_dehydrate_center: 0,
             scrolled_up: false,
             is_streaming: false,
+            session_switch_gen: 0,
             rail_mark_hovered: false,
             anim_epoch: Instant::now(),
             anim_phase_ms: 0,
@@ -959,12 +961,46 @@ impl PaApp {
         }
     }
 
+    pub(crate) fn select_session(&mut self, key: String, cx: &mut Context<Self>) {
+        self.session_switch_gen = self.session_switch_gen.wrapping_add(1);
+        let request_id = self.session_switch_gen;
+        let switching = self.roster.is_draft() || self.roster.active_id() != Some(key.as_str());
+        self.open_popup = OpenPopup::None;
+        self.hovered_model = None;
+        self.composer_model.set_pending_slash(None);
+        if switching {
+            self.composer_model.clear_busy();
+            self.composer_model.clear_queues();
+            self.composer_model.cancel_edit_queue();
+            self.oldest_entry_id = None;
+            self.has_older = false;
+            self.loading_older = false;
+            self.pending_trim_tail = false;
+            self.scrolled_up = false;
+            self.find_index = 0;
+            self.items.clear();
+            self.list_state.reset(0);
+            self.list_state.set_follow_mode(FollowMode::Tail);
+        }
+        self.roster.select_session_optimistic(&key);
+        self.is_streaming = self.roster.active_row_is_streaming().unwrap_or(false);
+        self.sync_stop_target(cx);
+        self.sync_diff_for_active_session(cx);
+        let _ = self.bridge.tx.send(DaemonCmd::SelectSession {
+            session: key,
+            request_id,
+        });
+        cx.notify();
+    }
+
     pub(crate) fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active_cwd = self
             .roster
             .active_session()
             .map(|r| r.cwd.trim().to_string())
             .filter(|s| !s.is_empty());
+        self.session_switch_gen = self.session_switch_gen.wrapping_add(1);
+        let _ = self.bridge.tx.send(DaemonCmd::DetachCurrent);
         self.open_popup = OpenPopup::None;
         self.hovered_model = None;
         self.roster.begin_draft();
@@ -1123,20 +1159,44 @@ impl PaApp {
                 self.sync_stop_target(cx);
                 self.sync_diff_for_active_session(cx);
             }
-            DaemonEvent::Messages {
-                session,
-                messages,
-                first_entry,
-                more,
-            } => {
-                let switching = self.roster.active_id() != Some(session.as_str());
-                if switching {
-                    self.composer_model.clear_busy();
-                    self.composer_model.cancel_edit_queue();
+            DaemonEvent::SessionLoaded(payload) => {
+                let crate::daemon::SessionLoadedPayload {
+                    requested_session,
+                    resolved_session,
+                    request_id,
+                    messages,
+                    first_entry,
+                    more,
+                    state,
+                    stats,
+                    steer,
+                    follow_up,
+                } = *payload;
+                let stale = if request_id > 0 {
+                    request_id != self.session_switch_gen
+                } else {
+                    self.session_switch_gen > 0 || self.roster.is_draft()
+                };
+                if stale {
+                    return;
                 }
-                self.roster.clear_draft();
-                self.roster.clear_pending_start_cwd();
-                self.roster.set_active_id(Some(session));
+                self.composer_model.clear_busy();
+                self.composer_model.cancel_edit_queue();
+                self.composer_model.set_queues(steer, follow_up);
+                self.roster
+                    .rebind_session_id(&requested_session, &resolved_session);
+                if let Some(st) = state {
+                    if !st.provider.is_empty() {
+                        self.collapsed_providers.remove(&st.provider);
+                    }
+                    self.is_streaming = st.is_streaming;
+                    self.roster.apply_session_state(&resolved_session, st);
+                } else if let Some(streaming) = self.roster.active_row_is_streaming() {
+                    self.is_streaming = streaming;
+                }
+                if let Some(st) = stats {
+                    self.roster.apply_stats(&resolved_session, st);
+                }
                 self.oldest_entry_id = (!first_entry.is_empty()).then_some(first_entry);
                 self.has_older = more;
                 self.loading_older = false;
@@ -1149,6 +1209,7 @@ impl PaApp {
                 self.list_state
                     .reset_with_uniform_height(self.items.len(), px(44.));
                 self.list_state.set_follow_mode(FollowMode::Tail);
+                self.sync_stop_target(cx);
                 self.sync_diff_for_active_session(cx);
             }
             DaemonEvent::TailRefresh {
@@ -1373,12 +1434,16 @@ impl PaApp {
             .get("activeSessionId")
             .or_else(|| frame.get("sessionId"))
             .and_then(Value::as_str);
-        let matches_active = match (frame_sid, self.roster.active_id()) {
-            (Some(fs), Some(cur)) => fs == cur,
-            _ => true,
-        };
-        if !matches_active {
+        if self.roster.is_draft() {
             return;
+        }
+        let Some(cur) = self.roster.active_id() else {
+            return;
+        };
+        if let Some(fs) = frame_sid {
+            if fs != cur {
+                return;
+            }
         }
 
         let event = frame.get("event").filter(|v| v.is_object()).unwrap_or(frame);

@@ -489,6 +489,7 @@ impl PaApp {
                 self.settings.record_recent_project(&project, dir);
                 self.settings.save();
             }
+            self.session_switch_gen = self.session_switch_gen.wrapping_add(1);
             self.is_streaming = true;
             let _ = self.bridge.tx.send(DaemonCmd::StartChat {
                 text,

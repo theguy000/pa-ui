@@ -106,6 +106,10 @@ pub fn model_catalog(client: &Client, session: &str) -> std::io::Result<Vec<Mode
         json!({"activeSessionId": session}),
         Duration::from_secs(20),
     )?;
+    parse_model_catalog_response(&response)
+}
+
+pub(crate) fn parse_model_catalog_response(response: &Value) -> std::io::Result<Vec<ModelEntry>> {
     if response.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(std::io::Error::other(format!(
             "get_model_catalog failed: {}",

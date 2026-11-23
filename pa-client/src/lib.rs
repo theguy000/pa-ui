@@ -169,7 +169,7 @@ impl Client {
     ///
     /// # Errors
     /// Fails on a transport error or when the deadline passes.
-    pub fn request(
+    async fn request_async(
         &self,
         ty: &str,
         payload: Value,
@@ -178,10 +178,20 @@ impl Client {
         let command = typed_command(ty, payload)?;
         let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
         let response = self
-            .rt
-            .block_on(self.inner.request_with_timeout(command, millis))
+            .inner
+            .request_with_timeout(command, millis)
+            .await
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         Ok(serde_json::to_value(response).unwrap_or(Value::Null))
+    }
+
+    pub fn request(
+        &self,
+        ty: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> std::io::Result<Frame> {
+        self.rt.block_on(self.request_async(ty, payload, timeout))
     }
 
     /// Next frame, backlog first. `None` on timeout.
@@ -600,6 +610,426 @@ pub fn attach_as(
         .cloned()
         .unwrap_or_default();
     Ok(messages)
+}
+
+/// Complete initial view returned by a single windowed `attach` round-trip.
+#[derive(Debug, Clone, Default)]
+pub struct AttachSnapshot {
+    pub active_session_id: String,
+    pub session_id: String,
+    pub messages: Vec<Value>,
+    pub first_entry: String,
+    pub more: bool,
+    pub state: Option<SessionState>,
+    pub stats: Option<SessionStats>,
+    pub steer: Vec<String>,
+    pub follow_up: Vec<String>,
+}
+
+fn parse_action_lane(state: &Value, lane: &str) -> Vec<String> {
+    state
+        .pointer(&format!("/sessionActions/{lane}"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str().map(str::to_string).or_else(|| {
+                        item.get("text")
+                            .or_else(|| item.get("preview"))
+                            .or_else(|| item.get("message"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `attach` with `windowed_snapshot` + `slim_attach`: returns the tail transcript,
+/// resolved `activeSessionId`, durable `sessionId`, live model/thinking state,
+/// context usage, and queued lanes in one round-trip.
+///
+/// # Errors
+/// Fails on transport errors or a non-success response.
+pub fn attach_snapshot(
+    client: &Client,
+    session: &str,
+    client_id: Option<&str>,
+) -> std::io::Result<AttachSnapshot> {
+    let mut payload = json!({"activeSessionId": session});
+    if let Value::Object(map) = &mut payload {
+        if let Some(id) = client_id {
+            map.insert("clientId".into(), Value::String(id.to_string()));
+        }
+        map.insert(
+            "capabilities".into(),
+            json!([
+                "attach_snapshot",
+                "event_sequence",
+                "slim_attach",
+                "windowed_snapshot"
+            ]),
+        );
+    }
+    let response = client.request("attach", payload, Duration::from_secs(20))?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "attach failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    let data = response.get("data").unwrap_or(&Value::Null);
+    let snapshot = data.get("snapshot").unwrap_or(&Value::Null);
+    let active_session_id = data
+        .get("activeSessionId")
+        .or_else(|| snapshot.get("activeSessionId"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(session)
+        .to_string();
+    let messages = snapshot
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let history_before = snapshot
+        .get("historyBeforeEntryId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let more = !history_before.is_empty();
+    let state_val = snapshot.get("state").filter(|v| v.is_object());
+    let session_id = state_val
+        .and_then(|s| s.get("sessionId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let state = state_val.map(SessionState::from_value);
+    let stats = state_val
+        .filter(|s| s.get("contextUsage").is_some_and(Value::is_object))
+        .map(|s| {
+            let mut st = SessionStats::from_value(s);
+            if st.messages == 0 {
+                st.messages = s.get("messageCount").and_then(Value::as_u64).unwrap_or(0);
+            }
+            st
+        });
+    let steer = state_val
+        .map(|s| parse_action_lane(s, "steering"))
+        .unwrap_or_default();
+    let follow_up = state_val
+        .map(|s| parse_action_lane(s, "followUps"))
+        .unwrap_or_default();
+
+    Ok(AttachSnapshot {
+        active_session_id,
+        session_id,
+        messages,
+        first_entry: history_before,
+        more,
+        state,
+        stats,
+        steer,
+        follow_up,
+    })
+}
+
+/// Fire-and-forget `detach` when switching away from a live session so old
+/// session frames stop streaming onto this connection.
+pub fn detach_session(client: &Client, session: &str) {
+    if !session.is_empty() {
+        let _ = client.send("detach", json!({"activeSessionId": session}));
+    }
+}
+
+/// Incremental payload delivered as each concurrent post-attach request settles.
+#[derive(Debug)]
+pub enum SessionExtra {
+    Activity {
+        subagents: usize,
+        shells: usize,
+        heartbeats: usize,
+    },
+    Stats(SessionStats),
+    Models(Vec<ModelEntry>),
+    Sessions(Vec<SessionRow>),
+    Queue {
+        steer: Vec<String>,
+        follow_up: Vec<String>,
+    },
+    Tail(Page),
+}
+
+/// Run post-attach metadata requests concurrently over the multiplexed daemon
+/// pipe and invoke `emit` immediately as each independent piece completes so
+/// slow `list` calls never stall activity, context stats, or models.
+pub fn fetch_session_extras_concurrent<F>(
+    client: &Client,
+    active_session_id: &str,
+    session_id: &str,
+    need_models: bool,
+    need_sessions: bool,
+    emit: F,
+) where
+    F: Fn(SessionExtra) + Sync,
+{
+    let active_id = active_session_id.to_string();
+    let durable_id = session_id.to_string();
+    let emit_ref = &emit;
+
+    client.rt.block_on(async {
+        let activity_fut = async {
+            let (roster_res, shells_res, hb_res) = tokio::join!(
+                client.request_async("roster_subscribe", json!({}), Duration::from_secs(3)),
+                client.request_async(
+                    "list_kernel_bash",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(3),
+                ),
+                client.request_async("heartbeats_list", json!({}), Duration::from_secs(3)),
+            );
+            let subagents = roster_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
+                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
+                .unwrap_or(0);
+            let shells = shells_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.get("data").cloned())
+                .map(|data| running_shell_count(&data))
+                .unwrap_or(0);
+            let heartbeats = hb_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.get("data").cloned())
+                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
+                .unwrap_or(0);
+            emit_ref(SessionExtra::Activity {
+                subagents,
+                shells,
+                heartbeats,
+            });
+        };
+
+        let stats_fut = async {
+            if let Ok(resp) = client
+                .request_async(
+                    "get_session_stats",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(6),
+                )
+                .await
+            {
+                if resp.get("success").and_then(Value::as_bool) != Some(false) {
+                    if let Some(data) = resp.get("data") {
+                        emit_ref(SessionExtra::Stats(SessionStats::from_value(data)));
+                    }
+                }
+            }
+        };
+
+        let models_fut = async {
+            if need_models {
+                if let Ok(resp) = client
+                    .request_async(
+                        "get_model_catalog",
+                        json!({"activeSessionId": active_id}),
+                        Duration::from_secs(15),
+                    )
+                    .await
+                {
+                    if let Ok(models) = models::parse_model_catalog_response(&resp) {
+                        emit_ref(SessionExtra::Models(models));
+                    }
+                }
+            }
+        };
+
+        let sessions_fut = async {
+            if need_sessions {
+                if let Ok(resp) = client
+                    .request_async("list", json!({"all": true}), Duration::from_secs(10))
+                    .await
+                {
+                    if resp.get("success").and_then(Value::as_bool) == Some(true) {
+                        let rows = resp
+                            .pointer("/data/sessions")
+                            .and_then(Value::as_array)
+                            .map(|sessions| sessions.iter().map(SessionRow::from_value).collect())
+                            .unwrap_or_default();
+                        emit_ref(SessionExtra::Sessions(rows));
+                    }
+                }
+            }
+        };
+
+        tokio::join!(activity_fut, stats_fut, models_fut, sessions_fut);
+    });
+}
+
+/// Refresh tail transcript, stats, queue, activity, and session list in parallel
+/// (used when a turn finishes so context % and activity pills stay current).
+pub fn reload_session_parallel<F>(
+    client: &Client,
+    active_session_id: &str,
+    session_id: &str,
+    limit: usize,
+    emit: F,
+) where
+    F: Fn(SessionExtra) + Sync,
+{
+    let active_id = active_session_id.to_string();
+    let durable_id = session_id.to_string();
+    let emit_ref = &emit;
+
+    client.rt.block_on(async {
+        let page_fut = async {
+            if let Ok(resp) = client
+                .request_async(
+                    "get_messages",
+                    json!({
+                        "activeSessionId": active_id,
+                        "page": {"from": "end", "limit": limit},
+                    }),
+                    Duration::from_secs(10),
+                )
+                .await
+            {
+                if resp.get("success").and_then(Value::as_bool) == Some(true) {
+                    let data = resp.get("data").unwrap_or(&Value::Null);
+                    let page = Page {
+                        messages: data
+                            .get("messages")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                        first_entry: data
+                            .get("firstEntryId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        last_entry: data
+                            .get("lastEntryId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        more: data.get("more").and_then(Value::as_bool).unwrap_or(false),
+                    };
+                    emit_ref(SessionExtra::Tail(page));
+                }
+            }
+        };
+
+        let queue_fut = async {
+            if let Ok(resp) = client
+                .request_async(
+                    "get_queue",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(6),
+                )
+                .await
+            {
+                let texts = |key: &str| -> Vec<String> {
+                    resp.pointer(&format!("/data/{key}"))
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .map(|item| match item {
+                                    Value::String(text) => text.clone(),
+                                    other => other
+                                        .get("preview")
+                                        .or_else(|| other.get("message"))
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                })
+                                .filter(|text| !text.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                emit_ref(SessionExtra::Queue {
+                    steer: texts("steer"),
+                    follow_up: texts("followUp"),
+                });
+            }
+        };
+
+        let stats_fut = async {
+            if let Ok(resp) = client
+                .request_async(
+                    "get_session_stats",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(6),
+                )
+                .await
+            {
+                if resp.get("success").and_then(Value::as_bool) != Some(false) {
+                    if let Some(data) = resp.get("data") {
+                        emit_ref(SessionExtra::Stats(SessionStats::from_value(data)));
+                    }
+                }
+            }
+        };
+
+        let activity_fut = async {
+            let (roster_res, shells_res, hb_res) = tokio::join!(
+                client.request_async("roster_subscribe", json!({}), Duration::from_secs(3)),
+                client.request_async(
+                    "list_kernel_bash",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(3),
+                ),
+                client.request_async("heartbeats_list", json!({}), Duration::from_secs(3)),
+            );
+            let subagents = roster_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
+                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
+                .unwrap_or(0);
+            let shells = shells_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.get("data").cloned())
+                .map(|data| running_shell_count(&data))
+                .unwrap_or(0);
+            let heartbeats = hb_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.get("data").cloned())
+                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
+                .unwrap_or(0);
+            emit_ref(SessionExtra::Activity {
+                subagents,
+                shells,
+                heartbeats,
+            });
+        };
+
+        let sessions_fut = async {
+            if let Ok(resp) = client
+                .request_async("list", json!({"all": true}), Duration::from_secs(10))
+                .await
+            {
+                if resp.get("success").and_then(Value::as_bool) == Some(true) {
+                    let rows = resp
+                        .pointer("/data/sessions")
+                        .and_then(Value::as_array)
+                        .map(|sessions| sessions.iter().map(SessionRow::from_value).collect())
+                        .unwrap_or_default();
+                    emit_ref(SessionExtra::Sessions(rows));
+                }
+            }
+        };
+
+        tokio::join!(page_fut, queue_fut, stats_fut, activity_fut, sessions_fut);
+    });
 }
 
 /// `get_messages` → every message the daemon has *right now*.
