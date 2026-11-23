@@ -736,24 +736,35 @@ impl PaApp {
                 let done_count = done_rows.len();
                 let live_on = self.sidebar_tab == SidebarTab::Live;
                 let done_on = self.sidebar_tab == SidebarTab::Done;
+                let pill_bg = if self.settings.dark_mode {
+                    p.composer_edge
+                } else {
+                    p.panel_surface
+                };
                 h_flex()
                     .w_full()
-                    .h(px(28.))
+                    .h(px(30.))
                     .p(px(2.))
                     .gap(px(2.))
-                    .rounded(px(7.))
-                    .bg(p.sidebar_row_hover)
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(p.sidebar_group_edge)
+                    .bg(p.sidebar_group_surface)
                     .child(
                         h_flex()
                             .id("sb-tab-live")
                             .flex_1()
                             .h_full()
                             .gap(px(5.))
-                            .rounded(px(5.))
+                            .rounded(px(6.))
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(live_on, |d| d.bg(p.panel_surface))
+                            .when(live_on, |d| {
+                                d.bg(pill_bg)
+                                    .border_1()
+                                    .border_color(p.sidebar_new_edge)
+                            })
                             .hover(move |d| {
                                 if live_on {
                                     d
@@ -769,14 +780,22 @@ impl PaApp {
                             .child(
                                 div()
                                     .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(if live_on {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    })
                                     .text_color(if live_on { p.ink } else { p.quiet_ink })
                                     .child("Live"),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.5))
-                                    .text_color(p.sidebar_group_empty_ink)
+                                    .text_color(if live_on {
+                                        p.quiet_ink
+                                    } else {
+                                        p.sidebar_group_empty_ink
+                                    })
                                     .child(live_count.to_string()),
                             ),
                     )
@@ -786,11 +805,15 @@ impl PaApp {
                             .flex_1()
                             .h_full()
                             .gap(px(5.))
-                            .rounded(px(5.))
+                            .rounded(px(6.))
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(done_on, |d| d.bg(p.panel_surface))
+                            .when(done_on, |d| {
+                                d.bg(pill_bg)
+                                    .border_1()
+                                    .border_color(p.sidebar_new_edge)
+                            })
                             .hover(move |d| {
                                 if done_on {
                                     d
@@ -806,14 +829,22 @@ impl PaApp {
                             .child(
                                 div()
                                     .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(if done_on {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    })
                                     .text_color(if done_on { p.ink } else { p.quiet_ink })
                                     .child("Done"),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.5))
-                                    .text_color(p.sidebar_group_empty_ink)
+                                    .text_color(if done_on {
+                                        p.quiet_ink
+                                    } else {
+                                        p.sidebar_group_empty_ink
+                                    })
                                     .child(done_count.to_string()),
                             ),
                     )
