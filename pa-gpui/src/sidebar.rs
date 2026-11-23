@@ -760,11 +760,13 @@ impl PaApp {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(live_on, |d| {
-                                d.bg(pill_bg)
-                                    .border_1()
-                                    .border_color(p.sidebar_new_edge)
+                            .border_1()
+                            .border_color(if live_on {
+                                p.sidebar_new_edge
+                            } else {
+                                Hsla::transparent_black()
                             })
+                            .when(live_on, |d| d.bg(pill_bg))
                             .hover(move |d| {
                                 if live_on {
                                     d
@@ -780,11 +782,7 @@ impl PaApp {
                             .child(
                                 div()
                                     .text_size(px(11.5))
-                                    .font_weight(if live_on {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::MEDIUM
-                                    })
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(if live_on { p.ink } else { p.quiet_ink })
                                     .child("Live"),
                             )
@@ -809,11 +807,13 @@ impl PaApp {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(done_on, |d| {
-                                d.bg(pill_bg)
-                                    .border_1()
-                                    .border_color(p.sidebar_new_edge)
+                            .border_1()
+                            .border_color(if done_on {
+                                p.sidebar_new_edge
+                            } else {
+                                Hsla::transparent_black()
                             })
+                            .when(done_on, |d| d.bg(pill_bg))
                             .hover(move |d| {
                                 if done_on {
                                     d
@@ -829,11 +829,7 @@ impl PaApp {
                             .child(
                                 div()
                                     .text_size(px(11.5))
-                                    .font_weight(if done_on {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::MEDIUM
-                                    })
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(if done_on { p.ink } else { p.quiet_ink })
                                     .child("Done"),
                             )
