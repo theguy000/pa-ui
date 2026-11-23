@@ -3,7 +3,8 @@
 
 use crate::app::PaApp;
 use crate::diff_git::{
-    load_diff_for_scope, load_single_file_diff, DiffFileSummary, DiffLoadOutcome,
+    load_diff_for_scope, load_single_file_diff, main_project_root_for, probe_repo_context,
+    DiffFileSummary, DiffLoadOutcome,
 };
 use crate::diff_model::DiffViewStatus;
 use crate::popups::OpenPopup;
@@ -57,11 +58,119 @@ impl PaApp {
         (Some(key), effective)
     }
 
-    pub(crate) fn sync_diff_for_active_session(&mut self, cx: &mut Context<Self>) {
-        if !self.settings.right_open {
+    pub(crate) fn sync_repo_context(&mut self, cx: &mut Context<Self>) {
+        let (_, cwd) = self.active_diff_target();
+        let Some((generation, cwd_path)) = self.diff_model.begin_context_probe(cwd.as_deref())
+        else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let repo_ctx = cx
+                .background_spawn(async move { probe_repo_context(&cwd_path) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.diff_model.apply_context_probe(generation, repo_ctx) {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn refresh_recent_project_worktrees(&mut self, cx: &mut Context<Self>) {
+        let folders = self.settings.recent_folders.clone();
+        if folders.is_empty() {
             return;
         }
+        let generation = self.diff_model.begin_recent_worktrees_probe();
+        cx.spawn(async move |this, cx| {
+            let map = cx
+                .background_spawn(async move {
+                    let mut out = HashMap::new();
+                    for dir in folders {
+                        if let Some(ctx) = probe_repo_context(std::path::Path::new(&dir)) {
+                            out.insert(dir, ctx.worktrees);
+                        }
+                    }
+                    out
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.diff_model.apply_recent_worktrees(generation, map) {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn select_draft_folder(
+        &mut self,
+        folder: String,
+        project_root: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let trimmed = folder.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.open_popup = OpenPopup::None;
+        self.roster.set_draft_cwd(Some(trimmed.clone()));
+        if let Some(project) = project_root {
+            self.settings.record_recent_project(&project, &trimmed);
+            self.settings.save();
+        } else {
+            let active_for_bg = trimmed.clone();
+            self.settings.last_folder = Some(trimmed.clone());
+            self.settings.save();
+            cx.spawn(async move |this, cx| {
+                let project = cx
+                    .background_spawn(async move {
+                        main_project_root_for(std::path::Path::new(&active_for_bg))
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.settings.record_recent_project(&project, &trimmed);
+                    this.settings.save();
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        self.sync_diff_for_active_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn pick_draft_folder(&mut self, cx: &mut Context<Self>) {
+        self.open_popup = OpenPopup::None;
+        cx.notify();
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose session folder".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = rx.await
+                && let Some(dir) = paths.into_iter().next()
+            {
+                let dir_str = dir.to_string_lossy().to_string();
+                let _ = this.update(cx, |this, cx| {
+                    this.select_draft_folder(dir_str, None, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn sync_diff_for_active_session(&mut self, cx: &mut Context<Self>) {
         let (key, cwd) = self.active_diff_target();
+        if !self.settings.right_open {
+            self.sync_repo_context(cx);
+            return;
+        }
         let scope = self.settings.diff_scope;
         let requested_base = self
             .diff_model
@@ -285,10 +394,22 @@ impl PaApp {
     }
 
     pub(crate) fn select_diff_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.open_popup = OpenPopup::None;
+        if self.roster.is_draft() || self.roster.active_id().is_none() {
+            let dir_str = path.to_string_lossy().to_string();
+            let main_root = self
+                .diff_model
+                .worktrees()
+                .iter()
+                .find(|wt| wt.is_main)
+                .map(|wt| wt.path.to_string_lossy().into_owned());
+            self.select_draft_folder(dir_str, main_root, cx);
+            return;
+        }
         let (key, _) = self.active_diff_target();
         self.diff_model.set_selected_worktree(key.as_deref(), path);
-        self.open_popup = OpenPopup::None;
-        self.refresh_diff(cx);
+        self.sync_diff_for_active_session(cx);
+        cx.notify();
     }
 
     pub(crate) fn toggle_diff_split(&mut self, cx: &mut Context<Self>) {
@@ -421,13 +542,7 @@ impl PaApp {
         let is_branch = scope == DiffScope::Branch;
         let base_branch = self.diff_model.base_branch().map(str::to_string);
         let on_base = self.diff_model.on_base_branch();
-        let has_multi_wt = self.diff_model.has_multiple_worktrees();
-        let active_wt_label = self
-            .diff_model
-            .active_worktree()
-            .map(|wt| wt.branch.as_deref().unwrap_or(&wt.label).to_string());
         let branch_menu_open = self.open_popup == OpenPopup::DiffBaseBranchMenu;
-        let wt_menu_open = self.open_popup == OpenPopup::DiffWorktreeMenu;
         let in_git_repo = !matches!(self.diff_model.status(), DiffViewStatus::NotAGitRepo);
 
         let seg_btn = |id: &'static str, label: &'static str, active: bool| {
@@ -609,60 +724,6 @@ impl PaApp {
                             .flex_shrink_0()
                             .gap(px(5.))
                             .items_center()
-                            .when_some(
-                                (in_git_repo && has_multi_wt)
-                                    .then_some(active_wt_label)
-                                    .flatten(),
-                                |row, wt_label| {
-                                    row.child(
-                                        h_flex()
-                                            .id("diff-worktree-btn")
-                                            .h(px(24.))
-                                            .px(px(8.))
-                                            .gap(px(4.))
-                                            .max_w(px(130.))
-                                            .rounded(px(6.))
-                                            .border_1()
-                                            .border_color(if wt_menu_open {
-                                                p.working
-                                            } else {
-                                                p.sidebar_group_edge
-                                            })
-                                            .bg(if wt_menu_open {
-                                                p.sidebar_row_selected
-                                            } else {
-                                                p.sidebar_group_surface
-                                            })
-                                            .items_center()
-                                            .cursor_pointer()
-                                            .hover(move |s| s.bg(p.sidebar_row_hover))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.open_popup = if this.open_popup
-                                                    == OpenPopup::DiffWorktreeMenu
-                                                {
-                                                    OpenPopup::None
-                                                } else {
-                                                    OpenPopup::DiffWorktreeMenu
-                                                };
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .text_size(px(11.))
-                                                    .text_color(p.ink)
-                                                    .child(wt_label),
-                                            )
-                                            .child(
-                                                Icon::new(IconName::ChevronDown)
-                                                    .size(px(11.))
-                                                    .text_color(p.quiet_ink),
-                                            ),
-                                    )
-                                },
-                            )
                             .child(
                                 div()
                                     .id("diff-refresh-btn")
@@ -999,18 +1060,7 @@ impl PaApp {
             .justify_center()
             .gap(px(10.))
             .px(px(28.))
-            .child(
-                div()
-                    .size(px(36.))
-                    .rounded(px(10.))
-                    .bg(p.sidebar_group_surface)
-                    .border_1()
-                    .border_color(p.sidebar_group_edge)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(Icon::new(icon).size(px(16.)).text_color(icon_color)),
-            )
+            .child(Icon::new(icon).size(px(20.)).text_color(icon_color))
             .child(
                 v_flex()
                     .items_center()
@@ -1269,7 +1319,7 @@ impl PaApp {
                     if self.roster.is_draft() && self.roster.draft_cwd().is_none() {
                         (
                             "Choose a folder".to_string(),
-                            "Pick a git folder in the composer below to preview diffs".to_string(),
+                            "Pick a git folder in the title bar above to preview diffs".to_string(),
                         )
                     } else {
                         (

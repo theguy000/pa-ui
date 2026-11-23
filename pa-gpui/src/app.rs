@@ -956,9 +956,21 @@ impl PaApp {
     }
 
     pub(crate) fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let active_cwd = self
+            .roster
+            .active_session()
+            .map(|r| r.cwd.trim().to_string())
+            .filter(|s| !s.is_empty());
         self.open_popup = OpenPopup::None;
         self.hovered_model = None;
         self.roster.begin_draft();
+        let sticky_folder = self
+            .settings
+            .last_folder
+            .clone()
+            .filter(|p| std::path::Path::new(p).is_dir())
+            .or_else(|| active_cwd.filter(|p| std::path::Path::new(p).is_dir()));
+        self.roster.set_draft_cwd(sticky_folder);
         self.is_streaming = false;
         self.composer_model.clear_busy();
         self.composer_model.clear_queues();

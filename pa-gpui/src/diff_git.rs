@@ -22,6 +22,12 @@ pub(crate) struct WorktreeEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RepoContext {
+    pub(crate) repo_root: PathBuf,
+    pub(crate) worktrees: Vec<WorktreeEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiffFileSummary {
     pub(crate) path: String,
     pub(crate) old_path: Option<String>,
@@ -492,13 +498,16 @@ pub(crate) fn parse_worktree_list_porcelain(stdout: &str) -> Vec<WorktreeEntry> 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
     let mut is_bare = false;
+    let mut is_prunable = false;
 
     let flush = |out: &mut Vec<WorktreeEntry>,
                  path: &mut Option<PathBuf>,
                  branch: &mut Option<String>,
-                 is_bare: &mut bool| {
+                 is_bare: &mut bool,
+                 is_prunable: &mut bool| {
         if let Some(p) = path.take()
             && !*is_bare
+            && !*is_prunable
         {
             let label = p
                 .file_name()
@@ -515,26 +524,67 @@ pub(crate) fn parse_worktree_list_porcelain(stdout: &str) -> Vec<WorktreeEntry> 
         }
         *branch = None;
         *is_bare = false;
+        *is_prunable = false;
     };
 
     for raw_line in stdout.lines() {
         let line = raw_line.trim();
         if line.is_empty() {
-            flush(&mut out, &mut path, &mut branch, &mut is_bare);
+            flush(&mut out, &mut path, &mut branch, &mut is_bare, &mut is_prunable);
             continue;
         }
         if let Some(rest) = line.strip_prefix("worktree ") {
-            flush(&mut out, &mut path, &mut branch, &mut is_bare);
+            flush(&mut out, &mut path, &mut branch, &mut is_bare, &mut is_prunable);
             path = Some(PathBuf::from(rest.trim()));
         } else if let Some(rest) = line.strip_prefix("branch ") {
             let b = rest.trim();
             branch = Some(b.strip_prefix("refs/heads/").unwrap_or(b).to_string());
         } else if line == "bare" {
             is_bare = true;
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            is_prunable = true;
         }
     }
-    flush(&mut out, &mut path, &mut branch, &mut is_bare);
+    flush(&mut out, &mut path, &mut branch, &mut is_bare, &mut is_prunable);
     out
+}
+
+fn path_mtime_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn resolve_worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
+    let dot_git = worktree_path.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let raw = fs::read_to_string(&dot_git).ok()?;
+    let rest = raw.trim().strip_prefix("gitdir:")?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let parsed = PathBuf::from(rest);
+    if parsed.is_absolute() {
+        Some(parsed)
+    } else {
+        Some(worktree_path.join(parsed))
+    }
+}
+
+fn worktree_activity_secs(worktree_path: &Path) -> u64 {
+    let mut best = path_mtime_secs(worktree_path);
+    if let Some(git_dir) = resolve_worktree_git_dir(worktree_path) {
+        best = best
+            .max(path_mtime_secs(&git_dir.join("index")))
+            .max(path_mtime_secs(&git_dir.join("HEAD")))
+            .max(path_mtime_secs(&git_dir.join("logs").join("HEAD")));
+    }
+    best
 }
 
 pub(crate) fn list_linked_worktrees(repo_root: &Path) -> Vec<WorktreeEntry> {
@@ -544,7 +594,38 @@ pub(crate) fn list_linked_worktrees(repo_root: &Path) -> Vec<WorktreeEntry> {
     if !out.status.success() {
         return Vec::new();
     }
-    parse_worktree_list_porcelain(&String::from_utf8_lossy(&out.stdout))
+    let mut live: Vec<(u64, WorktreeEntry)> =
+        parse_worktree_list_porcelain(&String::from_utf8_lossy(&out.stdout))
+            .into_iter()
+            .filter(|wt| wt.path.is_dir())
+            .map(|wt| (worktree_activity_secs(&wt.path), wt))
+            .collect();
+    live.sort_by(|(a_ts, a_wt), (b_ts, b_wt)| {
+        b_ts.cmp(a_ts)
+            .then_with(|| b_wt.is_main.cmp(&a_wt.is_main))
+            .then_with(|| a_wt.label.cmp(&b_wt.label))
+    });
+    live.into_iter().map(|(_, wt)| wt).collect()
+}
+
+pub(crate) fn main_project_root_for(path: &Path) -> PathBuf {
+    probe_repo_context(path)
+        .and_then(|ctx| {
+            ctx.worktrees
+                .into_iter()
+                .find(|wt| wt.is_main)
+                .map(|wt| wt.path)
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+pub(crate) fn probe_repo_context(cwd: &Path) -> Option<RepoContext> {
+    let repo_root = resolve_worktree_root(cwd)?;
+    let worktrees = list_linked_worktrees(&repo_root);
+    Some(RepoContext {
+        repo_root,
+        worktrees,
+    })
 }
 
 fn resolve_merge_base(repo_root: &Path, base_branch: &str) -> Result<String, String> {
@@ -1151,14 +1232,37 @@ v2
 
         let worktrees = list_linked_worktrees(&root);
         assert_eq!(worktrees.len(), 2);
-        assert!(worktrees[0].is_main);
-        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
-        assert!(!worktrees[1].is_main);
-        assert_eq!(worktrees[1].branch.as_deref(), Some("feat/side"));
-        assert!(same_worktree_path(&worktrees[1].path, &wt_sibling));
+        let main_wt = worktrees.iter().find(|wt| wt.is_main).expect("main worktree");
+        assert_eq!(main_wt.branch.as_deref(), Some("main"));
+        let side_wt = worktrees.iter().find(|wt| !wt.is_main).expect("side worktree");
+        assert_eq!(side_wt.branch.as_deref(), Some("feat/side"));
+        assert!(same_worktree_path(&side_wt.path, &wt_sibling));
 
         let _ = run_git(&root, &["worktree", "remove", "--force", &wt_str]);
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&wt_sibling);
+    }
+
+    #[::core::prelude::v1::test]
+    fn porcelain_parser_skips_bare_and_prunable_worktrees() {
+        let raw = "worktree /repos/app
+HEAD 1111111
+branch refs/heads/main
+
+worktree /repos/app-stale
+HEAD 2222222
+branch refs/heads/old
+prunable gitdir file points to non-existent location
+
+worktree /repos/app-live
+HEAD 3333333
+branch refs/heads/feat/live
+";
+        let entries = parse_worktree_list_porcelain(raw);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert!(entries[0].is_main);
+        assert_eq!(entries[1].branch.as_deref(), Some("feat/live"));
+        assert!(!entries[1].is_main);
     }
 }

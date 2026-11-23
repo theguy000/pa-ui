@@ -1,4 +1,4 @@
-use crate::diff_git::{same_worktree_path, DiffFileSummary, DiffLoadOutcome, WorktreeEntry};
+use crate::diff_git::{same_worktree_path, DiffFileSummary, DiffLoadOutcome, RepoContext, WorktreeEntry};
 use crate::settings::DiffScope;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -45,6 +45,8 @@ pub(crate) struct DiffModel {
     status: DiffViewStatus,
     loading: bool,
     generation: u64,
+    context_generation: u64,
+    context_cwd: Option<String>,
     debounce_seq: u64,
     session_key: Option<String>,
     cwd: Option<String>,
@@ -64,6 +66,9 @@ pub(crate) struct DiffModel {
     expanded_by_session: HashMap<String, HashSet<String>>,
     selected_worktree_by_session: HashMap<String, PathBuf>,
     selected_base_by_session: HashMap<String, String>,
+    recent_worktrees: HashMap<String, Vec<WorktreeEntry>>,
+    expanded_projects: HashSet<String>,
+    recent_probe_generation: u64,
 }
 
 impl DiffModel {
@@ -78,6 +83,8 @@ impl DiffModel {
             status: DiffViewStatus::Idle,
             loading: false,
             generation: 0,
+            context_generation: 0,
+            context_cwd: None,
             debounce_seq: 0,
             session_key: None,
             cwd: None,
@@ -96,6 +103,9 @@ impl DiffModel {
             expanded_by_session: HashMap::new(),
             selected_worktree_by_session: HashMap::new(),
             selected_base_by_session: HashMap::new(),
+            recent_worktrees: HashMap::new(),
+            expanded_projects: HashSet::new(),
+            recent_probe_generation: 0,
         }
     }
 
@@ -212,6 +222,85 @@ impl DiffModel {
         self.worktrees
             .iter()
             .find(|wt| same_worktree_path(&wt.path, root))
+    }
+
+    pub(crate) fn main_worktree_label(&self) -> Option<&str> {
+        self.worktrees
+            .iter()
+            .find(|wt| wt.is_main)
+            .or_else(|| self.worktrees.first())
+            .map(|wt| wt.label.as_str())
+    }
+
+    pub(crate) fn begin_recent_worktrees_probe(&mut self) -> u64 {
+        self.recent_probe_generation = self.recent_probe_generation.wrapping_add(1);
+        self.recent_probe_generation
+    }
+
+    pub(crate) fn apply_recent_worktrees(
+        &mut self,
+        generation: u64,
+        map: HashMap<String, Vec<WorktreeEntry>>,
+    ) -> bool {
+        if generation != self.recent_probe_generation {
+            return false;
+        }
+        self.recent_worktrees = map;
+        true
+    }
+
+    pub(crate) fn worktrees_for_project(&self, project_path: &str) -> &[WorktreeEntry] {
+        self.recent_worktrees
+            .get(project_path)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub(crate) fn is_project_expanded(&self, project_path: &str) -> bool {
+        self.expanded_projects.contains(project_path)
+    }
+
+    pub(crate) fn toggle_project_expanded(&mut self, project_path: &str) {
+        if !self.expanded_projects.remove(project_path) {
+            self.expanded_projects.insert(project_path.to_string());
+        }
+    }
+
+    pub(crate) fn begin_context_probe(&mut self, cwd: Option<&str>) -> Option<(u64, PathBuf)> {
+        if self.context_cwd.as_deref() == cwd {
+            return None;
+        }
+        self.context_generation = self.context_generation.wrapping_add(1);
+        self.context_cwd = cwd.map(str::to_string);
+        match cwd {
+            Some(path) if !path.trim().is_empty() => {
+                self.repo_root = None;
+                self.worktrees.clear();
+                Some((self.context_generation, PathBuf::from(path)))
+            }
+            _ => {
+                self.repo_root = None;
+                self.worktrees.clear();
+                None
+            }
+        }
+    }
+
+    pub(crate) fn apply_context_probe(&mut self, generation: u64, ctx: Option<RepoContext>) -> bool {
+        if generation != self.context_generation {
+            return false;
+        }
+        match ctx {
+            Some(ctx) => {
+                self.repo_root = Some(ctx.repo_root);
+                self.worktrees = ctx.worktrees;
+            }
+            None => {
+                self.repo_root = None;
+                self.worktrees.clear();
+            }
+        }
+        true
     }
 
     pub(crate) fn is_active_worktree(&self, path: &Path) -> bool {
@@ -377,6 +466,8 @@ impl DiffModel {
                 Some(Vec::new())
             }
             DiffLoadOutcome::Loaded(loaded) => {
+                self.context_generation = self.context_generation.wrapping_add(1);
+                self.context_cwd = self.cwd.clone();
                 self.repo_root = Some(loaded.repo_root.clone());
                 self.base_ref = Some(loaded.base_ref.clone());
                 self.base_branch = loaded.base_branch.clone();

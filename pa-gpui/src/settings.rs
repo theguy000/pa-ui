@@ -25,6 +25,8 @@ pub struct AppSettings {
     pub active_closed: bool,
     pub idle_closed: bool,
     pub done_closed: bool,
+    pub last_folder: Option<String>,
+    pub recent_folders: Vec<String>,
     pub model_thinking: BTreeMap<String, String>,
 }
 
@@ -42,6 +44,8 @@ impl Default for AppSettings {
             active_closed: false,
             idle_closed: false,
             done_closed: false,
+            last_folder: None,
+            recent_folders: Vec::new(),
             model_thinking: BTreeMap::new(),
         }
     }
@@ -75,6 +79,34 @@ impl AppSettings {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path, json);
         }
+    }
+
+    #[cfg(test)]
+    pub fn record_recent_folder(&mut self, folder: &str) {
+        self.record_recent_project(folder, folder);
+    }
+
+    pub fn record_recent_project(&mut self, project_root: &str, active_cwd: &str) {
+        let project = project_root.trim();
+        let active = active_cwd.trim();
+        if !active.is_empty() {
+            self.last_folder = Some(active.to_string());
+        }
+        if project.is_empty() {
+            return;
+        }
+        self.recent_folders.retain(|existing| {
+            #[cfg(windows)]
+            {
+                !existing.eq_ignore_ascii_case(project)
+            }
+            #[cfg(not(windows))]
+            {
+                existing != project
+            }
+        });
+        self.recent_folders.insert(0, project.to_string());
+        self.recent_folders.truncate(8);
     }
 
     pub fn model_thinking_for(&self, provider: &str, model_id: &str) -> Option<&str> {
@@ -131,5 +163,30 @@ mod tests {
         assert!(!parsed.diff_split);
         assert!(!parsed.diff_wrap);
         assert!(!parsed.diff_jump_collapsed);
+        assert_eq!(parsed.last_folder, None);
+        assert!(parsed.recent_folders.is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn recent_folders_deduplicate_and_cap_at_eight() {
+        let mut settings = AppSettings::default();
+        for i in 0..10 {
+            settings.record_recent_folder(&format!("/repo/p{i}"));
+        }
+        assert_eq!(settings.last_folder.as_deref(), Some("/repo/p9"));
+        assert_eq!(settings.recent_folders.len(), 8);
+        assert_eq!(settings.recent_folders[0], "/repo/p9");
+
+        settings.record_recent_folder("/repo/p5");
+        assert_eq!(settings.last_folder.as_deref(), Some("/repo/p5"));
+        assert_eq!(settings.recent_folders[0], "/repo/p5");
+        assert_eq!(
+            settings
+                .recent_folders
+                .iter()
+                .filter(|p| p.as_str() == "/repo/p5")
+                .count(),
+            1
+        );
     }
 }

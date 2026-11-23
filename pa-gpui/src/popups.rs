@@ -17,6 +17,7 @@ pub(crate) enum OpenPopup {
     None,
     ModelMenu,
     SettingsMenu,
+    FolderMenu,
     DiffBaseBranchMenu,
     DiffWorktreeMenu,
     ExportResult {
@@ -856,6 +857,7 @@ impl PaApp {
                     .into_any_element(),
             ),
             OpenPopup::SettingsMenu => Some(self.render_settings_popup(window, cx)),
+            OpenPopup::FolderMenu => Some(self.render_folder_menu_popup(cx)),
             OpenPopup::DiffBaseBranchMenu => Some(self.render_diff_base_branch_popup(window, cx)),
             OpenPopup::DiffWorktreeMenu => Some(self.render_diff_worktree_popup(cx)),
             OpenPopup::ExportResult {
@@ -1093,6 +1095,7 @@ impl PaApp {
         id: &'static str,
         list_id: &'static str,
         width: f32,
+        top_y: f32,
         left_x: Option<f32>,
         rows: Vec<AnyElement>,
     ) -> AnyElement {
@@ -1102,19 +1105,19 @@ impl PaApp {
             .w_full()
             .max_h(px(280.))
             .overflow_y_scrollbar()
-            .gap(px(2.))
+            .gap(px(1.))
             .children(rows);
         v_flex()
             .id(id)
             .absolute()
-            .top(px(74.))
+            .top(px(top_y))
             .when_some(left_x, |box_, x| box_.left(px(x)))
             .when(left_x.is_none(), |box_| box_.right(px(12.)))
             .w(px(width))
-            .p(px(6.))
-            .rounded(px(10.))
+            .p(px(5.))
+            .rounded(px(9.))
             .border_1()
-            .border_color(p.panel_edge)
+            .border_color(p.sidebar_group_edge)
             .bg(p.panel_surface)
             .shadow_lg()
             .on_click(|_, _, cx| cx.stop_propagation())
@@ -1126,55 +1129,59 @@ impl PaApp {
         &self,
         id: (&'static str, usize),
         title: String,
-        subtitle: String,
+        detail: String,
         selected: bool,
     ) -> Stateful<Div> {
         let p = self.palette();
         h_flex()
             .id(id)
             .w_full()
+            .h(px(26.))
             .px(px(8.))
-            .py(px(if subtitle.is_empty() { 4. } else { 5. }))
-            .gap(px(6.))
+            .gap(px(8.))
             .rounded(px(6.))
             .items_center()
             .justify_between()
             .cursor_pointer()
             .bg(if selected {
-                p.sidebar_row_selected
+                p.sidebar_row_hover
             } else {
                 Hsla::transparent_black()
             })
             .hover(move |s| s.bg(p.sidebar_row_hover))
             .child(
-                v_flex()
-                    .min_w_0()
+                div()
                     .flex_1()
-                    .gap(px(1.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(12.))
-                            .text_color(p.ink)
-                            .child(title),
-                    )
-                    .when(!subtitle.is_empty(), |col| {
-                        col.child(
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(11.5))
+                    .when(selected, |d| d.font_weight(FontWeight::MEDIUM))
+                    .text_color(if selected { p.ink } else { p.quiet_ink })
+                    .child(title),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap(px(6.))
+                    .items_center()
+                    .when(!detail.is_empty(), |r| {
+                        r.child(
                             div()
+                                .max_w(px(110.))
                                 .truncate()
                                 .text_size(px(10.5))
-                                .text_color(p.quiet_ink)
-                                .child(subtitle),
+                                .text_color(p.sidebar_group_empty_ink)
+                                .child(detail),
+                        )
+                    })
+                    .when(selected, |r| {
+                        r.child(
+                            Icon::new(IconName::Check)
+                                .size(px(11.))
+                                .text_color(p.working),
                         )
                     }),
             )
-            .when(selected, |row| {
-                row.child(
-                    Icon::new(IconName::Check)
-                        .size(px(12.))
-                        .text_color(p.working),
-                )
-            })
     }
 
     fn render_diff_base_branch_popup(
@@ -1222,13 +1229,235 @@ impl PaApp {
         self.diff_menu_shell(
             "floating-diff-branch-menu",
             "diff-branch-menu-list",
-            220.,
+            210.,
+            74.,
+            Some(left_x),
+            rows,
+        )
+    }
+
+    fn render_folder_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        let left_x = if self.settings.sidebar_open { 246. } else { 46. };
+        let current_draft = self.roster.draft_cwd().unwrap_or_default();
+        let current_draft_path = std::path::Path::new(current_draft);
+        let mut rows: Vec<AnyElement> = Vec::new();
+
+        for (ix, dir) in self.settings.recent_folders.iter().enumerate() {
+            let worktrees = self.diff_model.worktrees_for_project(dir);
+            let has_multi_wt = worktrees.len() > 1;
+            let expanded = has_multi_wt && self.diff_model.is_project_expanded(dir);
+            let exact_selected = !current_draft.is_empty()
+                && crate::diff_git::same_worktree_path(std::path::Path::new(dir), current_draft_path);
+            let child_selected = !current_draft.is_empty()
+                && worktrees
+                    .iter()
+                    .any(|wt| crate::diff_git::same_worktree_path(&wt.path, current_draft_path));
+            let row_selected = if expanded {
+                exact_selected
+            } else {
+                exact_selected || child_selected
+            };
+
+            let title = crate::sidebar::display_folder_name(dir);
+            let dir_click = dir.clone();
+            let dir_toggle = dir.clone();
+
+            rows.push(
+                h_flex()
+                    .id(("recent-folder-opt", ix))
+                    .w_full()
+                    .h(px(26.))
+                    .pl(px(4.))
+                    .pr(px(8.))
+                    .gap(px(4.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .bg(if row_selected {
+                        p.sidebar_row_hover
+                    } else {
+                        Hsla::transparent_black()
+                    })
+                    .hover(move |s| s.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.select_draft_folder(dir_click.clone(), Some(dir_click.clone()), cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(4.))
+                            .items_center()
+                            .child(if has_multi_wt {
+                                div()
+                                    .id(("recent-folder-expand", ix))
+                                    .size(px(18.))
+                                    .rounded(px(4.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .hover(move |s| s.bg(p.sidebar_row_selected))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.diff_model.toggle_project_expanded(&dir_toggle);
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        Icon::new(if expanded {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .size(px(11.))
+                                        .text_color(p.quiet_ink),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                div().w(px(18.)).flex_shrink_0().into_any_element()
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(11.5))
+                                    .when(row_selected, |d| d.font_weight(FontWeight::MEDIUM))
+                                    .text_color(if row_selected { p.ink } else { p.quiet_ink })
+                                    .child(title),
+                            ),
+                    )
+                    .when(row_selected, |r| {
+                        r.child(
+                            Icon::new(IconName::Check)
+                                .size(px(11.))
+                                .text_color(p.working),
+                        )
+                    })
+                    .into_any_element(),
+            );
+
+            if expanded {
+                for (wt_ix, wt) in worktrees.iter().enumerate() {
+                    let wt_selected = !current_draft.is_empty()
+                        && crate::diff_git::same_worktree_path(&wt.path, current_draft_path);
+                    let wt_label = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
+                    let wt_path = wt.path.to_string_lossy().into_owned();
+                    let proj_root = dir.clone();
+                    rows.push(
+                        h_flex()
+                            .id(("recent-folder-wt", ix * 1000 + wt_ix))
+                            .w_full()
+                            .h(px(24.))
+                            .pl(px(26.))
+                            .pr(px(8.))
+                            .gap(px(6.))
+                            .rounded(px(6.))
+                            .items_center()
+                            .justify_between()
+                            .cursor_pointer()
+                            .bg(if wt_selected {
+                                p.sidebar_row_hover
+                            } else {
+                                Hsla::transparent_black()
+                            })
+                            .hover(move |s| s.bg(p.sidebar_row_hover))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.select_draft_folder(wt_path.clone(), Some(proj_root.clone()), cx);
+                            }))
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(5.))
+                                    .items_center()
+                                    .child(
+                                        svg()
+                                            .path(crate::assets::ICON_GIT_BRANCH_PATH)
+                                            .size(px(10.5))
+                                            .flex_shrink_0()
+                                            .text_color(p.quiet_ink),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .when(wt_selected, |d| d.font_weight(FontWeight::MEDIUM))
+                                            .text_color(if wt_selected { p.ink } else { p.quiet_ink })
+                                            .child(wt_label),
+                                    ),
+                            )
+                            .when(wt_selected, |r| {
+                                r.child(
+                                    Icon::new(IconName::Check)
+                                        .size(px(11.))
+                                        .text_color(p.working),
+                                )
+                            })
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        if !rows.is_empty() {
+            rows.push(
+                div()
+                    .w_full()
+                    .h(px(1.))
+                    .my(px(3.))
+                    .bg(p.sidebar_group_edge)
+                    .into_any_element(),
+            );
+        }
+
+        rows.push(
+            h_flex()
+                .id("choose-folder-opt")
+                .w_full()
+                .h(px(26.))
+                .px(px(8.))
+                .gap(px(7.))
+                .rounded(px(6.))
+                .items_center()
+                .cursor_pointer()
+                .hover(move |s| s.bg(p.sidebar_row_hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.pick_draft_folder(cx);
+                }))
+                .child(
+                    Icon::new(IconName::FolderOpen)
+                        .size(px(12.))
+                        .text_color(p.quiet_ink),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(p.ink)
+                        .child("Choose folder…"),
+                )
+                .into_any_element(),
+        );
+
+        self.diff_menu_shell(
+            "floating-folder-menu",
+            "folder-menu-list",
+            248.,
+            34.,
             Some(left_x),
             rows,
         )
     }
 
     fn render_diff_worktree_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let left_x = if self.settings.sidebar_open { 320. } else { 120. };
         let rows: Vec<AnyElement> = self
             .diff_model
             .worktrees()
@@ -1238,13 +1467,7 @@ impl PaApp {
                 let selected = self.diff_model.is_active_worktree(&wt.path);
                 let path_click = wt.path.clone();
                 let title = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
-                let subtitle = match (wt.branch.is_some(), wt.is_main) {
-                    (true, true) => format!("{} · main", wt.label),
-                    (true, false) => wt.label.clone(),
-                    (false, true) => "main".to_string(),
-                    (false, false) => String::new(),
-                };
-                self.diff_menu_option(("diff-wt-opt", ix), title, subtitle, selected)
+                self.diff_menu_option(("diff-wt-opt", ix), title, String::new(), selected)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.select_diff_worktree(path_click.clone(), cx);
@@ -1256,8 +1479,9 @@ impl PaApp {
         self.diff_menu_shell(
             "floating-diff-worktree-menu",
             "diff-worktree-menu-list",
-            240.,
-            None,
+            224.,
+            34.,
+            Some(left_x),
             rows,
         )
     }
