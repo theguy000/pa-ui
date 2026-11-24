@@ -1,7 +1,9 @@
 use crate::diff_git::{same_worktree_path, DiffFileSummary, DiffLoadOutcome, RepoContext, WorktreeEntry};
 use crate::settings::DiffScope;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 pub(crate) const DIFF_DEFAULT_WIDTH: f32 = 480.0;
 pub(crate) const DIFF_MIN_WIDTH: f32 = 280.0;
@@ -27,6 +29,117 @@ pub(crate) fn clamp_diff_width(desired: f32, viewport_w: f32, sidebar_w: f32) ->
         return max_available;
     }
     desired.clamp(DIFF_MIN_WIDTH, max_available)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StickyHeaderLayout {
+    pub(crate) file_ix: usize,
+    pub(crate) top_offset: f32,
+}
+
+#[derive(Default)]
+pub(crate) struct StickyDiffTracker {
+    pub(crate) header_content_h: f32,
+    pub(crate) frame_headers: Vec<(usize, f32)>,
+    pub(crate) last_sticky: Option<usize>,
+    pub(crate) hovered_file: Option<usize>,
+}
+
+/// Computes which expanded file header (if any) should pin at the top of the diff viewport,
+/// plus a sub-pixel push-up offset (`<= 0.0`) as the next file's header rises from below.
+///
+/// `frame_headers` contains `(file_ix, content_top_y)` measured directly from the inner
+/// header row bounds. The pinned header places its own inner row at `viewport_top + py1`,
+/// so the handoff at `content_top_y <= viewport_top + py1` is exact to the sub-pixel.
+pub(crate) fn compute_sticky_diff_header(
+    viewport_top: f32,
+    py1: f32,
+    header_content_h: f32,
+    frame_headers: &[(usize, f32)],
+    expanded: &[bool],
+    prev_sticky: Option<usize>,
+    hovered_file: Option<usize>,
+) -> Option<StickyHeaderLayout> {
+    if expanded.is_empty() {
+        return None;
+    }
+    let content_h = header_content_h.max(20.0);
+    // Outer height of the sticky bar: top py1 + content + bottom py1 + 1px bottom border.
+    let sticky_h = content_h + 2.0 * py1 + 1.0;
+    // The exact Y where the pinned header's inner content sits when `top_offset == 0.0`.
+    let pin_content_y = viewport_top + py1;
+
+    let mut headers: Vec<(usize, f32)> = frame_headers
+        .iter()
+        .copied()
+        .filter(|(ix, _)| *ix < expanded.len())
+        .collect();
+    headers.sort_by_key(|(ix, _)| *ix);
+
+    let finish = |file_ix: usize, next_content_y: Option<f32>| -> Option<StickyHeaderLayout> {
+        if !expanded.get(file_ix).copied().unwrap_or(false) {
+            return None;
+        }
+        // The next file (`file_ix + 1 > 0`) has a 1px top border at `next_content_y - py1 - 1.0`.
+        // Let the sticky bar's 1px bottom border meet that 1px top border cleanly on the same row.
+        let top_offset = match next_content_y {
+            Some(ny) => {
+                let next_outer_top = ny - py1 - 1.0;
+                let contact_y = viewport_top + sticky_h - 1.0;
+                if next_outer_top < contact_y {
+                    (next_outer_top - contact_y).clamp(-sticky_h, 0.0)
+                } else {
+                    0.0
+                }
+            }
+            None => 0.0,
+        };
+        if top_offset <= -sticky_h + 0.5 {
+            return None;
+        }
+        Some(StickyHeaderLayout {
+            file_ix,
+            top_offset,
+        })
+    };
+
+    // 1. Any rendered header whose inner content has reached or passed the pinned line.
+    if let Some((above_pos, &(above_ix, _))) = headers
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (_, y))| *y < pin_content_y - 0.05)
+    {
+        let next_content_y = headers
+            .get(above_pos + 1)
+            .filter(|(next_ix, _)| *next_ix == above_ix + 1)
+            .map(|(_, y)| *y);
+        return finish(above_ix, next_content_y);
+    }
+
+    // 2. No rendered header is above the pinned line, but at least one header is visible below.
+    if let Some(&(first_ix, first_y)) = headers.first() {
+        if first_ix > 0 && first_y > pin_content_y + 0.05 {
+            return finish(first_ix - 1, Some(first_y));
+        }
+        return None;
+    }
+
+    // 3. No file headers are visible in the current viewport (deep inside a long file).
+    if let Some(h) = hovered_file.filter(|&ix| expanded.get(ix).copied().unwrap_or(false)) {
+        return finish(h, None);
+    }
+    if let Some(prev) = prev_sticky.filter(|&ix| expanded.get(ix).copied().unwrap_or(false)) {
+        return finish(prev, None);
+    }
+    let mut expanded_iter = expanded
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, &open)| open.then_some(ix));
+    if let (Some(only), None) = (expanded_iter.next(), expanded_iter.next()) {
+        return finish(only, None);
+    }
+    None
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +186,7 @@ pub(crate) struct DiffModel {
     expanded_projects: HashSet<String>,
     recent_probe_generation: u64,
     draft_folder_generation: u64,
+    sticky_tracker: Rc<RefCell<StickyDiffTracker>>,
 }
 
 impl DiffModel {
@@ -111,7 +225,19 @@ impl DiffModel {
             expanded_projects: HashSet::new(),
             recent_probe_generation: 0,
             draft_folder_generation: 0,
+            sticky_tracker: Rc::new(RefCell::new(StickyDiffTracker::default())),
         }
+    }
+
+    pub(crate) fn sticky_tracker(&self) -> Rc<RefCell<StickyDiffTracker>> {
+        self.sticky_tracker.clone()
+    }
+
+    pub(crate) fn clear_sticky_header(&mut self) {
+        let mut tr = self.sticky_tracker.borrow_mut();
+        tr.frame_headers.clear();
+        tr.last_sticky = None;
+        tr.hovered_file = None;
     }
 
     #[cfg(test)]
@@ -223,10 +349,12 @@ impl DiffModel {
         &self.worktrees
     }
 
+    #[allow(dead_code)]
     pub(crate) fn has_multiple_worktrees(&self) -> bool {
         self.worktrees.len() > 1
     }
 
+    #[allow(dead_code)]
     pub(crate) fn active_worktree(&self) -> Option<&WorktreeEntry> {
         let root = self.repo_root.as_deref()?;
         self.worktrees
@@ -234,6 +362,7 @@ impl DiffModel {
             .find(|wt| same_worktree_path(&wt.path, root))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn main_worktree_label(&self) -> Option<&str> {
         self.worktrees
             .iter()
@@ -242,6 +371,7 @@ impl DiffModel {
             .map(|wt| wt.label.as_str())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn begin_recent_worktrees_probe(&mut self) -> u64 {
         self.recent_probe_generation = self.recent_probe_generation.wrapping_add(1);
         self.recent_probe_generation
@@ -256,6 +386,7 @@ impl DiffModel {
         generation == self.draft_folder_generation
     }
 
+    #[allow(dead_code)]
     pub(crate) fn apply_recent_worktrees(
         &mut self,
         generation: u64,
@@ -268,6 +399,7 @@ impl DiffModel {
         true
     }
 
+    #[allow(dead_code)]
     pub(crate) fn worktrees_for_project(&self, project_path: &str) -> &[WorktreeEntry] {
         self.recent_worktrees
             .get(project_path)
@@ -275,10 +407,12 @@ impl DiffModel {
             .unwrap_or(&[])
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_project_expanded(&self, project_path: &str) -> bool {
         self.expanded_projects.contains(project_path)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn toggle_project_expanded(&mut self, project_path: &str) {
         if !self.expanded_projects.remove(project_path) {
             self.expanded_projects.insert(project_path.to_string());
@@ -322,6 +456,7 @@ impl DiffModel {
         true
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_active_worktree(&self, path: &Path) -> bool {
         self.repo_root
             .as_deref()
@@ -341,6 +476,7 @@ impl DiffModel {
         session_cwd.map(str::to_string)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_selected_worktree(&mut self, session_key: Option<&str>, path: PathBuf) {
         if let Some(key) = session_key {
             self.selected_worktree_by_session
@@ -407,6 +543,7 @@ impl DiffModel {
         self.total_additions = 0;
         self.total_deletions = 0;
         self.status = DiffViewStatus::NotAGitRepo;
+        self.clear_sticky_header();
     }
 
     /// Starts a load generation for `(session_key, cwd, scope, requested_base)`. Returns
@@ -443,6 +580,7 @@ impl DiffModel {
             self.total_additions = 0;
             self.total_deletions = 0;
             self.status = DiffViewStatus::Loading;
+            self.clear_sticky_header();
             (self.generation, true)
         } else {
             (self.generation, false)
@@ -578,6 +716,15 @@ impl DiffModel {
             if let Some(set) = self.expanded_by_session.get_mut(&key) {
                 set.remove(path);
             }
+            let sticky_matches = self
+                .sticky_tracker
+                .borrow()
+                .last_sticky
+                .and_then(|ix| self.summaries.get(ix))
+                .is_some_and(|s| s.path == path);
+            if sticky_matches {
+                self.clear_sticky_header();
+            }
         } else {
             self.expanded_by_session
                 .entry(key)
@@ -606,6 +753,7 @@ impl DiffModel {
             if let Some(set) = self.expanded_by_session.get_mut(&key) {
                 set.clear();
             }
+            self.clear_sticky_header();
         } else {
             let set = self.expanded_by_session.entry(key).or_default();
             for summary in &self.summaries {
@@ -643,6 +791,7 @@ mod tests {
                 additions: 3,
                 deletions: 1,
                 binary: false,
+                added: false,
                 untracked: false,
                 truncated: false,
                 deferred: *deferred,
@@ -929,5 +1078,51 @@ mod tests {
             .expect("returning to repo-a while closed must re-probe");
         assert_eq!(path2, PathBuf::from("/repo-a"));
         assert!(p2 != p1);
+    }
+
+    #[::core::prelude::v1::test]
+    fn sticky_header_tracks_scroll_pushup_and_collapsed_files() {
+        let exp = [true, true, false, true];
+        // viewport_top = 100, py1 = 4, content_h = 22 => sticky_h = 31, pin_content_y = 104.
+        // At scroll=0, F0 content sits right at pin_content_y (104.0) => no sticky overlay.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(0, 104.0)], &exp, None, None),
+            None
+        );
+        // Scrolled down 0.5px into F0 => F0 pins immediately at top_offset = 0.0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(0, 103.5)], &exp, None, None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset: 0.0 })
+        );
+        // Deep inside F0 (no headers visible) => keeps prev_sticky = 0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset: 0.0 })
+        );
+        // F1 header enters from bottom at content_y = 220 => still F0 at top_offset = 0.0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(1, 220.0)], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset: 0.0 })
+        );
+        // F1 content_y = 125 => next_outer_top = 120, contact_y = 130 => pushes F0 up by -10.0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(1, 125.0)], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset: -10.0 })
+        );
+        // F1 reaches pin_content_y (104.0) => F0 is fully pushed off, no sticky until F1 crosses.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(1, 104.0)], &exp, Some(0), None),
+            None
+        );
+        // Collapsed file (F2) scrolled above top never produces a sticky header.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[(2, 70.0), (3, 110.0)], &exp, Some(1), None),
+            None
+        );
+        // Hovered file recovers sticky identity after a blind jump with no visible headers.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 4.0, 22.0, &[], &exp, Some(0), Some(3)),
+            Some(StickyHeaderLayout { file_ix: 3, top_offset: 0.0 })
+        );
     }
 }

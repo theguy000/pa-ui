@@ -18,8 +18,8 @@ pub(crate) enum OpenPopup {
     ModelMenu,
     SettingsMenu,
     FolderMenu,
+    BranchMenu,
     DiffBaseBranchMenu,
-    DiffWorktreeMenu,
     DevErrors {
         // `None` = nothing copied yet, `Some(0)` = copied all, `Some(id)` = copied entry `id`.
         copied: Option<usize>,
@@ -855,9 +855,9 @@ impl PaApp {
                     .into_any_element(),
             ),
             OpenPopup::SettingsMenu => Some(self.render_settings_popup(window, cx)),
-            OpenPopup::FolderMenu => Some(self.render_folder_menu_popup(cx)),
+            OpenPopup::FolderMenu => Some(self.render_workspace_menu_popup(cx)),
+            OpenPopup::BranchMenu => Some(self.render_branch_menu_popup(cx)),
             OpenPopup::DiffBaseBranchMenu => Some(self.render_diff_base_branch_popup(window, cx)),
-            OpenPopup::DiffWorktreeMenu => Some(self.render_diff_worktree_popup(cx)),
             OpenPopup::DevErrors { copied } => Some(self.render_dev_errors_popup(*copied, cx)),
             OpenPopup::ExportResult {
                 kind,
@@ -1230,321 +1230,6 @@ impl PaApp {
             "diff-branch-menu-list",
             210.,
             74.,
-            Some(left_x),
-            rows,
-        )
-    }
-
-    fn render_folder_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.palette();
-        let left_x = if self.settings.sidebar_open { 246. } else { 46. };
-        let current_draft = self.roster.draft_cwd().unwrap_or_default();
-        let current_draft_path = std::path::Path::new(current_draft);
-        let none_selected = current_draft.is_empty();
-        let mut rows: Vec<AnyElement> = Vec::new();
-
-        rows.push(
-            h_flex()
-                .id("none-folder-opt")
-                .w_full()
-                .h(px(26.))
-                .px(px(8.))
-                .gap(px(7.))
-                .rounded(px(6.))
-                .items_center()
-                .justify_between()
-                .cursor_pointer()
-                .bg(if none_selected {
-                    p.sidebar_row_hover
-                } else {
-                    Hsla::transparent_black()
-                })
-                .hover(move |s| s.bg(p.sidebar_row_hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.clear_draft_folder(cx);
-                }))
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(px(7.))
-                        .items_center()
-                        .child(
-                            Icon::new(IconName::Folder)
-                                .size(px(12.))
-                                .text_color(p.quiet_ink),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(11.5))
-                                .when(none_selected, |d| d.font_weight(FontWeight::MEDIUM))
-                                .text_color(if none_selected { p.ink } else { p.quiet_ink })
-                                .child("None (home folder)"),
-                        ),
-                )
-                .when(none_selected, |r| {
-                    r.child(
-                        Icon::new(IconName::Check)
-                            .size(px(11.))
-                            .text_color(p.working),
-                    )
-                })
-                .into_any_element(),
-        );
-
-        if !self.settings.recent_folders.is_empty() {
-            rows.push(
-                div()
-                    .w_full()
-                    .h(px(1.))
-                    .my(px(3.))
-                    .bg(p.sidebar_group_edge)
-                    .into_any_element(),
-            );
-        }
-
-        for (ix, dir) in self.settings.recent_folders.iter().enumerate() {
-            let worktrees = self.diff_model.worktrees_for_project(dir);
-            let has_multi_wt = worktrees.len() > 1;
-            let expanded = has_multi_wt && self.diff_model.is_project_expanded(dir);
-            let exact_selected = !current_draft.is_empty()
-                && crate::diff_git::same_worktree_path(std::path::Path::new(dir), current_draft_path);
-            let child_selected = !current_draft.is_empty()
-                && worktrees
-                    .iter()
-                    .any(|wt| crate::diff_git::same_worktree_path(&wt.path, current_draft_path));
-            let row_selected = if expanded {
-                exact_selected && !child_selected
-            } else {
-                exact_selected || child_selected
-            };
-
-            let title = crate::sidebar::display_folder_name(dir);
-            let dir_click = dir.clone();
-            let dir_toggle = dir.clone();
-
-            rows.push(
-                h_flex()
-                    .id(("recent-folder-opt", ix))
-                    .w_full()
-                    .h(px(26.))
-                    .pl(px(4.))
-                    .pr(px(8.))
-                    .gap(px(4.))
-                    .rounded(px(6.))
-                    .items_center()
-                    .justify_between()
-                    .cursor_pointer()
-                    .bg(if row_selected {
-                        p.sidebar_row_hover
-                    } else {
-                        Hsla::transparent_black()
-                    })
-                    .hover(move |s| s.bg(p.sidebar_row_hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.select_draft_folder(dir_click.clone(), Some(dir_click.clone()), cx);
-                    }))
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(4.))
-                            .items_center()
-                            .child(if has_multi_wt {
-                                div()
-                                    .id(("recent-folder-expand", ix))
-                                    .size(px(18.))
-                                    .rounded(px(4.))
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .hover(move |s| s.bg(p.sidebar_row_selected))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.diff_model.toggle_project_expanded(&dir_toggle);
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        Icon::new(if expanded {
-                                            IconName::ChevronDown
-                                        } else {
-                                            IconName::ChevronRight
-                                        })
-                                        .size(px(11.))
-                                        .text_color(p.quiet_ink),
-                                    )
-                                    .into_any_element()
-                            } else {
-                                div().w(px(18.)).flex_shrink_0().into_any_element()
-                            })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(11.5))
-                                    .when(row_selected, |d| d.font_weight(FontWeight::MEDIUM))
-                                    .text_color(if row_selected { p.ink } else { p.quiet_ink })
-                                    .child(title),
-                            ),
-                    )
-                    .when(row_selected, |r| {
-                        r.child(
-                            Icon::new(IconName::Check)
-                                .size(px(11.))
-                                .text_color(p.working),
-                        )
-                    })
-                    .into_any_element(),
-            );
-
-            if expanded {
-                for (wt_ix, wt) in worktrees.iter().enumerate() {
-                    let wt_selected = !current_draft.is_empty()
-                        && crate::diff_git::same_worktree_path(&wt.path, current_draft_path);
-                    let wt_label = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
-                    let wt_path = wt.path.to_string_lossy().into_owned();
-                    let proj_root = dir.clone();
-                    rows.push(
-                        h_flex()
-                            .id(("recent-folder-wt", ix * 1000 + wt_ix))
-                            .w_full()
-                            .h(px(24.))
-                            .pl(px(26.))
-                            .pr(px(8.))
-                            .gap(px(6.))
-                            .rounded(px(6.))
-                            .items_center()
-                            .justify_between()
-                            .cursor_pointer()
-                            .bg(if wt_selected {
-                                p.sidebar_row_hover
-                            } else {
-                                Hsla::transparent_black()
-                            })
-                            .hover(move |s| s.bg(p.sidebar_row_hover))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.select_draft_folder(wt_path.clone(), Some(proj_root.clone()), cx);
-                            }))
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .gap(px(5.))
-                                    .items_center()
-                                    .child(
-                                        svg()
-                                            .path(crate::assets::ICON_GIT_BRANCH_PATH)
-                                            .size(px(10.5))
-                                            .flex_shrink_0()
-                                            .text_color(p.quiet_ink),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(11.))
-                                            .when(wt_selected, |d| d.font_weight(FontWeight::MEDIUM))
-                                            .text_color(if wt_selected { p.ink } else { p.quiet_ink })
-                                            .child(wt_label),
-                                    ),
-                            )
-                            .when(wt_selected, |r| {
-                                r.child(
-                                    Icon::new(IconName::Check)
-                                        .size(px(11.))
-                                        .text_color(p.working),
-                                )
-                            })
-                            .into_any_element(),
-                    );
-                }
-            }
-        }
-
-        if !rows.is_empty() {
-            rows.push(
-                div()
-                    .w_full()
-                    .h(px(1.))
-                    .my(px(3.))
-                    .bg(p.sidebar_group_edge)
-                    .into_any_element(),
-            );
-        }
-
-        rows.push(
-            h_flex()
-                .id("choose-folder-opt")
-                .w_full()
-                .h(px(26.))
-                .px(px(8.))
-                .gap(px(7.))
-                .rounded(px(6.))
-                .items_center()
-                .cursor_pointer()
-                .hover(move |s| s.bg(p.sidebar_row_hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.pick_draft_folder(cx);
-                }))
-                .child(
-                    Icon::new(IconName::FolderOpen)
-                        .size(px(12.))
-                        .text_color(p.quiet_ink),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.5))
-                        .text_color(p.ink)
-                        .child("Choose folder…"),
-                )
-                .into_any_element(),
-        );
-
-        self.diff_menu_shell(
-            "floating-folder-menu",
-            "folder-menu-list",
-            248.,
-            34.,
-            Some(left_x),
-            rows,
-        )
-    }
-
-    fn render_diff_worktree_popup(&self, cx: &mut Context<Self>) -> AnyElement {
-        let left_x = if self.settings.sidebar_open { 320. } else { 120. };
-        let rows: Vec<AnyElement> = self
-            .diff_model
-            .worktrees()
-            .iter()
-            .enumerate()
-            .map(|(ix, wt)| {
-                let selected = self.diff_model.is_active_worktree(&wt.path);
-                let path_click = wt.path.clone();
-                let title = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
-                self.diff_menu_option(("diff-wt-opt", ix), title, String::new(), selected)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.select_diff_worktree(path_click.clone(), cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect();
-
-        self.diff_menu_shell(
-            "floating-diff-worktree-menu",
-            "diff-worktree-menu-list",
-            224.,
-            34.,
             Some(left_x),
             rows,
         )
@@ -1957,9 +1642,9 @@ impl PaApp {
             .child(
                 h_flex()
                     .id("floating-settings-menu")
-                    .w(px(740.))
+                    .w(px(960.))
                     .max_w_full()
-                    .h(px(480.))
+                    .h(px(620.))
                     .max_h_full()
                     .rounded(px(16.))
                     .border_1()
@@ -2074,6 +1759,83 @@ impl PaApp {
                                                     .text_color(if active { p.ink } else { p.quiet_ink })
                                                     .child("Providers"),
                                             )
+                                    })
+                                    .child({
+                                        let active = self.settings_tab == SettingsTab::Harness;
+                                        h_flex()
+                                            .id("settings-nav-harness")
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .cursor_pointer()
+                                            .when(active, |d| d.bg(p.sidebar_row_selected))
+                                            .when(!active, |d| d.hover(|h| h.bg(p.sidebar_row_hover)))
+                                            .items_center()
+                                            .gap(px(9.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_tab = SettingsTab::Harness;
+                                                this.refresh_harness_view(cx);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .size(px(16.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(
+                                                        Icon::new(IconName::Bot)
+                                                            .size(px(14.))
+                                                            .text_color(if active { p.ink } else { p.quiet_ink }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .line_height(px(16.))
+                                                    .font_medium()
+                                                    .text_color(if active { p.ink } else { p.quiet_ink })
+                                                    .child("Harness"),
+                                            )
+                                    })
+                                    .child({
+                                        let active = self.settings_tab == SettingsTab::Workspaces;
+                                        h_flex()
+                                            .id("settings-nav-workspaces")
+                                            .h(px(34.))
+                                            .px(px(10.))
+                                            .rounded(px(8.))
+                                            .cursor_pointer()
+                                            .when(active, |d| d.bg(p.sidebar_row_selected))
+                                            .when(!active, |d| d.hover(|h| h.bg(p.sidebar_row_hover)))
+                                            .items_center()
+                                            .gap(px(9.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_tab = SettingsTab::Workspaces;
+                                                this.workspace_ui.pending_delete_ws = None;
+                                                let _ = this.bridge.tx.send(DaemonCmd::RefreshWorkspaces);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .size(px(16.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(
+                                                        Icon::new(IconName::FolderOpen)
+                                                            .size(px(14.))
+                                                            .text_color(if active { p.ink } else { p.quiet_ink }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .line_height(px(16.))
+                                                    .font_medium()
+                                                    .text_color(if active { p.ink } else { p.quiet_ink })
+                                                    .child("Workspaces"),
+                                            )
                                     }),
                             ),
                     )
@@ -2159,6 +1921,12 @@ impl PaApp {
                                                     .child(match self.settings_tab {
                                                         SettingsTab::General => {
                                                             "General".to_string()
+                                                        }
+                                                        SettingsTab::Harness => {
+                                                            "Harness".to_string()
+                                                        }
+                                                        SettingsTab::Workspaces => {
+                                                            "Workspaces".to_string()
                                                         }
                                                         SettingsTab::Providers => {
                                                             match &self.providers_mode {
@@ -2302,10 +2070,27 @@ impl PaApp {
                                                     ),
                                             ),
                                     )
+                                    .child(self.render_settings_general_worktree_root(cx))
                                     .into_any_element(),
                                 SettingsTab::Providers => {
                                     self.render_providers_settings_body(window, cx)
                                 }
+                                SettingsTab::Harness => v_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .px(px(22.))
+                                    .pt(px(14.))
+                                    .pb(px(18.))
+                                    .child(self.render_settings_harness_tab(window, cx))
+                                    .into_any_element(),
+                                SettingsTab::Workspaces => v_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .px(px(22.))
+                                    .pt(px(14.))
+                                    .pb(px(18.))
+                                    .child(self.render_settings_workspaces_tab(cx))
+                                    .into_any_element(),
                             }),
                     ),
             )

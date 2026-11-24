@@ -22,9 +22,8 @@ pub struct AppSettings {
     pub diff_split: bool,
     pub diff_wrap: bool,
     pub diff_jump_collapsed: bool,
-    pub active_closed: bool,
-    pub idle_closed: bool,
-    pub done_closed: bool,
+    pub live_radar_closed: bool,
+    pub collapsed_workspaces: Vec<String>,
     pub last_folder: Option<String>,
     pub recent_folders: Vec<String>,
     pub model_thinking: BTreeMap<String, String>,
@@ -41,9 +40,8 @@ impl Default for AppSettings {
             diff_split: false,
             diff_wrap: false,
             diff_jump_collapsed: false,
-            active_closed: false,
-            idle_closed: false,
-            done_closed: false,
+            live_radar_closed: false,
+            collapsed_workspaces: Vec::new(),
             last_folder: None,
             recent_folders: Vec::new(),
             model_thinking: BTreeMap::new(),
@@ -112,6 +110,18 @@ impl AppSettings {
     pub fn model_thinking_for(&self, provider: &str, model_id: &str) -> Option<&str> {
         let key = format!("{provider}/{model_id}");
         self.model_thinking.get(&key).map(String::as_str)
+    }
+
+    pub fn is_workspace_collapsed(&self, key: &str) -> bool {
+        self.collapsed_workspaces.iter().any(|k| k == key)
+    }
+
+    pub fn toggle_workspace_collapsed(&mut self, key: &str) {
+        if let Some(pos) = self.collapsed_workspaces.iter().position(|k| k == key) {
+            self.collapsed_workspaces.remove(pos);
+        } else {
+            self.collapsed_workspaces.push(key.to_string());
+        }
     }
 
     pub fn set_model_thinking(&mut self, provider: &str, model_id: &str, level: &str) {
@@ -191,4 +201,78 @@ mod tests {
             1
         );
     }
+}
+
+
+fn agent_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("PRIME_AGENT_CODING_AGENT_DIR").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(PathBuf::from(home).join(".prime").join("agent"))
+}
+
+/// Path to `~/.prime/agent/settings.json` (shared with the daemon).
+pub fn agent_settings_path() -> Option<PathBuf> {
+    Some(agent_dir()?.join("settings.json"))
+}
+
+/// Default worktree root (`~/.prime/agent/worktrees`).
+pub fn default_worktree_root() -> String {
+    agent_dir()
+        .map(|d| d.join("worktrees").to_string_lossy().into_owned())
+        .unwrap_or_else(|| "~/.prime/agent/worktrees".to_string())
+}
+
+/// Read `worktreeRoot` from `~/.prime/agent/settings.json`, falling back to default.
+pub fn load_agent_worktree_root() -> String {
+    if let Some(path) = agent_settings_path() {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(root) = val
+                    .get("worktreeRoot")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    return root.to_string();
+                }
+            }
+        }
+    }
+    default_worktree_root()
+}
+
+/// Atomically update `worktreeRoot` in `~/.prime/agent/settings.json` without touching other keys.
+pub fn save_agent_worktree_root(root: Option<&str>) -> std::io::Result<String> {
+    let Some(path) = agent_settings_path() else {
+        return Err(std::io::Error::other("home directory unavailable"));
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut obj = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    let effective = match root.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(custom) => {
+            obj.insert(
+                "worktreeRoot".to_string(),
+                serde_json::Value::String(custom.to_string()),
+            );
+            custom.to_string()
+        }
+        None => {
+            obj.remove("worktreeRoot");
+            default_worktree_root()
+        }
+    };
+    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(effective)
 }

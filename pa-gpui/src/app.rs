@@ -13,7 +13,7 @@ use crate::providers::{
 };
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
-use crate::sidebar::{RenameTarget, SidebarTab};
+use crate::sidebar::RenameTarget;
 use crate::theme::PaPalette;
 use crate::transcript::{
     append_text_delta, append_thinking_delta, build_items, compute_tail_trim,
@@ -44,6 +44,8 @@ const KEEP_TAIL_ITEMS: usize = 140;
 pub(crate) enum SettingsTab {
     General,
     Providers,
+    Harness,
+    Workspaces,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,8 +93,11 @@ pub struct PaApp {
     pub(crate) anim_epoch: Instant,
     pub(crate) anim_phase_ms: u64,
     pub(crate) settings: AppSettings,
-    pub(crate) sidebar_tab: SidebarTab,
+    pub(crate) expanded_older_workspaces: HashSet<String>,
     pub(crate) settings_tab: SettingsTab,
+    pub(crate) workspace_ui: crate::workspace_ui::WorkspaceUiState,
+    pub(crate) harness_ui: crate::settings_harness::HarnessUiState,
+    pub(crate) pending_bind_registered_workspace: bool,
     pub(crate) providers_snapshot: ProviderSnapshot,
     pub(crate) providers_mode: ProvidersEditMode,
     pub(crate) providers_more_open: bool,
@@ -119,6 +124,12 @@ pub struct PaApp {
     pub(crate) prov_model_name_input: Entity<InputState>,
     pub(crate) prov_model_ctx_input: Entity<InputState>,
     pub(crate) prov_model_max_input: Entity<InputState>,
+    pub(crate) ws_new_name_input: Entity<InputState>,
+    pub(crate) branch_new_name_input: Entity<InputState>,
+    pub(crate) harness_search_input: Entity<InputState>,
+    pub(crate) harness_title_input: Entity<InputState>,
+    pub(crate) harness_path_input: Entity<InputState>,
+    pub(crate) harness_content_input: Entity<TextareaState>,
     pub(crate) composer: Entity<TextareaState>,
     _subscriptions: Vec<Subscription>,
     _daemon_task: Task<()>,
@@ -140,6 +151,16 @@ impl PaApp {
         let prov_model_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Display name (optional)"));
         let prov_model_ctx_input = cx.new(|cx| InputState::new(window, cx).placeholder("128000"));
         let prov_model_max_input = cx.new(|cx| InputState::new(window, cx).placeholder("16384"));
+        let ws_new_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Worktree name"));
+        let branch_new_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Branch name"));
+        let harness_search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search entries"));
+        let harness_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
+        let harness_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("Category"));
+        let harness_content_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Write entry content")
+                .soft_wrap(true)
+        });
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("Ask anything… (/ for commands · Shift+Enter for newline)")
@@ -204,6 +225,22 @@ impl PaApp {
                     cx.notify();
                 }
                 _ => {}
+            }
+        });
+
+        let sub_ws_new = cx.subscribe_in(&ws_new_name_input, window, |this, _, ev: &InputEvent, window, cx| {
+            if matches!(ev, InputEvent::PressEnter { secondary: false, shift: false }) {
+                this.submit_new_worktree(window, cx);
+            }
+        });
+        let sub_br_new = cx.subscribe_in(&branch_new_name_input, window, |this, _, ev: &InputEvent, window, cx| {
+            if matches!(ev, InputEvent::PressEnter { secondary: false, shift: false }) {
+                this.submit_new_branch(window, cx);
+            }
+        });
+        let sub_h_search = cx.subscribe_in(&harness_search_input, window, |_this, _, ev: &InputEvent, _, cx| {
+            if matches!(ev, InputEvent::Change | InputEvent::Focus | InputEvent::Blur) {
+                cx.notify();
             }
         });
 
@@ -356,7 +393,7 @@ impl PaApp {
             anim_epoch: Instant::now(),
             anim_phase_ms: 0,
             settings,
-            sidebar_tab: SidebarTab::Live,
+            expanded_older_workspaces: HashSet::new(),
             settings_tab: SettingsTab::General,
             providers_snapshot: ProviderSnapshot::default(),
             providers_mode: ProvidersEditMode::List,
@@ -385,7 +422,26 @@ impl PaApp {
             prov_model_ctx_input,
             prov_model_max_input,
             composer,
-            _subscriptions: vec![sub_composer, sub_search, sub_find, sub_rename],
+            workspace_ui: crate::workspace_ui::WorkspaceUiState::new(
+                crate::settings::load_agent_worktree_root(),
+            ),
+            harness_ui: crate::settings_harness::HarnessUiState::default(),
+            pending_bind_registered_workspace: false,
+            ws_new_name_input,
+            branch_new_name_input,
+            harness_search_input,
+            harness_title_input,
+            harness_path_input,
+            harness_content_input,
+            _subscriptions: vec![
+                sub_composer,
+                sub_search,
+                sub_find,
+                sub_rename,
+                sub_ws_new,
+                sub_br_new,
+                sub_h_search,
+            ],
             _daemon_task: daemon_task,
             _attach_task: attach_task,
             _fetch_models_task: fetch_models_task,
@@ -419,7 +475,7 @@ impl PaApp {
             self.diff_model.cancel_pending_on_close();
             if matches!(
                 self.open_popup,
-                OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+                OpenPopup::DiffBaseBranchMenu
             ) {
                 self.open_popup = OpenPopup::None;
             }
@@ -971,6 +1027,7 @@ impl PaApp {
         let switching = self.roster.is_draft() || self.roster.active_id() != Some(key.as_str());
         self.open_popup = OpenPopup::None;
         self.hovered_model = None;
+        self.workspace_ui.diff_peek = None;
         self.composer_model.set_pending_slash(None);
         if switching {
             self.composer_model.clear_busy();
@@ -986,7 +1043,7 @@ impl PaApp {
             self.list_state.reset(0);
             self.list_state.set_follow_mode(FollowMode::Tail);
         }
-        self.roster.select_session_optimistic(&key);
+        let _ = self.roster.select_session_optimistic(&key);
         self.is_streaming = self.roster.active_row_is_streaming().unwrap_or(false);
         self.sync_stop_target(cx);
         self.sync_diff_for_active_session(cx);
@@ -995,6 +1052,17 @@ impl PaApp {
             request_id,
         });
         cx.notify();
+    }
+
+    pub(crate) fn request_new_session_in_workspace(
+        &mut self,
+        workspace_id: Option<String>,
+        root_path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_new_session(window, cx);
+        self.apply_workspace_selection(workspace_id, root_path, cx);
     }
 
     pub(crate) fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1168,7 +1236,7 @@ impl PaApp {
                     requested_session,
                     resolved_session,
                     request_id,
-                    messages,
+                    mut items,
                     first_entry,
                     more,
                     state,
@@ -1207,9 +1275,8 @@ impl PaApp {
                 self.pending_trim_tail = false;
                 self.scrolled_up = false;
 
-                let mut next = build_items(&messages);
-                self.assign_item_ids(&mut next);
-                self.items = next;
+                self.assign_item_ids(&mut items);
+                self.items = items;
                 self.list_state
                     .reset_with_uniform_height(self.items.len(), px(44.));
                 self.list_state.set_follow_mode(FollowMode::Tail);
@@ -1395,6 +1462,145 @@ impl PaApp {
                     copied: Some("primary"),
                 };
             }
+            DaemonEvent::WorkspacesLoaded {
+                workspaces,
+                worktree_root,
+            } => {
+                self.workspace_ui.workspaces = workspaces;
+                if !worktree_root.is_empty() {
+                    self.workspace_ui.worktree_root = worktree_root;
+                }
+                if self.harness_ui.selected_workspace_id.is_none() {
+                    self.harness_ui.selected_workspace_id = self.effective_harness_workspace_id();
+                }
+            }
+            DaemonEvent::WorkspaceRegistered { workspace, binding } => {
+                let ws_id = workspace.id.clone();
+                let wt_path = binding.worktree_path.clone();
+                if let Some(pos) = self
+                    .workspace_ui
+                    .workspaces
+                    .iter()
+                    .position(|w| w.id == workspace.id)
+                {
+                    self.workspace_ui.workspaces[pos] = workspace;
+                } else {
+                    self.workspace_ui.workspaces.push(workspace);
+                }
+                self.workspace_ui.notice = Some((true, "Workspace added".into()));
+                if self.pending_bind_registered_workspace {
+                    self.pending_bind_registered_workspace = false;
+                    self.apply_workspace_selection(Some(ws_id), Some(wt_path), cx);
+                }
+            }
+            DaemonEvent::WorkspaceRelinked(workspace) => {
+                if let Some(pos) = self
+                    .workspace_ui
+                    .workspaces
+                    .iter()
+                    .position(|w| w.id == workspace.id)
+                {
+                    self.workspace_ui.workspaces[pos] = workspace;
+                }
+                self.workspace_ui.notice = Some((true, "Workspace relinked".into()));
+            }
+            DaemonEvent::WorkspaceDeleted(ws_id) => {
+                self.workspace_ui.workspaces.retain(|w| w.id != ws_id);
+                self.workspace_ui.worktrees_by_ws.remove(&ws_id);
+                if self.workspace_ui.draft_workspace_id.as_deref() == Some(ws_id.as_str()) {
+                    self.workspace_ui.draft_workspace_id = None;
+                    self.workspace_ui.draft_worktree_path = None;
+                    self.roster.set_draft_cwd(None);
+                }
+                if self.harness_ui.selected_workspace_id.as_deref() == Some(ws_id.as_str()) {
+                    self.harness_ui.selected_workspace_id = self.effective_harness_workspace_id();
+                }
+                self.workspace_ui.notice = Some((true, "Workspace removed".into()));
+            }
+            DaemonEvent::WorktreesLoaded {
+                workspace_id,
+                worktrees,
+            } => {
+                self.workspace_ui
+                    .worktrees_by_ws
+                    .insert(workspace_id, worktrees);
+            }
+            DaemonEvent::WorktreeCreated {
+                workspace_id,
+                worktree,
+            } => {
+                let wt_path = worktree.path.clone();
+                self.workspace_ui
+                    .worktrees_by_ws
+                    .entry(workspace_id.clone())
+                    .or_default()
+                    .push(worktree);
+                self.apply_workspace_selection(Some(workspace_id), Some(wt_path), cx);
+            }
+            DaemonEvent::BranchesLoaded {
+                worktree_path,
+                branches,
+            } => {
+                self.workspace_ui.branches_for_wt = Some((worktree_path, branches));
+            }
+            DaemonEvent::BranchSwitched {
+                worktree_path,
+                branch,
+            } => {
+                if let Some(sid) = self.roster.active_id().map(str::to_string) {
+                    if let Some(mut binding) = self.current_workspace_binding().cloned() {
+                        if crate::workspace_ui::paths_same(&binding.worktree_path, &worktree_path) {
+                            binding.branch = Some(branch.clone());
+                            self.roster.set_workspace_binding(&sid, Some(binding));
+                        }
+                    }
+                }
+                for list in self.workspace_ui.worktrees_by_ws.values_mut() {
+                    for wt in list.iter_mut() {
+                        if crate::workspace_ui::paths_same(&wt.path, &worktree_path) {
+                            wt.branch = Some(branch.clone());
+                        }
+                    }
+                }
+                self.sync_diff_for_active_session(cx);
+            }
+            DaemonEvent::WorkspaceBindingUpdated { session, binding } => {
+                self.roster.set_workspace_binding(&session, binding);
+                self.workspace_ui.diff_peek = None;
+                self.sync_diff_for_active_session(cx);
+            }
+            DaemonEvent::HarnessEntriesLoaded { entries } => {
+                self.harness_ui.entries = entries;
+            }
+            DaemonEvent::HarnessEntrySaved(entry) => {
+                self.harness_ui.creating_new = false;
+                self.harness_ui.selected_entry_id = Some(entry.id.clone());
+                self.harness_ui.notice = Some((true, "Saved".into()));
+                if let Some(pos) = self
+                    .harness_ui
+                    .entries
+                    .iter()
+                    .position(|e| e.id == entry.id)
+                {
+                    self.harness_ui.entries[pos] = entry;
+                } else {
+                    self.harness_ui.entries.insert(0, entry);
+                }
+            }
+            DaemonEvent::HarnessEntryDeleted { entry_id } => {
+                self.harness_ui.entries.retain(|e| e.id != entry_id);
+                if self.harness_ui.selected_entry_id.as_deref() == Some(entry_id.as_str()) {
+                    self.harness_ui.selected_entry_id = None;
+                }
+                self.harness_ui.notice = Some((true, "Deleted".into()));
+            }
+            DaemonEvent::HarnessHistoryLoaded(items) => {
+                self.harness_ui.history = items;
+            }
+            DaemonEvent::HarnessRolledBack => {
+                self.harness_ui.notice = Some((true, "Rolled back refinement".into()));
+                self.refresh_harness_view(cx);
+            }
             DaemonEvent::LiveFrame(frame) => {
                 self.handle_live_frame(&frame, cx);
             }
@@ -1411,6 +1617,34 @@ impl PaApp {
 
     fn handle_live_frame(&mut self, frame: &Value, cx: &mut Context<Self>) {
         let top_kind = frame.get("type").and_then(Value::as_str).unwrap_or_default();
+        if top_kind == "workspaces_changed" {
+            let _ = self.bridge.tx.send(DaemonCmd::RefreshWorkspaces);
+            return;
+        }
+        if top_kind == "harness_changed" {
+            if self.open_popup == OpenPopup::SettingsMenu && self.settings_tab == SettingsTab::Harness {
+                self.refresh_harness_view(cx);
+            }
+            return;
+        }
+        if top_kind == "session_event" {
+            if let Some(ev) = frame.get("event") {
+                if ev.get("type").and_then(Value::as_str) == Some("workspace_changed") {
+                    let sid = frame
+                        .get("activeSessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let binding = ev
+                        .get("binding")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    if !sid.is_empty() {
+                        self.roster.set_workspace_binding(sid, binding);
+                        self.sync_diff_for_active_session(cx);
+                    }
+                    return;
+                }
+            }
+        }
         if matches!(
             top_kind,
             "roster_update" | "session_updated" | "session_closed" | "session_binding"
@@ -1819,6 +2053,9 @@ impl Render for PaApp {
                     this.toggle_right_column(cx);
                 } else if ctrl && key.eq_ignore_ascii_case("b") {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
+                    if !this.settings.sidebar_open {
+                        this.expanded_older_workspaces.clear();
+                    }
                     this.rail_mark_hovered = false;
                     this.settings.save();
                     cx.notify();
@@ -1832,7 +2069,15 @@ impl Render for PaApp {
                     }
                     cx.notify();
                 } else if key == "escape" {
-                    if this.open_popup != OpenPopup::None {
+                    if this.workspace_ui.creating_worktree_ws.take().is_some()
+                        || std::mem::take(&mut this.workspace_ui.creating_branch)
+                        || std::mem::take(&mut this.harness_ui.workspace_dropdown_open)
+                        || this.harness_ui.pending_delete_id.take().is_some()
+                        || this.harness_ui.pending_rollback_id.take().is_some()
+                        || this.workspace_ui.pending_delete_ws.take().is_some()
+                    {
+                        cx.notify();
+                    } else if this.open_popup != OpenPopup::None {
                         this.open_popup = OpenPopup::None;
                         this.hovered_model = None;
                         cx.notify();

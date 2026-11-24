@@ -2,7 +2,7 @@
 //! grouped session list (Active / Idle / Done), inline rename, and title bar.
 
 use crate::app::PaApp;
-use crate::assets::{ICON_GIT_BRANCH_PATH, PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
+use crate::assets::{PRIME_AGENT_MARK_DARK_PATH, PRIME_AGENT_MARK_LIGHT_PATH};
 use crate::daemon::DaemonCmd;
 use crate::popups::OpenPopup;
 use gpui_kit::component::{
@@ -23,19 +23,9 @@ pub(crate) struct RenameTarget {
     pub(crate) is_resident: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SidebarTab {
-    Live,
-    Done,
-}
+const WORKSPACE_DONE_PREVIEW: usize = 5;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarGroup {
-    Active,
-    Idle,
-    Done,
-}
-
+#[allow(dead_code)]
 pub(crate) fn display_folder_name(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -119,11 +109,16 @@ impl PaApp {
         cx.notify();
     }
 
-    pub(crate) fn toggle_group(&mut self, group: SidebarGroup, cx: &mut Context<Self>) {
-        match group {
-            SidebarGroup::Active => self.settings.active_closed = !self.settings.active_closed,
-            SidebarGroup::Idle => self.settings.idle_closed = !self.settings.idle_closed,
-            SidebarGroup::Done => self.settings.done_closed = !self.settings.done_closed,
+    pub(crate) fn toggle_live_radar(&mut self, cx: &mut Context<Self>) {
+        self.settings.live_radar_closed = !self.settings.live_radar_closed;
+        self.settings.save();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_workspace_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.settings.toggle_workspace_collapsed(key);
+        if self.settings.is_workspace_collapsed(key) {
+            self.expanded_older_workspaces.remove(key);
         }
         self.settings.save();
         cx.notify();
@@ -167,207 +162,6 @@ impl PaApp {
             )
     }
 
-    fn render_titlebar_context(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let p = self.palette();
-        let is_draft = self.roster.is_draft_or_empty();
-        let (_, active_cwd) = self.active_diff_target();
-        let main_repo_label = self.diff_model.main_worktree_label().map(str::to_string);
-        let active_wt = self.diff_model.active_worktree().cloned();
-        let has_multi_wt = self.diff_model.has_multiple_worktrees();
-
-        let folder_label = main_repo_label.or_else(|| {
-            active_cwd
-                .as_deref()
-                .map(display_folder_name)
-                .filter(|s| !s.is_empty())
-        });
-
-        if !is_draft && folder_label.is_none() {
-            return None;
-        }
-
-        let folder_menu_open = self.open_popup == OpenPopup::FolderMenu;
-        let wt_menu_open = self.open_popup == OpenPopup::DiffWorktreeMenu;
-        let has_folder = folder_label.is_some();
-        let folder_text = folder_label.unwrap_or_else(|| "Choose folder".to_string());
-
-        let folder_el: AnyElement = if is_draft {
-            h_flex()
-                .id("tb-folder-btn")
-                .h(px(22.))
-                .px(px(6.))
-                .gap(px(5.))
-                .max_w(px(220.))
-                .rounded(px(5.))
-                .bg(if folder_menu_open {
-                    p.sidebar_row_selected
-                } else {
-                    Hsla::transparent_black()
-                })
-                .items_center()
-                .cursor_pointer()
-                .hover(move |s| s.bg(p.sidebar_row_hover))
-                .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    if this.open_popup == OpenPopup::FolderMenu {
-                        this.open_popup = OpenPopup::None;
-                    } else {
-                        this.open_popup = OpenPopup::FolderMenu;
-                        this.refresh_recent_project_worktrees(cx);
-                    }
-                    cx.notify();
-                }))
-                .child(
-                    Icon::new(if has_folder {
-                        IconName::FolderOpen
-                    } else {
-                        IconName::Folder
-                    })
-                    .size(px(12.))
-                    .text_color(p.quiet_ink),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if has_folder { p.ink } else { p.quiet_ink })
-                        .child(folder_text),
-                )
-                .child(
-                    Icon::new(IconName::ChevronDown)
-                        .size(px(10.5))
-                        .text_color(p.quiet_ink),
-                )
-                .into_any_element()
-        } else {
-            h_flex()
-                .id("tb-folder-label")
-                .h(px(22.))
-                .px(px(4.))
-                .gap(px(5.))
-                .max_w(px(210.))
-                .items_center()
-                .child(
-                    Icon::new(IconName::Folder)
-                        .size(px(12.))
-                        .text_color(p.quiet_ink),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.ink)
-                        .child(folder_text),
-                )
-                .into_any_element()
-        };
-
-        let worktree_el: Option<AnyElement> = active_wt.map(|wt| {
-            let wt_label = wt.branch.as_deref().unwrap_or(&wt.label).to_string();
-            if has_multi_wt {
-                h_flex()
-                    .id("tb-worktree-btn")
-                    .h(px(22.))
-                    .px(px(6.))
-                    .gap(px(5.))
-                    .max_w(px(210.))
-                    .rounded(px(5.))
-                    .bg(if wt_menu_open {
-                        p.sidebar_row_selected
-                    } else {
-                        Hsla::transparent_black()
-                    })
-                    .items_center()
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(p.sidebar_row_hover))
-                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                        window.prevent_default();
-                        cx.stop_propagation();
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.open_popup = if this.open_popup == OpenPopup::DiffWorktreeMenu {
-                            OpenPopup::None
-                        } else {
-                            OpenPopup::DiffWorktreeMenu
-                        };
-                        cx.notify();
-                    }))
-                    .child(
-                        svg()
-                            .path(ICON_GIT_BRANCH_PATH)
-                            .size(px(11.5))
-                            .flex_shrink_0()
-                            .text_color(p.quiet_ink),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(12.))
-                            .text_color(p.quiet_ink)
-                            .child(wt_label),
-                    )
-                    .child(
-                        Icon::new(IconName::ChevronDown)
-                            .size(px(10.5))
-                            .text_color(p.quiet_ink),
-                    )
-                    .into_any_element()
-            } else {
-                h_flex()
-                    .id("tb-worktree-badge")
-                    .h(px(22.))
-                    .px(px(4.))
-                    .gap(px(4.))
-                    .max_w(px(180.))
-                    .items_center()
-                    .child(
-                        svg()
-                            .path(ICON_GIT_BRANCH_PATH)
-                            .size(px(11.))
-                            .flex_shrink_0()
-                            .text_color(p.quiet_ink),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(12.))
-                            .text_color(p.quiet_ink)
-                            .child(wt_label),
-                    )
-                    .into_any_element()
-            }
-        });
-
-        Some(
-            h_flex()
-                .min_w_0()
-                .gap(px(5.))
-                .items_center()
-                .child(folder_el)
-                .when_some(worktree_el, |row, wt_el| {
-                    row.child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child("/"),
-                    )
-                    .child(wt_el)
-                })
-                .into_any_element(),
-        )
-    }
-
     pub(crate) fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
         let settings_open = self.open_popup == OpenPopup::SettingsMenu;
@@ -388,7 +182,7 @@ impl PaApp {
                     .pr(px(8.))
                     .gap(px(4.))
                     .items_center()
-                    .children(self.render_titlebar_context(cx))
+                    .child(self.render_titlebar_workspace_context(cx))
                     .child(div().flex_1().h_full())
                     .when(dev_enabled, |bar| {
                         bar.child(
@@ -463,6 +257,10 @@ impl PaApp {
                                     OpenPopup::None
                                 } else {
                                     this.refresh_providers_snapshot();
+                                    let _ = this.bridge.tx.send(DaemonCmd::RefreshWorkspaces);
+                                    if this.settings_tab == crate::app::SettingsTab::Harness {
+                                        this.refresh_harness_view(cx);
+                                    }
                                     OpenPopup::SettingsMenu
                                 };
                                 cx.notify();
@@ -593,10 +391,10 @@ impl PaApp {
         }
         let p = self.palette();
         let query = self.search_input.read(cx).value();
-        let grouped = self.roster.grouped_sessions(&query);
-        let active_rows = grouped.active;
-        let idle_rows = grouped.idle;
-        let done_rows = grouped.done;
+        let has_query = !query.trim().is_empty();
+        let view = self
+            .roster
+            .workspace_sidebar_view(&self.workspace_ui.workspaces, &query);
 
         v_flex()
             .w(px(244.))
@@ -677,6 +475,7 @@ impl PaApp {
                                         cx.stop_propagation();
                                         this.settings.sidebar_open = false;
                                         this.rail_mark_hovered = false;
+                                        this.expanded_older_workspaces.clear();
                                         this.settings.save();
                                         cx.notify();
                                     })),
@@ -733,194 +532,67 @@ impl PaApp {
                         ),
                 )
             })
-            .child({
-                let live_count = active_rows.len() + idle_rows.len();
-                let done_count = done_rows.len();
-                let live_on = self.sidebar_tab == SidebarTab::Live;
-                let done_on = self.sidebar_tab == SidebarTab::Done;
-                let pill_bg = if self.settings.dark_mode {
-                    p.composer_edge
-                } else {
-                    p.panel_surface
-                };
-                h_flex()
-                    .w_full()
-                    .h(px(28.))
-                    .p(px(2.))
-                    .gap(px(2.))
-                    .rounded(px(8.))
-                    .bg(p.sidebar_group_surface)
-                    .child(
-                        h_flex()
-                            .id("sb-tab-live")
-                            .flex_1()
-                            .h_full()
-                            .gap(px(5.))
-                            .rounded(px(6.))
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .when(live_on, |d| d.bg(pill_bg))
-                            .hover(move |d| {
-                                if live_on {
-                                    d
-                                } else {
-                                    d.bg(p.sidebar_row_hover)
-                                }
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.sidebar_tab = SidebarTab::Live;
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if live_on { p.ink } else { p.quiet_ink })
-                                    .child("Live"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(if live_on {
-                                        p.quiet_ink
-                                    } else {
-                                        p.sidebar_group_empty_ink
-                                    })
-                                    .child(live_count.to_string()),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .id("sb-tab-done")
-                            .flex_1()
-                            .h_full()
-                            .gap(px(5.))
-                            .rounded(px(6.))
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .when(done_on, |d| d.bg(pill_bg))
-                            .hover(move |d| {
-                                if done_on {
-                                    d
-                                } else {
-                                    d.bg(p.sidebar_row_hover)
-                                }
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.sidebar_tab = SidebarTab::Done;
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if done_on { p.ink } else { p.quiet_ink })
-                                    .child("Done"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(if done_on {
-                                        p.quiet_ink
-                                    } else {
-                                        p.sidebar_group_empty_ink
-                                    })
-                                    .child(done_count.to_string()),
-                            ),
-                    )
-            })
             .child(
                 div()
                     .id("sidebar-scroll")
                     .flex_1()
                     .overflow_y_scrollbar()
-                    .child(match self.sidebar_tab {
-                        SidebarTab::Live => {
-                            let mut col = v_flex().gap(px(8.)).pt(px(2.));
-                            if active_rows.is_empty() && idle_rows.is_empty() {
-                                col = col.child(
-                                    div()
-                                        .w_full()
-                                        .py(px(24.))
-                                        .flex()
-                                        .justify_center()
-                                        .text_size(px(12.))
-                                        .text_color(p.sidebar_group_empty_ink)
-                                        .child("No live sessions"),
-                                );
-                            } else {
-                                if !active_rows.is_empty() {
-                                    col = col.child(self.render_session_group(
-                                        SidebarGroup::Active,
-                                        "Running",
-                                        &active_rows,
-                                        self.settings.active_closed,
-                                        cx,
-                                    ));
-                                }
-                                if !idle_rows.is_empty() {
-                                    col = col.child(self.render_session_group(
-                                        SidebarGroup::Idle,
-                                        "Idle",
-                                        &idle_rows,
-                                        self.settings.idle_closed,
-                                        cx,
-                                    ));
-                                }
-                            }
-                            col
+                    .child({
+                        let mut col = v_flex().w_full().gap(px(4.)).pt(px(2.));
+
+                        // Variant B: Pinned Live radar (Running + Idle with Workspace tag)
+                        if !view.live.is_empty() {
+                            col = col.child(self.render_live_radar(&view.live, has_query, cx));
+                            col = col.child(
+                                div()
+                                    .w_full()
+                                    .h(px(1.))
+                                    .my(px(2.))
+                                    .bg(p.sidebar_group_edge),
+                            );
                         }
-                        SidebarTab::Done => {
-                            let mut col = v_flex().gap(px(2.)).pt(px(2.));
-                            if done_rows.is_empty() {
-                                col = col.child(
-                                    div()
-                                        .w_full()
-                                        .py(px(24.))
-                                        .flex()
-                                        .justify_center()
-                                        .text_size(px(12.))
-                                        .text_color(p.sidebar_group_empty_ink)
-                                        .child("No finished sessions"),
-                                );
-                            } else {
-                                for (idx, row) in done_rows.iter().enumerate() {
-                                    col = col.child(self.render_session_row(
-                                        SidebarGroup::Done,
-                                        "Done",
-                                        idx,
-                                        row,
-                                        cx,
-                                    ));
-                                }
+
+                        if view.groups.is_empty() {
+                            col = col.child(
+                                div()
+                                    .w_full()
+                                    .py(px(24.))
+                                    .flex()
+                                    .justify_center()
+                                    .text_size(px(12.))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(if has_query {
+                                        "No matching sessions"
+                                    } else {
+                                        "No sessions yet"
+                                    }),
+                            );
+                        } else {
+                            for grp in &view.groups {
+                                col = col.child(self.render_workspace_group(grp, has_query, cx));
                             }
-                            col
                         }
+
+                        col
                     }),
             )
             .into_any_element()
     }
 
-    pub(crate) fn render_session_group(
+    fn render_live_radar(
         &self,
-        group_kind: SidebarGroup,
-        title: &'static str,
-        rows: &[&SessionRow],
-        closed: bool,
+        live_rows: &[(&SessionRow, String)],
+        force_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette();
-        let empty = rows.is_empty();
-        let mut card = v_flex()
+        let closed = self.settings.live_radar_closed && !force_open;
+        let mut section = v_flex()
             .w_full()
             .gap(px(2.))
             .child(
                 h_flex()
-                    .id(SharedString::from(format!("grp-hdr-{title}")))
+                    .id("sb-live-radar-hdr")
                     .h(px(24.))
                     .w_full()
                     .px(px(6.))
@@ -929,9 +601,9 @@ impl PaApp {
                     .justify_between()
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
-                        this.toggle_group(group_kind, cx);
+                        this.toggle_live_radar(cx);
                     }))
                     .child(
                         h_flex()
@@ -943,86 +615,364 @@ impl PaApp {
                                 } else {
                                     IconName::ChevronDown
                                 })
-                                .size(px(10.5))
-                                .text_color(p.sidebar_group_empty_ink),
+                                .size(px(10.))
+                                .text_color(p.quiet_ink),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(p.sidebar_group_ink)
-                                    .child(title),
+                                    .child("Live"),
                             ),
                     )
                     .child(
                         div()
                             .text_size(px(10.5))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child(rows.len().to_string()),
+                            .text_color(p.quiet_ink)
+                            .child(live_rows.len().to_string()),
                     ),
             );
 
-        if closed || empty {
-            return card;
+        if closed {
+            return section;
         }
 
-        for (idx, row) in rows.iter().enumerate() {
-            card = card.child(self.render_session_row(group_kind, title, idx, row, cx));
+        for (idx, (row, ws_name)) in live_rows.iter().enumerate() {
+            section = section.child(self.render_live_row(idx, row, ws_name, cx));
         }
-
-        card
+        section
     }
 
-    fn render_session_row(
+    fn render_live_row(
         &self,
-        group_kind: SidebarGroup,
-        title: &'static str,
         idx: usize,
         row: &SessionRow,
+        ws_name: &str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette();
         let key = session_key(row);
-        let selected = self.roster.active_id() == Some(key.as_str())
-            || (!row.session_file.is_empty()
-                && self.roster.active_id() == Some(row.session_file.as_str()));
-        let label = {
-            let single: String = row
-                .name
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if !single.is_empty() {
-                single
-            } else {
-                key.chars().take(12).collect()
-            }
-        };
+        let selected = self
+            .roster
+            .active_id()
+            .is_some_and(|sid| crate::roster::row_matches_selector(row, sid));
+        let menu_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key: open_k, .. } if open_k == &key
+        );
+        let label = format_session_label(row, &key);
         let click_key = key.clone();
         let menu_key = key.clone();
         let menu_id = row.id.clone();
         let menu_file = row.session_file.clone();
         let menu_name = label.clone();
         let is_resident = row.is_resident();
-        let dot_color = match group_kind {
-            SidebarGroup::Active => Some(p.working),
-            SidebarGroup::Idle => Some(p.tag_idle),
-            SidebarGroup::Done => None,
+        let dot_color = if row.roster_status() == "Running" {
+            p.working
+        } else {
+            p.tag_idle
+        };
+        let row_group: SharedString = format!("sb-live-grp-{idx}").into();
+
+        v_flex()
+            .id(SharedString::from(format!("sess-live-{idx}")))
+            .group(row_group.clone())
+            .w_full()
+            .px(px(8.))
+            .py(px(6.))
+            .gap(px(2.))
+            .rounded(px(7.))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(p.sidebar_row_selected))
+            .hover(|d| d.bg(p.sidebar_row_hover))
+            .child(
+                h_flex()
+                    .w_full()
+                    .h(px(20.))
+                    .gap(px(7.))
+                    .items_center()
+                    .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(dot_color))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(12.5))
+                            .font_weight(if selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(p.ink)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("sess-dots-live-{idx}")))
+                            .h(px(20.))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .rounded(px(5.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(menu_open, |d| d.w(px(22.)).opacity(1.0))
+                            .when(!menu_open, |d| {
+                                d.w(px(0.)).opacity(0.0).group_hover(row_group, |s| {
+                                    s.w(px(22.)).opacity(1.0)
+                                })
+                            })
+                            .hover(|d| d.bg(p.sidebar_row_selected))
+                            .child(
+                                Icon::new(IconName::Ellipsis)
+                                    .size(px(12.))
+                                    .text_color(p.quiet_ink),
+                            )
+                            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.toggle_session_menu(
+                                    menu_key.clone(),
+                                    menu_id.clone(),
+                                    menu_file.clone(),
+                                    menu_name.clone(),
+                                    is_resident,
+                                    ev,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .pl(px(13.))
+                    .text_size(px(11.))
+                    .text_color(p.quiet_ink)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(ws_name.to_string()),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.select_session(click_key.clone(), cx);
+            }))
+    }
+
+    fn render_workspace_group(
+        &self,
+        grp: &crate::roster::WorkspaceSidebarGroup<'_>,
+        force_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let closed = !force_open && self.settings.is_workspace_collapsed(&grp.key);
+        let toggle_key = grp.key.clone();
+        let add_ws_id = grp.workspace_id.clone();
+        let add_root = grp.root_path.clone();
+        let older_key = grp.key.clone();
+        let expanded_older = force_open || self.expanded_older_workspaces.contains(&grp.key);
+
+        let visible_limit = if expanded_older {
+            grp.rows.len()
+        } else {
+            WORKSPACE_DONE_PREVIEW
+        };
+        let hidden_older = grp.rows.len().saturating_sub(visible_limit);
+        let hdr_group: SharedString = format!("ws-hdr-grp-{}", grp.key).into();
+        let folder_icon = if closed {
+            IconName::Folder
+        } else {
+            IconName::FolderOpen
         };
 
+        let mut card = v_flex()
+            .w_full()
+            .mt(px(4.))
+            .gap(px(2.))
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!("ws-hdr-{}", grp.key)))
+                    .group(hdr_group.clone())
+                    .h(px(28.))
+                    .w_full()
+                    .px(px(6.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_workspace_group(&toggle_key, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(
+                                Icon::new(if closed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .size(px(10.))
+                                .text_color(p.quiet_ink),
+                            )
+                            .child(
+                                Icon::new(folder_icon)
+                                    .size(px(13.))
+                                    .text_color(p.quiet_ink),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.ink)
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(grp.name.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .flex_shrink_0()
+                            .when(!grp.rows.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(p.sidebar_group_empty_ink)
+                                        .child(grp.rows.len().to_string()),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("ws-add-{}", grp.key)))
+                                    .size(px(20.))
+                                    .rounded(px(5.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .opacity(0.0)
+                                    .group_hover(hdr_group, |s| s.opacity(1.0))
+                                    .hover(|d| d.bg(p.sidebar_row_selected))
+                                    .child(
+                                        Icon::new(IconName::Plus)
+                                            .size(px(12.))
+                                            .text_color(p.quiet_ink),
+                                    )
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.request_new_session_in_workspace(
+                                            add_ws_id.clone(),
+                                            add_root.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            );
+
+        if closed {
+            return card;
+        }
+
+        if grp.rows.is_empty() {
+            if grp.live_count == 0 {
+                card = card.child(
+                    div()
+                        .pl(px(26.))
+                        .py(px(3.))
+                        .text_size(px(11.5))
+                        .text_color(p.quiet_ink)
+                        .child("No sessions yet"),
+                );
+            }
+            return card;
+        }
+
+        let scope_prefix = format!("ws-{}", grp.key);
+        for (idx, row) in grp.rows.iter().take(visible_limit).enumerate() {
+            card = card.child(self.render_done_row(&scope_prefix, idx, row, cx));
+        }
+
+        if hidden_older > 0 {
+            card = card.child(
+                div()
+                    .id(SharedString::from(format!("ws-older-{}", grp.key)))
+                    .pl(px(26.))
+                    .h(px(24.))
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .text_size(px(11.))
+                    .text_color(p.quiet_ink)
+                    .child(format!("Show {hidden_older} older"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.expanded_older_workspaces.insert(older_key.clone());
+                        cx.notify();
+                    })),
+            );
+        }
+
+        card
+    }
+
+    fn render_done_row(
+        &self,
+        scope: &str,
+        idx: usize,
+        row: &SessionRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let key = session_key(row);
+        let selected = self
+            .roster
+            .active_id()
+            .is_some_and(|sid| crate::roster::row_matches_selector(row, sid));
+        let menu_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key: open_k, .. } if open_k == &key
+        );
+        let label = format_session_label(row, &key);
+        let click_key = key.clone();
+        let menu_key = key.clone();
+        let menu_id = row.id.clone();
+        let menu_file = row.session_file.clone();
+        let menu_name = label.clone();
+        let is_resident = row.is_resident();
+        let row_group: SharedString = format!("sb-done-grp-{scope}-{idx}").into();
+
         h_flex()
-            .id((title, idx))
+            .id(SharedString::from(format!("sess-row-{scope}-{idx}")))
+            .group(row_group.clone())
             .h(px(28.))
-            .px(px(7.))
-            .gap(px(6.))
+            .pl(px(26.))
+            .pr(px(6.))
+            .gap(px(4.))
             .items_center()
             .rounded(px(6.))
             .cursor_pointer()
             .when(selected, |d| d.bg(p.sidebar_row_selected))
             .hover(|d| d.bg(p.sidebar_row_hover))
-            .when_some(dot_color, |d, c| {
-                d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
-            })
             .child(
                 div()
                     .flex_1()
@@ -1036,43 +986,39 @@ impl PaApp {
             )
             .child(
                 div()
-                    .id(SharedString::from(format!("sess-dots-{title}-{idx}")))
-                    .size(px(22.))
+                    .id(SharedString::from(format!("sess-dots-{scope}-{idx}")))
+                    .h(px(22.))
                     .flex_shrink_0()
+                    .overflow_hidden()
                     .rounded(px(5.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    .when(menu_open, |d| d.w(px(22.)).opacity(1.0))
+                    .when(!menu_open, |d| {
+                        d.w(px(0.)).opacity(0.0).group_hover(row_group, |s| {
+                            s.w(px(22.)).opacity(1.0)
+                        })
+                    })
                     .hover(|d| d.bg(p.sidebar_row_selected))
                     .child(
                         Icon::new(IconName::Ellipsis)
                             .size(px(12.))
-                            .text_color(p.sidebar_group_empty_ink),
+                            .text_color(p.quiet_ink),
                     )
                     .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                         cx.stop_propagation();
-                        let already_open = matches!(
-                            &this.open_popup,
-                            OpenPopup::SessionMenu { key, .. } if key == &menu_key
+                        this.toggle_session_menu(
+                            menu_key.clone(),
+                            menu_id.clone(),
+                            menu_file.clone(),
+                            menu_name.clone(),
+                            is_resident,
+                            ev,
+                            window,
+                            cx,
                         );
-                        if already_open {
-                            this.open_popup = OpenPopup::None;
-                        } else {
-                            let vp_h = window.viewport_size().height.as_f32();
-                            let top_y = (ev.position().y.as_f32() - 14.0)
-                                .clamp(36.0, (vp_h - 140.0).max(36.0))
-                                .round() as i32;
-                            this.open_popup = OpenPopup::SessionMenu {
-                                key: menu_key.clone(),
-                                id: menu_id.clone(),
-                                file: menu_file.clone(),
-                                name: menu_name.clone(),
-                                is_resident,
-                                anchor_y: top_y,
-                            };
-                        }
-                        cx.notify();
                     })),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1081,4 +1027,51 @@ impl PaApp {
             }))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn toggle_session_menu(
+        &mut self,
+        menu_key: String,
+        menu_id: String,
+        menu_file: String,
+        menu_name: String,
+        is_resident: bool,
+        ev: &ClickEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let already_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key, .. } if key == &menu_key
+        );
+        if already_open {
+            self.open_popup = OpenPopup::None;
+        } else {
+            let vp_h = window.viewport_size().height.as_f32();
+            let top_y = (ev.position().y.as_f32() - 14.0)
+                .clamp(36.0, (vp_h - 140.0).max(36.0))
+                .round() as i32;
+            self.open_popup = OpenPopup::SessionMenu {
+                key: menu_key,
+                id: menu_id,
+                file: menu_file,
+                name: menu_name,
+                is_resident,
+                anchor_y: top_y,
+            };
+        }
+        cx.notify();
+    }
+}
+
+fn format_session_label(row: &SessionRow, key: &str) -> String {
+    let single: String = row
+        .name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !single.is_empty() {
+        single
+    } else {
+        key.chars().take(12).collect()
+    }
 }

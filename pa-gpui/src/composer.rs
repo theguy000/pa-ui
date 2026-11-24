@@ -495,12 +495,16 @@ impl PaApp {
             }
             self.session_switch_gen = self.session_switch_gen.wrapping_add(1);
             self.is_streaming = true;
+            let workspace_id = self.workspace_ui.draft_workspace_id.clone();
+            let worktree_path = self.workspace_ui.draft_worktree_path.clone();
             let _ = self.bridge.tx.send(DaemonCmd::StartChat {
                 text,
                 images: wire_images,
                 model,
                 level,
                 cwd,
+                workspace_id,
+                worktree_path,
             });
             self.set_composer_text("", window, cx);
             self.sync_stop_target(cx);

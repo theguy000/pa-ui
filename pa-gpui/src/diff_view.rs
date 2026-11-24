@@ -6,24 +6,131 @@ use crate::diff_git::{
     load_diff_for_scope, load_single_file_diff, main_project_root_for, probe_repo_context,
     DiffFileSummary, DiffLoadOutcome,
 };
-use crate::diff_model::DiffViewStatus;
+use crate::diff_model::{compute_sticky_diff_header, DiffViewStatus, StickyDiffTracker};
 use crate::popups::OpenPopup;
 use crate::settings::DiffScope;
 use crate::sidebar::session_key;
 use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
     diff::{
         Diff, DiffChangeIndicator, DiffFileStatus, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
     },
     h_flex,
     scroll::ScrollableElement as _,
-    v_flex, Icon, IconName,
+    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 const DIFF_REFRESH_DEBOUNCE_MS: u64 = 350;
+
+type StickyHeaderBuilder = Box<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyElement>>;
+
+/// Wraps `gpui_kit`'s `Diff` element so the active expanded file header pins to the top of
+/// the viewport and slides smoothly with the next header in the **exact same frame** (no
+/// `cx.notify()` lag, no visual mismatch).
+struct StickyDiffLayer {
+    child: AnyElement,
+    tracker: Rc<RefCell<StickyDiffTracker>>,
+    expanded: Vec<bool>,
+    build_sticky: StickyHeaderBuilder,
+    sticky_el: Option<AnyElement>,
+}
+
+impl IntoElement for StickyDiffLayer {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for StickyDiffLayer {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::Name("diff-sticky-layer".into()))
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.tracker.borrow_mut().frame_headers.clear();
+        self.child.prepaint(window, cx);
+        let py1 = f32::from(window.rem_size()) * 0.25;
+        let next = {
+            let mut tr = self.tracker.borrow_mut();
+            if !tr.frame_headers.is_empty() {
+                tr.hovered_file = None;
+            }
+            let res = compute_sticky_diff_header(
+                f32::from(bounds.origin.y),
+                py1,
+                tr.header_content_h,
+                &tr.frame_headers,
+                &self.expanded,
+                tr.last_sticky,
+                tr.hovered_file,
+            );
+            tr.last_sticky = res.map(|s| s.file_ix);
+            res
+        };
+        self.sticky_el = next.and_then(|sticky| {
+            let mut el = (self.build_sticky)(sticky.file_ix, window, cx)?;
+            let origin = point(bounds.origin.x, bounds.origin.y + px(sticky.top_offset));
+            let avail = size(
+                AvailableSpace::Definite(bounds.size.width),
+                AvailableSpace::MinContent,
+            );
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                el.prepaint_as_root(origin, avail, window, cx);
+            });
+            Some(el)
+        });
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+        if let Some(el) = &mut self.sticky_el {
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                el.paint(window, cx);
+            });
+        }
+    }
+}
 
 fn split_dir_and_name(path: &str) -> (&str, &str) {
     match path.rsplit_once('/') {
@@ -42,7 +149,21 @@ impl PaApp {
     }
 
     pub(crate) fn active_diff_target(&self) -> (Option<String>, Option<String>) {
+        if let Some((peek_path, _)) = self.workspace_ui.diff_peek.as_ref() {
+            return (Some(format!("__peek__:{peek_path}")), Some(peek_path.clone()));
+        }
         if self.roster.is_draft_or_empty() {
+            if let Some(wt) = self.workspace_ui.draft_worktree_path.as_ref() {
+                return (Some("__draft__".to_string()), Some(wt.clone()));
+            }
+            if let Some(ws) = self
+                .workspace_ui
+                .draft_workspace_id
+                .as_deref()
+                .and_then(|id| self.workspace_ui.workspace_by_id(id))
+            {
+                return (Some("__draft__".to_string()), Some(ws.root_path.clone()));
+            }
             let cwd = self
                 .roster
                 .draft_cwd()
@@ -56,7 +177,12 @@ impl PaApp {
             return (sid, cwd);
         };
         let key = session_key(row);
-        let cwd = row.cwd.trim();
+        let bound_wt = row
+            .workspace_binding
+            .as_ref()
+            .map(|b| b.worktree_path.as_str())
+            .filter(|s| !s.trim().is_empty());
+        let cwd = bound_wt.unwrap_or_else(|| row.cwd.trim());
         let cwd_opt = (!cwd.is_empty()).then(|| cwd.to_string());
         let effective = self
             .diff_model
@@ -83,6 +209,7 @@ impl PaApp {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn refresh_recent_project_worktrees(&mut self, cx: &mut Context<Self>) {
         let folders = self.settings.recent_folders.clone();
         if folders.is_empty() {
@@ -110,6 +237,7 @@ impl PaApp {
         .detach();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_draft_folder(&mut self, cx: &mut Context<Self>) {
         self.diff_model.bump_draft_folder_generation();
         self.open_popup = OpenPopup::None;
@@ -162,6 +290,7 @@ impl PaApp {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pick_draft_folder(&mut self, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
         cx.notify();
@@ -207,7 +336,7 @@ impl PaApp {
         }
         if matches!(
             self.open_popup,
-            OpenPopup::DiffBaseBranchMenu | OpenPopup::DiffWorktreeMenu
+            OpenPopup::DiffBaseBranchMenu
         ) {
             self.open_popup = OpenPopup::None;
         }
@@ -238,6 +367,14 @@ impl PaApp {
     }
 
     pub(crate) fn on_window_focused(&mut self, cx: &mut Context<Self>) {
+        if !self.roster.is_draft_or_empty() {
+            if let Some(sid) = self.roster.active_id().map(str::to_string) {
+                let _ = self
+                    .bridge
+                    .tx
+                    .send(crate::daemon::DaemonCmd::RefreshSessionWorkspace { session: sid });
+            }
+        }
         if self.settings.right_open {
             self.refresh_diff(cx);
         }
@@ -332,6 +469,16 @@ impl PaApp {
         }
     }
 
+    pub(crate) fn collapse_sticky_diff_file(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.diff_model.set_file_collapsed(path, true);
+        self.diff_model.clear_sticky_header();
+        self.diff_state.update(cx, |state, cx| {
+            state.set_file_collapsed(path, true, cx);
+            state.scroll_to_file(path, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn maybe_load_deferred_file(
         &mut self,
         path: &str,
@@ -414,6 +561,7 @@ impl PaApp {
         self.refresh_diff(cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn select_diff_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.open_popup = OpenPopup::None;
         if self.roster.is_draft_or_empty() {
@@ -544,6 +692,7 @@ impl PaApp {
                         .h_full()
                         .overflow_hidden()
                         .child(self.render_diff_header(cx))
+                        .children(self.render_diff_peek_banner(cx))
                         .children(self.render_diff_jump_list(cx))
                         .child(self.render_diff_body(window, cx)),
                 )
@@ -572,12 +721,14 @@ impl PaApp {
         let seg_btn = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
-                .h(px(21.))
+                .h(px(22.))
                 .px(px(8.))
                 .rounded(px(5.))
                 .flex()
                 .items_center()
+                .justify_center()
                 .text_size(px(11.))
+                .line_height(px(11.))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .text_color(if active { p.ink } else { p.quiet_ink })
@@ -610,7 +761,9 @@ impl PaApp {
                 })
                 .flex()
                 .items_center()
+                .justify_center()
                 .text_size(px(11.))
+                .line_height(px(11.))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .text_color(if active { p.ink } else { p.quiet_ink })
@@ -651,8 +804,10 @@ impl PaApp {
                             .child(
                                 h_flex()
                                     .flex_shrink_0()
+                                    .h(px(28.))
                                     .p(px(2.))
                                     .gap(px(1.))
+                                    .items_center()
                                     .rounded(px(7.))
                                     .bg(p.sidebar_group_surface)
                                     .border_1()
@@ -682,7 +837,7 @@ impl PaApp {
                                     row.child(
                                         h_flex()
                                             .id("diff-base-branch-btn")
-                                            .h(px(24.))
+                                            .h(px(28.))
                                             .px(px(8.))
                                             .gap(px(4.))
                                             .min_w_0()
@@ -717,6 +872,7 @@ impl PaApp {
                                                     .min_w_0()
                                                     .truncate()
                                                     .text_size(px(11.))
+                                                    .line_height(px(11.))
                                                     .text_color(p.ink)
                                                     .child(base_pill_label),
                                             )
@@ -945,7 +1101,7 @@ impl PaApp {
         let truncated = summary.truncated;
         let deferred = summary.deferred;
         let loading = self.diff_model.is_file_loading(&summary.path);
-        let dot_color = if untracked || (additions > 0 && deletions == 0 && summary.old_path.is_none()) {
+        let dot_color = if untracked || summary.added || (additions > 0 && deletions == 0 && summary.old_path.is_none()) {
             p.tag_idle
         } else if additions == 0 && deletions > 0 {
             p.danger
@@ -1118,8 +1274,10 @@ impl PaApp {
             DiffViewStatus::Ready => {
                 #[derive(Clone, Copy)]
                 struct HeaderMeta {
+                    file_ix: usize,
                     additions: usize,
                     deletions: usize,
+                    added: bool,
                     untracked: bool,
                     deferred: bool,
                     truncated: bool,
@@ -1127,16 +1285,18 @@ impl PaApp {
                     loading: bool,
                 }
 
-                let file_meta: HashMap<String, HeaderMeta> = self
-                    .diff_model
-                    .summaries()
+                let summaries = self.diff_model.summaries();
+                let file_meta: HashMap<String, HeaderMeta> = summaries
                     .iter()
-                    .map(|s| {
+                    .enumerate()
+                    .map(|(file_ix, s)| {
                         (
                             s.path.clone(),
                             HeaderMeta {
+                                file_ix,
                                 additions: s.additions,
                                 deletions: s.deletions,
+                                added: s.added,
                                 untracked: s.untracked,
                                 deferred: s.deferred,
                                 truncated: s.truncated,
@@ -1146,6 +1306,18 @@ impl PaApp {
                         )
                     })
                     .collect();
+                let path_to_ix: HashMap<String, usize> = summaries
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, s)| (s.path.clone(), ix))
+                    .collect();
+                let expanded_flags: Vec<bool> = {
+                    let ds = self.diff_state.read(cx);
+                    summaries
+                        .iter()
+                        .map(|s| !ds.is_file_collapsed(&s.path))
+                        .collect()
+                };
 
                 let app_entity = cx.entity().clone();
                 let ink = p.ink;
@@ -1156,186 +1328,327 @@ impl PaApp {
                 let row_hover = p.sidebar_row_hover;
                 let row_selected = p.sidebar_row_selected;
 
+                let build_header_content = move |path: &str,
+                                                 original_path: Option<&str>,
+                                                 modified_path: Option<&str>,
+                                                 status: DiffFileStatus,
+                                                 file_add: usize,
+                                                 file_del: usize,
+                                                 file_binary: bool,
+                                                 meta: Option<HeaderMeta>| {
+                    let (dir, name) = split_dir_and_name(path);
+                    let name_owned = name.to_string();
+                    let subtitle = match (original_path, modified_path) {
+                        (Some(old), Some(new)) if old != new => format!("from {old}"),
+                        _ => dir.to_string(),
+                    };
+
+                    let (badge, badge_ink, badge_bg) = if meta.is_some_and(|m| m.untracked) {
+                        ("U", tag_idle, tag_idle.opacity(0.14))
+                    } else if meta.is_some_and(|m| m.added) {
+                        ("A", tag_idle, tag_idle.opacity(0.14))
+                    } else {
+                        match status {
+                            DiffFileStatus::Added => ("A", tag_idle, tag_idle.opacity(0.14)),
+                            DiffFileStatus::Deleted => ("D", danger, danger.opacity(0.14)),
+                            DiffFileStatus::Renamed | DiffFileStatus::Copied => {
+                                ("R", quiet_ink, row_selected)
+                            }
+                            DiffFileStatus::Conflicted => ("!", working, working.opacity(0.16)),
+                            _ => ("M", working, working.opacity(0.14)),
+                        }
+                    };
+
+                    let add = meta.map_or(file_add, |m| m.additions);
+                    let del = meta.map_or(file_del, |m| m.deletions);
+                    let binary = meta.map_or(file_binary, |m| m.binary);
+                    let deferred = meta.is_some_and(|m| m.deferred);
+                    let truncated = meta.is_some_and(|m| m.truncated);
+                    let loading = meta.is_some_and(|m| m.loading);
+
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(7.))
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(6.))
+                                .items_center()
+                                .child(
+                                    div()
+                                        .size(px(16.))
+                                        .rounded(px(4.))
+                                        .flex_shrink_0()
+                                        .bg(badge_bg)
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_size(px(9.5))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(badge_ink)
+                                        .child(badge),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(ink)
+                                        .child(name_owned),
+                                )
+                                .when(!subtitle.is_empty(), |row| {
+                                    row.child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .text_color(quiet_ink)
+                                            .child(subtitle),
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .gap(px(5.))
+                                .items_center()
+                                .text_size(px(11.))
+                                .when(truncated, |r| {
+                                    r.child(
+                                        div()
+                                            .px(px(5.))
+                                            .py(px(1.))
+                                            .rounded(px(4.))
+                                            .bg(row_hover)
+                                            .text_size(px(10.))
+                                            .text_color(quiet_ink)
+                                            .child("256K preview"),
+                                    )
+                                })
+                                .when(deferred, |r| {
+                                    r.child(
+                                        div()
+                                            .px(px(5.))
+                                            .py(px(1.))
+                                            .rounded(px(4.))
+                                            .bg(row_hover)
+                                            .text_size(px(10.))
+                                            .text_color(if loading {
+                                                working
+                                            } else {
+                                                quiet_ink
+                                            })
+                                            .child(if loading {
+                                                "Loading…"
+                                            } else {
+                                                "Lazy"
+                                            }),
+                                    )
+                                })
+                                .when(binary, |r| {
+                                    r.child(
+                                        div()
+                                            .px(px(5.))
+                                            .py(px(1.))
+                                            .rounded(px(4.))
+                                            .bg(row_hover)
+                                            .text_size(px(10.))
+                                            .text_color(quiet_ink)
+                                            .child("Binary"),
+                                    )
+                                })
+                                .when(!binary && add > 0, |r| {
+                                    r.child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(tag_idle)
+                                            .child(format!("+{add}")),
+                                    )
+                                })
+                                .when(!binary && del > 0, |r| {
+                                    r.child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(danger)
+                                            .child(format!("-{del}")),
+                                    )
+                                }),
+                        )
+                };
+
+                let file_meta = Rc::new(file_meta);
+                let file_meta_inline = file_meta.clone();
+                let file_meta_sticky = file_meta.clone();
+                let build_header_content = Rc::new(build_header_content);
+                let build_inline = build_header_content.clone();
+                let build_sticky_inner = build_header_content.clone();
+                let tracker_layer = self.diff_model.sticky_tracker();
+                let tracker_hdr = self.diff_model.sticky_tracker();
+                let tracker_hover = self.diff_model.sticky_tracker();
+                let diff_state_sticky = self.diff_state.clone();
+                let app_inline = app_entity.clone();
+                let app_sticky = app_entity.clone();
+                let window_surface = p.window_surface;
+
+                let diff_el = Diff::new(&self.diff_state)
+                    .border_0()
+                    .bg(window_surface)
+                    .soft_wrap(self.settings.diff_wrap)
+                    .hover_highlight(DiffHoverHighlight::Line)
+                    .change_indicator(DiffChangeIndicator::Bars)
+                    .hunk_separator(DiffHunkSeparator::LineInfo)
+                    .on_line_hover(move |pos, _, _| {
+                        let hovered = pos.and_then(|pos| {
+                            path_to_ix.get(pos.path().as_ref()).copied()
+                        });
+                        tracker_hover.borrow_mut().hovered_file = hovered;
+                    })
+                    .header(move |file, _, _| {
+                        let path = file.path().clone();
+                        let meta = file_meta_inline.get(path.as_ref()).copied();
+                        let inner = build_inline(
+                            path.as_ref(),
+                            file.original_path().map(|p| p.as_ref()),
+                            file.modified_path().map(|p| p.as_ref()),
+                            file.status(),
+                            file.additions(),
+                            file.deletions(),
+                            file.is_binary(),
+                            meta,
+                        );
+                        let app_click = app_inline.clone();
+                        let path_click = path.clone();
+                        let tracker_row = tracker_hdr.clone();
+                        let file_ix = meta.map(|m| m.file_ix);
+
+                        h_flex()
+                            .relative()
+                            .w(px(header_visible_w))
+                            .min_w_0()
+                            .px(px(4.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .items_center()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(row_hover))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                cx.stop_propagation();
+                                app_click.update(cx, |this, cx| {
+                                    this.toggle_diff_file_collapsed(path_click.as_ref(), cx);
+                                });
+                            })
+                            .child(inner)
+                            .when_some(file_ix, |row, ix| {
+                                row.child(
+                                    canvas(
+                                        move |bounds, _, _| {
+                                            let mut tr = tracker_row.borrow_mut();
+                                            let y = f32::from(bounds.origin.y);
+                                            tr.header_content_h = f32::from(bounds.size.height).max(20.0);
+                                            if let Some(slot) = tr.frame_headers.iter_mut().find(|(k, _)| *k == ix) {
+                                                slot.1 = y;
+                                            } else {
+                                                tr.frame_headers.push((ix, y));
+                                            }
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                            })
+                    })
+                    .size_full()
+                    .into_any_element();
+
+                let build_sticky: StickyHeaderBuilder = Box::new(move |file_ix, _window, cx| {
+                    let file = diff_state_sticky.read(cx).files().get(file_ix)?.clone();
+                    let path = file.path().clone();
+                    let meta = file_meta_sticky.get(path.as_ref()).copied();
+                    let inner = build_sticky_inner(
+                        path.as_ref(),
+                        file.original_path().map(|p| p.as_ref()),
+                        file.modified_path().map(|p| p.as_ref()),
+                        file.status(),
+                        file.additions(),
+                        file.deletions(),
+                        file.is_binary(),
+                        meta,
+                    );
+                    let border = cx.theme().border;
+                    let app_btn = app_sticky.clone();
+                    let path_btn = path.clone();
+                    let app_row = app_sticky.clone();
+                    let path_row = path.clone();
+
+                    Some(
+                        v_flex()
+                            .id("diff-sticky-file-header")
+                            .w_full()
+                            .bg(window_surface)
+                            .border_b_1()
+                            .border_color(border)
+                            .block_mouse_except_scroll()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .pl_1()
+                                    .pr_3()
+                                    .py_1()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("sticky-collapse-file")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::ChevronDown)
+                                            .on_click(move |_, _, cx| {
+                                                app_btn.update(cx, |this, cx| {
+                                                    this.collapse_sticky_diff_file(path_btn.as_ref(), cx);
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        div().flex_1().min_w_0().child(
+                                            h_flex()
+                                                .w(px(header_visible_w))
+                                                .min_w_0()
+                                                .px(px(4.))
+                                                .py(px(3.))
+                                                .rounded(px(5.))
+                                                .items_center()
+                                                .cursor_pointer()
+                                                .hover(move |s| s.bg(row_hover))
+                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                    cx.stop_propagation();
+                                                    app_row.update(cx, |this, cx| {
+                                                        this.collapse_sticky_diff_file(path_row.as_ref(), cx);
+                                                    });
+                                                })
+                                                .child(inner),
+                                        ),
+                                    ),
+                            )
+                            .into_any_element(),
+                    )
+                });
+
                 div()
                     .flex_1()
                     .min_h_0()
                     .w_full()
                     .overflow_hidden()
-                    .child(
-                        Diff::new(&self.diff_state)
-                            .border_0()
-                            .bg(p.window_surface)
-                            .soft_wrap(self.settings.diff_wrap)
-                            .hover_highlight(DiffHoverHighlight::Line)
-                            .change_indicator(DiffChangeIndicator::Bars)
-                            .hunk_separator(DiffHunkSeparator::LineInfo)
-                            .header(move |file, _, _| {
-                                let path = file.path().clone();
-                                let meta = file_meta.get(path.as_ref()).copied();
-                                let (dir, name) = split_dir_and_name(path.as_ref());
-                                let name_owned = name.to_string();
-                                let subtitle = match (file.original_path(), file.modified_path()) {
-                                    (Some(old), Some(new)) if old != new => {
-                                        format!("from {old}")
-                                    }
-                                    _ => dir.to_string(),
-                                };
-
-                                let (badge, badge_ink, badge_bg) = if meta.is_some_and(|m| m.untracked) {
-                                    ("U", tag_idle, tag_idle.opacity(0.14))
-                                } else {
-                                    match file.status() {
-                                        DiffFileStatus::Added => {
-                                            ("A", tag_idle, tag_idle.opacity(0.14))
-                                        }
-                                        DiffFileStatus::Deleted => {
-                                            ("D", danger, danger.opacity(0.14))
-                                        }
-                                        DiffFileStatus::Renamed | DiffFileStatus::Copied => {
-                                            ("R", quiet_ink, row_selected)
-                                        }
-                                        DiffFileStatus::Conflicted => {
-                                            ("!", working, working.opacity(0.16))
-                                        }
-                                        _ => ("M", working, working.opacity(0.14)),
-                                    }
-                                };
-
-                                let add = meta.map_or(file.additions(), |m| m.additions);
-                                let del = meta.map_or(file.deletions(), |m| m.deletions);
-                                let binary = meta.map_or(file.is_binary(), |m| m.binary);
-                                let deferred = meta.is_some_and(|m| m.deferred);
-                                let truncated = meta.is_some_and(|m| m.truncated);
-                                let loading = meta.is_some_and(|m| m.loading);
-                                let app_click = app_entity.clone();
-                                let path_click = path.clone();
-
-                                h_flex()
-                                    .w(px(header_visible_w))
-                                    .min_w_0()
-                                    .px(px(4.))
-                                    .py(px(3.))
-                                    .gap(px(7.))
-                                    .rounded(px(5.))
-                                    .items_center()
-                                    .justify_between()
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(row_hover))
-                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        app_click.update(cx, |this, cx| {
-                                            this.toggle_diff_file_collapsed(path_click.as_ref(), cx);
-                                        });
-                                    })
-                                    .child(
-                                        h_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .gap(px(6.))
-                                            .items_center()
-                                            .child(
-                                                div()
-                                                    .size(px(16.))
-                                                    .rounded(px(4.))
-                                                    .flex_shrink_0()
-                                                    .bg(badge_bg)
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .text_size(px(9.5))
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(badge_ink)
-                                                    .child(badge),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(ink)
-                                                    .child(name_owned),
-                                            )
-                                            .when(!subtitle.is_empty(), |row| {
-                                                row.child(
-                                                    div()
-                                                        .min_w_0()
-                                                        .truncate()
-                                                        .text_size(px(11.))
-                                                        .text_color(quiet_ink)
-                                                        .child(subtitle),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .flex_shrink_0()
-                                            .gap(px(5.))
-                                            .items_center()
-                                            .text_size(px(11.))
-                                            .when(truncated, |r| {
-                                                r.child(
-                                                    div()
-                                                        .px(px(5.))
-                                                        .py(px(1.))
-                                                        .rounded(px(4.))
-                                                        .bg(row_hover)
-                                                        .text_size(px(10.))
-                                                        .text_color(quiet_ink)
-                                                        .child("256K preview"),
-                                                )
-                                            })
-                                            .when(deferred, |r| {
-                                                r.child(
-                                                    div()
-                                                        .px(px(5.))
-                                                        .py(px(1.))
-                                                        .rounded(px(4.))
-                                                        .bg(row_hover)
-                                                        .text_size(px(10.))
-                                                        .text_color(if loading {
-                                                            working
-                                                        } else {
-                                                            quiet_ink
-                                                        })
-                                                        .child(if loading {
-                                                            "Loading…"
-                                                        } else {
-                                                            "Lazy"
-                                                        }),
-                                                )
-                                            })
-                                            .when(binary, |r| {
-                                                r.child(
-                                                    div()
-                                                        .px(px(5.))
-                                                        .py(px(1.))
-                                                        .rounded(px(4.))
-                                                        .bg(row_hover)
-                                                        .text_size(px(10.))
-                                                        .text_color(quiet_ink)
-                                                        .child("Binary"),
-                                                )
-                                            })
-                                            .when(!binary && add > 0, |r| {
-                                                r.child(
-                                                    div()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(tag_idle)
-                                                        .child(format!("+{add}")),
-                                                )
-                                            })
-                                            .when(!binary && del > 0, |r| {
-                                                r.child(
-                                                    div()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(danger)
-                                                        .child(format!("-{del}")),
-                                                )
-                                            }),
-                                    )
-                            })
-                            .size_full(),
-                    )
+                    .child(StickyDiffLayer {
+                        child: diff_el,
+                        tracker: tracker_layer,
+                        expanded: expanded_flags,
+                        build_sticky,
+                        sticky_el: None,
+                    })
                     .into_any_element()
             }
             DiffViewStatus::NotAGitRepo => {

@@ -6,7 +6,7 @@
 use crate::popups::model_label;
 use crate::settings::AppSettings;
 use crate::sidebar::session_key;
-use pa_client::{clamp_level, ModelEntry, SessionRow, SessionState, SessionStats};
+use pa_client::{clamp_level, ModelEntry, SessionRow, SessionState, SessionStats, WorkspaceRecord};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedModel {
@@ -16,10 +16,34 @@ pub(crate) struct ResolvedModel {
     pub(crate) thinking: String,
 }
 
+pub(crate) fn row_matches_selector(row: &SessionRow, selector: &str) -> bool {
+    !selector.is_empty()
+        && (session_key(row) == selector
+            || (!row.session_id.is_empty() && row.session_id == selector)
+            || (!row.session_file.is_empty() && row.session_file == selector))
+}
+
+#[cfg(test)]
 pub(crate) struct GroupedSessions<'a> {
     pub(crate) active: Vec<&'a SessionRow>,
     pub(crate) idle: Vec<&'a SessionRow>,
     pub(crate) done: Vec<&'a SessionRow>,
+}
+
+pub(crate) struct WorkspaceSidebarGroup<'a> {
+    pub(crate) key: String,
+    pub(crate) workspace_id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) root_path: Option<String>,
+    pub(crate) live_count: usize,
+    pub(crate) rows: Vec<&'a SessionRow>,
+}
+
+pub(crate) struct WorkspaceSidebarView<'a> {
+    /// Pinned Live radar rows (Running first, then Idle), each paired with its Workspace name.
+    pub(crate) live: Vec<(&'a SessionRow, String)>,
+    /// Workspace groups (registered + inferred from bindings, Scratch last).
+    pub(crate) groups: Vec<WorkspaceSidebarGroup<'a>>,
 }
 
 pub(crate) enum ModelPickEffect {
@@ -124,12 +148,28 @@ impl SessionRoster {
         let sid = self.active_session_id.as_deref()?;
         self.sessions
             .iter()
-            .find(|s| session_key(s) == sid || (!s.session_file.is_empty() && s.session_file == sid))
+            .find(|s| row_matches_selector(s, sid))
     }
 
     /// Update the roster from a daemon snapshot. Returns a session key to auto-select
     /// when no session is currently active and the user is not composing a draft chat.
-    pub(crate) fn apply_sessions(&mut self, rows: Vec<SessionRow>) -> Option<String> {
+    pub(crate) fn apply_sessions(&mut self, mut rows: Vec<SessionRow>) -> Option<String> {
+        let active_was_live = self
+            .active_session()
+            .is_some_and(|r| r.is_resident() && r.lifecycle != "archived");
+        if active_was_live {
+            if let Some(sid) = self.active_session_id.as_deref() {
+                if let Some(row) = rows.iter_mut().find(|r| row_matches_selector(r, sid)) {
+                    if !row.is_resident() || row.lifecycle == "archived" {
+                        row.worker_state = "ready".into();
+                        row.lifecycle = "live".into();
+                        if row.activity.is_empty() {
+                            row.activity = "idle".into();
+                        }
+                    }
+                }
+            }
+        }
         self.sessions = rows;
         if self.active_session().is_some() {
             self.pending_start_cwd = None;
@@ -181,7 +221,27 @@ impl SessionRoster {
         }
     }
 
+    pub(crate) fn set_workspace_binding(
+        &mut self,
+        session: &str,
+        binding: Option<pa_client::WorkspaceBinding>,
+    ) {
+        if let Some(row) = self
+            .sessions
+            .iter_mut()
+            .find(|r| row_matches_selector(r, session))
+        {
+            if let Some(ref b) = binding {
+                row.cwd = b.worktree_path.clone();
+            }
+            row.workspace_binding = binding;
+        }
+    }
+
     pub(crate) fn apply_session_state(&mut self, session: &str, state: SessionState) {
+        if let Some(binding) = state.workspace_binding.clone() {
+            self.set_workspace_binding(session, Some(binding));
+        }
         if self.active_session_id.as_deref() == Some(session) {
             self.session_state = Some(state);
         }
@@ -228,19 +288,38 @@ impl SessionRoster {
         self.draft_cwd = None;
     }
 
-    pub(crate) fn select_session_optimistic(&mut self, key: &str) {
+    pub(crate) fn select_session_optimistic(&mut self, key: &str) -> bool {
         self.draft_chat = false;
         self.draft_model_picked = false;
         self.draft_cwd = None;
         self.pending_start_cwd = None;
-        if self.active_session_id.as_deref() != Some(key) {
-            self.active_session_id = Some(key.to_string());
+        let same_active = self
+            .active_session()
+            .is_some_and(|r| row_matches_selector(r, key))
+            || self.active_session_id.as_deref() == Some(key);
+        if !same_active {
             self.session_state = None;
             self.stats = None;
             self.subagent_count = 0;
             self.heartbeat_count = 0;
             self.shell_count = 0;
         }
+        self.active_session_id = Some(key.to_string());
+        let mut promoted_from_done = false;
+        if let Some(row) = self
+            .sessions
+            .iter_mut()
+            .find(|s| row_matches_selector(s, key))
+        {
+            if !row.is_resident() || row.lifecycle == "archived" {
+                row.worker_state = "ready".into();
+                row.lifecycle = "live".into();
+                row.activity = "idle".into();
+                row.is_session_active = false;
+                promoted_from_done = true;
+            }
+        }
+        promoted_from_done
     }
 
     pub(crate) fn rebind_session_id(&mut self, requested: &str, resolved: &str) {
@@ -249,7 +328,10 @@ impl SessionRoster {
         self.draft_cwd = None;
         self.pending_start_cwd = None;
         let switched = self.active_session_id.as_deref() != Some(requested)
-            && self.active_session_id.as_deref() != Some(resolved);
+            && self.active_session_id.as_deref() != Some(resolved)
+            && !self
+                .active_session()
+                .is_some_and(|r| row_matches_selector(r, requested) || row_matches_selector(r, resolved));
         if switched {
             self.session_state = None;
             self.stats = None;
@@ -262,8 +344,11 @@ impl SessionRoster {
             if let Some(row) = self
                 .sessions
                 .iter_mut()
-                .find(|s| session_key(s) == requested || s.session_file == requested)
+                .find(|s| row_matches_selector(s, requested) || row_matches_selector(s, resolved))
             {
+                if row.session_id.is_empty() && !row.id.is_empty() && row.id != resolved {
+                    row.session_id = row.id.clone();
+                }
                 row.id = resolved.to_string();
                 if !row.is_resident() || row.lifecycle == "archived" {
                     row.worker_state = "ready".into();
@@ -437,6 +522,192 @@ impl SessionRoster {
         }
     }
 
+    pub(crate) fn workspace_sidebar_view<'a>(
+        &'a self,
+        workspaces: &[WorkspaceRecord],
+        raw_query: &str,
+    ) -> WorkspaceSidebarView<'a> {
+        let query = raw_query.trim().to_ascii_lowercase();
+        let norm = |p: &str| -> String {
+            let s = p.trim().replace('\\', "/");
+            let trimmed = s.trim_end_matches('/');
+            if cfg!(windows) {
+                trimmed.to_ascii_lowercase()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        let ws_norms: Vec<(usize, String)> = workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| !w.root_path.trim().is_empty())
+            .map(|(idx, w)| (idx, norm(&w.root_path)))
+            .collect();
+
+        let resolve_ws = |s: &SessionRow| -> (String, Option<String>, String, Option<String>) {
+            if let Some(ref b) = s.workspace_binding {
+                if let Some(reg) = workspaces.iter().find(|w| w.id == b.workspace_id) {
+                    return (
+                        reg.id.clone(),
+                        Some(reg.id.clone()),
+                        reg.name.clone(),
+                        Some(reg.root_path.clone()),
+                    );
+                }
+                let name = if b.workspace_name.trim().is_empty() {
+                    b.workspace_id.clone()
+                } else {
+                    b.workspace_name.clone()
+                };
+                return (
+                    b.workspace_id.clone(),
+                    Some(b.workspace_id.clone()),
+                    name,
+                    Some(b.workspace_root.clone()),
+                );
+            }
+            let cwd_n = norm(&s.cwd);
+            if !cwd_n.is_empty() {
+                let best = ws_norms
+                    .iter()
+                    .filter(|(_, root)| {
+                        cwd_n == *root
+                            || (cwd_n.len() > root.len()
+                                && cwd_n.starts_with(root.as_str())
+                                && cwd_n.as_bytes()[root.len()] == b'/')
+                    })
+                    .max_by_key(|(_, root)| root.len());
+                if let Some(&(idx, _)) = best {
+                    let reg = &workspaces[idx];
+                    return (
+                        reg.id.clone(),
+                        Some(reg.id.clone()),
+                        reg.name.clone(),
+                        Some(reg.root_path.clone()),
+                    );
+                }
+            }
+            ("__scratch__".to_string(), None, "Scratch".to_string(), None)
+        };
+
+        // Seed groups with registered workspaces in registry order
+        let mut groups: Vec<WorkspaceSidebarGroup<'a>> = workspaces
+            .iter()
+            .map(|w| WorkspaceSidebarGroup {
+                key: w.id.clone(),
+                workspace_id: Some(w.id.clone()),
+                name: w.name.clone(),
+                root_path: Some(w.root_path.clone()),
+                live_count: 0,
+                rows: Vec::new(),
+            })
+            .collect();
+        let mut scratch_rows: Vec<&'a SessionRow> = Vec::new();
+        let mut scratch_live: usize = 0;
+        let mut live_running: Vec<(&'a SessionRow, String)> = Vec::new();
+        let mut live_idle: Vec<(&'a SessionRow, String)> = Vec::new();
+
+        for s in self.sessions.iter() {
+            if !(s.depth == 0 && s.parent.is_empty() && s.parent_active.is_empty()) {
+                continue;
+            }
+            let (key, ws_id, ws_name, root_path) = resolve_ws(s);
+            if !query.is_empty() {
+                let hit = s.name.to_ascii_lowercase().contains(&query)
+                    || s.id.to_ascii_lowercase().contains(&query)
+                    || s.cwd.to_ascii_lowercase().contains(&query)
+                    || ws_name.to_ascii_lowercase().contains(&query);
+                if !hit {
+                    continue;
+                }
+            }
+            // Deduplicate: Live (Running / Idle) sessions appear ONLY in the top Live section.
+            match s.roster_status() {
+                "Running" => {
+                    live_running.push((s, ws_name.clone()));
+                    if ws_id.is_none() {
+                        scratch_live += 1;
+                    } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                        grp.live_count += 1;
+                    }
+                    continue;
+                }
+                "Idle" => {
+                    live_idle.push((s, ws_name.clone()));
+                    if ws_id.is_none() {
+                        scratch_live += 1;
+                    } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                        grp.live_count += 1;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            // Hide empty `(no messages)` Done rows unless currently active.
+            let is_active = self
+                .active_session_id
+                .as_deref()
+                .is_some_and(|sid| row_matches_selector(s, sid));
+            let trimmed_name = s.name.trim();
+            if !is_active
+                && (trimmed_name == "(no messages)"
+                    || (s.messages == 0 && trimmed_name.is_empty()))
+            {
+                continue;
+            }
+            if ws_id.is_none() {
+                scratch_rows.push(s);
+            } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                grp.rows.push(s);
+            } else {
+                groups.push(WorkspaceSidebarGroup {
+                    key,
+                    workspace_id: ws_id,
+                    name: ws_name,
+                    root_path,
+                    live_count: 0,
+                    rows: vec![s],
+                });
+            }
+        }
+
+        if !query.is_empty() {
+            groups.retain(|g| !g.rows.is_empty());
+        }
+
+        // Workspaces with live or historical sessions float above empty workspaces.
+        groups.sort_by_key(|g| {
+            if g.live_count > 0 && !g.rows.is_empty() {
+                0u8
+            } else if !g.rows.is_empty() {
+                1u8
+            } else if g.live_count > 0 {
+                2u8
+            } else {
+                3u8
+            }
+        });
+
+        if !scratch_rows.is_empty() || (groups.is_empty() && query.is_empty()) {
+            groups.push(WorkspaceSidebarGroup {
+                key: "__scratch__".to_string(),
+                workspace_id: None,
+                name: "Scratch".to_string(),
+                root_path: None,
+                live_count: scratch_live,
+                rows: scratch_rows,
+            });
+        }
+
+        live_running.extend(live_idle);
+        WorkspaceSidebarView {
+            live: live_running,
+            groups,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn grouped_sessions<'a>(&'a self, raw_query: &str) -> GroupedSessions<'a> {
         let query = raw_query.trim().to_ascii_lowercase();
         let matches_query = |s: &&SessionRow| -> bool {
@@ -579,6 +850,7 @@ mod tests {
                 model_id: "gpt-5".into(),
                 thinking_level: "low".into(),
                 is_streaming: false,
+                workspace_binding: None,
             },
         );
         roster.apply_stats(
@@ -604,5 +876,87 @@ mod tests {
         roster.rebind_session_id("/tmp/archived.jsonl", "s2-live");
         assert_eq!(roster.active_id(), Some("s2-live"));
         assert_eq!(roster.active_session().map(|r| r.id.as_str()), Some("s2-live"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn selecting_done_session_optimistically_promotes_to_live_and_matches_session_id() {
+        let mut roster = SessionRoster::new();
+        let mut s_done = row("uuid-done", "Finished Work", "live", "idle", "");
+        s_done.session_id = "uuid-done".into();
+        s_done.session_file = "/tmp/uuid-done.jsonl".into();
+        roster.apply_sessions(vec![s_done.clone()]);
+        assert_eq!(roster.grouped_sessions("").done.len(), 1);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 0);
+
+        let promoted = roster.select_session_optimistic("uuid-done");
+        assert!(promoted);
+        assert_eq!(roster.grouped_sessions("").done.len(), 0);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 1);
+
+        // An in-flight stale list before worker registration must not flicker active row back to Done.
+        roster.apply_sessions(vec![s_done]);
+        assert_eq!(roster.grouped_sessions("").done.len(), 0);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 1);
+        assert!(row_matches_selector(roster.active_session().unwrap(), "uuid-done"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn workspace_sidebar_view_pins_live_radar_and_groups_by_workspace_with_scratch_last() {
+        let mut roster = SessionRoster::new();
+        let workspaces = vec![
+            WorkspaceRecord {
+                id: "ws-a".into(),
+                name: "pa-ui".into(),
+                root_path: "/repos/pa-ui".into(),
+                kind: pa_client::WorkspaceKind::Git,
+                last_used_at: String::new(),
+                harness_entry_count: 0,
+                missing: false,
+            },
+            WorkspaceRecord {
+                id: "ws-empty".into(),
+                name: "empty-proj".into(),
+                root_path: "/repos/empty".into(),
+                kind: pa_client::WorkspaceKind::Plain,
+                last_used_at: String::new(),
+                harness_entry_count: 0,
+                missing: false,
+            },
+        ];
+
+        let mut s_run = row("s-run", "Titlebar", "live", "working", "ready");
+        s_run.cwd = "/repos/pa-ui/src".into();
+        let mut s_done = row("s-done", "Older", "archived", "idle", "");
+        s_done.cwd = "/repos/pa-ui".into();
+        s_done.messages = 4;
+        let mut s_empty = row("s-empty", "(no messages)", "archived", "idle", "");
+        s_empty.cwd = "/repos/pa-ui".into();
+        let mut s_scratch_live = row("s-scr", "Notes", "live", "idle", "ready");
+        s_scratch_live.cwd = "/tmp/other".into();
+        let mut s_scratch_done = row("s-scr-done", "Old note", "archived", "idle", "");
+        s_scratch_done.cwd = "/tmp/other".into();
+        s_scratch_done.messages = 2;
+
+        roster.apply_sessions(vec![s_done, s_empty, s_scratch_live, s_scratch_done, s_run]);
+        let view = roster.workspace_sidebar_view(&workspaces, "");
+
+        // Live section has Running first (pa-ui), then Idle (Scratch)
+        assert_eq!(view.live.len(), 2);
+        assert_eq!(view.live[0].0.id, "s-run");
+        assert_eq!(view.live[0].1, "pa-ui");
+        assert_eq!(view.live[1].0.id, "s-scr");
+        assert_eq!(view.live[1].1, "Scratch");
+
+        // Groups deduplicate live rows and hide `(no messages)` Done rows
+        assert_eq!(view.groups.len(), 3);
+        assert_eq!(view.groups[0].name, "pa-ui");
+        assert_eq!(view.groups[0].live_count, 1);
+        assert_eq!(view.groups[0].rows.len(), 1);
+        assert_eq!(view.groups[0].rows[0].id, "s-done");
+        assert_eq!(view.groups[1].name, "empty-proj");
+        assert!(view.groups[1].rows.is_empty());
+        assert_eq!(view.groups[2].name, "Scratch");
+        assert_eq!(view.groups[2].rows.len(), 1);
+        assert_eq!(view.groups[2].rows[0].id, "s-scr-done");
     }
 }
