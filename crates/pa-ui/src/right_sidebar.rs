@@ -236,6 +236,7 @@ impl PaApp {
             .active_id()
             .unwrap_or_default()
             .to_string();
+        self.activity_sheet.set_session(&key);
         let was_open = self.right_sidebar.is_open();
         self.right_sidebar.set_session(key);
         if self.right_sidebar.is_open() != was_open {
@@ -467,15 +468,9 @@ impl PaApp {
                 .text_color(p.quiet_ink)
                 .child(format!("Subagent: {name}"))
                 .into_any_element(),
-            Some(RightTabKind::Shell { title, .. }) => div()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .p(px(16.))
-                .text_size(px(12.))
-                .text_color(p.quiet_ink)
-                .child(format!("Shell: {title}"))
-                .into_any_element(),
+            Some(RightTabKind::Shell { activity_id, title }) => {
+                self.render_right_shell_tab(activity_id, title, cx)
+            }
         };
 
         Some(

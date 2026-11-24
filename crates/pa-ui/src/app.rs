@@ -11,7 +11,8 @@ use crate::providers::{
     save_builtin_config, upsert_custom_endpoint, AuthKind, BuiltinProviderRow, CustomEndpointRow,
     ModelDefinition, ProviderConfig, ProviderSnapshot,
 };
-use crate::right_sidebar::RightSidebarModel;
+use crate::activity_sheet::{ActivitySheetModel, ActivityTab};
+use crate::right_sidebar::{RightSidebarModel, RightTabKind};
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
 use crate::sidebar::RenameTarget;
@@ -79,6 +80,7 @@ pub struct PaApp {
     pub(crate) composer_model: ComposerModel,
     pub(crate) diff_model: DiffModel,
     pub(crate) right_sidebar: RightSidebarModel,
+    pub(crate) activity_sheet: ActivitySheetModel,
     pub(crate) diff_state: Entity<DiffState>,
     pub(crate) renaming: Option<RenameTarget>,
     pub(crate) items: Vec<TranscriptItem>,
@@ -127,6 +129,8 @@ pub struct PaApp {
     pub(crate) prov_model_ctx_input: Entity<InputState>,
     pub(crate) prov_model_max_input: Entity<InputState>,
     pub(crate) ws_new_name_input: Entity<InputState>,
+    pub(crate) hb_schedule_input: Entity<InputState>,
+    pub(crate) hb_prompt_input: Entity<InputState>,
     pub(crate) branch_new_name_input: Entity<InputState>,
     pub(crate) harness_search_input: Entity<InputState>,
     pub(crate) harness_title_input: Entity<InputState>,
@@ -154,6 +158,8 @@ impl PaApp {
         let prov_model_ctx_input = cx.new(|cx| InputState::new(window, cx).placeholder("128000"));
         let prov_model_max_input = cx.new(|cx| InputState::new(window, cx).placeholder("16384"));
         let ws_new_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Worktree name"));
+        let hb_schedule_input = cx.new(|cx| InputState::new(window, cx).placeholder("every 5m"));
+        let hb_prompt_input = cx.new(|cx| InputState::new(window, cx).placeholder("Instruction for each beat…"));
         let branch_new_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Branch name"));
         let harness_search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search entries"));
         let harness_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
@@ -380,6 +386,7 @@ impl PaApp {
             composer_model: ComposerModel::new(),
             diff_model: DiffModel::new(settings.diff_width),
             right_sidebar: RightSidebarModel::new(settings.right_open),
+            activity_sheet: ActivitySheetModel::new(),
             diff_state,
             renaming: None,
             items: Vec::new(),
@@ -431,6 +438,8 @@ impl PaApp {
             harness_ui: crate::settings_harness::HarnessUiState::default(),
             pending_bind_registered_workspace: false,
             ws_new_name_input,
+            hb_schedule_input,
+            hb_prompt_input,
             branch_new_name_input,
             harness_search_input,
             harness_title_input,
@@ -1608,6 +1617,30 @@ impl PaApp {
                 self.harness_ui.notice = Some((true, "Rolled back refinement".into()));
                 self.refresh_harness_view(cx);
             }
+            DaemonEvent::SessionHeartbeatsLoaded { session, items } => {
+                if self.roster.active_id() == Some(session.as_str()) {
+                    let counts = pa_client::heartbeat_counts(&items);
+                    self.roster.set_heartbeat_count(counts);
+                    self.activity_sheet.apply_heartbeats(&session, items);
+                }
+            }
+            DaemonEvent::SessionShellsLoaded { session, items } => {
+                if self.roster.active_id() == Some(session.as_str()) {
+                    let counts = pa_client::shell_counts(&items);
+                    self.roster.set_shell_count(counts);
+                    self.activity_sheet.apply_shells(&session, items);
+                }
+            }
+            DaemonEvent::ShellTailLoaded {
+                session,
+                activity_id,
+                tail,
+            } => {
+                if self.roster.active_id() == Some(session.as_str()) {
+                    self.activity_sheet
+                        .apply_shell_tail(&session, activity_id, tail);
+                }
+            }
             DaemonEvent::LiveFrame(frame) => {
                 self.handle_live_frame(&frame, cx);
             }
@@ -1626,6 +1659,10 @@ impl PaApp {
         let top_kind = frame.get("type").and_then(Value::as_str).unwrap_or_default();
         if top_kind == "workspaces_changed" {
             let _ = self.bridge.tx.send(DaemonCmd::RefreshWorkspaces);
+            return;
+        }
+        if top_kind == "heartbeats_changed" {
+            self.request_session_heartbeats();
             return;
         }
         if top_kind == "harness_changed" {
@@ -1790,6 +1827,16 @@ impl PaApp {
                     self.composer_model.set_busy_label("Waiting", false);
                 }
                 self.schedule_debounced_diff_refresh(cx);
+                if self.activity_sheet.open_tab() == Some(ActivityTab::Shells)
+                    || matches!(self.right_sidebar.active_tab(), Some(RightTabKind::Shell { .. }))
+                {
+                    self.request_session_shells();
+                    if let Some(RightTabKind::Shell { activity_id, .. }) =
+                        self.right_sidebar.active_tab().cloned()
+                    {
+                        self.request_shell_tail(activity_id, cx);
+                    }
+                }
             }
             "auto_retry_start" => {
                 self.is_streaming = true;
@@ -2090,6 +2137,8 @@ impl Render for PaApp {
                         cx.notify();
                     } else if this.find_open {
                         this.find_open = false;
+                        cx.notify();
+                    } else if this.activity_sheet.handle_escape() {
                         cx.notify();
                     } else if this.renaming.is_some() {
                         this.renaming = None;

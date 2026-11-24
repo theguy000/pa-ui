@@ -776,9 +776,9 @@ pub fn detach_session(client: &Client, session: &str) {
 #[derive(Debug)]
 pub enum SessionExtra {
     Activity {
-        subagents: usize,
-        shells: usize,
-        heartbeats: usize,
+        subagents: ChipCount,
+        shells: ChipCount,
+        heartbeats: ChipCount,
     },
     Stats(SessionStats),
     Models(Vec<ModelEntry>),
@@ -840,20 +840,20 @@ pub fn fetch_session_extras_concurrent<F>(
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
-                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|roster| subagent_counts(&roster, &active_id, &durable_id))
+                .unwrap_or_default();
             let shells = shells_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| running_shell_count(&data))
-                .unwrap_or(0);
+                .map(|data| shell_counts(&parse_shell_activities(&data)))
+                .unwrap_or_default();
             let heartbeats = hb_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|data| heartbeat_counts(&parse_scoped_heartbeats(&data, &active_id, &durable_id)))
+                .unwrap_or_default();
             emit_ref(SessionExtra::Activity {
                 subagents,
                 shells,
@@ -1037,20 +1037,20 @@ pub fn reload_session_parallel<F>(
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
-                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|roster| subagent_counts(&roster, &active_id, &durable_id))
+                .unwrap_or_default();
             let shells = shells_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| running_shell_count(&data))
-                .unwrap_or(0);
+                .map(|data| shell_counts(&parse_shell_activities(&data)))
+                .unwrap_or_default();
             let heartbeats = hb_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|data| heartbeat_counts(&parse_scoped_heartbeats(&data, &active_id, &durable_id)))
+                .unwrap_or_default();
             emit_ref(SessionExtra::Activity {
                 subagents,
                 shells,

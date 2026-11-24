@@ -1,6 +1,7 @@
 //! Composer module: multi-line prompt editor, unified drag-resize geometry,
 //! live `/command` color decorations, Tab completion overlay, attachments, and status strip.
 
+use crate::activity_sheet::ActivityTab;
 use crate::app::PaApp;
 use crate::assets::{
     ICON_HEARTBEAT_PATH, ICON_SEND_PATH, ICON_SHELLS_PATH, ICON_SUBAGENTS_PATH,
@@ -537,15 +538,51 @@ impl PaApp {
         cx.notify();
     }
 
-    pub(crate) fn render_activity_chip(&self) -> impl IntoElement {
+    pub(crate) fn render_activity_chip(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
-        let metric = |icon_path: &'static str, count: usize| {
-            let ink = if count > 0 { p.working } else { p.quiet_ink };
+        let open_tab = self.activity_sheet.open_tab();
+        let disabled = self.roster.is_draft_or_empty();
+        let (subagent_count, heartbeat_count, shell_count) = self.roster.activity_counts();
+
+        let segment = |id: &'static str,
+                       tab: ActivityTab,
+                       icon_path: &'static str,
+                       count: pa_client::ChipCount,
+                       cx: &mut Context<Self>| {
+            let (val, live) = count.display_value();
+            let is_open = open_tab == Some(tab);
+            let ink = if live {
+                p.working
+            } else if is_open {
+                p.ink
+            } else {
+                p.quiet_ink
+            };
             h_flex()
-                .h_full()
+                .id(id)
+                .h(px(20.))
+                .px(px(7.))
                 .flex_shrink_0()
+                .rounded(px(5.))
                 .items_center()
                 .gap(px(5.))
+                .bg(if is_open {
+                    p.sidebar_row_selected
+                } else {
+                    Hsla::transparent_black()
+                })
+                .when(!disabled, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(p.sidebar_row_hover))
+                        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_activity_tab(tab, cx);
+                        }))
+                })
                 .child(
                     svg()
                         .path(icon_path)
@@ -560,24 +597,23 @@ impl PaApp {
                         .line_height(px(11.5))
                         .whitespace_nowrap()
                         .text_color(ink)
-                        .child(count.to_string()),
+                        .child(val.to_string()),
                 )
         };
 
-        let (subagent_count, heartbeat_count, shell_count) = self.roster.activity_counts();
         h_flex()
             .h(px(26.))
             .flex_shrink_0()
-            .px(px(10.))
-            .gap(px(12.))
+            .px(px(3.))
+            .gap(px(2.))
             .rounded(px(7.))
             .border_1()
             .border_color(p.composer_edge)
             .bg(p.sidebar_group_surface)
             .items_center()
-            .child(metric(ICON_SUBAGENTS_PATH, subagent_count))
-            .child(metric(ICON_HEARTBEAT_PATH, heartbeat_count))
-            .child(metric(ICON_SHELLS_PATH, shell_count))
+            .child(segment("act-chip-sub", ActivityTab::Subagents, ICON_SUBAGENTS_PATH, subagent_count, cx))
+            .child(segment("act-chip-hb", ActivityTab::Heartbeats, ICON_HEARTBEAT_PATH, heartbeat_count, cx))
+            .child(segment("act-chip-sh", ActivityTab::Shells, ICON_SHELLS_PATH, shell_count, cx))
     }
 
     pub(crate) fn render_send_stop_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -825,6 +861,8 @@ impl PaApp {
                                 p.composer_edge
                             })
                             .bg(p.composer_surface)
+                            .overflow_hidden()
+                    .children(self.render_activity_sheet(cx))
                     // Interactive resize grab handle at top center (unified with COMPOSER_MIN_HEIGHT)
                     .child(
                         div()
@@ -1010,7 +1048,7 @@ impl PaApp {
                                         .detach();
                                     })),
                             )
-                            .child(self.render_activity_chip())
+                            .child(self.render_activity_chip(cx))
                             .when(self.composer_model.is_editing_queue(), |row| {
                                 row.child(
                                     h_flex()

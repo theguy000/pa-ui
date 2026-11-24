@@ -1,3 +1,4 @@
+mod activity_sheet;
 mod app;
 mod assets;
 mod composer;

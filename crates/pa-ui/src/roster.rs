@@ -6,7 +6,7 @@
 use crate::popups::model_label;
 use crate::settings::AppSettings;
 use crate::sidebar::session_key;
-use pa_client::{clamp_level, ModelEntry, SessionRow, SessionState, SessionStats, WorkspaceRecord};
+use pa_client::{clamp_level, ChipCount, ModelEntry, SessionRow, SessionState, SessionStats, WorkspaceRecord};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedModel {
@@ -72,9 +72,9 @@ pub(crate) struct SessionRoster {
     draft_model_picked: bool,
     draft_cwd: Option<String>,
     pending_start_cwd: Option<String>,
-    subagent_count: usize,
-    heartbeat_count: usize,
-    shell_count: usize,
+    subagent_count: ChipCount,
+    heartbeat_count: ChipCount,
+    shell_count: ChipCount,
 }
 
 impl SessionRoster {
@@ -89,9 +89,9 @@ impl SessionRoster {
             draft_model_picked: false,
             draft_cwd: None,
             pending_start_cwd: None,
-            subagent_count: 0,
-            heartbeat_count: 0,
-            shell_count: 0,
+            subagent_count: ChipCount::default(),
+            heartbeat_count: ChipCount::default(),
+            shell_count: ChipCount::default(),
         }
     }
 
@@ -140,7 +140,7 @@ impl SessionRoster {
         self.stats.as_ref()
     }
 
-    pub(crate) fn activity_counts(&self) -> (usize, usize, usize) {
+    pub(crate) fn activity_counts(&self) -> (ChipCount, ChipCount, ChipCount) {
         (self.subagent_count, self.heartbeat_count, self.shell_count)
     }
 
@@ -253,9 +253,22 @@ impl SessionRoster {
         }
     }
 
-    pub(crate) fn apply_activity(&mut self, subagents: usize, heartbeats: usize, shells: usize) {
+    pub(crate) fn apply_activity(
+        &mut self,
+        subagents: ChipCount,
+        heartbeats: ChipCount,
+        shells: ChipCount,
+    ) {
         self.subagent_count = subagents;
         self.heartbeat_count = heartbeats;
+        self.shell_count = shells;
+    }
+
+    pub(crate) fn set_heartbeat_count(&mut self, heartbeats: ChipCount) {
+        self.heartbeat_count = heartbeats;
+    }
+
+    pub(crate) fn set_shell_count(&mut self, shells: ChipCount) {
         self.shell_count = shells;
     }
 
@@ -267,9 +280,9 @@ impl SessionRoster {
         self.pending_start_cwd = None;
         self.active_session_id = None;
         self.stats = None;
-        self.subagent_count = 0;
-        self.heartbeat_count = 0;
-        self.shell_count = 0;
+        self.subagent_count = ChipCount::default();
+        self.heartbeat_count = ChipCount::default();
+        self.shell_count = ChipCount::default();
         if !cur.provider.is_empty() && !cur.model_id.is_empty() {
             self.session_state = Some(SessionState {
                 provider: cur.provider,
@@ -300,9 +313,9 @@ impl SessionRoster {
         if !same_active {
             self.session_state = None;
             self.stats = None;
-            self.subagent_count = 0;
-            self.heartbeat_count = 0;
-            self.shell_count = 0;
+            self.subagent_count = ChipCount::default();
+            self.heartbeat_count = ChipCount::default();
+            self.shell_count = ChipCount::default();
         }
         self.active_session_id = Some(key.to_string());
         let mut promoted_from_done = false;
@@ -335,9 +348,9 @@ impl SessionRoster {
         if switched {
             self.session_state = None;
             self.stats = None;
-            self.subagent_count = 0;
-            self.heartbeat_count = 0;
-            self.shell_count = 0;
+            self.subagent_count = ChipCount::default();
+            self.heartbeat_count = ChipCount::default();
+            self.shell_count = ChipCount::default();
         }
         self.active_session_id = Some(resolved.to_string());
         if requested != resolved {
@@ -862,12 +875,15 @@ mod tests {
                 ..SessionStats::default()
             },
         );
-        roster.apply_activity(2, 1, 3);
+        roster.apply_activity(ChipCount::new(2, 2), ChipCount::new(1, 1), ChipCount::new(3, 3));
 
         roster.select_session_optimistic("/tmp/archived.jsonl");
         assert_eq!(roster.active_id(), Some("/tmp/archived.jsonl"));
         assert!(roster.stats().is_none());
-        assert_eq!(roster.activity_counts(), (0, 0, 0));
+        assert_eq!(
+            roster.activity_counts(),
+            (ChipCount::default(), ChipCount::default(), ChipCount::default())
+        );
         let cur = roster.current_model();
         assert_eq!(cur.provider, "anthropic");
         assert_eq!(cur.model_id, "claude-sonnet-4");
