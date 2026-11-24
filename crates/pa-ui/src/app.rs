@@ -11,6 +11,7 @@ use crate::providers::{
     save_builtin_config, upsert_custom_endpoint, AuthKind, BuiltinProviderRow, CustomEndpointRow,
     ModelDefinition, ProviderConfig, ProviderSnapshot,
 };
+use crate::right_sidebar::RightSidebarModel;
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
 use crate::sidebar::RenameTarget;
@@ -77,6 +78,7 @@ pub struct PaApp {
     pub(crate) roster: SessionRoster,
     pub(crate) composer_model: ComposerModel,
     pub(crate) diff_model: DiffModel,
+    pub(crate) right_sidebar: RightSidebarModel,
     pub(crate) diff_state: Entity<DiffState>,
     pub(crate) renaming: Option<RenameTarget>,
     pub(crate) items: Vec<TranscriptItem>,
@@ -377,6 +379,7 @@ impl PaApp {
             roster,
             composer_model: ComposerModel::new(),
             diff_model: DiffModel::new(settings.diff_width),
+            right_sidebar: RightSidebarModel::new(settings.right_open),
             diff_state,
             renaming: None,
             items: Vec::new(),
@@ -461,7 +464,7 @@ impl PaApp {
     }
 
     pub(crate) fn right_column_width(&self, window: &Window) -> f32 {
-        if !self.settings.right_open {
+        if !self.right_sidebar.is_open() {
             return 0.0;
         }
         let viewport_w = window.viewport_size().width.as_f32();
@@ -470,18 +473,16 @@ impl PaApp {
     }
 
     pub(crate) fn toggle_right_column(&mut self, cx: &mut Context<Self>) {
-        self.settings.right_open = !self.settings.right_open;
-        if !self.settings.right_open {
+        let now_open = self.right_sidebar.toggle_open();
+        self.settings.right_open = now_open;
+        if !now_open {
             self.diff_model.cancel_pending_on_close();
-            if matches!(
-                self.open_popup,
-                OpenPopup::DiffBaseBranchMenu
-            ) {
+            if matches!(self.open_popup, OpenPopup::DiffBaseBranchMenu) {
                 self.open_popup = OpenPopup::None;
             }
         }
         self.settings.save();
-        if self.settings.right_open {
+        if self.right_sidebar.is_diff_active() {
             self.refresh_diff(cx);
         } else {
             cx.notify();

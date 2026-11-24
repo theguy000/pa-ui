@@ -316,8 +316,9 @@ impl PaApp {
     }
 
     pub(crate) fn sync_diff_for_active_session(&mut self, cx: &mut Context<Self>) {
+        self.sync_right_sidebar_session();
         let (key, cwd) = self.active_diff_target();
-        if !self.settings.right_open {
+        if !self.right_sidebar.is_diff_active() {
             self.sync_repo_context(cx);
             return;
         }
@@ -346,7 +347,7 @@ impl PaApp {
     pub(crate) fn schedule_debounced_diff_refresh(&mut self, cx: &mut Context<Self>) {
         let Some(seq) = self
             .diff_model
-            .begin_debounced_refresh(self.settings.right_open)
+            .begin_debounced_refresh(self.right_sidebar.is_diff_active())
         else {
             return;
         };
@@ -357,7 +358,7 @@ impl PaApp {
             let _ = this.update(cx, |app, cx| {
                 if app
                     .diff_model
-                    .should_fire_debounced_refresh(seq, app.settings.right_open)
+                    .should_fire_debounced_refresh(seq, app.right_sidebar.is_diff_active())
                 {
                     app.refresh_diff(cx);
                 }
@@ -375,13 +376,13 @@ impl PaApp {
                     .send(crate::daemon::DaemonCmd::RefreshSessionWorkspace { session: sid });
             }
         }
-        if self.settings.right_open {
+        if self.right_sidebar.is_diff_active() {
             self.refresh_diff(cx);
         }
     }
 
     pub(crate) fn refresh_diff(&mut self, cx: &mut Context<Self>) {
-        if !self.settings.right_open {
+        if !self.right_sidebar.is_diff_active() {
             return;
         }
         let (key, cwd) = self.active_diff_target();
@@ -628,79 +629,7 @@ impl PaApp {
         cx.notify();
     }
 
-    pub(crate) fn render_right_column(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !self.settings.right_open {
-            return None;
-        }
-        let p = self.palette();
-        let width = self.right_column_width(window);
-        if width <= 0.0 {
-            return None;
-        }
-        let handle_active = self.diff_model.is_dragging() || self.diff_model.is_handle_hovered();
-        let edge_color = if handle_active {
-            p.composer_edge_focus
-        } else {
-            p.sidebar_group_edge
-        };
-
-        Some(
-            h_flex()
-                .id("right-diff-column")
-                .relative()
-                .w(px(width))
-                .h_full()
-                .flex_shrink_0()
-                .bg(p.window_surface)
-                .child(
-                    div()
-                        .id("diff-resize-handle")
-                        .w(px(5.))
-                        .h_full()
-                        .flex_shrink_0()
-                        .cursor_col_resize()
-                        .flex()
-                        .justify_start()
-                        .child(div().w(px(1.)).h_full().bg(edge_color))
-                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                            if this.diff_model.is_handle_hovered() != *hovered {
-                                this.diff_model.set_handle_hovered(*hovered);
-                                cx.notify();
-                            }
-                        }))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                window.prevent_default();
-                                if ev.click_count >= 2 {
-                                    this.reset_right_column_width(cx);
-                                    return;
-                                }
-                                this.begin_right_column_drag(ev.position.x.as_f32(), window, cx);
-                            }),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .overflow_hidden()
-                        .child(self.render_diff_header(cx))
-                        .children(self.render_diff_peek_banner(cx))
-                        .children(self.render_diff_jump_list(cx))
-                        .child(self.render_diff_body(window, cx)),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn render_diff_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_diff_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
         let summaries = self.diff_model.summaries();
         let file_count = summaries.len();
@@ -1033,7 +962,7 @@ impl PaApp {
             })
     }
 
-    fn render_diff_jump_list(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_diff_jump_list(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let summaries = self.diff_model.summaries();
         if summaries.is_empty() || self.settings.diff_jump_collapsed {
             return None;
@@ -1251,7 +1180,7 @@ impl PaApp {
             .into_any_element()
     }
 
-    fn render_diff_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_diff_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette();
         let header_visible_w = (self.right_column_width(window) - 52.).max(180.);
         match self.diff_model.status() {
