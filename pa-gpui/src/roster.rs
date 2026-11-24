@@ -35,6 +35,7 @@ pub(crate) struct WorkspaceSidebarGroup<'a> {
     pub(crate) workspace_id: Option<String>,
     pub(crate) name: String,
     pub(crate) root_path: Option<String>,
+    pub(crate) live_count: usize,
     pub(crate) rows: Vec<&'a SessionRow>,
 }
 
@@ -598,10 +599,12 @@ impl SessionRoster {
                 workspace_id: Some(w.id.clone()),
                 name: w.name.clone(),
                 root_path: Some(w.root_path.clone()),
+                live_count: 0,
                 rows: Vec::new(),
             })
             .collect();
         let mut scratch_rows: Vec<&'a SessionRow> = Vec::new();
+        let mut scratch_live: usize = 0;
         let mut live_running: Vec<(&'a SessionRow, String)> = Vec::new();
         let mut live_idle: Vec<(&'a SessionRow, String)> = Vec::new();
 
@@ -619,10 +622,39 @@ impl SessionRoster {
                     continue;
                 }
             }
+            // Deduplicate: Live (Running / Idle) sessions appear ONLY in the top Live section.
             match s.roster_status() {
-                "Running" => live_running.push((s, ws_name.clone())),
-                "Idle" => live_idle.push((s, ws_name.clone())),
+                "Running" => {
+                    live_running.push((s, ws_name.clone()));
+                    if ws_id.is_none() {
+                        scratch_live += 1;
+                    } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                        grp.live_count += 1;
+                    }
+                    continue;
+                }
+                "Idle" => {
+                    live_idle.push((s, ws_name.clone()));
+                    if ws_id.is_none() {
+                        scratch_live += 1;
+                    } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                        grp.live_count += 1;
+                    }
+                    continue;
+                }
                 _ => {}
+            }
+            // Hide empty `(no messages)` Done rows unless currently active.
+            let is_active = self
+                .active_session_id
+                .as_deref()
+                .is_some_and(|sid| row_matches_selector(s, sid));
+            let trimmed_name = s.name.trim();
+            if !is_active
+                && (trimmed_name == "(no messages)"
+                    || (s.messages == 0 && trimmed_name.is_empty()))
+            {
+                continue;
             }
             if ws_id.is_none() {
                 scratch_rows.push(s);
@@ -634,36 +666,23 @@ impl SessionRoster {
                     workspace_id: ws_id,
                     name: ws_name,
                     root_path,
+                    live_count: 0,
                     rows: vec![s],
                 });
             }
         }
 
-        let status_rank = |s: &SessionRow| -> u8 {
-            match s.roster_status() {
-                "Running" => 0,
-                "Idle" => 1,
-                _ => 2,
-            }
-        };
-        for grp in &mut groups {
-            grp.rows.sort_by_key(|s| status_rank(s));
-        }
-        scratch_rows.sort_by_key(|s| status_rank(s));
-
         if !query.is_empty() {
             groups.retain(|g| !g.rows.is_empty());
         }
 
-        // Workspaces with live sessions float above quiet workspaces, preserving order within each band.
+        // Workspaces with live or historical sessions float above empty workspaces.
         groups.sort_by_key(|g| {
-            let has_running = g.rows.iter().any(|r| r.roster_status() == "Running");
-            let has_idle = g.rows.iter().any(|r| r.roster_status() == "Idle");
-            if has_running {
+            if g.live_count > 0 && !g.rows.is_empty() {
                 0u8
-            } else if has_idle {
-                1u8
             } else if !g.rows.is_empty() {
+                1u8
+            } else if g.live_count > 0 {
                 2u8
             } else {
                 3u8
@@ -676,6 +695,7 @@ impl SessionRoster {
                 workspace_id: None,
                 name: "Scratch".to_string(),
                 root_path: None,
+                live_count: scratch_live,
                 rows: scratch_rows,
             });
         }
@@ -908,27 +928,35 @@ mod tests {
         s_run.cwd = "/repos/pa-ui/src".into();
         let mut s_done = row("s-done", "Older", "archived", "idle", "");
         s_done.cwd = "/repos/pa-ui".into();
-        let mut s_scratch = row("s-scr", "Notes", "live", "idle", "ready");
-        s_scratch.cwd = "/tmp/other".into();
+        s_done.messages = 4;
+        let mut s_empty = row("s-empty", "(no messages)", "archived", "idle", "");
+        s_empty.cwd = "/repos/pa-ui".into();
+        let mut s_scratch_live = row("s-scr", "Notes", "live", "idle", "ready");
+        s_scratch_live.cwd = "/tmp/other".into();
+        let mut s_scratch_done = row("s-scr-done", "Old note", "archived", "idle", "");
+        s_scratch_done.cwd = "/tmp/other".into();
+        s_scratch_done.messages = 2;
 
-        roster.apply_sessions(vec![s_done, s_scratch, s_run]);
+        roster.apply_sessions(vec![s_done, s_empty, s_scratch_live, s_scratch_done, s_run]);
         let view = roster.workspace_sidebar_view(&workspaces, "");
 
-        // Live radar has Running first (pa-ui), then Idle (Scratch)
+        // Live section has Running first (pa-ui), then Idle (Scratch)
         assert_eq!(view.live.len(), 2);
         assert_eq!(view.live[0].0.id, "s-run");
         assert_eq!(view.live[0].1, "pa-ui");
         assert_eq!(view.live[1].0.id, "s-scr");
         assert_eq!(view.live[1].1, "Scratch");
 
-        // Groups: pa-ui (live first, done second), empty-proj (registered empty), Scratch last
+        // Groups deduplicate live rows and hide `(no messages)` Done rows
         assert_eq!(view.groups.len(), 3);
         assert_eq!(view.groups[0].name, "pa-ui");
-        assert_eq!(view.groups[0].rows[0].id, "s-run");
-        assert_eq!(view.groups[0].rows[1].id, "s-done");
+        assert_eq!(view.groups[0].live_count, 1);
+        assert_eq!(view.groups[0].rows.len(), 1);
+        assert_eq!(view.groups[0].rows[0].id, "s-done");
         assert_eq!(view.groups[1].name, "empty-proj");
         assert!(view.groups[1].rows.is_empty());
         assert_eq!(view.groups[2].name, "Scratch");
         assert_eq!(view.groups[2].rows.len(), 1);
+        assert_eq!(view.groups[2].rows[0].id, "s-scr-done");
     }
 }

@@ -534,7 +534,7 @@ impl PaApp {
                     .flex_1()
                     .overflow_y_scrollbar()
                     .child({
-                        let mut col = v_flex().w_full().gap(px(8.)).pt(px(2.));
+                        let mut col = v_flex().w_full().gap(px(4.)).pt(px(2.));
 
                         // Variant B: Pinned Live radar (Running + Idle with Workspace tag)
                         if !view.live.is_empty() {
@@ -583,21 +583,16 @@ impl PaApp {
     ) -> impl IntoElement {
         let p = self.palette();
         let closed = self.settings.live_radar_closed && !force_open;
-        let mut box_el = v_flex()
+        let mut section = v_flex()
             .w_full()
-            .p(px(4.))
             .gap(px(2.))
-            .rounded(px(8.))
-            .bg(p.sidebar_group_surface)
-            .border_1()
-            .border_color(p.sidebar_group_edge)
             .child(
                 h_flex()
                     .id("sb-live-radar-hdr")
-                    .h(px(22.))
+                    .h(px(24.))
                     .w_full()
                     .px(px(6.))
-                    .rounded(px(5.))
+                    .rounded(px(6.))
                     .items_center()
                     .justify_between()
                     .cursor_pointer()
@@ -617,11 +612,11 @@ impl PaApp {
                                     IconName::ChevronDown
                                 })
                                 .size(px(10.))
-                                .text_color(p.sidebar_group_empty_ink),
+                                .text_color(p.quiet_ink),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.5))
+                                    .text_size(px(11.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(p.sidebar_group_ink)
                                     .child("Live"),
@@ -630,25 +625,143 @@ impl PaApp {
                     .child(
                         div()
                             .text_size(px(10.5))
-                            .text_color(p.sidebar_group_empty_ink)
+                            .text_color(p.quiet_ink)
                             .child(live_rows.len().to_string()),
                     ),
             );
 
         if closed {
-            return box_el;
+            return section;
         }
 
         for (idx, (row, ws_name)) in live_rows.iter().enumerate() {
-            box_el = box_el.child(self.render_session_row(
-                "live",
-                idx,
-                row,
-                Some(ws_name.as_str()),
-                cx,
-            ));
+            section = section.child(self.render_live_row(idx, row, ws_name, cx));
         }
-        box_el
+        section
+    }
+
+    fn render_live_row(
+        &self,
+        idx: usize,
+        row: &SessionRow,
+        ws_name: &str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let key = session_key(row);
+        let selected = self
+            .roster
+            .active_id()
+            .is_some_and(|sid| crate::roster::row_matches_selector(row, sid));
+        let menu_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key: open_k, .. } if open_k == &key
+        );
+        let label = format_session_label(row, &key);
+        let click_key = key.clone();
+        let menu_key = key.clone();
+        let menu_id = row.id.clone();
+        let menu_file = row.session_file.clone();
+        let menu_name = label.clone();
+        let is_resident = row.is_resident();
+        let dot_color = if row.roster_status() == "Running" {
+            p.working
+        } else {
+            p.tag_idle
+        };
+        let row_group: SharedString = format!("sb-live-grp-{idx}").into();
+        let dots_bg = if selected {
+            p.sidebar_row_selected
+        } else {
+            p.sidebar_surface
+        };
+
+        v_flex()
+            .id(SharedString::from(format!("sess-live-{idx}")))
+            .group(row_group.clone())
+            .relative()
+            .w_full()
+            .px(px(8.))
+            .py(px(6.))
+            .gap(px(2.))
+            .rounded(px(7.))
+            .cursor_pointer()
+            .when(selected, |d| d.bg(p.sidebar_row_selected))
+            .hover(|d| d.bg(p.sidebar_row_hover))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(7.))
+                    .items_center()
+                    .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(dot_color))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(12.5))
+                            .font_weight(if selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(p.ink)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(label),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .pl(px(13.))
+                    .text_size(px(11.))
+                    .text_color(p.quiet_ink)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(ws_name.to_string()),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("sess-dots-live-{idx}")))
+                    .absolute()
+                    .right(px(4.))
+                    .top(px(5.))
+                    .size(px(22.))
+                    .rounded(px(5.))
+                    .bg(dots_bg)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .when(!menu_open, |d| {
+                        d.opacity(0.0).group_hover(row_group, |s| s.opacity(1.0))
+                    })
+                    .hover(|d| d.bg(p.sidebar_row_selected))
+                    .child(
+                        Icon::new(IconName::Ellipsis)
+                            .size(px(12.))
+                            .text_color(p.quiet_ink),
+                    )
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.toggle_session_menu(
+                            menu_key.clone(),
+                            menu_id.clone(),
+                            menu_file.clone(),
+                            menu_name.clone(),
+                            is_resident,
+                            ev,
+                            window,
+                            cx,
+                        );
+                    })),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.select_session(click_key.clone(), cx);
+            }))
     }
 
     fn render_workspace_group(
@@ -665,26 +778,28 @@ impl PaApp {
         let older_key = grp.key.clone();
         let expanded_older = force_open || self.expanded_older_workspaces.contains(&grp.key);
 
-        let live_count = grp
-            .rows
-            .iter()
-            .filter(|r| matches!(r.roster_status(), "Running" | "Idle"))
-            .count();
-        let done_count = grp.rows.len().saturating_sub(live_count);
         let visible_limit = if expanded_older {
             grp.rows.len()
         } else {
-            live_count + WORKSPACE_DONE_PREVIEW
+            WORKSPACE_DONE_PREVIEW
         };
         let hidden_older = grp.rows.len().saturating_sub(visible_limit);
+        let hdr_group: SharedString = format!("ws-hdr-grp-{}", grp.key).into();
+        let folder_icon = if closed {
+            IconName::Folder
+        } else {
+            IconName::FolderOpen
+        };
 
         let mut card = v_flex()
             .w_full()
+            .mt(px(4.))
             .gap(px(2.))
             .child(
                 h_flex()
                     .id(SharedString::from(format!("ws-hdr-{}", grp.key)))
-                    .h(px(25.))
+                    .group(hdr_group.clone())
+                    .h(px(28.))
                     .w_full()
                     .px(px(6.))
                     .rounded(px(6.))
@@ -700,7 +815,7 @@ impl PaApp {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(5.))
+                            .gap(px(6.))
                             .items_center()
                             .child(
                                 Icon::new(if closed {
@@ -708,16 +823,21 @@ impl PaApp {
                                 } else {
                                     IconName::ChevronDown
                                 })
-                                .size(px(10.5))
-                                .text_color(p.sidebar_group_empty_ink),
+                                .size(px(10.))
+                                .text_color(p.quiet_ink),
+                            )
+                            .child(
+                                Icon::new(folder_icon)
+                                    .size(px(13.))
+                                    .text_color(p.quiet_ink),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_size(px(11.5))
+                                    .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.sidebar_group_ink)
+                                    .text_color(p.ink)
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
@@ -729,12 +849,14 @@ impl PaApp {
                             .gap(px(4.))
                             .items_center()
                             .flex_shrink_0()
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(p.sidebar_group_empty_ink)
-                                    .child(grp.rows.len().to_string()),
-                            )
+                            .when(!grp.rows.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(p.sidebar_group_empty_ink)
+                                        .child(grp.rows.len().to_string()),
+                                )
+                            })
                             .child(
                                 div()
                                     .id(SharedString::from(format!("ws-add-{}", grp.key)))
@@ -744,11 +866,13 @@ impl PaApp {
                                     .items_center()
                                     .justify_center()
                                     .cursor_pointer()
+                                    .opacity(0.0)
+                                    .group_hover(hdr_group, |s| s.opacity(1.0))
                                     .hover(|d| d.bg(p.sidebar_row_selected))
                                     .child(
                                         Icon::new(IconName::Plus)
-                                            .size(px(11.5))
-                                            .text_color(p.sidebar_group_empty_ink),
+                                            .size(px(12.))
+                                            .text_color(p.quiet_ink),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
@@ -768,26 +892,29 @@ impl PaApp {
         }
 
         if grp.rows.is_empty() {
-            return card.child(
-                div()
-                    .pl(px(22.))
-                    .py(px(4.))
-                    .text_size(px(11.))
-                    .text_color(p.sidebar_group_empty_ink)
-                    .child("No sessions yet"),
-            );
+            if grp.live_count == 0 {
+                card = card.child(
+                    div()
+                        .pl(px(26.))
+                        .py(px(3.))
+                        .text_size(px(11.5))
+                        .text_color(p.quiet_ink)
+                        .child("No sessions yet"),
+                );
+            }
+            return card;
         }
 
         let scope_prefix = format!("ws-{}", grp.key);
         for (idx, row) in grp.rows.iter().take(visible_limit).enumerate() {
-            card = card.child(self.render_session_row(&scope_prefix, idx, row, None, cx));
+            card = card.child(self.render_done_row(&scope_prefix, idx, row, cx));
         }
 
-        if hidden_older > 0 && done_count > WORKSPACE_DONE_PREVIEW {
+        if hidden_older > 0 {
             card = card.child(
                 div()
                     .id(SharedString::from(format!("ws-older-{}", grp.key)))
-                    .pl(px(20.))
+                    .pl(px(26.))
                     .h(px(24.))
                     .rounded(px(5.))
                     .flex()
@@ -795,7 +922,7 @@ impl PaApp {
                     .cursor_pointer()
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .text_size(px(11.))
-                    .text_color(p.sidebar_group_empty_ink)
+                    .text_color(p.quiet_ink)
                     .child(format!("Show {hidden_older} older"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -808,12 +935,11 @@ impl PaApp {
         card
     }
 
-    fn render_session_row(
+    fn render_done_row(
         &self,
         scope: &str,
         idx: usize,
         row: &SessionRow,
-        workspace_tag: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette();
@@ -822,130 +948,134 @@ impl PaApp {
             .roster
             .active_id()
             .is_some_and(|sid| crate::roster::row_matches_selector(row, sid));
-        let label = {
-            let single: String = row
-                .name
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if !single.is_empty() {
-                single
-            } else {
-                key.chars().take(12).collect()
-            }
-        };
+        let menu_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key: open_k, .. } if open_k == &key
+        );
+        let label = format_session_label(row, &key);
         let click_key = key.clone();
         let menu_key = key.clone();
         let menu_id = row.id.clone();
         let menu_file = row.session_file.clone();
         let menu_name = label.clone();
         let is_resident = row.is_resident();
-        let status = row.roster_status();
-        let is_done = !matches!(status, "Running" | "Idle");
-        let dot_color = match status {
-            "Running" => Some(p.working),
-            "Idle" => Some(p.tag_idle),
-            _ => None,
-        };
-        let label_color = if selected {
-            p.ink
-        } else if is_done {
-            p.sidebar_group_empty_ink
+        let row_group: SharedString = format!("sb-done-grp-{scope}-{idx}").into();
+        let dots_bg = if selected {
+            p.sidebar_row_selected
         } else {
-            p.quiet_ink
+            p.sidebar_surface
         };
-        let ws_tag = workspace_tag.map(str::to_string);
 
         h_flex()
             .id(SharedString::from(format!("sess-row-{scope}-{idx}")))
+            .group(row_group.clone())
+            .relative()
             .h(px(28.))
-            .px(px(7.))
-            .gap(px(6.))
+            .pl(px(26.))
+            .pr(px(8.))
             .items_center()
             .rounded(px(6.))
             .cursor_pointer()
             .when(selected, |d| d.bg(p.sidebar_row_selected))
             .hover(|d| d.bg(p.sidebar_row_hover))
-            .when_some(dot_color, |d, c| {
-                d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
-            })
-            .when(dot_color.is_none(), |d| {
-                d.child(div().w(px(6.)).flex_shrink_0())
-            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .text_size(px(12.5))
-                    .text_color(label_color)
+                    .text_color(if selected { p.ink } else { p.quiet_ink })
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .child(label),
             )
-            .when_some(ws_tag, |d, tag| {
-                d.child(
-                    div()
-                        .max_w(px(72.))
-                        .px(px(5.))
-                        .py(px(1.))
-                        .rounded(px(4.))
-                        .bg(p.sidebar_surface)
-                        .border_1()
-                        .border_color(p.sidebar_group_edge)
-                        .text_size(px(10.))
-                        .text_color(p.sidebar_group_empty_ink)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .flex_shrink_0()
-                        .child(tag),
-                )
-            })
             .child(
                 div()
                     .id(SharedString::from(format!("sess-dots-{scope}-{idx}")))
+                    .absolute()
+                    .right(px(4.))
+                    .top(px(3.))
                     .size(px(22.))
-                    .flex_shrink_0()
                     .rounded(px(5.))
+                    .bg(dots_bg)
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    .when(!menu_open, |d| {
+                        d.opacity(0.0).group_hover(row_group, |s| s.opacity(1.0))
+                    })
                     .hover(|d| d.bg(p.sidebar_row_selected))
                     .child(
                         Icon::new(IconName::Ellipsis)
                             .size(px(12.))
-                            .text_color(p.sidebar_group_empty_ink),
+                            .text_color(p.quiet_ink),
                     )
                     .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                         cx.stop_propagation();
-                        let already_open = matches!(
-                            &this.open_popup,
-                            OpenPopup::SessionMenu { key, .. } if key == &menu_key
+                        this.toggle_session_menu(
+                            menu_key.clone(),
+                            menu_id.clone(),
+                            menu_file.clone(),
+                            menu_name.clone(),
+                            is_resident,
+                            ev,
+                            window,
+                            cx,
                         );
-                        if already_open {
-                            this.open_popup = OpenPopup::None;
-                        } else {
-                            let vp_h = window.viewport_size().height.as_f32();
-                            let top_y = (ev.position().y.as_f32() - 14.0)
-                                .clamp(36.0, (vp_h - 140.0).max(36.0))
-                                .round() as i32;
-                            this.open_popup = OpenPopup::SessionMenu {
-                                key: menu_key.clone(),
-                                id: menu_id.clone(),
-                                file: menu_file.clone(),
-                                name: menu_name.clone(),
-                                is_resident,
-                                anchor_y: top_y,
-                            };
-                        }
-                        cx.notify();
                     })),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 this.select_session(click_key.clone(), cx);
             }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn toggle_session_menu(
+        &mut self,
+        menu_key: String,
+        menu_id: String,
+        menu_file: String,
+        menu_name: String,
+        is_resident: bool,
+        ev: &ClickEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let already_open = matches!(
+            &self.open_popup,
+            OpenPopup::SessionMenu { key, .. } if key == &menu_key
+        );
+        if already_open {
+            self.open_popup = OpenPopup::None;
+        } else {
+            let vp_h = window.viewport_size().height.as_f32();
+            let top_y = (ev.position().y.as_f32() - 14.0)
+                .clamp(36.0, (vp_h - 140.0).max(36.0))
+                .round() as i32;
+            self.open_popup = OpenPopup::SessionMenu {
+                key: menu_key,
+                id: menu_id,
+                file: menu_file,
+                name: menu_name,
+                is_resident,
+                anchor_y: top_y,
+            };
+        }
+        cx.notify();
+    }
+}
+
+fn format_session_label(row: &SessionRow, key: &str) -> String {
+    let single: String = row
+        .name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !single.is_empty() {
+        single
+    } else {
+        key.chars().take(12).collect()
     }
 }
