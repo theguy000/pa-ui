@@ -984,7 +984,7 @@ impl PaApp {
         let truncated = summary.truncated;
         let deferred = summary.deferred;
         let loading = self.diff_model.is_file_loading(&summary.path);
-        let dot_color = if untracked || (additions > 0 && deletions == 0 && summary.old_path.is_none()) {
+        let dot_color = if untracked || summary.added || (additions > 0 && deletions == 0 && summary.old_path.is_none()) {
             p.tag_idle
         } else if additions == 0 && deletions > 0 {
             p.danger
@@ -1159,6 +1159,7 @@ impl PaApp {
                 struct HeaderMeta {
                     additions: usize,
                     deletions: usize,
+                    added: bool,
                     untracked: bool,
                     deferred: bool,
                     truncated: bool,
@@ -1176,6 +1177,7 @@ impl PaApp {
                             HeaderMeta {
                                 additions: s.additions,
                                 deletions: s.deletions,
+                                added: s.added,
                                 untracked: s.untracked,
                                 deferred: s.deferred,
                                 truncated: s.truncated,
@@ -1222,6 +1224,8 @@ impl PaApp {
 
                                 let (badge, badge_ink, badge_bg) = if meta.is_some_and(|m| m.untracked) {
                                     ("U", tag_idle, tag_idle.opacity(0.14))
+                                } else if meta.is_some_and(|m| m.added) {
+                                    ("A", tag_idle, tag_idle.opacity(0.14))
                                 } else {
                                     match file.status() {
                                         DiffFileStatus::Added => {

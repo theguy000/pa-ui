@@ -653,6 +653,7 @@ mod tests {
                 additions: 3,
                 deletions: 1,
                 binary: false,
+                added: false,
                 untracked: false,
                 truncated: false,
                 deferred: *deferred,

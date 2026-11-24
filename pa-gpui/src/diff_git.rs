@@ -1,7 +1,7 @@
 //! Synchronous Git diff loader meant to run on background threads.
 
 use crate::settings::DiffScope;
-use gpui_kit::component::diff::{DiffFile, DiffParseOptions};
+use gpui_kit::component::diff::{DiffFile, DiffFileStatus, DiffParseOptions};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read as _;
@@ -34,6 +34,7 @@ pub(crate) struct DiffFileSummary {
     pub(crate) additions: usize,
     pub(crate) deletions: usize,
     pub(crate) binary: bool,
+    pub(crate) added: bool,
     pub(crate) untracked: bool,
     pub(crate) truncated: bool,
     pub(crate) deferred: bool,
@@ -162,14 +163,66 @@ fn parse_numstat_z(stdout: &[u8]) -> Vec<NumstatEntry> {
     entries
 }
 
-fn parse_patch_resilient(patch: &str) -> Vec<DiffFile> {
+struct ParsedDiffFile {
+    file: DiffFile,
+    added: bool,
+    additions: usize,
+}
+
+fn extract_added_file_text(chunk: &str) -> Option<String> {
+    let mut in_hunk = false;
+    let mut lines: Vec<&str> = Vec::new();
+    let mut no_trailing_newline = false;
+    for raw in chunk.lines() {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        if let Some(content) = line.strip_prefix('+') {
+            lines.push(content);
+        } else if line.starts_with("\\ No newline at end of file") {
+            no_trailing_newline = true;
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut text = lines.join("\n");
+    if !no_trailing_newline {
+        text.push('\n');
+    }
+    Some(text)
+}
+
+fn collapse_added_to_single_column(df: DiffFile, chunk: &str) -> ParsedDiffFile {
+    let added = df.status() == DiffFileStatus::Added;
+    let additions = df.additions();
+    if added && !df.is_binary() && additions > 0 {
+        if let Some(text) = extract_added_file_text(chunk) {
+            let single = DiffFile::unchanged(df.path().clone(), &text);
+            return ParsedDiffFile {
+                file: single,
+                added: true,
+                additions,
+            };
+        }
+    }
+    ParsedDiffFile {
+        file: df,
+        added,
+        additions,
+    }
+}
+
+fn parse_patch_resilient(patch: &str) -> Vec<ParsedDiffFile> {
     if patch.trim().is_empty() {
         return Vec::new();
     }
     let opts = DiffParseOptions::new().truncated_hunks(true);
-    if let Ok(files) = DiffFile::parse_with(patch, opts) {
-        return files;
-    }
     let mut out = Vec::new();
     let mut start = 0usize;
     let bytes = patch.as_bytes();
@@ -179,8 +232,10 @@ fn parse_patch_resilient(patch: &str) -> Vec<DiffFile> {
             .map(|rel| start + rel + 1)
             .unwrap_or(bytes.len());
         let chunk = &patch[start..next];
-        if let Ok(mut parsed) = DiffFile::parse_with(chunk, opts) {
-            out.append(&mut parsed);
+        if let Ok(parsed) = DiffFile::parse_with(chunk, opts) {
+            for df in parsed {
+                out.push(collapse_added_to_single_column(df, chunk));
+            }
         }
         start = next;
     }
@@ -245,19 +300,26 @@ fn decode_text_capped(buf: &[u8], truncated: bool) -> String {
 fn build_untracked_diff_file(repo_root: &Path, rel_path: &str) -> Option<(DiffFile, bool)> {
     let (buf, truncated) = read_untracked_bytes(repo_root, rel_path)?;
     let git_path = rel_path.replace('\\', "/");
-    let patch = if is_probably_binary(&buf) {
-        format!(
+    if is_probably_binary(&buf) {
+        let patch = format!(
             "diff --git a/{p} b/{p}\nnew file mode 100644\nBinary files /dev/null and b/{p} differ\n",
             p = git_path
-        )
-    } else {
-        let text = decode_text_capped(&buf, truncated);
-        synthesize_added_file_patch(&git_path, &text)
-    };
-
-    let opts = DiffParseOptions::new().truncated_hunks(true);
-    let parsed = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
-    Some((parsed, truncated))
+        );
+        let opts = DiffParseOptions::new().truncated_hunks(true);
+        let parsed = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
+        return Some((parsed, truncated));
+    }
+    let text = decode_text_capped(&buf, truncated);
+    if text.is_empty() {
+        let patch = format!(
+            "diff --git a/{p} b/{p}\nnew file mode 100644\n",
+            p = git_path
+        );
+        let opts = DiffParseOptions::new().truncated_hunks(true);
+        let parsed = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
+        return Some((parsed, truncated));
+    }
+    Some((DiffFile::unchanged(git_path, &text), truncated))
 }
 
 fn load_untracked_entry(
@@ -278,16 +340,34 @@ fn load_untracked_entry(
                 additions: line_count,
                 deletions: 0,
                 binary: false,
+                added: true,
                 untracked: true,
                 truncated,
                 deferred: true,
             };
             return Some((placeholder, summary));
         }
-        let patch = synthesize_added_file_patch(&git_path, &text);
-        let opts = DiffParseOptions::new().truncated_hunks(true);
-        let df = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
-        let summary = summary_from_diff_file(&df, true, truncated, false);
+        let df = if text.is_empty() {
+            let patch = format!(
+                "diff --git a/{p} b/{p}\nnew file mode 100644\n",
+                p = git_path
+            );
+            let opts = DiffParseOptions::new().truncated_hunks(true);
+            DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?
+        } else {
+            DiffFile::unchanged(git_path.clone(), &text)
+        };
+        let summary = DiffFileSummary {
+            path: git_path,
+            old_path: None,
+            additions: line_count,
+            deletions: 0,
+            binary: false,
+            added: true,
+            untracked: true,
+            truncated,
+            deferred: false,
+        };
         return Some((df, summary));
     }
 
@@ -297,47 +377,15 @@ fn load_untracked_entry(
     );
     let opts = DiffParseOptions::new().truncated_hunks(true);
     let df = DiffFile::parse_with(&patch, opts).ok()?.into_iter().next()?;
-    let summary = summary_from_diff_file(&df, true, false, false);
+    let summary = summary_from_diff_file(&df, true, true, 0, false, false);
     Some((df, summary))
-}
-
-fn synthesize_added_file_patch(git_path: &str, text: &str) -> String {
-    if text.is_empty() {
-        return format!(
-            "diff --git a/{p} b/{p}\nnew file mode 100644\n",
-            p = git_path
-        );
-    }
-    let has_trailing_nl = text.ends_with('\n');
-    let lines: Vec<&str> = text.split('\n').collect();
-    let line_count = if has_trailing_nl {
-        lines.len().saturating_sub(1)
-    } else {
-        lines.len()
-    };
-    let mut patch = String::with_capacity(text.len() + 128);
-    patch.push_str(&format!(
-        "diff --git a/{p} b/{p}\nnew file mode 100644\n--- /dev/null\n+++ b/{p}\n@@ -0,0 +1,{n} @@\n",
-        p = git_path,
-        n = line_count,
-    ));
-    for line in lines.iter().take(line_count) {
-        let clean = line.strip_suffix('\r').unwrap_or(line);
-        patch.push('+');
-        patch.push_str(clean);
-        patch.push('\n');
-    }
-    if !has_trailing_nl {
-        patch.push_str("\\ No newline at end of file\n");
-    }
-    patch
 }
 
 fn fetch_tracked_patches(
     repo_root: &Path,
     base_ref: &str,
     entries: &[&NumstatEntry],
-) -> Result<Vec<DiffFile>, String> {
+) -> Result<Vec<ParsedDiffFile>, String> {
     let mut out_files = Vec::new();
     for chunk in entries.chunks(EAGER_DIFF_PATH_CHUNK) {
         let mut args = vec![
@@ -390,7 +438,7 @@ pub(crate) fn load_single_file_diff(
         binary: false,
     };
     let files = fetch_tracked_patches(repo_root, base_ref, &[&entry]).ok()?;
-    files.into_iter().next()
+    files.into_iter().next().map(|parsed| parsed.file)
 }
 
 pub(crate) fn same_worktree_path(a: &Path, b: &Path) -> bool {
@@ -756,9 +804,10 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
         }
     };
 
-    let mut eager_map: HashMap<String, DiffFile> = HashMap::with_capacity(eager_files.len());
-    for df in eager_files {
-        eager_map.insert(df.path().to_string(), df);
+    let mut eager_map: HashMap<String, ParsedDiffFile> =
+        HashMap::with_capacity(eager_files.len());
+    for parsed in eager_files {
+        eager_map.insert(parsed.file.path().to_string(), parsed);
     }
 
     let mut files = Vec::with_capacity(entries.len());
@@ -774,16 +823,24 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
                     additions: entry.additions,
                     deletions: entry.deletions,
                     binary: entry.binary,
+                    added: false,
                     untracked: false,
                     truncated: false,
                     deferred: true,
                 });
                 files.push(placeholder);
             }
-        } else if let Some(df) = eager_map.remove(&entry.path) {
-            let summary = summary_from_diff_file(&df, false, false, false);
+        } else if let Some(parsed) = eager_map.remove(&entry.path) {
+            let summary = summary_from_diff_file(
+                &parsed.file,
+                parsed.added,
+                false,
+                parsed.additions,
+                false,
+                false,
+            );
             summaries.push(summary);
-            files.push(df);
+            files.push(parsed.file);
         }
     }
 
@@ -830,7 +887,9 @@ pub(crate) fn load_diff_against_base(repo_root: PathBuf, base_ref: String) -> Di
 
 fn summary_from_diff_file(
     file: &DiffFile,
+    added: bool,
     untracked: bool,
+    additions: usize,
     truncated: bool,
     deferred: bool,
 ) -> DiffFileSummary {
@@ -842,9 +901,10 @@ fn summary_from_diff_file(
     DiffFileSummary {
         path,
         old_path,
-        additions: file.additions(),
+        additions,
         deletions: file.deletions(),
         binary: file.is_binary(),
+        added,
         untracked,
         truncated,
         deferred,
@@ -1058,7 +1118,8 @@ mod tests {
             true,
         )
         .expect("on-demand untracked minified file");
-        assert_eq!(min_loaded.additions(), 2);
+        assert_eq!(min_loaded.status(), DiffFileStatus::Unchanged);
+        assert!(!min_loaded.is_binary());
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1100,6 +1161,40 @@ mod tests {
         .expect("load renamed deferred diff");
         assert_eq!(df.original_path().map(|p| p.as_ref()), Some("old.min.js"));
         assert_eq!(df.additions(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[::core::prelude::v1::test]
+    fn added_and_untracked_files_render_single_column_while_keeping_added_metadata() {
+        let root = make_temp_dir("added-single-col");
+        init_repo(&root);
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        git(&root, &["add", "README.md"]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+        fs::write(root.join("README.md"), "hello\nworld\n").unwrap();
+        fs::write(root.join("staged_new.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+        git(&root, &["add", "staged_new.rs"]);
+        fs::write(root.join("fresh_untracked.rs"), "const X: usize = 1;\n").unwrap();
+
+        let DiffLoadOutcome::Loaded(loaded) = load_diff_for_scope(&root, DiffScope::Uncommitted, None) else {
+            panic!("expected Loaded diff");
+        };
+        let find = |p: &str| {
+            let ix = loaded.summaries.iter().position(|s| s.path == p).unwrap();
+            (&loaded.summaries[ix], &loaded.files[ix])
+        };
+        let (mod_s, mod_f) = find("README.md");
+        assert!(!mod_s.added && !mod_s.untracked);
+        assert_eq!(mod_f.status(), DiffFileStatus::Modified);
+
+        let (add_s, add_f) = find("staged_new.rs");
+        assert!(add_s.added && !add_s.untracked && add_s.additions == 2);
+        assert_eq!(add_f.status(), DiffFileStatus::Unchanged);
+
+        let (unt_s, unt_f) = find("fresh_untracked.rs");
+        assert!(unt_s.added && unt_s.untracked && unt_s.additions == 1);
+        assert_eq!(unt_f.status(), DiffFileStatus::Unchanged);
 
         let _ = fs::remove_dir_all(&root);
     }
