@@ -674,16 +674,10 @@ impl PaApp {
             p.tag_idle
         };
         let row_group: SharedString = format!("sb-live-grp-{idx}").into();
-        let dots_bg = if selected {
-            p.sidebar_row_selected
-        } else {
-            p.sidebar_surface
-        };
 
         v_flex()
             .id(SharedString::from(format!("sess-live-{idx}")))
             .group(row_group.clone())
-            .relative()
             .w_full()
             .px(px(8.))
             .py(px(6.))
@@ -695,6 +689,7 @@ impl PaApp {
             .child(
                 h_flex()
                     .w_full()
+                    .h(px(20.))
                     .gap(px(7.))
                     .items_center()
                     .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(dot_color))
@@ -713,6 +708,43 @@ impl PaApp {
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .child(label),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("sess-dots-live-{idx}")))
+                            .h(px(20.))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .rounded(px(5.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .when(menu_open, |d| d.w(px(22.)).opacity(1.0))
+                            .when(!menu_open, |d| {
+                                d.w(px(0.)).opacity(0.0).group_hover(row_group, |s| {
+                                    s.w(px(22.)).opacity(1.0)
+                                })
+                            })
+                            .hover(|d| d.bg(p.sidebar_row_selected))
+                            .child(
+                                Icon::new(IconName::Ellipsis)
+                                    .size(px(12.))
+                                    .text_color(p.quiet_ink),
+                            )
+                            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.toggle_session_menu(
+                                    menu_key.clone(),
+                                    menu_id.clone(),
+                                    menu_file.clone(),
+                                    menu_name.clone(),
+                                    is_resident,
+                                    ev,
+                                    window,
+                                    cx,
+                                );
+                            })),
                     ),
             )
             .child(
@@ -725,42 +757,6 @@ impl PaApp {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .child(ws_name.to_string()),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("sess-dots-live-{idx}")))
-                    .absolute()
-                    .right(px(4.))
-                    .top(px(5.))
-                    .size(px(22.))
-                    .rounded(px(5.))
-                    .bg(dots_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .when(!menu_open, |d| {
-                        d.opacity(0.0).group_hover(row_group, |s| s.opacity(1.0))
-                    })
-                    .hover(|d| d.bg(p.sidebar_row_selected))
-                    .child(
-                        Icon::new(IconName::Ellipsis)
-                            .size(px(12.))
-                            .text_color(p.quiet_ink),
-                    )
-                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.toggle_session_menu(
-                            menu_key.clone(),
-                            menu_id.clone(),
-                            menu_file.clone(),
-                            menu_name.clone(),
-                            is_resident,
-                            ev,
-                            window,
-                            cx,
-                        );
-                    })),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
@@ -964,19 +960,14 @@ impl PaApp {
         let menu_name = label.clone();
         let is_resident = row.is_resident();
         let row_group: SharedString = format!("sb-done-grp-{scope}-{idx}").into();
-        let dots_bg = if selected {
-            p.sidebar_row_selected
-        } else {
-            p.sidebar_surface
-        };
 
         h_flex()
             .id(SharedString::from(format!("sess-row-{scope}-{idx}")))
             .group(row_group.clone())
-            .relative()
             .h(px(28.))
             .pl(px(26.))
-            .pr(px(8.))
+            .pr(px(6.))
+            .gap(px(4.))
             .items_center()
             .rounded(px(6.))
             .cursor_pointer()
@@ -996,18 +987,19 @@ impl PaApp {
             .child(
                 div()
                     .id(SharedString::from(format!("sess-dots-{scope}-{idx}")))
-                    .absolute()
-                    .right(px(4.))
-                    .top(px(3.))
-                    .size(px(22.))
+                    .h(px(22.))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .rounded(px(5.))
-                    .bg(dots_bg)
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    .when(menu_open, |d| d.w(px(22.)).opacity(1.0))
                     .when(!menu_open, |d| {
-                        d.opacity(0.0).group_hover(row_group, |s| s.opacity(1.0))
+                        d.w(px(0.)).opacity(0.0).group_hover(row_group, |s| {
+                            s.w(px(22.)).opacity(1.0)
+                        })
                     })
                     .hover(|d| d.bg(p.sidebar_row_selected))
                     .child(
