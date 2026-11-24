@@ -2079,6 +2079,7 @@ impl PaApp {
                                     .flex_1()
                                     .min_h_0()
                                     .px(px(22.))
+                                    .pt(px(14.))
                                     .pb(px(18.))
                                     .child(self.render_settings_harness_tab(window, cx))
                                     .into_any_element(),
@@ -2086,6 +2087,7 @@ impl PaApp {
                                     .flex_1()
                                     .min_h_0()
                                     .px(px(22.))
+                                    .pt(px(14.))
                                     .pb(px(18.))
                                     .child(self.render_settings_workspaces_tab(cx))
                                     .into_any_element(),
