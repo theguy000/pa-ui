@@ -2053,6 +2053,9 @@ impl Render for PaApp {
                     this.toggle_right_column(cx);
                 } else if ctrl && key.eq_ignore_ascii_case("b") {
                     this.settings.sidebar_open = !this.settings.sidebar_open;
+                    if !this.settings.sidebar_open {
+                        this.expanded_older_workspaces.clear();
+                    }
                     this.rail_mark_hovered = false;
                     this.settings.save();
                     cx.notify();
@@ -2068,6 +2071,7 @@ impl Render for PaApp {
                 } else if key == "escape" {
                     if this.workspace_ui.creating_worktree_ws.take().is_some()
                         || std::mem::take(&mut this.workspace_ui.creating_branch)
+                        || std::mem::take(&mut this.harness_ui.workspace_dropdown_open)
                         || this.harness_ui.pending_delete_id.take().is_some()
                         || this.harness_ui.pending_rollback_id.take().is_some()
                         || this.workspace_ui.pending_delete_ws.take().is_some()

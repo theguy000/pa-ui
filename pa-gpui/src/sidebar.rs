@@ -117,6 +117,9 @@ impl PaApp {
 
     pub(crate) fn toggle_workspace_group(&mut self, key: &str, cx: &mut Context<Self>) {
         self.settings.toggle_workspace_collapsed(key);
+        if self.settings.is_workspace_collapsed(key) {
+            self.expanded_older_workspaces.remove(key);
+        }
         self.settings.save();
         cx.notify();
     }
@@ -472,6 +475,7 @@ impl PaApp {
                                         cx.stop_propagation();
                                         this.settings.sidebar_open = false;
                                         this.rail_mark_hovered = false;
+                                        this.expanded_older_workspaces.clear();
                                         this.settings.save();
                                         cx.notify();
                                     })),

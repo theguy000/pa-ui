@@ -81,6 +81,7 @@ pub(crate) fn filter_harness_entries<'a>(
 pub(crate) struct HarnessUiState {
     pub scope: HarnessUiScope,
     pub selected_workspace_id: Option<String>,
+    pub workspace_dropdown_open: bool,
     pub kind_filter: Option<HarnessKindWire>,
     pub entries: Vec<HarnessEntryWire>,
     pub history: Vec<RefinementHistoryItemWire>,
@@ -97,6 +98,7 @@ impl Default for HarnessUiState {
         Self {
             scope: HarnessUiScope::Global,
             selected_workspace_id: None,
+            workspace_dropdown_open: false,
             kind_filter: None,
             entries: Vec::new(),
             history: Vec::new(),
@@ -431,6 +433,7 @@ impl PaApp {
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.harness_ui.scope = target;
+                    this.harness_ui.workspace_dropdown_open = false;
                     this.harness_ui.selected_entry_id = None;
                     this.harness_ui.creating_new = false;
                     this.harness_ui.pending_delete_id = None;
@@ -440,6 +443,27 @@ impl PaApp {
                     cx.notify();
                 }))
                 .child(label)
+        };
+
+        let selected_ws_id = self.effective_harness_workspace_id();
+        let selected_ws_name = selected_ws_id
+            .as_deref()
+            .and_then(|id| self.workspace_ui.workspaces.iter().find(|w| w.id == id))
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| {
+                if self.workspace_ui.workspaces.is_empty() {
+                    "No workspaces".to_string()
+                } else {
+                    "Select workspace".to_string()
+                }
+            });
+        let ws_dd_open = active_scope == HarnessUiScope::Workspace
+            && self.harness_ui.workspace_dropdown_open;
+        let can_create = match active_scope {
+            HarnessUiScope::Global => true,
+            HarnessUiScope::Workspace => selected_ws_id.is_some(),
+            HarnessUiScope::Session => self.effective_harness_session_id().is_some(),
+            HarnessUiScope::History => false,
         };
 
         let top_bar = h_flex()
@@ -456,85 +480,90 @@ impl PaApp {
                     .child(scope_tab("h-scope-sess", "Session", HarnessUiScope::Session))
                     .child(scope_tab("h-scope-hist", "History", HarnessUiScope::History)),
             )
-            .when(active_scope != HarnessUiScope::History, |row| {
-                let can_create = match active_scope {
-                    HarnessUiScope::Global => true,
-                    HarnessUiScope::Workspace => self.effective_harness_workspace_id().is_some(),
-                    HarnessUiScope::Session => self.effective_harness_session_id().is_some(),
-                    HarnessUiScope::History => false,
-                };
-                row.when(can_create, |r| {
-                    r.child(
-                        h_flex()
-                            .id("harness-new-btn")
-                            .h(px(26.))
-                            .px(px(10.))
-                            .gap(px(5.))
-                            .rounded(px(6.))
-                            .bg(p.sidebar_row_selected)
-                            .items_center()
-                            .cursor_pointer()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.ink)
-                            .hover(move |s| s.bg(p.sidebar_row_hover))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.begin_new_harness_entry(window, cx);
-                            }))
-                            .child(Icon::new(IconName::Plus).size(px(12.)).text_color(p.ink))
-                            .child("New"),
-                    )
-                })
-            });
-
-        // Workspace selector strip when Workspace scope is active
-        let ws_strip: Option<AnyElement> = if active_scope == HarnessUiScope::Workspace {
-            let selected_ws = self.effective_harness_workspace_id();
-            let mut strip = h_flex().w_full().gap(px(6.)).flex_wrap().items_center();
-            if self.workspace_ui.workspaces.is_empty() {
-                strip = strip.child(
-                    div()
-                        .text_size(px(11.5))
-                        .text_color(p.quiet_ink)
-                        .child("No registered workspaces"),
-                );
-            } else {
-                for (i, ws) in self.workspace_ui.workspaces.iter().enumerate() {
-                    let is_sel = selected_ws.as_deref() == Some(ws.id.as_str());
-                    let ws_id_click = ws.id.clone();
-                    strip = strip.child(
-                        div()
-                            .id(("h-ws-chip", i))
-                            .h(px(23.))
-                            .px(px(8.))
-                            .rounded(px(6.))
-                            .flex()
-                            .items_center()
-                            .cursor_pointer()
-                            .text_size(px(11.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .bg(if is_sel {
-                                p.sidebar_row_selected
-                            } else {
-                                p.sidebar_group_surface
-                            })
-                            .text_color(if is_sel { p.ink } else { p.quiet_ink })
-                            .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.harness_ui.selected_workspace_id = Some(ws_id_click.clone());
-                                this.harness_ui.selected_entry_id = None;
-                                this.harness_ui.creating_new = false;
-                                this.refresh_harness_view(cx);
-                                cx.notify();
-                            }))
-                            .child(ws.name.clone()),
-                    );
-                }
-            }
-            Some(strip.into_any_element())
-        } else {
-            None
-        };
+            .child(
+                h_flex()
+                    .gap(px(6.))
+                    .items_center()
+                    .when(active_scope == HarnessUiScope::Workspace, |row| {
+                        let has_ws = !self.workspace_ui.workspaces.is_empty();
+                        row.child(
+                            h_flex()
+                                .id("h-ws-dropdown-trigger")
+                                .h(px(26.))
+                                .px(px(9.))
+                                .gap(px(6.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(if ws_dd_open {
+                                    p.panel_edge
+                                } else {
+                                    p.sidebar_group_edge
+                                })
+                                .bg(if ws_dd_open {
+                                    p.sidebar_row_selected
+                                } else {
+                                    p.sidebar_group_surface
+                                })
+                                .items_center()
+                                .when(has_ws, |d| {
+                                    d.cursor_pointer()
+                                        .hover(move |s| s.bg(p.sidebar_row_hover))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.harness_ui.workspace_dropdown_open =
+                                                !this.harness_ui.workspace_dropdown_open;
+                                            cx.notify();
+                                        }))
+                                })
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(12.))
+                                        .text_color(p.quiet_ink),
+                                )
+                                .child(
+                                    div()
+                                        .max_w(px(180.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(if has_ws { p.ink } else { p.quiet_ink })
+                                        .child(selected_ws_name),
+                                )
+                                .when(has_ws, |d| {
+                                    d.child(
+                                        Icon::new(IconName::ChevronDown)
+                                            .size(px(11.))
+                                            .text_color(p.quiet_ink),
+                                    )
+                                }),
+                        )
+                    })
+                    .when(active_scope != HarnessUiScope::History && can_create, |r| {
+                        r.child(
+                            h_flex()
+                                .id("harness-new-btn")
+                                .h(px(26.))
+                                .px(px(10.))
+                                .gap(px(5.))
+                                .rounded(px(6.))
+                                .bg(p.sidebar_row_selected)
+                                .items_center()
+                                .cursor_pointer()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.ink)
+                                .hover(move |s| s.bg(p.sidebar_row_hover))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.harness_ui.workspace_dropdown_open = false;
+                                    this.begin_new_harness_entry(window, cx);
+                                }))
+                                .child(Icon::new(IconName::Plus).size(px(12.)).text_color(p.ink))
+                                .child("New"),
+                        )
+                    }),
+            );
 
         // Main body: History view vs Master-Detail Split
         let body: AnyElement = if active_scope == HarnessUiScope::History {
@@ -543,14 +572,143 @@ impl PaApp {
             self.render_harness_master_detail(cx)
         };
 
+        // Floating Workspace dropdown overlay (rendered last so it paints above body)
+        let ws_dropdown_overlay: Option<AnyElement> = if ws_dd_open {
+            let mut list = v_flex().w_full().gap(px(2.)).p(px(5.));
+            for (i, ws) in self.workspace_ui.workspaces.iter().enumerate() {
+                let is_sel = selected_ws_id.as_deref() == Some(ws.id.as_str());
+                let ws_id_click = ws.id.clone();
+                let kind_lbl = match ws.kind {
+                    WorkspaceKind::Git => "Git",
+                    WorkspaceKind::Plain => "Folder",
+                };
+                list = list.child(
+                    h_flex()
+                        .id(("h-ws-dd-item", i))
+                        .w_full()
+                        .h(px(30.))
+                        .px(px(8.))
+                        .gap(px(8.))
+                        .rounded(px(6.))
+                        .items_center()
+                        .justify_between()
+                        .cursor_pointer()
+                        .when(is_sel, |d| d.bg(p.sidebar_row_selected))
+                        .hover(move |s| s.bg(p.sidebar_row_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.harness_ui.selected_workspace_id = Some(ws_id_click.clone());
+                            this.harness_ui.workspace_dropdown_open = false;
+                            this.harness_ui.selected_entry_id = None;
+                            this.harness_ui.creating_new = false;
+                            this.refresh_harness_view(cx);
+                            cx.notify();
+                        }))
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(7.))
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(12.5))
+                                        .text_color(p.quiet_ink),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(px(12.))
+                                        .font_weight(if is_sel {
+                                            FontWeight::MEDIUM
+                                        } else {
+                                            FontWeight::NORMAL
+                                        })
+                                        .text_color(p.ink)
+                                        .child(ws.name.clone()),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap(px(6.))
+                                .items_center()
+                                .flex_shrink_0()
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(p.quiet_ink)
+                                        .child(kind_lbl),
+                                )
+                                .child(if is_sel {
+                                    Icon::new(IconName::Check)
+                                        .size(px(12.))
+                                        .text_color(p.working)
+                                        .into_any_element()
+                                } else {
+                                    div().w(px(12.)).into_any_element()
+                                }),
+                        ),
+                );
+            }
+            let right_offset = if can_create { 68. } else { 0. };
+            Some(
+                div()
+                    .id("h-ws-dd-layer")
+                    .absolute()
+                    .inset_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.harness_ui.workspace_dropdown_open = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .id("h-ws-dd-menu")
+                            .absolute()
+                            .top(px(32.))
+                            .right(px(right_offset))
+                            .w(px(268.))
+                            .rounded(px(10.))
+                            .border_1()
+                            .border_color(p.panel_edge)
+                            .bg(p.panel_surface)
+                            .shadow_xl()
+                            .overflow_hidden()
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                            })
+                            .on_click(|_, _, cx| cx.stop_propagation())
+                            .child(
+                                div()
+                                    .id("h-ws-dd-scroll")
+                                    .max_h(px(260.))
+                                    .overflow_y_scrollbar()
+                                    .child(list),
+                            ),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
         v_flex()
+            .relative()
             .w_full()
             .flex_1()
             .min_h_0()
             .gap(px(10.))
             .child(top_bar)
-            .children(ws_strip)
             .child(body)
+            .children(ws_dropdown_overlay)
             .into_any_element()
     }
 
