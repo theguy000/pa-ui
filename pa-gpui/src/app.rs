@@ -13,7 +13,7 @@ use crate::providers::{
 };
 use crate::roster::SessionRoster;
 use crate::settings::AppSettings;
-use crate::sidebar::{RenameTarget, SidebarTab};
+use crate::sidebar::RenameTarget;
 use crate::theme::PaPalette;
 use crate::transcript::{
     append_text_delta, append_thinking_delta, build_items, compute_tail_trim,
@@ -93,7 +93,7 @@ pub struct PaApp {
     pub(crate) anim_epoch: Instant,
     pub(crate) anim_phase_ms: u64,
     pub(crate) settings: AppSettings,
-    pub(crate) sidebar_tab: SidebarTab,
+    pub(crate) expanded_older_workspaces: HashSet<String>,
     pub(crate) settings_tab: SettingsTab,
     pub(crate) workspace_ui: crate::workspace_ui::WorkspaceUiState,
     pub(crate) harness_ui: crate::settings_harness::HarnessUiState,
@@ -393,7 +393,7 @@ impl PaApp {
             anim_epoch: Instant::now(),
             anim_phase_ms: 0,
             settings,
-            sidebar_tab: SidebarTab::Live,
+            expanded_older_workspaces: HashSet::new(),
             settings_tab: SettingsTab::General,
             providers_snapshot: ProviderSnapshot::default(),
             providers_mode: ProvidersEditMode::List,
@@ -1043,10 +1043,7 @@ impl PaApp {
             self.list_state.reset(0);
             self.list_state.set_follow_mode(FollowMode::Tail);
         }
-        let promoted_from_done = self.roster.select_session_optimistic(&key);
-        if promoted_from_done || self.sidebar_tab == SidebarTab::Done {
-            self.sidebar_tab = SidebarTab::Live;
-        }
+        let _ = self.roster.select_session_optimistic(&key);
         self.is_streaming = self.roster.active_row_is_streaming().unwrap_or(false);
         self.sync_stop_target(cx);
         self.sync_diff_for_active_session(cx);
@@ -1055,6 +1052,17 @@ impl PaApp {
             request_id,
         });
         cx.notify();
+    }
+
+    pub(crate) fn request_new_session_in_workspace(
+        &mut self,
+        workspace_id: Option<String>,
+        root_path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_new_session(window, cx);
+        self.apply_workspace_selection(workspace_id, root_path, cx);
     }
 
     pub(crate) fn request_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {

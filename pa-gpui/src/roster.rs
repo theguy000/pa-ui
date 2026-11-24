@@ -6,7 +6,7 @@
 use crate::popups::model_label;
 use crate::settings::AppSettings;
 use crate::sidebar::session_key;
-use pa_client::{clamp_level, ModelEntry, SessionRow, SessionState, SessionStats};
+use pa_client::{clamp_level, ModelEntry, SessionRow, SessionState, SessionStats, WorkspaceRecord};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedModel {
@@ -23,10 +23,26 @@ pub(crate) fn row_matches_selector(row: &SessionRow, selector: &str) -> bool {
             || (!row.session_file.is_empty() && row.session_file == selector))
 }
 
+#[cfg(test)]
 pub(crate) struct GroupedSessions<'a> {
     pub(crate) active: Vec<&'a SessionRow>,
     pub(crate) idle: Vec<&'a SessionRow>,
     pub(crate) done: Vec<&'a SessionRow>,
+}
+
+pub(crate) struct WorkspaceSidebarGroup<'a> {
+    pub(crate) key: String,
+    pub(crate) workspace_id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) root_path: Option<String>,
+    pub(crate) rows: Vec<&'a SessionRow>,
+}
+
+pub(crate) struct WorkspaceSidebarView<'a> {
+    /// Pinned Live radar rows (Running first, then Idle), each paired with its Workspace name.
+    pub(crate) live: Vec<(&'a SessionRow, String)>,
+    /// Workspace groups (registered + inferred from bindings, Scratch last).
+    pub(crate) groups: Vec<WorkspaceSidebarGroup<'a>>,
 }
 
 pub(crate) enum ModelPickEffect {
@@ -505,6 +521,173 @@ impl SessionRoster {
         }
     }
 
+    pub(crate) fn workspace_sidebar_view<'a>(
+        &'a self,
+        workspaces: &[WorkspaceRecord],
+        raw_query: &str,
+    ) -> WorkspaceSidebarView<'a> {
+        let query = raw_query.trim().to_ascii_lowercase();
+        let norm = |p: &str| -> String {
+            let s = p.trim().replace('\\', "/");
+            let trimmed = s.trim_end_matches('/');
+            if cfg!(windows) {
+                trimmed.to_ascii_lowercase()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        let ws_norms: Vec<(usize, String)> = workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| !w.root_path.trim().is_empty())
+            .map(|(idx, w)| (idx, norm(&w.root_path)))
+            .collect();
+
+        let resolve_ws = |s: &SessionRow| -> (String, Option<String>, String, Option<String>) {
+            if let Some(ref b) = s.workspace_binding {
+                if let Some(reg) = workspaces.iter().find(|w| w.id == b.workspace_id) {
+                    return (
+                        reg.id.clone(),
+                        Some(reg.id.clone()),
+                        reg.name.clone(),
+                        Some(reg.root_path.clone()),
+                    );
+                }
+                let name = if b.workspace_name.trim().is_empty() {
+                    b.workspace_id.clone()
+                } else {
+                    b.workspace_name.clone()
+                };
+                return (
+                    b.workspace_id.clone(),
+                    Some(b.workspace_id.clone()),
+                    name,
+                    Some(b.workspace_root.clone()),
+                );
+            }
+            let cwd_n = norm(&s.cwd);
+            if !cwd_n.is_empty() {
+                let best = ws_norms
+                    .iter()
+                    .filter(|(_, root)| {
+                        cwd_n == *root
+                            || (cwd_n.len() > root.len()
+                                && cwd_n.starts_with(root.as_str())
+                                && cwd_n.as_bytes()[root.len()] == b'/')
+                    })
+                    .max_by_key(|(_, root)| root.len());
+                if let Some(&(idx, _)) = best {
+                    let reg = &workspaces[idx];
+                    return (
+                        reg.id.clone(),
+                        Some(reg.id.clone()),
+                        reg.name.clone(),
+                        Some(reg.root_path.clone()),
+                    );
+                }
+            }
+            ("__scratch__".to_string(), None, "Scratch".to_string(), None)
+        };
+
+        // Seed groups with registered workspaces in registry order
+        let mut groups: Vec<WorkspaceSidebarGroup<'a>> = workspaces
+            .iter()
+            .map(|w| WorkspaceSidebarGroup {
+                key: w.id.clone(),
+                workspace_id: Some(w.id.clone()),
+                name: w.name.clone(),
+                root_path: Some(w.root_path.clone()),
+                rows: Vec::new(),
+            })
+            .collect();
+        let mut scratch_rows: Vec<&'a SessionRow> = Vec::new();
+        let mut live_running: Vec<(&'a SessionRow, String)> = Vec::new();
+        let mut live_idle: Vec<(&'a SessionRow, String)> = Vec::new();
+
+        for s in self.sessions.iter() {
+            if !(s.depth == 0 && s.parent.is_empty() && s.parent_active.is_empty()) {
+                continue;
+            }
+            let (key, ws_id, ws_name, root_path) = resolve_ws(s);
+            if !query.is_empty() {
+                let hit = s.name.to_ascii_lowercase().contains(&query)
+                    || s.id.to_ascii_lowercase().contains(&query)
+                    || s.cwd.to_ascii_lowercase().contains(&query)
+                    || ws_name.to_ascii_lowercase().contains(&query);
+                if !hit {
+                    continue;
+                }
+            }
+            match s.roster_status() {
+                "Running" => live_running.push((s, ws_name.clone())),
+                "Idle" => live_idle.push((s, ws_name.clone())),
+                _ => {}
+            }
+            if ws_id.is_none() {
+                scratch_rows.push(s);
+            } else if let Some(grp) = groups.iter_mut().find(|g| g.key == key) {
+                grp.rows.push(s);
+            } else {
+                groups.push(WorkspaceSidebarGroup {
+                    key,
+                    workspace_id: ws_id,
+                    name: ws_name,
+                    root_path,
+                    rows: vec![s],
+                });
+            }
+        }
+
+        let status_rank = |s: &SessionRow| -> u8 {
+            match s.roster_status() {
+                "Running" => 0,
+                "Idle" => 1,
+                _ => 2,
+            }
+        };
+        for grp in &mut groups {
+            grp.rows.sort_by_key(|s| status_rank(s));
+        }
+        scratch_rows.sort_by_key(|s| status_rank(s));
+
+        if !query.is_empty() {
+            groups.retain(|g| !g.rows.is_empty());
+        }
+
+        // Workspaces with live sessions float above quiet workspaces, preserving order within each band.
+        groups.sort_by_key(|g| {
+            let has_running = g.rows.iter().any(|r| r.roster_status() == "Running");
+            let has_idle = g.rows.iter().any(|r| r.roster_status() == "Idle");
+            if has_running {
+                0u8
+            } else if has_idle {
+                1u8
+            } else if !g.rows.is_empty() {
+                2u8
+            } else {
+                3u8
+            }
+        });
+
+        if !scratch_rows.is_empty() || (groups.is_empty() && query.is_empty()) {
+            groups.push(WorkspaceSidebarGroup {
+                key: "__scratch__".to_string(),
+                workspace_id: None,
+                name: "Scratch".to_string(),
+                root_path: None,
+                rows: scratch_rows,
+            });
+        }
+
+        live_running.extend(live_idle);
+        WorkspaceSidebarView {
+            live: live_running,
+            groups,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn grouped_sessions<'a>(&'a self, raw_query: &str) -> GroupedSessions<'a> {
         let query = raw_query.trim().to_ascii_lowercase();
         let matches_query = |s: &&SessionRow| -> bool {
@@ -695,5 +878,57 @@ mod tests {
         assert_eq!(roster.grouped_sessions("").done.len(), 0);
         assert_eq!(roster.grouped_sessions("").idle.len(), 1);
         assert!(row_matches_selector(roster.active_session().unwrap(), "uuid-done"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn workspace_sidebar_view_pins_live_radar_and_groups_by_workspace_with_scratch_last() {
+        let mut roster = SessionRoster::new();
+        let workspaces = vec![
+            WorkspaceRecord {
+                id: "ws-a".into(),
+                name: "pa-ui".into(),
+                root_path: "/repos/pa-ui".into(),
+                kind: pa_client::WorkspaceKind::Git,
+                last_used_at: String::new(),
+                harness_entry_count: 0,
+                missing: false,
+            },
+            WorkspaceRecord {
+                id: "ws-empty".into(),
+                name: "empty-proj".into(),
+                root_path: "/repos/empty".into(),
+                kind: pa_client::WorkspaceKind::Plain,
+                last_used_at: String::new(),
+                harness_entry_count: 0,
+                missing: false,
+            },
+        ];
+
+        let mut s_run = row("s-run", "Titlebar", "live", "working", "ready");
+        s_run.cwd = "/repos/pa-ui/src".into();
+        let mut s_done = row("s-done", "Older", "archived", "idle", "");
+        s_done.cwd = "/repos/pa-ui".into();
+        let mut s_scratch = row("s-scr", "Notes", "live", "idle", "ready");
+        s_scratch.cwd = "/tmp/other".into();
+
+        roster.apply_sessions(vec![s_done, s_scratch, s_run]);
+        let view = roster.workspace_sidebar_view(&workspaces, "");
+
+        // Live radar has Running first (pa-ui), then Idle (Scratch)
+        assert_eq!(view.live.len(), 2);
+        assert_eq!(view.live[0].0.id, "s-run");
+        assert_eq!(view.live[0].1, "pa-ui");
+        assert_eq!(view.live[1].0.id, "s-scr");
+        assert_eq!(view.live[1].1, "Scratch");
+
+        // Groups: pa-ui (live first, done second), empty-proj (registered empty), Scratch last
+        assert_eq!(view.groups.len(), 3);
+        assert_eq!(view.groups[0].name, "pa-ui");
+        assert_eq!(view.groups[0].rows[0].id, "s-run");
+        assert_eq!(view.groups[0].rows[1].id, "s-done");
+        assert_eq!(view.groups[1].name, "empty-proj");
+        assert!(view.groups[1].rows.is_empty());
+        assert_eq!(view.groups[2].name, "Scratch");
+        assert_eq!(view.groups[2].rows.len(), 1);
     }
 }

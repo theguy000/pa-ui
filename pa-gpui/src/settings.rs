@@ -22,9 +22,8 @@ pub struct AppSettings {
     pub diff_split: bool,
     pub diff_wrap: bool,
     pub diff_jump_collapsed: bool,
-    pub active_closed: bool,
-    pub idle_closed: bool,
-    pub done_closed: bool,
+    pub live_radar_closed: bool,
+    pub collapsed_workspaces: Vec<String>,
     pub last_folder: Option<String>,
     pub recent_folders: Vec<String>,
     pub model_thinking: BTreeMap<String, String>,
@@ -41,9 +40,8 @@ impl Default for AppSettings {
             diff_split: false,
             diff_wrap: false,
             diff_jump_collapsed: false,
-            active_closed: false,
-            idle_closed: false,
-            done_closed: false,
+            live_radar_closed: false,
+            collapsed_workspaces: Vec::new(),
             last_folder: None,
             recent_folders: Vec::new(),
             model_thinking: BTreeMap::new(),
@@ -112,6 +110,18 @@ impl AppSettings {
     pub fn model_thinking_for(&self, provider: &str, model_id: &str) -> Option<&str> {
         let key = format!("{provider}/{model_id}");
         self.model_thinking.get(&key).map(String::as_str)
+    }
+
+    pub fn is_workspace_collapsed(&self, key: &str) -> bool {
+        self.collapsed_workspaces.iter().any(|k| k == key)
+    }
+
+    pub fn toggle_workspace_collapsed(&mut self, key: &str) {
+        if let Some(pos) = self.collapsed_workspaces.iter().position(|k| k == key) {
+            self.collapsed_workspaces.remove(pos);
+        } else {
+            self.collapsed_workspaces.push(key.to_string());
+        }
     }
 
     pub fn set_model_thinking(&mut self, provider: &str, model_id: &str, level: &str) {

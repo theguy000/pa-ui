@@ -23,18 +23,7 @@ pub(crate) struct RenameTarget {
     pub(crate) is_resident: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SidebarTab {
-    Live,
-    Done,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarGroup {
-    Active,
-    Idle,
-    Done,
-}
+const WORKSPACE_DONE_PREVIEW: usize = 5;
 
 #[allow(dead_code)]
 pub(crate) fn display_folder_name(raw: &str) -> String {
@@ -120,12 +109,14 @@ impl PaApp {
         cx.notify();
     }
 
-    pub(crate) fn toggle_group(&mut self, group: SidebarGroup, cx: &mut Context<Self>) {
-        match group {
-            SidebarGroup::Active => self.settings.active_closed = !self.settings.active_closed,
-            SidebarGroup::Idle => self.settings.idle_closed = !self.settings.idle_closed,
-            SidebarGroup::Done => self.settings.done_closed = !self.settings.done_closed,
-        }
+    pub(crate) fn toggle_live_radar(&mut self, cx: &mut Context<Self>) {
+        self.settings.live_radar_closed = !self.settings.live_radar_closed;
+        self.settings.save();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_workspace_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.settings.toggle_workspace_collapsed(key);
         self.settings.save();
         cx.notify();
     }
@@ -397,10 +388,10 @@ impl PaApp {
         }
         let p = self.palette();
         let query = self.search_input.read(cx).value();
-        let grouped = self.roster.grouped_sessions(&query);
-        let active_rows = grouped.active;
-        let idle_rows = grouped.idle;
-        let done_rows = grouped.done;
+        let has_query = !query.trim().is_empty();
+        let view = self
+            .roster
+            .workspace_sidebar_view(&self.workspace_ui.workspaces, &query);
 
         v_flex()
             .w(px(244.))
@@ -537,195 +528,163 @@ impl PaApp {
                         ),
                 )
             })
-            .child({
-                let live_count = active_rows.len() + idle_rows.len();
-                let done_count = done_rows.len();
-                let live_on = self.sidebar_tab == SidebarTab::Live;
-                let done_on = self.sidebar_tab == SidebarTab::Done;
-                let pill_bg = if self.settings.dark_mode {
-                    p.composer_edge
-                } else {
-                    p.panel_surface
-                };
-                h_flex()
-                    .w_full()
-                    .h(px(28.))
-                    .p(px(2.))
-                    .gap(px(2.))
-                    .rounded(px(8.))
-                    .bg(p.sidebar_group_surface)
-                    .child(
-                        h_flex()
-                            .id("sb-tab-live")
-                            .flex_1()
-                            .h_full()
-                            .gap(px(5.))
-                            .rounded(px(6.))
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .when(live_on, |d| d.bg(pill_bg))
-                            .hover(move |d| {
-                                if live_on {
-                                    d
-                                } else {
-                                    d.bg(p.sidebar_row_hover)
-                                }
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.sidebar_tab = SidebarTab::Live;
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if live_on { p.ink } else { p.quiet_ink })
-                                    .child("Live"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(if live_on {
-                                        p.quiet_ink
-                                    } else {
-                                        p.sidebar_group_empty_ink
-                                    })
-                                    .child(live_count.to_string()),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .id("sb-tab-done")
-                            .flex_1()
-                            .h_full()
-                            .gap(px(5.))
-                            .rounded(px(6.))
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .when(done_on, |d| d.bg(pill_bg))
-                            .hover(move |d| {
-                                if done_on {
-                                    d
-                                } else {
-                                    d.bg(p.sidebar_row_hover)
-                                }
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.sidebar_tab = SidebarTab::Done;
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if done_on { p.ink } else { p.quiet_ink })
-                                    .child("Done"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(if done_on {
-                                        p.quiet_ink
-                                    } else {
-                                        p.sidebar_group_empty_ink
-                                    })
-                                    .child(done_count.to_string()),
-                            ),
-                    )
-            })
             .child(
                 div()
                     .id("sidebar-scroll")
                     .flex_1()
                     .overflow_y_scrollbar()
-                    .child(match self.sidebar_tab {
-                        SidebarTab::Live => {
-                            let mut col = v_flex().gap(px(8.)).pt(px(2.));
-                            if active_rows.is_empty() && idle_rows.is_empty() {
-                                col = col.child(
-                                    div()
-                                        .w_full()
-                                        .py(px(24.))
-                                        .flex()
-                                        .justify_center()
-                                        .text_size(px(12.))
-                                        .text_color(p.sidebar_group_empty_ink)
-                                        .child("No live sessions"),
-                                );
-                            } else {
-                                if !active_rows.is_empty() {
-                                    col = col.child(self.render_session_group(
-                                        SidebarGroup::Active,
-                                        "Running",
-                                        &active_rows,
-                                        self.settings.active_closed,
-                                        cx,
-                                    ));
-                                }
-                                if !idle_rows.is_empty() {
-                                    col = col.child(self.render_session_group(
-                                        SidebarGroup::Idle,
-                                        "Idle",
-                                        &idle_rows,
-                                        self.settings.idle_closed,
-                                        cx,
-                                    ));
-                                }
-                            }
-                            col
+                    .child({
+                        let mut col = v_flex().w_full().gap(px(8.)).pt(px(2.));
+
+                        // Variant B: Pinned Live radar (Running + Idle with Workspace tag)
+                        if !view.live.is_empty() {
+                            col = col.child(self.render_live_radar(&view.live, has_query, cx));
+                            col = col.child(
+                                div()
+                                    .w_full()
+                                    .h(px(1.))
+                                    .my(px(2.))
+                                    .bg(p.sidebar_group_edge),
+                            );
                         }
-                        SidebarTab::Done => {
-                            let mut col = v_flex().gap(px(2.)).pt(px(2.));
-                            if done_rows.is_empty() {
-                                col = col.child(
-                                    div()
-                                        .w_full()
-                                        .py(px(24.))
-                                        .flex()
-                                        .justify_center()
-                                        .text_size(px(12.))
-                                        .text_color(p.sidebar_group_empty_ink)
-                                        .child("No finished sessions"),
-                                );
-                            } else {
-                                for (idx, row) in done_rows.iter().enumerate() {
-                                    col = col.child(self.render_session_row(
-                                        SidebarGroup::Done,
-                                        "Done",
-                                        idx,
-                                        row,
-                                        cx,
-                                    ));
-                                }
+
+                        if view.groups.is_empty() {
+                            col = col.child(
+                                div()
+                                    .w_full()
+                                    .py(px(24.))
+                                    .flex()
+                                    .justify_center()
+                                    .text_size(px(12.))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(if has_query {
+                                        "No matching sessions"
+                                    } else {
+                                        "No sessions yet"
+                                    }),
+                            );
+                        } else {
+                            for grp in &view.groups {
+                                col = col.child(self.render_workspace_group(grp, has_query, cx));
                             }
-                            col
                         }
+
+                        col
                     }),
             )
             .into_any_element()
     }
 
-    pub(crate) fn render_session_group(
+    fn render_live_radar(
         &self,
-        group_kind: SidebarGroup,
-        title: &'static str,
-        rows: &[&SessionRow],
-        closed: bool,
+        live_rows: &[(&SessionRow, String)],
+        force_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette();
-        let empty = rows.is_empty();
+        let closed = self.settings.live_radar_closed && !force_open;
+        let mut box_el = v_flex()
+            .w_full()
+            .p(px(4.))
+            .gap(px(2.))
+            .rounded(px(8.))
+            .bg(p.sidebar_group_surface)
+            .border_1()
+            .border_color(p.sidebar_group_edge)
+            .child(
+                h_flex()
+                    .id("sb-live-radar-hdr")
+                    .h(px(22.))
+                    .w_full()
+                    .px(px(6.))
+                    .rounded(px(5.))
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_live_radar(cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .gap(px(5.))
+                            .items_center()
+                            .child(
+                                Icon::new(if closed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .size(px(10.))
+                                .text_color(p.sidebar_group_empty_ink),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.sidebar_group_ink)
+                                    .child("Live"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(p.sidebar_group_empty_ink)
+                            .child(live_rows.len().to_string()),
+                    ),
+            );
+
+        if closed {
+            return box_el;
+        }
+
+        for (idx, (row, ws_name)) in live_rows.iter().enumerate() {
+            box_el = box_el.child(self.render_session_row(
+                "live",
+                idx,
+                row,
+                Some(ws_name.as_str()),
+                cx,
+            ));
+        }
+        box_el
+    }
+
+    fn render_workspace_group(
+        &self,
+        grp: &crate::roster::WorkspaceSidebarGroup<'_>,
+        force_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = self.palette();
+        let closed = !force_open && self.settings.is_workspace_collapsed(&grp.key);
+        let toggle_key = grp.key.clone();
+        let add_ws_id = grp.workspace_id.clone();
+        let add_root = grp.root_path.clone();
+        let older_key = grp.key.clone();
+        let expanded_older = force_open || self.expanded_older_workspaces.contains(&grp.key);
+
+        let live_count = grp
+            .rows
+            .iter()
+            .filter(|r| matches!(r.roster_status(), "Running" | "Idle"))
+            .count();
+        let done_count = grp.rows.len().saturating_sub(live_count);
+        let visible_limit = if expanded_older {
+            grp.rows.len()
+        } else {
+            live_count + WORKSPACE_DONE_PREVIEW
+        };
+        let hidden_older = grp.rows.len().saturating_sub(visible_limit);
+
         let mut card = v_flex()
             .w_full()
             .gap(px(2.))
             .child(
                 h_flex()
-                    .id(SharedString::from(format!("grp-hdr-{title}")))
-                    .h(px(24.))
+                    .id(SharedString::from(format!("ws-hdr-{}", grp.key)))
+                    .h(px(25.))
                     .w_full()
                     .px(px(6.))
                     .rounded(px(6.))
@@ -735,10 +694,12 @@ impl PaApp {
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.toggle_group(group_kind, cx);
+                        this.toggle_workspace_group(&toggle_key, cx);
                     }))
                     .child(
                         h_flex()
+                            .flex_1()
+                            .min_w_0()
                             .gap(px(5.))
                             .items_center()
                             .child(
@@ -752,26 +713,96 @@ impl PaApp {
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(11.5))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(p.sidebar_group_ink)
-                                    .child(title),
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(grp.name.clone()),
                             ),
                     )
                     .child(
-                        div()
-                            .text_size(px(10.5))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child(rows.len().to_string()),
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(grp.rows.len().to_string()),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("ws-add-{}", grp.key)))
+                                    .size(px(20.))
+                                    .rounded(px(5.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(p.sidebar_row_selected))
+                                    .child(
+                                        Icon::new(IconName::Plus)
+                                            .size(px(11.5))
+                                            .text_color(p.sidebar_group_empty_ink),
+                                    )
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.request_new_session_in_workspace(
+                                            add_ws_id.clone(),
+                                            add_root.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            ),
                     ),
             );
 
-        if closed || empty {
+        if closed {
             return card;
         }
 
-        for (idx, row) in rows.iter().enumerate() {
-            card = card.child(self.render_session_row(group_kind, title, idx, row, cx));
+        if grp.rows.is_empty() {
+            return card.child(
+                div()
+                    .pl(px(22.))
+                    .py(px(4.))
+                    .text_size(px(11.))
+                    .text_color(p.sidebar_group_empty_ink)
+                    .child("No sessions yet"),
+            );
+        }
+
+        let scope_prefix = format!("ws-{}", grp.key);
+        for (idx, row) in grp.rows.iter().take(visible_limit).enumerate() {
+            card = card.child(self.render_session_row(&scope_prefix, idx, row, None, cx));
+        }
+
+        if hidden_older > 0 && done_count > WORKSPACE_DONE_PREVIEW {
+            card = card.child(
+                div()
+                    .id(SharedString::from(format!("ws-older-{}", grp.key)))
+                    .pl(px(20.))
+                    .h(px(24.))
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(p.sidebar_row_hover))
+                    .text_size(px(11.))
+                    .text_color(p.sidebar_group_empty_ink)
+                    .child(format!("Show {hidden_older} older"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.expanded_older_workspaces.insert(older_key.clone());
+                        cx.notify();
+                    })),
+            );
         }
 
         card
@@ -779,10 +810,10 @@ impl PaApp {
 
     fn render_session_row(
         &self,
-        group_kind: SidebarGroup,
-        title: &'static str,
+        scope: &str,
         idx: usize,
         row: &SessionRow,
+        workspace_tag: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette();
@@ -809,14 +840,24 @@ impl PaApp {
         let menu_file = row.session_file.clone();
         let menu_name = label.clone();
         let is_resident = row.is_resident();
-        let dot_color = match group_kind {
-            SidebarGroup::Active => Some(p.working),
-            SidebarGroup::Idle => Some(p.tag_idle),
-            SidebarGroup::Done => None,
+        let status = row.roster_status();
+        let is_done = !matches!(status, "Running" | "Idle");
+        let dot_color = match status {
+            "Running" => Some(p.working),
+            "Idle" => Some(p.tag_idle),
+            _ => None,
         };
+        let label_color = if selected {
+            p.ink
+        } else if is_done {
+            p.sidebar_group_empty_ink
+        } else {
+            p.quiet_ink
+        };
+        let ws_tag = workspace_tag.map(str::to_string);
 
         h_flex()
-            .id((title, idx))
+            .id(SharedString::from(format!("sess-row-{scope}-{idx}")))
             .h(px(28.))
             .px(px(7.))
             .gap(px(6.))
@@ -828,20 +869,42 @@ impl PaApp {
             .when_some(dot_color, |d, c| {
                 d.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(c))
             })
+            .when(dot_color.is_none(), |d| {
+                d.child(div().w(px(6.)).flex_shrink_0())
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .text_size(px(12.5))
-                    .text_color(if selected { p.ink } else { p.quiet_ink })
+                    .text_color(label_color)
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .child(label),
             )
+            .when_some(ws_tag, |d, tag| {
+                d.child(
+                    div()
+                        .max_w(px(72.))
+                        .px(px(5.))
+                        .py(px(1.))
+                        .rounded(px(4.))
+                        .bg(p.sidebar_surface)
+                        .border_1()
+                        .border_color(p.sidebar_group_edge)
+                        .text_size(px(10.))
+                        .text_color(p.sidebar_group_empty_ink)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .flex_shrink_0()
+                        .child(tag),
+                )
+            })
             .child(
                 div()
-                    .id(SharedString::from(format!("sess-dots-{title}-{idx}")))
+                    .id(SharedString::from(format!("sess-dots-{scope}-{idx}")))
                     .size(px(22.))
                     .flex_shrink_0()
                     .rounded(px(5.))
@@ -885,5 +948,4 @@ impl PaApp {
                 this.select_session(click_key.clone(), cx);
             }))
     }
-
 }
