@@ -218,9 +218,11 @@ impl PaApp {
             });
             self.roster.set_draft_cwd(effective_cwd);
             if let Some(ref ws_id) = workspace_id {
-                let _ = self.bridge.tx.send(DaemonCmd::LoadWorktrees {
-                    workspace_id: ws_id.clone(),
-                });
+                if self.workspace_ui.workspace_by_id(ws_id).is_some() {
+                    let _ = self.bridge.tx.send(DaemonCmd::LoadWorktrees {
+                        workspace_id: ws_id.clone(),
+                    });
+                }
             }
             self.sync_diff_for_active_session(cx);
             cx.notify();
@@ -476,10 +478,12 @@ impl PaApp {
                     this.workspace_ui.creating_worktree_ws = None;
                     let _ = this.bridge.tx.send(DaemonCmd::RefreshWorkspaces);
                     if let Some(ref ws_id) = active_ws_id {
-                        this.workspace_ui.expanded_workspaces.insert(ws_id.clone());
-                        let _ = this.bridge.tx.send(DaemonCmd::LoadWorktrees {
-                            workspace_id: ws_id.clone(),
-                        });
+                        if this.workspace_ui.workspace_by_id(ws_id).is_some() {
+                            this.workspace_ui.expanded_workspaces.insert(ws_id.clone());
+                            let _ = this.bridge.tx.send(DaemonCmd::LoadWorktrees {
+                                workspace_id: ws_id.clone(),
+                            });
+                        }
                     }
                 }
                 cx.notify();
@@ -602,53 +606,114 @@ impl PaApp {
             .p(px(5.))
             .gap(px(2.));
 
-        // 1. Scratch row
-        let scratch_active = bc.is_scratch;
-        list_body = list_body.child(
-            h_flex()
-                .id("ws-opt-scratch")
-                .w_full()
-                .h(px(28.))
-                .px(px(8.))
-                .gap(px(8.))
-                .rounded(px(6.))
-                .items_center()
-                .cursor_pointer()
-                .bg(if scratch_active {
-                    p.sidebar_row_selected
-                } else {
-                    Hsla::transparent_black()
-                })
-                .hover(move |s| s.bg(p.sidebar_row_hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.apply_workspace_selection(None, None, cx);
-                }))
-                .child(
-                    Icon::new(IconName::Folder)
-                        .size(px(12.5))
-                        .text_color(p.quiet_ink),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.ink)
-                        .child("Scratch"),
-                )
-                .when(scratch_active, |r| {
-                    r.child(Icon::new(IconName::Check).size(px(12.)).text_color(p.working))
-                }),
-        );
-
-        if !self.workspace_ui.workspaces.is_empty() {
+        // 1. Scratch row (shown only on the new session / draft canvas)
+        if self.roster.is_draft_or_empty() {
+            let scratch_active = bc.is_scratch;
             list_body = list_body.child(
-                div()
+                h_flex()
+                    .id("ws-opt-scratch")
                     .w_full()
-                    .h(px(1.))
-                    .my(px(4.))
-                    .bg(p.sidebar_group_edge),
+                    .h(px(28.))
+                    .px(px(8.))
+                    .gap(px(8.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .cursor_pointer()
+                    .bg(if scratch_active {
+                        p.sidebar_row_selected
+                    } else {
+                        Hsla::transparent_black()
+                    })
+                    .hover(move |s| s.bg(p.sidebar_row_hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.apply_workspace_selection(None, None, cx);
+                    }))
+                    .child(
+                        Icon::new(IconName::Folder)
+                            .size(px(12.5))
+                            .text_color(p.quiet_ink),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.ink)
+                            .child("Scratch"),
+                    )
+                    .when(scratch_active, |r| {
+                        r.child(Icon::new(IconName::Check).size(px(12.)).text_color(p.working))
+                    }),
+            );
+
+            if !self.workspace_ui.workspaces.is_empty() {
+                list_body = list_body.child(
+                    div()
+                        .w_full()
+                        .h(px(1.))
+                        .my(px(4.))
+                        .bg(p.sidebar_group_edge),
+                );
+            }
+        }
+
+        // 1b. Unregistered active Workspace (e.g. deleted from registry or opened on a fresh machine)
+        if let Some(b) = self
+            .current_workspace_binding()
+            .filter(|b| self.workspace_ui.workspace_by_id(&b.workspace_id).is_none())
+        {
+            let reg_root = b.workspace_root.clone();
+            let reg_name = b.workspace_name.clone();
+            list_body = list_body.child(
+                h_flex()
+                    .id("ws-row-unregistered")
+                    .w_full()
+                    .h(px(28.))
+                    .px(px(8.))
+                    .gap(px(6.))
+                    .rounded(px(6.))
+                    .items_center()
+                    .bg(p.sidebar_row_selected)
+                    .child(
+                        Icon::new(IconName::FolderOpen)
+                            .size(px(12.5))
+                            .text_color(p.quiet_ink),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.ink)
+                            .child(b.workspace_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .id("ws-row-register-btn")
+                            .h(px(20.))
+                            .px(px(7.))
+                            .rounded(px(4.))
+                            .bg(p.sidebar_row_hover)
+                            .flex()
+                            .items_center()
+                            .cursor_pointer()
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.ink)
+                            .hover(move |s| s.bg(p.sidebar_row_selected))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                let _ = this.bridge.tx.send(DaemonCmd::RegisterWorkspace {
+                                    path: reg_root.clone(),
+                                    name: Some(reg_name.clone()),
+                                });
+                                cx.notify();
+                            }))
+                            .child("Register"),
+                    ),
             );
         }
 

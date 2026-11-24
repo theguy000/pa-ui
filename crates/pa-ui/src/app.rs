@@ -1491,6 +1491,12 @@ impl PaApp {
                 if self.pending_bind_registered_workspace {
                     self.pending_bind_registered_workspace = false;
                     self.apply_workspace_selection(Some(ws_id), Some(wt_path), cx);
+                } else if self.open_popup == OpenPopup::FolderMenu {
+                    self.workspace_ui.expanded_workspaces.insert(ws_id.clone());
+                    let _ = self
+                        .bridge
+                        .tx
+                        .send(DaemonCmd::LoadWorktrees { workspace_id: ws_id });
                 }
             }
             DaemonEvent::WorkspaceRelinked(workspace) => {
