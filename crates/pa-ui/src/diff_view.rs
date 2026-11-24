@@ -714,7 +714,6 @@ impl PaApp {
         let scope = self.settings.diff_scope;
         let is_branch = scope == DiffScope::Branch;
         let base_branch = self.diff_model.base_branch().map(str::to_string);
-        let on_base = self.diff_model.on_base_branch();
         let branch_menu_open = self.open_popup == OpenPopup::DiffBaseBranchMenu;
         let in_git_repo = !matches!(self.diff_model.status(), DiffViewStatus::NotAGitRepo);
 
@@ -833,7 +832,6 @@ impl PaApp {
                                     .flatten(),
                                 |row, base| {
                                     let base_pill_label = format!("vs {base}");
-                                    let on_base_text = format!("On {base}");
                                     row.child(
                                         h_flex()
                                             .id("diff-base-branch-btn")
@@ -882,20 +880,6 @@ impl PaApp {
                                                     .text_color(p.quiet_ink),
                                             ),
                                     )
-                                    .when(on_base, |r| {
-                                        r.child(
-                                            div()
-                                                .min_w_0()
-                                                .truncate()
-                                                .px(px(6.))
-                                                .py(px(2.))
-                                                .rounded(px(4.))
-                                                .bg(p.sidebar_group_surface)
-                                                .text_size(px(10.5))
-                                                .text_color(p.quiet_ink)
-                                                .child(on_base_text),
-                                        )
-                                    })
                                 },
                             ),
                     )
