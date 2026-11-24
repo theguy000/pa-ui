@@ -1,7 +1,9 @@
 use crate::diff_git::{same_worktree_path, DiffFileSummary, DiffLoadOutcome, RepoContext, WorktreeEntry};
 use crate::settings::DiffScope;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 pub(crate) const DIFF_DEFAULT_WIDTH: f32 = 480.0;
 pub(crate) const DIFF_MIN_WIDTH: f32 = 280.0;
@@ -27,6 +29,106 @@ pub(crate) fn clamp_diff_width(desired: f32, viewport_w: f32, sidebar_w: f32) ->
         return max_available;
     }
     desired.clamp(DIFF_MIN_WIDTH, max_available)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StickyHeaderLayout {
+    pub(crate) file_ix: usize,
+    pub(crate) top_offset_px: i32,
+}
+
+#[derive(Default)]
+pub(crate) struct StickyDiffTracker {
+    pub(crate) viewport_top: f32,
+    pub(crate) header_height: f32,
+    pub(crate) frame_headers: Vec<(usize, f32)>,
+    pub(crate) hovered_file: Option<usize>,
+}
+
+/// Computes which expanded file header (if any) should stick to the top of the diff viewport,
+/// plus an optional negative Y push-up offset (`<= 0`) as the next file header approaches.
+pub(crate) fn compute_sticky_diff_header(
+    viewport_top: f32,
+    header_height: f32,
+    frame_headers: &[(usize, f32)],
+    expanded: &[bool],
+    prev_sticky: Option<usize>,
+    hovered_file: Option<usize>,
+) -> Option<StickyHeaderLayout> {
+    if expanded.is_empty() {
+        return None;
+    }
+    let sticky_h = header_height.max(28.0);
+    let mut headers: Vec<(usize, f32)> = frame_headers
+        .iter()
+        .copied()
+        .filter(|(ix, _)| *ix < expanded.len())
+        .collect();
+    headers.sort_by_key(|(ix, _)| *ix);
+    headers.dedup_by_key(|(ix, _)| *ix);
+
+    let finish = |file_ix: usize, next_top: Option<f32>| -> Option<StickyHeaderLayout> {
+        if !expanded.get(file_ix).copied().unwrap_or(false) {
+            return None;
+        }
+        let top_offset_px = match next_top {
+            Some(ny) if ny < viewport_top + sticky_h => {
+                ((ny - viewport_top - sticky_h).round() as i32).clamp(-(sticky_h.ceil() as i32), 0)
+            }
+            _ => 0,
+        };
+        if top_offset_px <= -(sticky_h.ceil() as i32) {
+            return None;
+        }
+        Some(StickyHeaderLayout {
+            file_ix,
+            top_offset_px,
+        })
+    };
+
+    // 1. Any rendered header scrolled above the top edge of the viewport.
+    if let Some((above_pos, &(above_ix, _))) = headers
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (_, y))| *y < viewport_top - 1.5)
+    {
+        let next_top = headers
+            .get(above_pos + 1)
+            .filter(|(next_ix, _)| *next_ix == above_ix + 1)
+            .map(|(_, y)| *y);
+        if next_top.is_some_and(|ny| ny <= viewport_top + 1.5) {
+            return None;
+        }
+        return finish(above_ix, next_top);
+    }
+
+    // 2. No rendered header is above the top, but at least one header is visible below.
+    if let Some(&(first_ix, first_y)) = headers.first() {
+        if first_y <= viewport_top + 1.5 {
+            return None;
+        }
+        if first_ix > 0 {
+            return finish(first_ix - 1, Some(first_y));
+        }
+        return None;
+    }
+
+    // 3. No file headers are visible in the current viewport (deep inside a long file).
+    if let Some(h) = hovered_file.filter(|&ix| expanded.get(ix).copied().unwrap_or(false)) {
+        return finish(h, None);
+    }
+    if let Some(prev) = prev_sticky.filter(|&ix| expanded.get(ix).copied().unwrap_or(false)) {
+        return finish(prev, None);
+    }
+    let mut expanded_iter = expanded
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, &open)| open.then_some(ix));
+    if let (Some(only), None) = (expanded_iter.next(), expanded_iter.next()) {
+        return finish(only, None);
+    }
+    None
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +175,8 @@ pub(crate) struct DiffModel {
     expanded_projects: HashSet<String>,
     recent_probe_generation: u64,
     draft_folder_generation: u64,
+    sticky_header: Option<StickyHeaderLayout>,
+    sticky_tracker: Rc<RefCell<StickyDiffTracker>>,
 }
 
 impl DiffModel {
@@ -111,7 +215,33 @@ impl DiffModel {
             expanded_projects: HashSet::new(),
             recent_probe_generation: 0,
             draft_folder_generation: 0,
+            sticky_header: None,
+            sticky_tracker: Rc::new(RefCell::new(StickyDiffTracker::default())),
         }
+    }
+
+    pub(crate) fn sticky_header(&self) -> Option<StickyHeaderLayout> {
+        self.sticky_header
+    }
+
+    pub(crate) fn sticky_tracker(&self) -> Rc<RefCell<StickyDiffTracker>> {
+        self.sticky_tracker.clone()
+    }
+
+    pub(crate) fn set_sticky_header(&mut self, next: Option<StickyHeaderLayout>) -> bool {
+        if self.sticky_header != next {
+            self.sticky_header = next;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn clear_sticky_header(&mut self) {
+        self.sticky_header = None;
+        let mut tr = self.sticky_tracker.borrow_mut();
+        tr.frame_headers.clear();
+        tr.hovered_file = None;
     }
 
     #[cfg(test)]
@@ -417,6 +547,7 @@ impl DiffModel {
         self.total_additions = 0;
         self.total_deletions = 0;
         self.status = DiffViewStatus::NotAGitRepo;
+        self.clear_sticky_header();
     }
 
     /// Starts a load generation for `(session_key, cwd, scope, requested_base)`. Returns
@@ -453,6 +584,7 @@ impl DiffModel {
             self.total_additions = 0;
             self.total_deletions = 0;
             self.status = DiffViewStatus::Loading;
+            self.clear_sticky_header();
             (self.generation, true)
         } else {
             (self.generation, false)
@@ -588,6 +720,13 @@ impl DiffModel {
             if let Some(set) = self.expanded_by_session.get_mut(&key) {
                 set.remove(path);
             }
+            if self
+                .sticky_header
+                .and_then(|s| self.summaries.get(s.file_ix))
+                .is_some_and(|s| s.path == path)
+            {
+                self.clear_sticky_header();
+            }
         } else {
             self.expanded_by_session
                 .entry(key)
@@ -616,6 +755,7 @@ impl DiffModel {
             if let Some(set) = self.expanded_by_session.get_mut(&key) {
                 set.clear();
             }
+            self.clear_sticky_header();
         } else {
             let set = self.expanded_by_session.entry(key).or_default();
             for summary in &self.summaries {
@@ -940,5 +1080,50 @@ mod tests {
             .expect("returning to repo-a while closed must re-probe");
         assert_eq!(path2, PathBuf::from("/repo-a"));
         assert!(p2 != p1);
+    }
+
+    #[::core::prelude::v1::test]
+    fn sticky_header_tracks_scroll_pushup_and_collapsed_files() {
+        let exp = [true, true, false, true];
+        // At scroll=0, F0 header sits right at viewport_top => no sticky overlay.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(0, 100.0)], &exp, None, None),
+            None
+        );
+        // Scrolled down 20px into F0 => F0 pins at top_offset_px = 0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(0, 80.0)], &exp, None, None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset_px: 0 })
+        );
+        // Deep inside F0 (no headers visible) => keeps prev_sticky = 0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset_px: 0 })
+        );
+        // F1 header enters from bottom at y=220 => still F0 at top_offset_px = 0.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(1, 220.0)], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset_px: 0 })
+        );
+        // F1 header approaches within 32px of viewport_top (y=118) => pushes F0 up by -14px.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(1, 118.0)], &exp, Some(0), None),
+            Some(StickyHeaderLayout { file_ix: 0, top_offset_px: -14 })
+        );
+        // F1 header reaches viewport_top => sticky clears cleanly.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(1, 100.0)], &exp, Some(0), None),
+            None
+        );
+        // Collapsed file (F2) scrolled above top never produces a sticky header.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[(2, 70.0), (3, 102.0)], &exp, Some(1), None),
+            None
+        );
+        // Hovered file recovers sticky identity after a blind jump with no visible headers.
+        assert_eq!(
+            compute_sticky_diff_header(100.0, 32.0, &[], &exp, Some(0), Some(3)),
+            Some(StickyHeaderLayout { file_ix: 3, top_offset_px: 0 })
+        );
     }
 }
