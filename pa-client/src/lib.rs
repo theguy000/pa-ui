@@ -685,7 +685,7 @@ pub fn attach_snapshot(
     session: &str,
     client_id: Option<&str>,
 ) -> std::io::Result<AttachSnapshot> {
-    let mut payload = json!({"activeSessionId": session});
+    let mut payload = json!({"activeSessionId": session, "limit": 120});
     if let Value::Object(map) = &mut payload {
         if let Some(id) = client_id {
             map.insert("clientId".into(), Value::String(id.to_string()));
@@ -696,7 +696,8 @@ pub fn attach_snapshot(
                 "attach_snapshot",
                 "event_sequence",
                 "slim_attach",
-                "windowed_snapshot"
+                "windowed_snapshot",
+                "elide_snapshot_images"
             ]),
         );
     }
@@ -792,6 +793,21 @@ pub enum SessionExtra {
 /// Run post-attach metadata requests concurrently over the multiplexed daemon
 /// pipe and invoke `emit` immediately as each independent piece completes so
 /// slow `list` calls never stall activity, context stats, or models.
+async fn request_inner(
+    inner: &wire::daemon_client::DaemonClient,
+    ty: &str,
+    payload: Value,
+    timeout: Duration,
+) -> std::io::Result<Frame> {
+    let command = typed_command(ty, payload)?;
+    let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+    let response = inner
+        .request_with_timeout(command, millis)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(serde_json::to_value(response).unwrap_or(Value::Null))
+}
+
 pub fn fetch_session_extras_concurrent<F>(
     client: &Client,
     active_session_id: &str,
@@ -800,22 +816,25 @@ pub fn fetch_session_extras_concurrent<F>(
     need_sessions: bool,
     emit: F,
 ) where
-    F: Fn(SessionExtra) + Sync,
+    F: Fn(SessionExtra) + Send + Sync + 'static,
 {
     let active_id = active_session_id.to_string();
     let durable_id = session_id.to_string();
-    let emit_ref = &emit;
+    let inner = std::sync::Arc::clone(&client.inner);
 
-    client.rt.block_on(async {
+    client.rt.spawn(async move {
+        let emit_ref = &emit;
+        let inner_ref = inner.as_ref();
         let activity_fut = async {
             let (roster_res, shells_res, hb_res) = tokio::join!(
-                client.request_async("roster_subscribe", json!({}), Duration::from_secs(3)),
-                client.request_async(
+                request_inner(inner_ref, "roster_subscribe", json!({}), Duration::from_secs(3)),
+                request_inner(
+                    inner_ref,
                     "list_kernel_bash",
                     json!({"activeSessionId": active_id}),
                     Duration::from_secs(3),
                 ),
-                client.request_async("heartbeats_list", json!({}), Duration::from_secs(3)),
+                request_inner(inner_ref, "heartbeats_list", json!({}), Duration::from_secs(3)),
             );
             let subagents = roster_res
                 .ok()
@@ -843,13 +862,13 @@ pub fn fetch_session_extras_concurrent<F>(
         };
 
         let stats_fut = async {
-            if let Ok(resp) = client
-                .request_async(
-                    "get_session_stats",
-                    json!({"activeSessionId": active_id}),
-                    Duration::from_secs(6),
-                )
-                .await
+            if let Ok(resp) = request_inner(
+                inner_ref,
+                "get_session_stats",
+                json!({"activeSessionId": active_id}),
+                Duration::from_secs(6),
+            )
+            .await
             {
                 if resp.get("success").and_then(Value::as_bool) != Some(false) {
                     if let Some(data) = resp.get("data") {
@@ -861,13 +880,13 @@ pub fn fetch_session_extras_concurrent<F>(
 
         let models_fut = async {
             if need_models {
-                if let Ok(resp) = client
-                    .request_async(
-                        "get_model_catalog",
-                        json!({"activeSessionId": active_id}),
-                        Duration::from_secs(15),
-                    )
-                    .await
+                if let Ok(resp) = request_inner(
+                    inner_ref,
+                    "get_model_catalog",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(15),
+                )
+                .await
                 {
                     if let Ok(models) = models::parse_model_catalog_response(&resp) {
                         emit_ref(SessionExtra::Models(models));
@@ -878,9 +897,9 @@ pub fn fetch_session_extras_concurrent<F>(
 
         let sessions_fut = async {
             if need_sessions {
-                if let Ok(resp) = client
-                    .request_async("list", json!({"all": true}), Duration::from_secs(10))
-                    .await
+                if let Ok(resp) =
+                    request_inner(inner_ref, "list", json!({"all": true}), Duration::from_secs(10))
+                        .await
                 {
                     if resp.get("success").and_then(Value::as_bool) == Some(true) {
                         let rows = resp

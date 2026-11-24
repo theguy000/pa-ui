@@ -787,9 +787,10 @@ impl PaApp {
     ) -> impl IntoElement {
         let p = self.palette();
         let key = session_key(row);
-        let selected = self.roster.active_id() == Some(key.as_str())
-            || (!row.session_file.is_empty()
-                && self.roster.active_id() == Some(row.session_file.as_str()));
+        let selected = self
+            .roster
+            .active_id()
+            .is_some_and(|sid| crate::roster::row_matches_selector(row, sid));
         let label = {
             let single: String = row
                 .name

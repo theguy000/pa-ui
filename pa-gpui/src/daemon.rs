@@ -135,7 +135,7 @@ pub struct SessionLoadedPayload {
     pub requested_session: String,
     pub resolved_session: String,
     pub request_id: u64,
-    pub messages: Vec<Value>,
+    pub items: Vec<crate::transcript::TranscriptItem>,
     pub first_entry: String,
     pub more: bool,
     pub state: Option<SessionState>,
@@ -275,7 +275,7 @@ struct WorkerSessionState<'a> {
     client_id: &'a str,
     ev_tx: &'a AsyncSender<DaemonEvent>,
     cmd_rx: &'a Receiver<DaemonCmd>,
-    models_loaded: bool,
+    models_loaded: std::sync::Arc<AtomicBool>,
     current_attached: Option<(String, String)>,
     pending_cmds: VecDeque<DaemonCmd>,
 }
@@ -300,14 +300,25 @@ impl WorkerSessionState<'_> {
         let durable_sid = snap.session_id.clone();
         self.current_attached = Some((resolved_sid.clone(), durable_sid.clone()));
 
+        let mut items = crate::transcript::build_items(&snap.messages);
+        let mut first_entry = snap.first_entry;
+        let mut more = snap.more;
+        if let Some((drop_count, new_oldest)) =
+            crate::transcript::compute_tail_trim(&items, 220, 140)
+        {
+            items.drain(0..drop_count);
+            first_entry = new_oldest;
+            more = true;
+        }
+
         let _ = self.ev_tx.try_send(DaemonEvent::SessionLoaded(Box::new(
             SessionLoadedPayload {
                 requested_session: sid.to_string(),
                 resolved_session: resolved_sid.clone(),
                 request_id,
-                messages: snap.messages,
-                first_entry: snap.first_entry,
-                more: snap.more,
+                items,
+                first_entry,
+                more,
                 state: snap.state,
                 stats: snap.stats,
                 steer: snap.steer,
@@ -325,18 +336,18 @@ impl WorkerSessionState<'_> {
             return;
         }
 
-        let need_models = !self.models_loaded;
-        let got_models = AtomicBool::new(false);
+        let need_models = !self.models_loaded.load(Ordering::Relaxed);
+        let got_models = std::sync::Arc::clone(&self.models_loaded);
         let need_sessions = refresh_sessions || resolved_sid != sid;
         let sid_for_emit = resolved_sid.clone();
-        let ev_tx = self.ev_tx;
+        let ev_tx = self.ev_tx.clone();
         pa_client::fetch_session_extras_concurrent(
             self.client,
             &resolved_sid,
             &durable_sid,
             need_models,
             need_sessions,
-            |extra| match extra {
+            move |extra| match extra {
                 SessionExtra::Activity {
                     subagents,
                     shells,
@@ -372,9 +383,6 @@ impl WorkerSessionState<'_> {
                 SessionExtra::Tail(_) => {}
             },
         );
-        if got_models.load(Ordering::Relaxed) {
-            self.models_loaded = true;
-        }
     }
 }
 
@@ -401,7 +409,7 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
             client_id: &client_id,
             ev_tx: &ev_tx,
             cmd_rx: &cmd_rx,
-            models_loaded: false,
+            models_loaded: std::sync::Arc::new(AtomicBool::new(false)),
             current_attached: None,
             pending_cmds: VecDeque::new(),
         };
@@ -588,21 +596,23 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                 {
                                     let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                                 }
-                                let got_models = AtomicBool::new(false);
+                                let need_models = !ws.models_loaded.load(Ordering::Relaxed);
+                                let got_models = std::sync::Arc::clone(&ws.models_loaded);
                                 let sid_emit = new_sid.clone();
+                                let ev_tx_c = ev_tx.clone();
                                 pa_client::fetch_session_extras_concurrent(
                                     &client,
                                     &new_sid,
                                     &snap.session_id,
-                                    !ws.models_loaded,
+                                    need_models,
                                     true,
-                                    |extra| match extra {
+                                    move |extra| match extra {
                                         SessionExtra::Activity {
                                             subagents,
                                             shells,
                                             heartbeats,
                                         } => {
-                                            let _ = ev_tx.try_send(DaemonEvent::Activity {
+                                            let _ = ev_tx_c.try_send(DaemonEvent::Activity {
                                                 session: sid_emit.clone(),
                                                 subagents,
                                                 shells,
@@ -610,24 +620,21 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                             });
                                         }
                                         SessionExtra::Stats(stats) => {
-                                            let _ = ev_tx.try_send(DaemonEvent::Stats {
+                                            let _ = ev_tx_c.try_send(DaemonEvent::Stats {
                                                 session: sid_emit.clone(),
                                                 stats,
                                             });
                                         }
                                         SessionExtra::Models(models) => {
                                             got_models.store(true, Ordering::Relaxed);
-                                            let _ = ev_tx.try_send(DaemonEvent::Models(models));
+                                            let _ = ev_tx_c.try_send(DaemonEvent::Models(models));
                                         }
                                         SessionExtra::Sessions(sessions) => {
-                                            let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
+                                            let _ = ev_tx_c.try_send(DaemonEvent::Sessions(sessions));
                                         }
                                         SessionExtra::Queue { .. } | SessionExtra::Tail(_) => {}
                                     },
                                 );
-                                if got_models.load(Ordering::Relaxed) {
-                                    ws.models_loaded = true;
-                                }
                             }
                             Err(err) => {
                                 let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));

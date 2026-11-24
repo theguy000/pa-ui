@@ -16,6 +16,13 @@ pub(crate) struct ResolvedModel {
     pub(crate) thinking: String,
 }
 
+pub(crate) fn row_matches_selector(row: &SessionRow, selector: &str) -> bool {
+    !selector.is_empty()
+        && (session_key(row) == selector
+            || (!row.session_id.is_empty() && row.session_id == selector)
+            || (!row.session_file.is_empty() && row.session_file == selector))
+}
+
 pub(crate) struct GroupedSessions<'a> {
     pub(crate) active: Vec<&'a SessionRow>,
     pub(crate) idle: Vec<&'a SessionRow>,
@@ -124,12 +131,28 @@ impl SessionRoster {
         let sid = self.active_session_id.as_deref()?;
         self.sessions
             .iter()
-            .find(|s| session_key(s) == sid || (!s.session_file.is_empty() && s.session_file == sid))
+            .find(|s| row_matches_selector(s, sid))
     }
 
     /// Update the roster from a daemon snapshot. Returns a session key to auto-select
     /// when no session is currently active and the user is not composing a draft chat.
-    pub(crate) fn apply_sessions(&mut self, rows: Vec<SessionRow>) -> Option<String> {
+    pub(crate) fn apply_sessions(&mut self, mut rows: Vec<SessionRow>) -> Option<String> {
+        let active_was_live = self
+            .active_session()
+            .is_some_and(|r| r.is_resident() && r.lifecycle != "archived");
+        if active_was_live {
+            if let Some(sid) = self.active_session_id.as_deref() {
+                if let Some(row) = rows.iter_mut().find(|r| row_matches_selector(r, sid)) {
+                    if !row.is_resident() || row.lifecycle == "archived" {
+                        row.worker_state = "ready".into();
+                        row.lifecycle = "live".into();
+                        if row.activity.is_empty() {
+                            row.activity = "idle".into();
+                        }
+                    }
+                }
+            }
+        }
         self.sessions = rows;
         if self.active_session().is_some() {
             self.pending_start_cwd = None;
@@ -189,7 +212,7 @@ impl SessionRoster {
         if let Some(row) = self
             .sessions
             .iter_mut()
-            .find(|r| r.id == session || r.session_id == session || r.session_file == session)
+            .find(|r| row_matches_selector(r, session))
         {
             if let Some(ref b) = binding {
                 row.cwd = b.worktree_path.clone();
@@ -248,19 +271,38 @@ impl SessionRoster {
         self.draft_cwd = None;
     }
 
-    pub(crate) fn select_session_optimistic(&mut self, key: &str) {
+    pub(crate) fn select_session_optimistic(&mut self, key: &str) -> bool {
         self.draft_chat = false;
         self.draft_model_picked = false;
         self.draft_cwd = None;
         self.pending_start_cwd = None;
-        if self.active_session_id.as_deref() != Some(key) {
-            self.active_session_id = Some(key.to_string());
+        let same_active = self
+            .active_session()
+            .is_some_and(|r| row_matches_selector(r, key))
+            || self.active_session_id.as_deref() == Some(key);
+        if !same_active {
             self.session_state = None;
             self.stats = None;
             self.subagent_count = 0;
             self.heartbeat_count = 0;
             self.shell_count = 0;
         }
+        self.active_session_id = Some(key.to_string());
+        let mut promoted_from_done = false;
+        if let Some(row) = self
+            .sessions
+            .iter_mut()
+            .find(|s| row_matches_selector(s, key))
+        {
+            if !row.is_resident() || row.lifecycle == "archived" {
+                row.worker_state = "ready".into();
+                row.lifecycle = "live".into();
+                row.activity = "idle".into();
+                row.is_session_active = false;
+                promoted_from_done = true;
+            }
+        }
+        promoted_from_done
     }
 
     pub(crate) fn rebind_session_id(&mut self, requested: &str, resolved: &str) {
@@ -269,7 +311,10 @@ impl SessionRoster {
         self.draft_cwd = None;
         self.pending_start_cwd = None;
         let switched = self.active_session_id.as_deref() != Some(requested)
-            && self.active_session_id.as_deref() != Some(resolved);
+            && self.active_session_id.as_deref() != Some(resolved)
+            && !self
+                .active_session()
+                .is_some_and(|r| row_matches_selector(r, requested) || row_matches_selector(r, resolved));
         if switched {
             self.session_state = None;
             self.stats = None;
@@ -282,8 +327,11 @@ impl SessionRoster {
             if let Some(row) = self
                 .sessions
                 .iter_mut()
-                .find(|s| session_key(s) == requested || s.session_file == requested)
+                .find(|s| row_matches_selector(s, requested) || row_matches_selector(s, resolved))
             {
+                if row.session_id.is_empty() && !row.id.is_empty() && row.id != resolved {
+                    row.session_id = row.id.clone();
+                }
                 row.id = resolved.to_string();
                 if !row.is_resident() || row.lifecycle == "archived" {
                     row.worker_state = "ready".into();
@@ -625,5 +673,27 @@ mod tests {
         roster.rebind_session_id("/tmp/archived.jsonl", "s2-live");
         assert_eq!(roster.active_id(), Some("s2-live"));
         assert_eq!(roster.active_session().map(|r| r.id.as_str()), Some("s2-live"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn selecting_done_session_optimistically_promotes_to_live_and_matches_session_id() {
+        let mut roster = SessionRoster::new();
+        let mut s_done = row("uuid-done", "Finished Work", "live", "idle", "");
+        s_done.session_id = "uuid-done".into();
+        s_done.session_file = "/tmp/uuid-done.jsonl".into();
+        roster.apply_sessions(vec![s_done.clone()]);
+        assert_eq!(roster.grouped_sessions("").done.len(), 1);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 0);
+
+        let promoted = roster.select_session_optimistic("uuid-done");
+        assert!(promoted);
+        assert_eq!(roster.grouped_sessions("").done.len(), 0);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 1);
+
+        // An in-flight stale list before worker registration must not flicker active row back to Done.
+        roster.apply_sessions(vec![s_done]);
+        assert_eq!(roster.grouped_sessions("").done.len(), 0);
+        assert_eq!(roster.grouped_sessions("").idle.len(), 1);
+        assert!(row_matches_selector(roster.active_session().unwrap(), "uuid-done"));
     }
 }

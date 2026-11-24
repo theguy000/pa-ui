@@ -55,6 +55,16 @@ pub fn fitted_image_size(width: f32, height: f32, max_w: f32, max_h: f32) -> (f3
     ((width * scale).max(32.0), (height * scale).max(32.0))
 }
 
+impl std::fmt::Debug for TranscriptItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscriptItem")
+            .field("id", &self.id)
+            .field("entry_id", &self.entry_id)
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
 pub struct TranscriptItem {
     pub id: usize,
     pub entry_id: Option<String>,

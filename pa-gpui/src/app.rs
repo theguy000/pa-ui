@@ -1043,7 +1043,10 @@ impl PaApp {
             self.list_state.reset(0);
             self.list_state.set_follow_mode(FollowMode::Tail);
         }
-        self.roster.select_session_optimistic(&key);
+        let promoted_from_done = self.roster.select_session_optimistic(&key);
+        if promoted_from_done || self.sidebar_tab == SidebarTab::Done {
+            self.sidebar_tab = SidebarTab::Live;
+        }
         self.is_streaming = self.roster.active_row_is_streaming().unwrap_or(false);
         self.sync_stop_target(cx);
         self.sync_diff_for_active_session(cx);
@@ -1225,7 +1228,7 @@ impl PaApp {
                     requested_session,
                     resolved_session,
                     request_id,
-                    messages,
+                    mut items,
                     first_entry,
                     more,
                     state,
@@ -1264,9 +1267,8 @@ impl PaApp {
                 self.pending_trim_tail = false;
                 self.scrolled_up = false;
 
-                let mut next = build_items(&messages);
-                self.assign_item_ids(&mut next);
-                self.items = next;
+                self.assign_item_ids(&mut items);
+                self.items = items;
                 self.list_state
                     .reset_with_uniform_height(self.items.len(), px(44.));
                 self.list_state.set_follow_mode(FollowMode::Tail);
