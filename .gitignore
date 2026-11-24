@@ -19,3 +19,10 @@ previews/shot.png
 # The session-search design note: kept on disk beside the code it describes,
 # never part of the product.
 /docs/specs/session-search.md
+
+# Python runtime caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/

@@ -1,9 +1,112 @@
 [workspace]
 resolver = "2"
-members = ["pa-client", "pa-gpui"]
+members = [
+    "crates/pa-telemetry",
+    "crates/pa-types",
+    "crates/pa-ai",
+    "crates/pa-models",
+    "crates/pa-agent",
+    "crates/pa-core",
+    "crates/pa-daemon",
+    "crates/pa-client",
+    "crates/pa-ui",
+]
+default-members = [
+    "crates/pa-ui",
+    "crates/pa-daemon",
+]
+
+[workspace.package]
+version = "0.10.1"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order: serde_json::Map keeps insertion order (IndexMap) so every
+# wire/durable JSON surface serializes in construction order.
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tracing = { version = "0.1", features = ["attributes"] }
+pa-telemetry = { path = "crates/pa-telemetry" }
+pa-types = { path = "crates/pa-types" }
+pa-ai = { path = "crates/pa-ai" }
+pa-agent = { path = "crates/pa-agent" }
+thiserror = "2"
+futures = "0.3"
+toml = "0.9"
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+redundant_clone = "warn"
+clone_on_copy = "warn"
+assigning_clones = "warn"
+unnecessary_to_owned = "warn"
+uninlined_format_args = "warn"
+collapsible_if = "warn"
+redundant_closure_for_method_calls = "warn"
+unnested_or_patterns = "warn"
+unreadable_literal = "warn"
+duration_suboptimal_units = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+single_match_else = "warn"
+needless_continue = "warn"
+items_after_statements = "warn"
+if_not_else = "warn"
+semicolon_if_nothing_returned = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+doc_markdown = "warn"
+bool_to_int_with_if = "warn"
+case_sensitive_file_extension_comparisons = "warn"
+cloned_instead_of_copied = "warn"
+default_trait_access = "warn"
+elidable_lifetime_names = "warn"
+enum_glob_use = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+format_collect = "warn"
+format_push_string = "warn"
+ignore_without_reason = "warn"
+ignored_unit_patterns = "warn"
+implicit_clone = "warn"
+manual_assert = "warn"
+manual_assert_eq = "warn"
+manual_instant_elapsed = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+manual_string_new = "warn"
+match_bool = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_raw_string_hashes = "warn"
+no_effect_underscore_binding = "warn"
+nonminimal_bool = "warn"
+overly_complex_bool_expr = "warn"
+range_plus_one = "warn"
+redundant_else = "warn"
+return_self_not_must_use = "warn"
+single_char_pattern = "warn"
+stable_sort_primitive = "warn"
+str_split_at_newline = "warn"
+unicode_not_nfc = "warn"
+unchecked_time_subtraction = "warn"
+unnecessary_debug_formatting = "warn"
+unnecessary_join = "warn"
+unnecessary_literal_bound = "warn"
+unnecessary_semicolon = "warn"
+used_underscore_binding = "warn"
 
 # Iteration profile: release-quality codegen without LTO, so a rebuild stays
-# in the seconds. `cargo build --profile fast -p pa-gpui`
+# in the seconds. `cargo build --profile fast` builds prime-agent-app + pa-daemon.
 [profile.release]
 opt-level = 3
 lto = false
