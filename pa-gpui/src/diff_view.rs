@@ -6,24 +6,131 @@ use crate::diff_git::{
     load_diff_for_scope, load_single_file_diff, main_project_root_for, probe_repo_context,
     DiffFileSummary, DiffLoadOutcome,
 };
-use crate::diff_model::{compute_sticky_diff_header, DiffViewStatus};
+use crate::diff_model::{compute_sticky_diff_header, DiffViewStatus, StickyDiffTracker};
 use crate::popups::OpenPopup;
 use crate::settings::DiffScope;
 use crate::sidebar::session_key;
 use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
     diff::{
         Diff, DiffChangeIndicator, DiffFileStatus, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
     },
     h_flex,
     scroll::ScrollableElement as _,
-    v_flex, Icon, IconName,
+    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 const DIFF_REFRESH_DEBOUNCE_MS: u64 = 350;
+
+type StickyHeaderBuilder = Box<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyElement>>;
+
+/// Wraps `gpui_kit`'s `Diff` element so the active expanded file header pins to the top of
+/// the viewport and slides smoothly with the next header in the **exact same frame** (no
+/// `cx.notify()` lag, no visual mismatch).
+struct StickyDiffLayer {
+    child: AnyElement,
+    tracker: Rc<RefCell<StickyDiffTracker>>,
+    expanded: Vec<bool>,
+    build_sticky: StickyHeaderBuilder,
+    sticky_el: Option<AnyElement>,
+}
+
+impl IntoElement for StickyDiffLayer {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for StickyDiffLayer {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::Name("diff-sticky-layer".into()))
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.tracker.borrow_mut().frame_headers.clear();
+        self.child.prepaint(window, cx);
+        let py1 = f32::from(window.rem_size()) * 0.25;
+        let next = {
+            let mut tr = self.tracker.borrow_mut();
+            if !tr.frame_headers.is_empty() {
+                tr.hovered_file = None;
+            }
+            let res = compute_sticky_diff_header(
+                f32::from(bounds.origin.y),
+                py1,
+                tr.header_content_h,
+                &tr.frame_headers,
+                &self.expanded,
+                tr.last_sticky,
+                tr.hovered_file,
+            );
+            tr.last_sticky = res.map(|s| s.file_ix);
+            res
+        };
+        self.sticky_el = next.and_then(|sticky| {
+            let mut el = (self.build_sticky)(sticky.file_ix, window, cx)?;
+            let origin = point(bounds.origin.x, bounds.origin.y + px(sticky.top_offset));
+            let avail = size(
+                AvailableSpace::Definite(bounds.size.width),
+                AvailableSpace::MinContent,
+            );
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                el.prepaint_as_root(origin, avail, window, cx);
+            });
+            Some(el)
+        });
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+        if let Some(el) = &mut self.sticky_el {
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                el.paint(window, cx);
+            });
+        }
+    }
+}
 
 fn split_dir_and_name(path: &str) -> (&str, &str) {
     match path.rsplit_once('/') {
@@ -1373,16 +1480,96 @@ impl PaApp {
                         )
                 };
 
-                let prev_sticky = self.diff_model.sticky_header();
-                let sticky_overlay: Option<AnyElement> = prev_sticky.and_then(|sticky| {
-                    if !expanded_flags.get(sticky.file_ix).copied().unwrap_or(false) {
-                        return None;
-                    }
-                    let ds = self.diff_state.read(cx);
-                    let file = ds.files().get(sticky.file_ix)?;
+                let file_meta = Rc::new(file_meta);
+                let file_meta_inline = file_meta.clone();
+                let file_meta_sticky = file_meta.clone();
+                let build_header_content = Rc::new(build_header_content);
+                let build_inline = build_header_content.clone();
+                let build_sticky_inner = build_header_content.clone();
+                let tracker_layer = self.diff_model.sticky_tracker();
+                let tracker_hdr = self.diff_model.sticky_tracker();
+                let tracker_hover = self.diff_model.sticky_tracker();
+                let diff_state_sticky = self.diff_state.clone();
+                let app_inline = app_entity.clone();
+                let app_sticky = app_entity.clone();
+                let window_surface = p.window_surface;
+
+                let diff_el = Diff::new(&self.diff_state)
+                    .border_0()
+                    .bg(window_surface)
+                    .soft_wrap(self.settings.diff_wrap)
+                    .hover_highlight(DiffHoverHighlight::Line)
+                    .change_indicator(DiffChangeIndicator::Bars)
+                    .hunk_separator(DiffHunkSeparator::LineInfo)
+                    .on_line_hover(move |pos, _, _| {
+                        let hovered = pos.and_then(|pos| {
+                            path_to_ix.get(pos.path().as_ref()).copied()
+                        });
+                        tracker_hover.borrow_mut().hovered_file = hovered;
+                    })
+                    .header(move |file, _, _| {
+                        let path = file.path().clone();
+                        let meta = file_meta_inline.get(path.as_ref()).copied();
+                        let inner = build_inline(
+                            path.as_ref(),
+                            file.original_path().map(|p| p.as_ref()),
+                            file.modified_path().map(|p| p.as_ref()),
+                            file.status(),
+                            file.additions(),
+                            file.deletions(),
+                            file.is_binary(),
+                            meta,
+                        );
+                        let app_click = app_inline.clone();
+                        let path_click = path.clone();
+                        let tracker_row = tracker_hdr.clone();
+                        let file_ix = meta.map(|m| m.file_ix);
+
+                        h_flex()
+                            .relative()
+                            .w(px(header_visible_w))
+                            .min_w_0()
+                            .px(px(4.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .items_center()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(row_hover))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                cx.stop_propagation();
+                                app_click.update(cx, |this, cx| {
+                                    this.toggle_diff_file_collapsed(path_click.as_ref(), cx);
+                                });
+                            })
+                            .child(inner)
+                            .when_some(file_ix, |row, ix| {
+                                row.child(
+                                    canvas(
+                                        move |bounds, _, _| {
+                                            let mut tr = tracker_row.borrow_mut();
+                                            let y = f32::from(bounds.origin.y);
+                                            tr.header_content_h = f32::from(bounds.size.height).max(20.0);
+                                            if let Some(slot) = tr.frame_headers.iter_mut().find(|(k, _)| *k == ix) {
+                                                slot.1 = y;
+                                            } else {
+                                                tr.frame_headers.push((ix, y));
+                                            }
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                            })
+                    })
+                    .size_full()
+                    .into_any_element();
+
+                let build_sticky: StickyHeaderBuilder = Box::new(move |file_ix, _window, cx| {
+                    let file = diff_state_sticky.read(cx).files().get(file_ix)?.clone();
                     let path = file.path().clone();
-                    let meta = file_meta.get(path.as_ref()).copied();
-                    let inner = build_header_content(
+                    let meta = file_meta_sticky.get(path.as_ref()).copied();
+                    let inner = build_sticky_inner(
                         path.as_ref(),
                         file.original_path().map(|p| p.as_ref()),
                         file.modified_path().map(|p| p.as_ref()),
@@ -1392,174 +1579,76 @@ impl PaApp {
                         file.is_binary(),
                         meta,
                     );
-                    let app_click = app_entity.clone();
-                    let path_click = path.clone();
+                    let border = cx.theme().border;
+                    let app_btn = app_sticky.clone();
+                    let path_btn = path.clone();
+                    let app_row = app_sticky.clone();
+                    let path_row = path.clone();
+
                     Some(
-                        div()
-                            .id("diff-sticky-header")
-                            .absolute()
-                            .top(px(sticky.top_offset_px as f32))
-                            .left_0()
-                            .right_0()
-                            .bg(p.window_surface)
+                        v_flex()
+                            .id("diff-sticky-file-header")
+                            .w_full()
+                            .bg(window_surface)
                             .border_b_1()
-                            .border_color(p.sidebar_group_edge)
-                            .shadow_sm()
-                            .pl(px(6.))
-                            .pr(px(12.))
-                            .py(px(4.))
+                            .border_color(border)
+                            .block_mouse_except_scroll()
                             .child(
                                 h_flex()
                                     .w_full()
                                     .min_w_0()
-                                    .px(px(4.))
-                                    .py(px(3.))
-                                    .gap(px(5.))
-                                    .rounded(px(5.))
-                                    .items_center()
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(row_hover))
-                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        app_click.update(cx, |this, cx| {
-                                            this.collapse_sticky_diff_file(path_click.as_ref(), cx);
-                                        });
-                                    })
+                                    .pl_1()
+                                    .pr_3()
+                                    .py_1()
+                                    .gap_1()
                                     .child(
-                                        Icon::new(IconName::ChevronDown)
-                                            .size(px(13.))
-                                            .flex_shrink_0()
-                                            .text_color(quiet_ink),
+                                        Button::new("sticky-collapse-file")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::ChevronDown)
+                                            .on_click(move |_, _, cx| {
+                                                app_btn.update(cx, |this, cx| {
+                                                    this.collapse_sticky_diff_file(path_btn.as_ref(), cx);
+                                                });
+                                            }),
                                     )
-                                    .child(inner),
+                                    .child(
+                                        div().flex_1().min_w_0().child(
+                                            h_flex()
+                                                .w(px(header_visible_w))
+                                                .min_w_0()
+                                                .px(px(4.))
+                                                .py(px(3.))
+                                                .rounded(px(5.))
+                                                .items_center()
+                                                .cursor_pointer()
+                                                .hover(move |s| s.bg(row_hover))
+                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                    cx.stop_propagation();
+                                                    app_row.update(cx, |this, cx| {
+                                                        this.collapse_sticky_diff_file(path_row.as_ref(), cx);
+                                                    });
+                                                })
+                                                .child(inner),
+                                        ),
+                                    ),
                             )
                             .into_any_element(),
                     )
                 });
 
-                let tracker_begin = self.diff_model.sticky_tracker();
-                let tracker_hdr = self.diff_model.sticky_tracker();
-                let tracker_hover = self.diff_model.sticky_tracker();
-                let tracker_end = self.diff_model.sticky_tracker();
-                let app_post = app_entity.clone();
-
                 div()
-                    .relative()
                     .flex_1()
                     .min_h_0()
                     .w_full()
                     .overflow_hidden()
-                    .child(
-                        canvas(
-                            move |bounds, _, _| {
-                                let mut tr = tracker_begin.borrow_mut();
-                                tr.viewport_top = f32::from(bounds.origin.y);
-                                tr.frame_headers.clear();
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    )
-                    .child(
-                        Diff::new(&self.diff_state)
-                            .border_0()
-                            .bg(p.window_surface)
-                            .soft_wrap(self.settings.diff_wrap)
-                            .hover_highlight(DiffHoverHighlight::Line)
-                            .change_indicator(DiffChangeIndicator::Bars)
-                            .hunk_separator(DiffHunkSeparator::LineInfo)
-                            .on_line_hover(move |pos, _, _| {
-                                let hovered = pos.and_then(|pos| {
-                                    path_to_ix.get(pos.path().as_ref()).copied()
-                                });
-                                tracker_hover.borrow_mut().hovered_file = hovered;
-                            })
-                            .header(move |file, _, _| {
-                                let path = file.path().clone();
-                                let meta = file_meta.get(path.as_ref()).copied();
-                                let inner = build_header_content(
-                                    path.as_ref(),
-                                    file.original_path().map(|p| p.as_ref()),
-                                    file.modified_path().map(|p| p.as_ref()),
-                                    file.status(),
-                                    file.additions(),
-                                    file.deletions(),
-                                    file.is_binary(),
-                                    meta,
-                                );
-                                let app_click = app_entity.clone();
-                                let path_click = path.clone();
-                                let tracker_row = tracker_hdr.clone();
-                                let file_ix = meta.map(|m| m.file_ix);
-
-                                h_flex()
-                                    .relative()
-                                    .w(px(header_visible_w))
-                                    .min_w_0()
-                                    .px(px(4.))
-                                    .py(px(3.))
-                                    .rounded(px(5.))
-                                    .items_center()
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(row_hover))
-                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        app_click.update(cx, |this, cx| {
-                                            this.toggle_diff_file_collapsed(path_click.as_ref(), cx);
-                                        });
-                                    })
-                                    .child(inner)
-                                    .when_some(file_ix, |row, ix| {
-                                        row.child(
-                                            canvas(
-                                                move |bounds, _, _| {
-                                                    let mut tr = tracker_row.borrow_mut();
-                                                    let top = f32::from(bounds.origin.y) - 4.0;
-                                                    tr.header_height = (f32::from(bounds.size.height) + 8.0).max(28.0);
-                                                    tr.frame_headers.push((ix, top));
-                                                },
-                                                |_, _, _, _| {},
-                                            )
-                                            .absolute()
-                                            .size_full(),
-                                        )
-                                    })
-                            })
-                            .size_full(),
-                    )
-                    .child(
-                        canvas(
-                            move |_, _, cx| {
-                                let next = {
-                                    let mut tr = tracker_end.borrow_mut();
-                                    if !tr.frame_headers.is_empty() {
-                                        tr.hovered_file = None;
-                                    }
-                                    compute_sticky_diff_header(
-                                        tr.viewport_top,
-                                        tr.header_height,
-                                        &tr.frame_headers,
-                                        &expanded_flags,
-                                        prev_sticky.map(|s| s.file_ix),
-                                        tr.hovered_file,
-                                    )
-                                };
-                                if next != prev_sticky {
-                                    app_post.update(cx, |this, cx| {
-                                        if this.diff_model.set_sticky_header(next) {
-                                            cx.notify();
-                                        }
-                                    });
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .w(px(0.))
-                        .h(px(0.)),
-                    )
-                    .children(sticky_overlay)
+                    .child(StickyDiffLayer {
+                        child: diff_el,
+                        tracker: tracker_layer,
+                        expanded: expanded_flags,
+                        build_sticky,
+                        sticky_el: None,
+                    })
                     .into_any_element()
             }
             DiffViewStatus::NotAGitRepo => {
