@@ -805,6 +805,542 @@ pub fn kill_kernel_shell(
     Ok(())
 }
 
+
+/// One Session-scoped subagent entry (direct or nested descendant).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentItem {
+    /// Stable identifier for UI selection (`child_id` if present, else `active_session_id`).
+    pub id: String,
+    /// Parent-scoped RLM child id (required for `cancel_rlm_child` / `delete_rlm_subagent`).
+    pub child_id: String,
+    pub active_session_id: String,
+    pub parent_active_session_id: String,
+    pub name: String,
+    pub status: String,
+    /// Nesting depth relative to the selected Session (`0` = direct child, `1+` = nested).
+    pub depth: usize,
+    pub model: String,
+    pub activity: String,
+    pub duration_ms: Option<u64>,
+    pub answer_preview: Option<String>,
+}
+
+impl SubagentItem {
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    #[must_use]
+    pub fn can_manage(&self) -> bool {
+        !self.child_id.is_empty() && !self.parent_active_session_id.is_empty()
+    }
+}
+
+/// One compact read-only message block rendered in a Subagent preview or Right sidebar tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentMessagePreview {
+    pub role: String,
+    pub text: String,
+}
+
+#[must_use]
+pub fn subagent_items_counts(items: &[SubagentItem]) -> ChipCount {
+    let running = items.iter().filter(|s| s.is_running()).count();
+    ChipCount::new(running, items.len())
+}
+
+/// Build an ordered descendant tree of subagents belonging to the selected Session,
+/// merging `roster_subscribe` entries (for direct + nested lineage) with `get_rlm_children`
+/// metadata (for `rlmChildId`, `progressNote`, `durationMs`, and recently settled direct children).
+#[must_use]
+pub fn parse_session_subagents(
+    roster: &[Value],
+    children: &[Value],
+    active_session_id: &str,
+    session_id: &str,
+) -> Vec<SubagentItem> {
+    let mut root_keys: Vec<(String, u64, Option<String>)> = [
+        roster_key("active", Some(active_session_id)),
+        roster_key("session", Some(session_id)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|key| (key, 0, None))
+    .collect();
+    if root_keys.is_empty() && children.is_empty() {
+        return Vec::new();
+    }
+    let root_ids: std::collections::HashSet<String> =
+        root_keys.iter().map(|(key, _, _)| key.clone()).collect();
+    if let Some(root) = roster.iter().find(|entry| {
+        roster_summary(entry).is_some_and(|summary| {
+            roster_identity_keys(summary)
+                .iter()
+                .any(|key| root_ids.contains(key))
+        })
+    }) {
+        if let Some(summary) = roster_summary(root) {
+            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
+            let file = summary
+                .get("sessionFile")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(normalize_session_path);
+            for parent in &mut root_keys {
+                parent.1 = depth;
+                parent.2.clone_from(&file);
+            }
+        }
+    }
+
+    // Index direct `get_rlm_children` rows by activeSessionId and sessionId for fast enrichment.
+    let mut child_by_active: std::collections::HashMap<String, &Value> =
+        std::collections::HashMap::new();
+    let mut child_by_session: std::collections::HashMap<String, &Value> =
+        std::collections::HashMap::new();
+    for ch in children {
+        if let Some(a) = ch
+            .get("activeSessionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            child_by_active.insert(a.to_string(), ch);
+        }
+        if let Some(s) = ch
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            child_by_session.insert(s.to_string(), ch);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_children(
+        roster: &[Value],
+        child_by_active: &std::collections::HashMap<String, &Value>,
+        child_by_session: &std::collections::HashMap<String, &Value>,
+        root_ids: &std::collections::HashSet<String>,
+        parent_keys: &[(String, u64, Option<String>)],
+        parent_active_id: &str,
+        rel_depth: usize,
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<SubagentItem>,
+    ) {
+        let mut matched_entries: Vec<(&Value, &Value, Vec<String>, u64, Option<String>)> =
+            Vec::new();
+        for entry in roster {
+            let Some(summary) = roster_summary(entry) else {
+                continue;
+            };
+            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
+            let is_sub = summary
+                .get("sessionKind")
+                .and_then(Value::as_str)
+                .map_or(depth > 0, |kind| kind == "subagent");
+            if !is_sub {
+                continue;
+            }
+            let identity = roster_identity_keys(summary);
+            if identity.iter().any(|key| root_ids.contains(key)) {
+                continue;
+            }
+            let matches_parent = parent_keys.iter().any(|(pkey, pdepth, pfile)| {
+                let by_id = roster_parent_keys(summary).iter().any(|k| k == pkey);
+                let by_path = pfile.as_ref().is_some_and(|file| {
+                    depth == pdepth.saturating_add(1)
+                        && summary
+                            .get("parentSessionPath")
+                            .and_then(Value::as_str)
+                            .is_some_and(|path| normalize_session_path(path) == *file)
+                });
+                by_id || by_path
+            });
+            if !matches_parent {
+                continue;
+            }
+            let dedupe_key = entry
+                .get("agentId")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| identity.first().cloned())
+                .unwrap_or_else(|| format!("sub-{rel_depth}-{}", seen.len()));
+            if !seen.insert(dedupe_key) {
+                continue;
+            }
+            let file = summary
+                .get("sessionFile")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(normalize_session_path);
+            matched_entries.push((entry, summary, identity, depth, file));
+        }
+
+        // Running siblings first, preserving stable order within each group.
+        matched_entries.sort_by_key(|(entry, _, _, _, _)| {
+            entry.get("status").and_then(Value::as_str) != Some("running")
+        });
+
+        for (entry, summary, identity, abs_depth, file) in matched_entries {
+            let active_id = summary
+                .get("activeSessionId")
+                .and_then(Value::as_str)
+                .or_else(|| entry.get("agentId").and_then(Value::as_str))
+                .unwrap_or_default()
+                .to_string();
+            let durable_id = summary
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let enriched = if rel_depth == 0 {
+                child_by_active
+                    .get(&active_id)
+                    .or_else(|| child_by_session.get(durable_id))
+                    .copied()
+            } else {
+                None
+            };
+
+            let child_id = enriched
+                .and_then(|c| c.get("rlmChildId").and_then(Value::as_str))
+                .or_else(|| summary.get("rlmChildId").and_then(Value::as_str))
+                .unwrap_or_default()
+                .to_string();
+            let name = enriched
+                .and_then(|c| c.get("sessionName").and_then(Value::as_str))
+                .or_else(|| summary.get("sessionName").and_then(Value::as_str))
+                .or_else(|| summary.get("name").and_then(Value::as_str))
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if !child_id.is_empty() {
+                        child_id.clone()
+                    } else {
+                        active_id.chars().take(12).collect()
+                    }
+                });
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .or_else(|| enriched.and_then(|c| c.get("status").and_then(Value::as_str)))
+                .unwrap_or("idle")
+                .to_string();
+            let model = summary
+                .get("modelId")
+                .or_else(|| summary.get("model"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let progress_note = enriched
+                .and_then(|c| c.get("progressNote").and_then(Value::as_str))
+                .or_else(|| summary.get("progressNote").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let answer_preview = enriched
+                .and_then(|c| c.get("answerPreview").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let activity = progress_note
+                .map(str::to_string)
+                .or_else(|| answer_preview.clone())
+                .or_else(|| {
+                    summary
+                        .get("activity")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| status.clone());
+            let duration_ms = enriched
+                .and_then(|c| c.get("durationMs").and_then(Value::as_u64))
+                .or_else(|| summary.get("durationMs").and_then(Value::as_u64));
+            let stable_id = if !child_id.is_empty() {
+                child_id.clone()
+            } else {
+                active_id.clone()
+            };
+
+            out.push(SubagentItem {
+                id: stable_id,
+                child_id,
+                active_session_id: active_id.clone(),
+                parent_active_session_id: parent_active_id.to_string(),
+                name,
+                status,
+                depth: rel_depth,
+                model,
+                activity,
+                duration_ms,
+                answer_preview,
+            });
+
+            let next_parents: Vec<(String, u64, Option<String>)> = identity
+                .into_iter()
+                .map(|k| (k, abs_depth, file.clone()))
+                .collect();
+            if !next_parents.is_empty() {
+                collect_children(
+                    roster,
+                    child_by_active,
+                    child_by_session,
+                    root_ids,
+                    &next_parents,
+                    &active_id,
+                    rel_depth + 1,
+                    seen,
+                    out,
+                );
+            }
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    if !root_keys.is_empty() {
+        collect_children(
+            roster,
+            &child_by_active,
+            &child_by_session,
+            &root_ids,
+            &root_keys,
+            active_session_id,
+            0,
+            &mut seen,
+            &mut out,
+        );
+    }
+
+    // Append any direct `get_rlm_children` entries not present in the live roster
+    // (e.g., recently completed or cancelled direct children).
+    for ch in children {
+        let child_id = ch
+            .get("rlmChildId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let active_id = ch
+            .get("activeSessionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if child_id.is_empty() && active_id.is_empty() {
+            continue;
+        }
+        let already = out.iter().any(|existing| {
+            (!child_id.is_empty() && existing.child_id == child_id)
+                || (!active_id.is_empty() && existing.active_session_id == active_id)
+        });
+        if already {
+            continue;
+        }
+        let name = ch
+            .get("sessionName")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if !child_id.is_empty() {
+                    child_id.clone()
+                } else {
+                    active_id.chars().take(12).collect()
+                }
+            });
+        let status = ch
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("completed")
+            .to_string();
+        let answer_preview = ch
+            .get("answerPreview")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let activity = ch
+            .get("progressNote")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| answer_preview.clone())
+            .unwrap_or_else(|| status.clone());
+        let duration_ms = ch.get("durationMs").and_then(Value::as_u64);
+        let stable_id = if !child_id.is_empty() {
+            child_id.clone()
+        } else {
+            active_id.clone()
+        };
+        out.push(SubagentItem {
+            id: stable_id,
+            child_id,
+            active_session_id: active_id,
+            parent_active_session_id: active_session_id.to_string(),
+            name,
+            status,
+            depth: 0,
+            model: String::new(),
+            activity,
+            duration_ms,
+            answer_preview,
+        });
+    }
+
+    out
+}
+
+/// Extract readable read-only message blocks from raw `get_messages` values.
+#[must_use]
+pub fn extract_subagent_messages(messages: &[Value]) -> Vec<SubagentMessagePreview> {
+    let mut out = Vec::new();
+    for raw in messages {
+        let msg = raw.get("message").unwrap_or(raw);
+        let role = msg
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if role.is_empty() || role == "toolResult" {
+            continue;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(s) = msg.get("content").and_then(Value::as_str) {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        } else if let Some(arr) = msg.get("content").and_then(Value::as_array) {
+            for block in arr {
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(t) = block.get("text").and_then(Value::as_str) {
+                            let trimmed = t.trim();
+                            if !trimmed.is_empty() {
+                                parts.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                    Some("toolCall") => {
+                        let tool_name = block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("tool");
+                        parts.push(format!("[{tool_name}]"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !parts.is_empty() {
+            let label = if role == "user" { "task" } else { role };
+            out.push(SubagentMessagePreview {
+                role: label.to_string(),
+                text: parts.join("\n"),
+            });
+        }
+    }
+    out
+}
+
+/// Fetch Session-scoped subagent descendants (roster lineage + `get_rlm_children`).
+///
+/// # Errors
+/// Fails if `roster_subscribe` fails.
+pub fn list_session_subagents(
+    client: &Client,
+    active_session_id: &str,
+    session_id: &str,
+) -> std::io::Result<Vec<SubagentItem>> {
+    let roster = list_roster(client)?;
+    let children = client
+        .request(
+            "get_rlm_children",
+            json!({"activeSessionId": active_session_id}),
+            Duration::from_secs(3),
+        )
+        .ok()
+        .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+        .and_then(|r| r.pointer("/data/children").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    Ok(parse_session_subagents(
+        &roster,
+        &children,
+        active_session_id,
+        session_id,
+    ))
+}
+
+/// Fetch read-only transcript messages for a Subagent Session (`get_messages`).
+///
+/// # Errors
+/// Fails on transport or daemon error.
+pub fn fetch_subagent_messages(
+    client: &Client,
+    subagent_active_session_id: &str,
+) -> std::io::Result<Vec<SubagentMessagePreview>> {
+    let raw = crate::get_messages_within(client, subagent_active_session_id, Duration::from_secs(5))?;
+    Ok(extract_subagent_messages(&raw))
+}
+
+/// Stop a running Subagent (`cancel_rlm_child`), which records `"Cancelled by user"` on its parent.
+///
+/// # Errors
+/// Fails on transport or daemon command error.
+pub fn cancel_subagent(
+    client: &Client,
+    parent_active_session_id: &str,
+    child_id: &str,
+) -> std::io::Result<bool> {
+    let response = client.request(
+        "cancel_rlm_child",
+        json!({
+            "activeSessionId": parent_active_session_id,
+            "childId": child_id,
+        }),
+        Duration::from_secs(5),
+    )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "cancel_rlm_child failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    Ok(response
+        .pointer("/data/cancelled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
+}
+
+/// Delete an inactive Subagent (`delete_rlm_subagent`).
+///
+/// # Errors
+/// Fails on transport or daemon command error.
+pub fn delete_subagent(
+    client: &Client,
+    parent_active_session_id: &str,
+    child_id: &str,
+) -> std::io::Result<bool> {
+    let response = client.request(
+        "delete_rlm_subagent",
+        json!({
+            "activeSessionId": parent_active_session_id,
+            "childId": child_id,
+        }),
+        Duration::from_secs(5),
+    )?;
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(std::io::Error::other(format!(
+            "delete_rlm_subagent failed: {}",
+            response.get("error").and_then(Value::as_str).unwrap_or("?")
+        )));
+    }
+    Ok(response
+        .pointer("/data/deleted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,5 +1473,116 @@ mod tests {
             subagent_counts(&roster, "root", "u-root"),
             ChipCount::new(1, 2)
         );
+    }
+
+    #[test]
+    fn parse_session_subagents_builds_nested_tree_sorts_running_first_and_excludes_unrelated() {
+        let roster = vec![
+            json!({
+                "agentId": "c-done",
+                "status": "completed",
+                "summary": {
+                    "activeSessionId": "c-done",
+                    "sessionId": "u-done",
+                    "sessionName": "audit-shells",
+                    "sessionKind": "subagent",
+                    "rlmDepth": 1,
+                    "parentActiveSessionId": "root",
+                    "parentSessionId": "u-root",
+                    "modelId": "claude-sonnet-4"
+                }
+            }),
+            json!({
+                "agentId": "c-run",
+                "status": "running",
+                "summary": {
+                    "activeSessionId": "c-run",
+                    "sessionId": "u-run",
+                    "sessionName": "audit-heartbeats",
+                    "sessionKind": "subagent",
+                    "rlmDepth": 1,
+                    "parentActiveSessionId": "root",
+                    "parentSessionId": "u-root",
+                    "modelId": "claude-sonnet-4"
+                }
+            }),
+            json!({
+                "agentId": "c-nested",
+                "status": "running",
+                "summary": {
+                    "activeSessionId": "c-nested",
+                    "sessionId": "u-nested",
+                    "sessionName": "check-cron-tests",
+                    "sessionKind": "subagent",
+                    "rlmDepth": 2,
+                    "parentActiveSessionId": "c-run",
+                    "parentSessionId": "u-run",
+                    "modelId": "claude-sonnet-4"
+                }
+            }),
+            json!({
+                "agentId": "c-other",
+                "status": "running",
+                "summary": {
+                    "activeSessionId": "c-other",
+                    "sessionId": "u-other",
+                    "sessionName": "foreign-worker",
+                    "sessionKind": "subagent",
+                    "rlmDepth": 1,
+                    "parentActiveSessionId": "other-root"
+                }
+            }),
+        ];
+        let children = vec![
+            json!({
+                "rlmChildId": "child-1",
+                "activeSessionId": "c-run",
+                "sessionId": "u-run",
+                "sessionName": "audit-heartbeats",
+                "status": "running",
+                "progressNote": "Inspecting arms.rs",
+                "durationMs": 12_000
+            }),
+            json!({
+                "rlmChildId": "child-old",
+                "activeSessionId": "c-old",
+                "sessionName": "finished-earlier",
+                "status": "cancelled",
+                "answerPreview": "Cancelled by user",
+                "durationMs": 3_000
+            }),
+        ];
+        let items = parse_session_subagents(&roster, &children, "root", "u-root");
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].name, "audit-heartbeats");
+        assert_eq!(items[0].depth, 0);
+        assert_eq!(items[0].child_id, "child-1");
+        assert_eq!(items[0].activity, "Inspecting arms.rs");
+        assert!(items[0].can_manage());
+        assert_eq!(items[1].name, "check-cron-tests");
+        assert_eq!(items[1].depth, 1);
+        assert_eq!(items[2].name, "audit-shells");
+        assert_eq!(items[2].depth, 0);
+        assert_eq!(items[3].name, "finished-earlier");
+        assert_eq!(items[3].status, "cancelled");
+        assert_eq!(subagent_items_counts(&items), ChipCount::new(2, 4));
+    }
+
+    #[test]
+    fn extract_subagent_messages_formats_roles_and_tool_calls() {
+        let msgs = vec![
+            json!({"role": "user", "content": "Audit cron tests"}),
+            json!({"role": "assistant", "content": [
+                {"type": "text", "text": "Checking store.rs"},
+                {"type": "toolCall", "name": "python_repl"}
+            ]}),
+            json!({"role": "toolResult", "content": "ignored raw output"}),
+        ];
+        let parsed = extract_subagent_messages(&msgs);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].role, "task");
+        assert_eq!(parsed[0].text, "Audit cron tests");
+        assert_eq!(parsed[1].role, "assistant");
+        assert_eq!(parsed[1].text, "Checking store.rs\n[python_repl]");
     }
 }

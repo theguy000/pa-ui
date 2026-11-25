@@ -2,8 +2,8 @@ use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use pa_client::{
     BranchInfo, ChipCount, Client, HarnessEntryWire, HarnessKindWire, HarnessScopeWire,
     HeartbeatItem, ModelEntry, RefinementHistoryItemWire, SessionExtra, SessionRow,
-    SessionState, SessionStats, ShellActivityItem, WorkspaceBinding, WorkspaceRecord,
-    WorktreeInfo,
+    SessionState, SessionStats, ShellActivityItem, SubagentItem, SubagentMessagePreview,
+    WorkspaceBinding, WorkspaceRecord, WorktreeInfo,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -152,6 +152,27 @@ pub enum DaemonCmd {
         active_session_id: String,
         activity_id: String,
     },
+    LoadSessionSubagents {
+        active_session_id: String,
+        session_id: String,
+    },
+    LoadSubagentMessages {
+        owner_session_id: String,
+        subagent_active_session_id: String,
+    },
+    CancelSubagent {
+        owner_session_id: String,
+        owner_durable_id: String,
+        parent_active_session_id: String,
+        child_id: String,
+    },
+    DeleteSubagent {
+        owner_session_id: String,
+        owner_durable_id: String,
+        parent_active_session_id: String,
+        child_id: String,
+        tab_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +273,19 @@ pub enum DaemonEvent {
         session: String,
         activity_id: String,
         tail: String,
+    },
+    SessionSubagentsLoaded {
+        session: String,
+        items: Vec<SubagentItem>,
+    },
+    SubagentMessagesLoaded {
+        owner_session: String,
+        subagent_session: String,
+        messages: Vec<SubagentMessagePreview>,
+    },
+    SubagentDeleted {
+        owner_session: String,
+        tab_id: String,
     },
     LiveFrame(Value),
     Error(String),
@@ -1519,6 +1553,104 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                     tail,
                                 });
                             }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                        }
+                    }
+                    DaemonCmd::LoadSessionSubagents {
+                        active_session_id,
+                        session_id,
+                    } => match pa_client::list_session_subagents(
+                        &client,
+                        &active_session_id,
+                        &session_id,
+                    ) {
+                        Ok(items) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                session: active_session_id,
+                                items,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                        }
+                    },
+                    DaemonCmd::LoadSubagentMessages {
+                        owner_session_id,
+                        subagent_active_session_id,
+                    } => match pa_client::fetch_subagent_messages(
+                        &client,
+                        &subagent_active_session_id,
+                    ) {
+                        Ok(messages) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SubagentMessagesLoaded {
+                                owner_session: owner_session_id,
+                                subagent_session: subagent_active_session_id,
+                                messages,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                        }
+                    },
+                    DaemonCmd::CancelSubagent {
+                        owner_session_id,
+                        owner_durable_id,
+                        parent_active_session_id,
+                        child_id,
+                    } => match pa_client::cancel_subagent(
+                        &client,
+                        &parent_active_session_id,
+                        &child_id,
+                    ) {
+                        Ok(_) => {
+                            if let Ok(items) = pa_client::list_session_subagents(
+                                &client,
+                                &owner_session_id,
+                                &owner_durable_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                    session: owner_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                        }
+                    },
+                    DaemonCmd::DeleteSubagent {
+                        owner_session_id,
+                        owner_durable_id,
+                        parent_active_session_id,
+                        child_id,
+                        tab_id,
+                    } => match pa_client::delete_subagent(
+                        &client,
+                        &parent_active_session_id,
+                        &child_id,
+                    ) {
+                        Ok(true) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SubagentDeleted {
+                                owner_session: owner_session_id.clone(),
+                                tab_id,
+                            });
+                            if let Ok(items) = pa_client::list_session_subagents(
+                                &client,
+                                &owner_session_id,
+                                &owner_durable_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                    session: owner_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Ok(false) => {
+                            let _ = ev_tx.try_send(DaemonEvent::Error(
+                                "Subagent could not be deleted while running".into(),
+                            ));
                         }
                         Err(err) => {
                             let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));

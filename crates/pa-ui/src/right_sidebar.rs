@@ -199,7 +199,6 @@ impl RightSidebarModel {
 
     /// Close a tab in the current Session by its stable `id()`.
     /// Returns `true` if a tab was removed.
-    #[allow(dead_code)]
     pub(crate) fn close_by_id(&mut self, tab_id: &str) -> bool {
         let Some(pos) = self.tabs().iter().position(|t| t.id() == tab_id) else {
             return false;
@@ -459,15 +458,11 @@ impl PaApp {
                 .children(self.render_diff_jump_list(cx))
                 .child(self.render_diff_body(window, cx))
                 .into_any_element(),
-            Some(RightTabKind::Subagent { name, .. }) => div()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .p(px(16.))
-                .text_size(px(12.))
-                .text_color(p.quiet_ink)
-                .child(format!("Subagent: {name}"))
-                .into_any_element(),
+            Some(RightTabKind::Subagent {
+                active_session_id,
+                child_id,
+                name,
+            }) => self.render_right_subagent_tab(active_session_id, child_id, name, cx),
             Some(RightTabKind::Shell { activity_id, title }) => {
                 self.render_right_shell_tab(activity_id, title, cx)
             }

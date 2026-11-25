@@ -264,6 +264,10 @@ impl SessionRoster {
         self.shell_count = shells;
     }
 
+    pub(crate) fn set_subagent_count(&mut self, subagents: ChipCount) {
+        self.subagent_count = subagents;
+    }
+
     pub(crate) fn set_heartbeat_count(&mut self, heartbeats: ChipCount) {
         self.heartbeat_count = heartbeats;
     }

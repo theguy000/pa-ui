@@ -1641,6 +1641,37 @@ impl PaApp {
                         .apply_shell_tail(&session, activity_id, tail);
                 }
             }
+            DaemonEvent::SessionSubagentsLoaded { session, items } => {
+                if self.roster.active_id() == Some(session.as_str()) {
+                    let counts = pa_client::subagent_items_counts(&items);
+                    self.roster.set_subagent_count(counts);
+                    self.activity_sheet.apply_subagents(&session, items);
+                }
+            }
+            DaemonEvent::SubagentMessagesLoaded {
+                owner_session,
+                subagent_session,
+                messages,
+            } => {
+                if self.roster.active_id() == Some(owner_session.as_str()) {
+                    self.activity_sheet.apply_subagent_messages(
+                        &owner_session,
+                        subagent_session,
+                        messages,
+                    );
+                }
+            }
+            DaemonEvent::SubagentDeleted {
+                owner_session,
+                tab_id,
+            } => {
+                if self.roster.active_id() == Some(owner_session.as_str()) {
+                    if self.right_sidebar.close_by_id(&tab_id) {
+                        self.settings.right_open = self.right_sidebar.is_open();
+                        self.settings.save();
+                    }
+                }
+            }
             DaemonEvent::LiveFrame(frame) => {
                 self.handle_live_frame(&frame, cx);
             }
@@ -1694,6 +1725,14 @@ impl PaApp {
             "roster_update" | "session_updated" | "session_closed" | "session_binding"
         ) {
             let _ = self.bridge.tx.send(DaemonCmd::RefreshSessions);
+            if !self.roster.is_draft_or_empty() {
+                self.request_session_subagents();
+                if let Some(RightTabKind::Subagent { active_session_id, .. }) =
+                    self.right_sidebar.active_tab().cloned()
+                {
+                    self.request_subagent_messages(active_session_id, cx);
+                }
+            }
             return;
         }
         if top_kind == "response" {

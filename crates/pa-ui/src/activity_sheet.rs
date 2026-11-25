@@ -4,7 +4,7 @@ use crate::right_sidebar::RightTabKind;
 use crate::theme::PaPalette;
 use gpui_kit::component::{h_flex, input::Input, scroll::ScrollableElement as _, v_flex};
 use gpui_kit::{prelude::FluentBuilder as _, *};
-use pa_client::{ChipCount, HeartbeatItem, ShellActivityItem};
+use pa_client::{ChipCount, HeartbeatItem, ShellActivityItem, SubagentItem, SubagentMessagePreview};
 use std::collections::HashMap;
 
 pub(crate) const SHELL_TAIL_LINES: u32 = 120;
@@ -36,6 +36,9 @@ pub(crate) struct ActivitySheetModel {
     drill_id: Option<String>,
     hb_editing: bool,
     hb_delivery_mode: String,
+    subagents: Vec<SubagentItem>,
+    subagent_messages: HashMap<String, Vec<SubagentMessagePreview>>,
+    subagent_loading: Option<String>,
     heartbeats: Vec<HeartbeatItem>,
     shells: Vec<ShellActivityItem>,
     shell_tails: HashMap<String, String>,
@@ -75,6 +78,28 @@ impl ActivitySheetModel {
         }
     }
 
+    pub(crate) fn subagents(&self) -> &[SubagentItem] {
+        &self.subagents
+    }
+
+    pub(crate) fn subagent_by_id(&self, id: &str) -> Option<&SubagentItem> {
+        self.subagents.iter().find(|s| {
+            s.id == id || (!s.child_id.is_empty() && s.child_id == id) || s.active_session_id == id
+        })
+    }
+
+    pub(crate) fn subagent_messages(&self, subagent_session_id: &str) -> Option<&[SubagentMessagePreview]> {
+        self.subagent_messages.get(subagent_session_id).map(Vec::as_slice)
+    }
+
+    pub(crate) fn is_subagent_loading(&self, subagent_session_id: &str) -> bool {
+        self.subagent_loading.as_deref() == Some(subagent_session_id)
+    }
+
+    pub(crate) fn mark_subagent_loading(&mut self, subagent_session_id: &str) {
+        self.subagent_loading = Some(subagent_session_id.to_string());
+    }
+
     pub(crate) fn heartbeats(&self) -> &[HeartbeatItem] {
         &self.heartbeats
     }
@@ -109,6 +134,9 @@ impl ActivitySheetModel {
         self.drill_id = None;
         self.hb_editing = false;
         self.hb_delivery_mode = "steer".to_string();
+        self.subagents.clear();
+        self.subagent_messages.clear();
+        self.subagent_loading = None;
         self.heartbeats.clear();
         self.shells.clear();
         self.shell_tails.clear();
@@ -200,6 +228,44 @@ impl ActivitySheetModel {
 
     pub(crate) fn set_notice(&mut self, ok: bool, msg: String) {
         self.notice = Some((ok, msg));
+    }
+
+    /// Apply Session-scoped subagents only if `session_id` still matches.
+    pub(crate) fn apply_subagents(&mut self, session_id: &str, items: Vec<SubagentItem>) -> bool {
+        if self.session_id != session_id {
+            return false;
+        }
+        self.subagents = items;
+        if self.open_tab == Some(ActivityTab::Subagents) {
+            if let Some(ref did) = self.drill_id {
+                if !self.subagents.iter().any(|s| &s.id == did) {
+                    self.drill_id = None;
+                }
+            }
+            if !self.subagents.is_empty() {
+                self.selected_index = self.selected_index.min(self.subagents.len() - 1);
+            } else {
+                self.selected_index = 0;
+            }
+        }
+        true
+    }
+
+    /// Apply read-only subagent messages only if `owner_session_id` still matches.
+    pub(crate) fn apply_subagent_messages(
+        &mut self,
+        owner_session_id: &str,
+        subagent_session_id: String,
+        messages: Vec<SubagentMessagePreview>,
+    ) -> bool {
+        if self.session_id != owner_session_id {
+            return false;
+        }
+        if self.subagent_loading.as_deref() == Some(subagent_session_id.as_str()) {
+            self.subagent_loading = None;
+        }
+        self.subagent_messages.insert(subagent_session_id, messages);
+        true
     }
 
     /// Apply Session-scoped heartbeats only if `session_id` still matches the
@@ -324,6 +390,54 @@ impl PaApp {
         self.activity_sheet.set_session(&sid);
     }
 
+    pub(crate) fn request_session_subagents(&self) {
+        let Some(row) = self.roster.active_session() else {
+            return;
+        };
+        let _ = self.bridge.tx.send(DaemonCmd::LoadSessionSubagents {
+            active_session_id: row.id.clone(),
+            session_id: row.session_id.clone(),
+        });
+    }
+
+    pub(crate) fn request_subagent_messages(
+        &mut self,
+        subagent_active_session_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(owner) = self.roster.active_id().map(str::to_string) else {
+            return;
+        };
+        if subagent_active_session_id.is_empty() {
+            return;
+        }
+        self.activity_sheet
+            .mark_subagent_loading(&subagent_active_session_id);
+        let _ = self.bridge.tx.send(DaemonCmd::LoadSubagentMessages {
+            owner_session_id: owner,
+            subagent_active_session_id,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn open_subagent_in_right_sidebar(
+        &mut self,
+        active_session_id: String,
+        child_id: String,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_right_tab(
+            RightTabKind::Subagent {
+                active_session_id: active_session_id.clone(),
+                child_id,
+                name,
+            },
+            cx,
+        );
+        self.request_subagent_messages(active_session_id, cx);
+    }
+
     pub(crate) fn request_session_heartbeats(&self) {
         let Some(row) = self.roster.active_session() else {
             return;
@@ -366,7 +480,7 @@ impl PaApp {
             match tab {
                 ActivityTab::Heartbeats => self.request_session_heartbeats(),
                 ActivityTab::Shells => self.request_session_shells(),
-                ActivityTab::Subagents => {}
+                ActivityTab::Subagents => self.request_session_subagents(),
             }
         }
         cx.notify();
@@ -530,14 +644,7 @@ impl PaApp {
         let body: AnyElement = match tab {
             ActivityTab::Heartbeats => self.render_heartbeats_sheet_body(cx),
             ActivityTab::Shells => self.render_shells_sheet_body(cx),
-            ActivityTab::Subagents => div()
-                .w_full()
-                .px(px(14.))
-                .py(px(12.))
-                .text_size(px(12.))
-                .text_color(p.quiet_ink)
-                .child("No subagents loaded.")
-                .into_any_element(),
+            ActivityTab::Subagents => self.render_subagents_sheet_body(cx),
         };
 
         Some(
@@ -1279,6 +1386,590 @@ impl PaApp {
             .into_any_element()
     }
 
+
+    fn render_subagents_sheet_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+
+        // Drill-in mode
+        if let Some(drill_id) = self.activity_sheet.drill_id() {
+            if let Some(sub) = self.activity_sheet.subagent_by_id(drill_id) {
+                let is_running = sub.is_running();
+                let can_manage = sub.can_manage();
+                let sub_active = sub.active_session_id.clone();
+                let sub_child = sub.child_id.clone();
+                let sub_name = sub.name.clone();
+                let parent_active = sub.parent_active_session_id.clone();
+                let (st_text, st_color) = status_dot_spec(&p, &sub.status, None);
+                let dur_str = format_duration_ms(sub.duration_ms);
+                let model_str = if sub.model.is_empty() {
+                    "inherited".to_string()
+                } else {
+                    sub.model.clone()
+                };
+
+                let preview_text = if self.activity_sheet.is_subagent_loading(&sub.active_session_id)
+                    && self
+                        .activity_sheet
+                        .subagent_messages(&sub.active_session_id)
+                        .is_none()
+                {
+                    "Loading transcript…".to_string()
+                } else if let Some(msgs) =
+                    self.activity_sheet.subagent_messages(&sub.active_session_id)
+                {
+                    if msgs.is_empty() {
+                        sub.answer_preview
+                            .clone()
+                            .unwrap_or_else(|| sub.activity.clone())
+                    } else {
+                        msgs.iter()
+                            .rev()
+                            .take(4)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .map(|m| format!("[{}] {}", m.role, m.text))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                } else {
+                    sub.answer_preview
+                        .clone()
+                        .unwrap_or_else(|| sub.activity.clone())
+                };
+
+                let open_active = sub_active.clone();
+                let open_child = sub_child.clone();
+                let open_name = sub_name.clone();
+                let stop_parent = parent_active.clone();
+                let stop_child = sub_child.clone();
+                let del_parent = parent_active;
+                let del_child = sub_child.clone();
+                let del_tab_id = RightTabKind::Subagent {
+                    active_session_id: sub_active,
+                    child_id: sub_child,
+                    name: sub_name.clone(),
+                }
+                .id();
+
+                let mut box_el = v_flex()
+                    .id("act-sub-detail-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .pb(px(6.))
+                    .gap(px(4.))
+                    .child(
+                        h_flex()
+                            .px(px(12.))
+                            .gap(px(8.))
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.ink)
+                                    .child(sub_name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(p.quiet_ink)
+                                    .child(format!("{model_str} · {dur_str}")),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(st_color)
+                                    .child(st_text),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("act-sub-preview")
+                            .mx(px(12.))
+                            .pl(px(10.))
+                            .py(px(5.))
+                            .max_h(px(92.))
+                            .overflow_y_scrollbar()
+                            .border_l_2()
+                            .border_color(p.composer_edge)
+                            .text_size(px(11.5))
+                            .text_color(p.ink)
+                            .child(preview_text),
+                    )
+                    .child(self.render_tui_action_row(
+                        "act-sub-open-rs",
+                        "Open in Right sidebar",
+                        "Watch read-only transcript alongside this session",
+                        false,
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.open_subagent_in_right_sidebar(
+                                open_active.clone(),
+                                open_child.clone(),
+                                open_name.clone(),
+                                cx,
+                            );
+                        },
+                        cx,
+                    ));
+
+                if can_manage && is_running {
+                    box_el = box_el.child(self.render_tui_action_row(
+                        "act-sub-stop",
+                        "Stop",
+                        "Abort subagent and record \"Cancelled by user\"",
+                        true,
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(row) = this.roster.active_session() {
+                                let _ = this.bridge.tx.send(DaemonCmd::CancelSubagent {
+                                    owner_session_id: row.id.clone(),
+                                    owner_durable_id: row.session_id.clone(),
+                                    parent_active_session_id: stop_parent.clone(),
+                                    child_id: stop_child.clone(),
+                                });
+                            }
+                        },
+                        cx,
+                    ));
+                } else if can_manage {
+                    box_el = box_el.child(self.render_tui_action_row(
+                        "act-sub-delete",
+                        "Delete",
+                        "Remove inactive subagent from this session",
+                        true,
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(row) = this.roster.active_session() {
+                                let _ = this.bridge.tx.send(DaemonCmd::DeleteSubagent {
+                                    owner_session_id: row.id.clone(),
+                                    owner_durable_id: row.session_id.clone(),
+                                    parent_active_session_id: del_parent.clone(),
+                                    child_id: del_child.clone(),
+                                    tab_id: del_tab_id.clone(),
+                                });
+                                this.activity_sheet.back();
+                                cx.notify();
+                            }
+                        },
+                        cx,
+                    ));
+                }
+
+                return box_el.into_any_element();
+            }
+        }
+
+        // List mode
+        let items = self.activity_sheet.subagents();
+        let sel_ix = self.activity_sheet.selected_index;
+        let mut list = v_flex()
+            .id("act-sub-list-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scrollbar()
+            .px(px(6.))
+            .pb(px(4.))
+            .gap(px(1.));
+
+        if items.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(8.))
+                    .py(px(10.))
+                    .text_size(px(12.))
+                    .text_color(p.quiet_ink)
+                    .child("No subagents in this session."),
+            );
+        } else {
+            list = list.child(
+                h_flex()
+                    .w_full()
+                    .px(px(6.))
+                    .py(px(3.))
+                    .gap(px(10.))
+                    .child(div().w(px(10.)))
+                    .child(div().w(px(150.)).text_size(px(11.)).text_color(p.sidebar_group_empty_ink).child("Subagent"))
+                    .child(div().flex_1().min_w_0().text_size(px(11.)).text_color(p.sidebar_group_empty_ink).child("Activity"))
+                    .child(div().w(px(56.)).text_size(px(11.)).text_color(p.sidebar_group_empty_ink).child("Duration"))
+                    .child(div().w(px(78.)).text_size(px(11.)).text_color(p.sidebar_group_empty_ink).child("Status")),
+            );
+            for (idx, sub) in items.iter().enumerate() {
+                let selected = idx == sel_ix;
+                let sub_id = sub.id.clone();
+                let sub_sess = sub.active_session_id.clone();
+                let dur = format_duration_ms(sub.duration_ms);
+                let (st_text, st_color) = status_dot_spec(&p, &sub.status, None);
+                let display_name = if sub.depth > 0 {
+                    let indent = "  ".repeat(sub.depth.saturating_sub(1).min(3));
+                    format!("{indent}↳ {}", sub.name)
+                } else {
+                    sub.name.clone()
+                };
+
+                list = list.child(
+                    h_flex()
+                        .id(("act-sub-row", idx))
+                        .w_full()
+                        .h(px(26.))
+                        .px(px(6.))
+                        .gap(px(10.))
+                        .rounded(px(4.))
+                        .items_center()
+                        .cursor_pointer()
+                        .bg(if selected {
+                            p.sidebar_row_selected
+                        } else {
+                            Hsla::transparent_black()
+                        })
+                        .hover(move |s| s.bg(p.sidebar_row_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.activity_sheet.drill_into(idx, sub_id.clone());
+                            this.request_subagent_messages(sub_sess.clone(), cx);
+                        }))
+                        .child(
+                            div()
+                                .w(px(10.))
+                                .text_size(px(12.))
+                                .text_color(if selected {
+                                    p.working
+                                } else {
+                                    Hsla::transparent_black()
+                                })
+                                .child("›"),
+                        )
+                        .child(
+                            div()
+                                .w(px(150.))
+                                .truncate()
+                                .text_size(px(12.))
+                                .font_weight(if selected {
+                                    FontWeight::MEDIUM
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(p.ink)
+                                .child(display_name),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.))
+                                .text_color(p.quiet_ink)
+                                .child(sub.activity.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(56.))
+                                .truncate()
+                                .text_size(px(11.5))
+                                .text_color(p.quiet_ink)
+                                .child(dur),
+                        )
+                        .child(
+                            div()
+                                .w(px(78.))
+                                .truncate()
+                                .text_size(px(11.5))
+                                .text_color(st_color)
+                                .child(st_text),
+                        ),
+                );
+            }
+        }
+
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(list)
+            .child(
+                h_flex()
+                    .w_full()
+                    .h(px(26.))
+                    .px(px(12.))
+                    .items_center()
+                    .border_t_1()
+                    .border_color(p.sidebar_group_edge)
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(p.sidebar_group_empty_ink)
+                            .child("click row to inspect · esc close"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("act-sub-refresh-list")
+                            .px(px(6.))
+                            .py(px(2.))
+                            .rounded(px(4.))
+                            .cursor_pointer()
+                            .text_size(px(11.))
+                            .text_color(p.quiet_ink)
+                            .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.request_session_subagents();
+                                cx.notify();
+                            }))
+                            .child("refresh"),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Read-only live Subagent transcript tab rendered inside the Right sidebar.
+    pub(crate) fn render_right_subagent_tab(
+        &self,
+        subagent_active_session_id: &str,
+        child_id: &str,
+        fallback_name: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let lookup_key = if !child_id.is_empty() {
+            child_id
+        } else {
+            subagent_active_session_id
+        };
+        let sub = self.activity_sheet.subagent_by_id(lookup_key);
+        let name = sub
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| fallback_name.to_string());
+        let is_running = sub.is_some_and(SubagentItem::is_running);
+        let can_manage = sub.is_some_and(SubagentItem::can_manage);
+        let (st_text, st_color) = sub.map_or_else(
+            || ("○ subagent".to_string(), p.quiet_ink),
+            |s| status_dot_spec(&p, &s.status, None),
+        );
+        let meta_line = sub.map(|s| {
+            let model = if s.model.is_empty() {
+                "inherited"
+            } else {
+                &s.model
+            };
+            format!("{model} · {}", format_duration_ms(s.duration_ms))
+        });
+
+        let sess_for_refresh = subagent_active_session_id.to_string();
+        let stop_parent = sub
+            .map(|s| s.parent_active_session_id.clone())
+            .unwrap_or_default();
+        let stop_child = sub
+            .map(|s| s.child_id.clone())
+            .unwrap_or_else(|| child_id.to_string());
+        let del_parent = stop_parent.clone();
+        let del_child = stop_child.clone();
+        let del_tab_id = RightTabKind::Subagent {
+            active_session_id: subagent_active_session_id.to_string(),
+            child_id: child_id.to_string(),
+            name: name.clone(),
+        }
+        .id();
+
+        let msgs = self
+            .activity_sheet
+            .subagent_messages(subagent_active_session_id);
+        let loading = self
+            .activity_sheet
+            .is_subagent_loading(subagent_active_session_id);
+
+        let mut transcript_col = v_flex()
+            .id("rs-sub-transcript-scroll")
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_y_scrollbar()
+            .p(px(12.))
+            .gap(px(10.))
+            .bg(p.transcript_surface);
+
+        match msgs {
+            Some(list) if !list.is_empty() => {
+                for (ix, m) in list.iter().enumerate() {
+                    transcript_col = transcript_col.child(
+                        v_flex()
+                            .id(("rs-sub-msg", ix))
+                            .w_full()
+                            .pl(px(10.))
+                            .py(px(5.))
+                            .gap(px(3.))
+                            .border_l_2()
+                            .border_color(if m.role == "task" {
+                                p.working
+                            } else {
+                                p.composer_edge
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(p.sidebar_group_empty_ink)
+                                    .child(m.role.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .line_height(px(18.))
+                                    .text_color(p.ink)
+                                    .child(m.text.clone()),
+                            ),
+                    );
+                }
+            }
+            _ => {
+                let placeholder = if loading {
+                    "Loading transcript…".to_string()
+                } else {
+                    sub.and_then(|s| s.answer_preview.clone())
+                        .unwrap_or_else(|| "No messages yet.".to_string())
+                };
+                transcript_col = transcript_col.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.quiet_ink)
+                        .child(placeholder),
+                );
+            }
+        }
+
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .gap(px(8.))
+                    .items_center()
+                    .border_b_1()
+                    .border_color(p.sidebar_group_edge)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.ink)
+                                    .child(name),
+                            )
+                            .when_some(meta_line, |col, meta| {
+                                col.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(p.quiet_ink)
+                                        .child(meta),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(11.5))
+                            .text_color(st_color)
+                            .child(st_text),
+                    )
+                    .child(
+                        div()
+                            .id("rs-sub-refresh")
+                            .px(px(7.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .cursor_pointer()
+                            .text_size(px(11.5))
+                            .text_color(p.quiet_ink)
+                            .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.request_session_subagents();
+                                this.request_subagent_messages(sess_for_refresh.clone(), cx);
+                            }))
+                            .child("Refresh"),
+                    )
+                    .when(can_manage && is_running, |row| {
+                        let sp = stop_parent.clone();
+                        let sc = stop_child.clone();
+                        row.child(
+                            div()
+                                .id("rs-sub-stop")
+                                .px(px(7.))
+                                .py(px(3.))
+                                .rounded(px(5.))
+                                .cursor_pointer()
+                                .text_size(px(11.5))
+                                .text_color(p.danger)
+                                .hover(move |s| s.bg(p.danger_surface))
+                                .on_click(cx.listener(move |this, _, _, _| {
+                                    if let Some(row) = this.roster.active_session() {
+                                        let _ = this.bridge.tx.send(DaemonCmd::CancelSubagent {
+                                            owner_session_id: row.id.clone(),
+                                            owner_durable_id: row.session_id.clone(),
+                                            parent_active_session_id: sp.clone(),
+                                            child_id: sc.clone(),
+                                        });
+                                    }
+                                }))
+                                .child("Stop"),
+                        )
+                    })
+                    .when(can_manage && !is_running, |row| {
+                        let dp = del_parent.clone();
+                        let dc = del_child.clone();
+                        let dt = del_tab_id.clone();
+                        row.child(
+                            div()
+                                .id("rs-sub-delete")
+                                .px(px(7.))
+                                .py(px(3.))
+                                .rounded(px(5.))
+                                .cursor_pointer()
+                                .text_size(px(11.5))
+                                .text_color(p.danger)
+                                .hover(move |s| s.bg(p.danger_surface))
+                                .on_click(cx.listener(move |this, _, _, _| {
+                                    if let Some(row) = this.roster.active_session() {
+                                        let _ = this.bridge.tx.send(DaemonCmd::DeleteSubagent {
+                                            owner_session_id: row.id.clone(),
+                                            owner_durable_id: row.session_id.clone(),
+                                            parent_active_session_id: dp.clone(),
+                                            child_id: dc.clone(),
+                                            tab_id: dt.clone(),
+                                        });
+                                    }
+                                }))
+                                .child("Delete"),
+                        )
+                    }),
+            )
+            .child(transcript_col)
+            .child(
+                div()
+                    .w_full()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .border_t_1()
+                    .border_color(p.sidebar_group_edge)
+                    .text_size(px(11.))
+                    .text_color(p.sidebar_group_empty_ink)
+                    .child("read-only · subagents are controlled by the parent agent"),
+            )
+            .into_any_element()
+    }
+
     /// Full scrollable Shell tail tab rendered inside the Right sidebar.
     pub(crate) fn render_right_shell_tab(
         &self,
@@ -1528,5 +2219,50 @@ mod tests {
         assert_eq!(m.hb_delivery_mode(), "steer");
         m.cancel_hb_edit();
         assert!(!m.hb_editing());
+    }
+
+    fn sample_sub(id: &str, status: &str) -> SubagentItem {
+        SubagentItem {
+            id: id.to_string(),
+            child_id: id.to_string(),
+            active_session_id: format!("sess-{id}"),
+            parent_active_session_id: "s1".to_string(),
+            name: format!("worker-{id}"),
+            status: status.to_string(),
+            depth: 0,
+            model: "claude-sonnet-4".to_string(),
+            activity: "Working".to_string(),
+            duration_ms: Some(2500),
+            answer_preview: None,
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn subagent_drill_in_and_stale_session_rejection_behave_cleanly() {
+        let mut m = ActivitySheetModel::new();
+        m.set_session("s1");
+        m.toggle_tab(ActivityTab::Subagents);
+        assert!(m.apply_subagents("s1", vec![sample_sub("c1", "running")]));
+        m.drill_into(0, "c1".into());
+        assert_eq!(m.drill_id(), Some("c1"));
+        assert!(m.apply_subagent_messages(
+            "s1",
+            "sess-c1".into(),
+            vec![SubagentMessagePreview {
+                role: "task".into(),
+                text: "Audit".into(),
+            }],
+        ));
+        assert_eq!(m.subagent_messages("sess-c1").map(<[_]>::len), Some(1));
+
+        // Removing the drilled subagent drops drill-in cleanly.
+        assert!(m.apply_subagents("s1", Vec::new()));
+        assert_eq!(m.drill_id(), None);
+
+        // Switching to s2 rejects stale s1 subagent payloads.
+        m.set_session("s2");
+        assert!(!m.apply_subagents("s1", vec![sample_sub("c1", "running")]));
+        assert!(!m.apply_subagent_messages("s1", "sess-c1".into(), Vec::new()));
+        assert!(m.subagents().is_empty());
     }
 }
