@@ -928,8 +928,8 @@ pub fn parse_session_subagents(
         seen: &mut std::collections::HashSet<String>,
         out: &mut Vec<SubagentItem>,
     ) {
-        let mut matched_entries: Vec<(&Value, &Value, Vec<String>, u64, Option<String>)> =
-            Vec::new();
+        type MatchedRosterEntry<'a> = (&'a Value, &'a Value, Vec<String>, u64, Option<String>);
+        let mut matched_entries: Vec<MatchedRosterEntry<'_>> = Vec::new();
         for entry in roster {
             let Some(summary) = roster_summary(entry) else {
                 continue;

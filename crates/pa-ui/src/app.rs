@@ -1665,11 +1665,11 @@ impl PaApp {
                 owner_session,
                 tab_id,
             } => {
-                if self.roster.active_id() == Some(owner_session.as_str()) {
-                    if self.right_sidebar.close_by_id(&tab_id) {
-                        self.settings.right_open = self.right_sidebar.is_open();
-                        self.settings.save();
-                    }
+                if self.roster.active_id() == Some(owner_session.as_str())
+                    && self.right_sidebar.close_by_id(&tab_id)
+                {
+                    self.settings.right_open = self.right_sidebar.is_open();
+                    self.settings.save();
                 }
             }
             DaemonEvent::LiveFrame(frame) => {

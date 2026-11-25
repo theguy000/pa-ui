@@ -219,10 +219,10 @@ impl RightSidebarModel {
             let entry = self.sessions.entry(self.current_session.clone()).or_default();
             entry.tabs.push(RightTabKind::Diff);
             entry.active = Some(0);
-        } else if self.active_index().is_none() {
-            if let Some(entry) = self.sessions.get_mut(&self.current_session) {
-                entry.active = Some(0);
-            }
+        } else if self.active_index().is_none()
+            && let Some(entry) = self.sessions.get_mut(&self.current_session)
+        {
+            entry.active = Some(0);
         }
         true
     }

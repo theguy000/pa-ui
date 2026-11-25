@@ -58,9 +58,6 @@ impl ActivitySheetModel {
         self.open_tab
     }
 
-    pub(crate) fn is_open(&self) -> bool {
-        self.open_tab.is_some()
-    }
 
     pub(crate) fn drill_id(&self) -> Option<&str> {
         self.drill_id.as_deref()
@@ -237,10 +234,10 @@ impl ActivitySheetModel {
         }
         self.subagents = items;
         if self.open_tab == Some(ActivityTab::Subagents) {
-            if let Some(ref did) = self.drill_id {
-                if !self.subagents.iter().any(|s| &s.id == did) {
-                    self.drill_id = None;
-                }
+            if let Some(ref did) = self.drill_id
+                && !self.subagents.iter().any(|s| &s.id == did)
+            {
+                self.drill_id = None;
             }
             if !self.subagents.is_empty() {
                 self.selected_index = self.selected_index.min(self.subagents.len() - 1);
@@ -276,11 +273,11 @@ impl ActivitySheetModel {
         }
         self.heartbeats = items;
         if self.open_tab == Some(ActivityTab::Heartbeats) {
-            if let Some(ref did) = self.drill_id {
-                if !self.heartbeats.iter().any(|h| &h.id == did) {
-                    self.drill_id = None;
-                    self.hb_editing = false;
-                }
+            if let Some(ref did) = self.drill_id
+                && !self.heartbeats.iter().any(|h| &h.id == did)
+            {
+                self.drill_id = None;
+                self.hb_editing = false;
             }
             if !self.heartbeats.is_empty() {
                 self.selected_index = self.selected_index.min(self.heartbeats.len() - 1);
@@ -298,10 +295,10 @@ impl ActivitySheetModel {
         }
         self.shells = items;
         if self.open_tab == Some(ActivityTab::Shells) {
-            if let Some(ref did) = self.drill_id {
-                if !self.shells.iter().any(|s| &s.id == did) {
-                    self.drill_id = None;
-                }
+            if let Some(ref did) = self.drill_id
+                && !self.shells.iter().any(|s| &s.id == did)
+            {
+                self.drill_id = None;
             }
             if !self.shells.is_empty() {
                 self.selected_index = self.selected_index.min(self.shells.len() - 1);
@@ -790,13 +787,13 @@ impl PaApp {
         let p = self.palette();
 
         // Drill-in mode
-        if let Some(drill_id) = self.activity_sheet.drill_id() {
-            if let Some(hb) = self
+        if let Some(drill_id) = self.activity_sheet.drill_id()
+            && let Some(hb) = self
                 .activity_sheet
                 .heartbeats()
                 .iter()
                 .find(|h| h.id == drill_id)
-            {
+        {
                 let is_active = hb.is_active();
                 let job_id_toggle = hb.id.clone();
                 let job_id_stop = hb.id.clone();
@@ -925,7 +922,6 @@ impl PaApp {
                 }
 
                 return box_el.into_any_element();
-            }
         }
 
         // List mode
@@ -1103,8 +1099,9 @@ impl PaApp {
         let p = self.palette();
 
         // Drill-in mode
-        if let Some(drill_id) = self.activity_sheet.drill_id() {
-            if let Some(sh) = self.activity_sheet.shell_by_id(drill_id) {
+        if let Some(drill_id) = self.activity_sheet.drill_id()
+            && let Some(sh) = self.activity_sheet.shell_by_id(drill_id)
+        {
                 let sh_id_open = sh.id.clone();
                 let sh_cmd_open = sh.command.clone();
                 let sh_id_ref = sh.id.clone();
@@ -1225,7 +1222,6 @@ impl PaApp {
                 }
 
                 return box_el.into_any_element();
-            }
         }
 
         // List mode
@@ -1391,8 +1387,9 @@ impl PaApp {
         let p = self.palette();
 
         // Drill-in mode
-        if let Some(drill_id) = self.activity_sheet.drill_id() {
-            if let Some(sub) = self.activity_sheet.subagent_by_id(drill_id) {
+        if let Some(drill_id) = self.activity_sheet.drill_id()
+            && let Some(sub) = self.activity_sheet.subagent_by_id(drill_id)
+        {
                 let is_running = sub.is_running();
                 let can_manage = sub.can_manage();
                 let sub_active = sub.active_session_id.clone();
@@ -1562,7 +1559,6 @@ impl PaApp {
                 }
 
                 return box_el.into_any_element();
-            }
         }
 
         // List mode
@@ -2145,7 +2141,7 @@ mod tests {
     fn toggle_tab_opens_switches_and_closes_on_same_segment() {
         let mut m = ActivitySheetModel::new();
         m.set_session("s1");
-        assert!(!m.is_open());
+        assert!(m.open_tab().is_none());
 
         assert!(m.toggle_tab(ActivityTab::Heartbeats));
         assert_eq!(m.open_tab(), Some(ActivityTab::Heartbeats));
@@ -2160,7 +2156,7 @@ mod tests {
 
         // Clicking active segment closes sheet.
         assert!(!m.toggle_tab(ActivityTab::Shells));
-        assert!(!m.is_open());
+        assert!(m.open_tab().is_none());
     }
 
     #[::core::prelude::v1::test]
@@ -2178,10 +2174,10 @@ mod tests {
 
         assert!(m.handle_escape());
         assert_eq!(m.drill_id(), None);
-        assert!(m.is_open());
+        assert!(m.open_tab().is_some());
 
         assert!(m.handle_escape());
-        assert!(!m.is_open());
+        assert!(m.open_tab().is_none());
         assert!(!m.handle_escape());
     }
 
