@@ -29,10 +29,10 @@ impl RightTabKind {
                 child_id,
                 ..
             } => {
-                if !child_id.is_empty() {
-                    format!("sub:{child_id}")
-                } else {
+                if !active_session_id.is_empty() {
                     format!("sub:{active_session_id}")
+                } else {
+                    format!("sub:{child_id}")
                 }
             }
             Self::Shell { activity_id, .. } => format!("sh:{activity_id}"),
@@ -138,6 +138,11 @@ impl RightSidebarModel {
             .and_then(SessionTabSet::active_tab)
     }
 
+    /// Active tab only when the Right sidebar is currently expanded.
+    pub(crate) fn visible_active_tab(&self) -> Option<&RightTabKind> {
+        self.is_open.then(|| self.active_tab()).flatten()
+    }
+
     pub(crate) fn is_diff_active(&self) -> bool {
         self.is_open && matches!(self.active_tab(), Some(RightTabKind::Diff))
     }
@@ -198,12 +203,33 @@ impl RightSidebarModel {
     }
 
     /// Close a tab in the current Session by its stable `id()`.
-    /// Returns `true` if a tab was removed.
-    pub(crate) fn close_by_id(&mut self, tab_id: &str) -> bool {
-        let Some(pos) = self.tabs().iter().position(|t| t.id() == tab_id) else {
+    /// Close a tab by id in a specific Session (works even if the reader switched away).
+    pub(crate) fn close_by_id_in_session(&mut self, session_key: &str, tab_id: &str) -> bool {
+        if session_key == self.current_session {
+            let Some(pos) = self.tabs().iter().position(|t| t.id() == tab_id) else {
+                return false;
+            };
+            let _ = self.close(pos);
+            return true;
+        }
+        let Some(entry) = self.sessions.get_mut(session_key) else {
             return false;
         };
-        let _ = self.close(pos);
+        let Some(ix) = entry.tabs.iter().position(|t| t.id() == tab_id) else {
+            return false;
+        };
+        entry.tabs.remove(ix);
+        if entry.tabs.is_empty() {
+            entry.active = None;
+        } else if let Some(cur) = entry.active {
+            entry.active = Some(if cur >= entry.tabs.len() {
+                entry.tabs.len() - 1
+            } else if ix < cur {
+                cur - 1
+            } else {
+                cur
+            });
+        }
         true
     }
 
@@ -260,16 +286,33 @@ impl PaApp {
         }
     }
 
-    pub(crate) fn activate_right_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        let diff_active = self.right_sidebar.activate(index);
-        if diff_active {
-            self.refresh_diff(cx);
-        } else {
-            if matches!(self.open_popup, OpenPopup::DiffBaseBranchMenu) {
-                self.open_popup = OpenPopup::None;
+    /// Ensure the currently visible Right sidebar tab has live data loaded.
+    pub(crate) fn refresh_visible_right_tab(&mut self, cx: &mut Context<Self>) {
+        match self.right_sidebar.visible_active_tab().cloned() {
+            Some(RightTabKind::Diff) => self.refresh_diff(cx),
+            Some(RightTabKind::Subagent { active_session_id, .. }) => {
+                if matches!(self.open_popup, OpenPopup::DiffBaseBranchMenu) {
+                    self.open_popup = OpenPopup::None;
+                }
+                self.request_session_subagents();
+                self.request_subagent_messages(active_session_id, cx);
             }
-            cx.notify();
+            Some(RightTabKind::Shell { activity_id, .. }) => {
+                if matches!(self.open_popup, OpenPopup::DiffBaseBranchMenu) {
+                    self.open_popup = OpenPopup::None;
+                }
+                self.request_session_shells();
+                self.request_shell_tail(activity_id, cx);
+            }
+            None => {
+                cx.notify();
+            }
         }
+    }
+
+    pub(crate) fn activate_right_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        let _ = self.right_sidebar.activate(index);
+        self.refresh_visible_right_tab(cx);
     }
 
     pub(crate) fn close_right_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -282,13 +325,8 @@ impl PaApp {
             }
             self.settings.save();
             cx.notify();
-        } else if self.right_sidebar.is_diff_active() {
-            self.refresh_diff(cx);
         } else {
-            if matches!(self.open_popup, OpenPopup::DiffBaseBranchMenu) {
-                self.open_popup = OpenPopup::None;
-            }
-            cx.notify();
+            self.refresh_visible_right_tab(cx);
         }
     }
 
@@ -644,10 +682,29 @@ mod tests {
     fn close_by_id_removes_matching_tab_and_collapses_if_last() {
         let mut m = RightSidebarModel::new(false);
         m.set_session("s1");
-        m.open_tab(sub("c1", "worker"));
-        assert!(!m.close_by_id("sub:missing"));
-        assert!(m.close_by_id("sub:c1"));
+        let tab = sub("c1", "worker");
+        assert_eq!(tab.id(), "sub:sess-c1");
+        m.open_tab(tab.clone());
+        assert!(!m.close_by_id_in_session("s1", "sub:missing"));
+        assert!(m.close_by_id_in_session("s1", &tab.id()));
         assert!(!m.is_open());
         assert!(m.tabs().is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn visible_active_tab_and_cross_session_close_behave_cleanly() {
+        let mut m = RightSidebarModel::new(true);
+        m.set_session("s1");
+        let tab = sub("c1", "worker");
+        m.open_tab(tab.clone());
+        assert!(m.visible_active_tab().is_some());
+        assert!(!m.toggle_open());
+        assert!(m.visible_active_tab().is_none());
+        assert!(m.active_tab().is_some());
+
+        m.set_session("s2");
+        assert!(m.close_by_id_in_session("s1", &tab.id()));
+        m.set_session("s1");
+        assert_eq!(m.tabs(), &[RightTabKind::Diff]);
     }
 }

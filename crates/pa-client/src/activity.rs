@@ -75,100 +75,7 @@ pub fn running_subagents(
     active_session_id: &str,
     session_id: &str,
 ) -> usize {
-    let mut parents: Vec<(String, u64, Option<String>)> = [
-        roster_key("active", Some(active_session_id)),
-        roster_key("session", Some(session_id)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .into_iter()
-    .map(|key| (key, 0, None))
-    .collect();
-    if parents.is_empty() {
-        return 0;
-    }
-    let root_ids: std::collections::HashSet<String> =
-        parents.iter().map(|(key, _, _)| key.clone()).collect();
-    if let Some(root) = roster.iter().find(|entry| {
-        roster_summary(entry).is_some_and(|summary| {
-            roster_identity_keys(summary)
-                .iter()
-                .any(|key| root_ids.contains(key))
-        })
-    }) {
-        if let Some(summary) = roster_summary(root) {
-            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
-            let file = summary
-                .get("sessionFile")
-                .and_then(Value::as_str)
-                .filter(|path| !path.is_empty())
-                .map(normalize_session_path);
-            for parent in &mut parents {
-                parent.1 = depth;
-                parent.2.clone_from(&file);
-            }
-        }
-    }
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut running = 0;
-    let mut index = 0;
-    while index < parents.len() {
-        let (parent_key, parent_depth, parent_file) = parents[index].clone();
-        index += 1;
-        for entry in roster {
-            let Some(summary) = roster_summary(entry) else {
-                continue;
-            };
-            let identity = roster_identity_keys(summary);
-            if identity.iter().any(|key| root_ids.contains(key)) {
-                continue;
-            }
-            let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
-            let subagent = summary
-                .get("runtimeKind")
-                .and_then(Value::as_str)
-                .map_or(depth > 0, |kind| kind == "subagent");
-            if !subagent {
-                continue;
-            }
-            let matches_id = roster_parent_keys(summary)
-                .iter()
-                .any(|key| key == &parent_key);
-            let matches_path = parent_file.as_deref().is_some_and(|file| {
-                depth == parent_depth + 1
-                    && summary
-                        .get("parentSessionPath")
-                        .and_then(Value::as_str)
-                        .is_some_and(|path| normalize_session_path(path) == file)
-            });
-            if !matches_id && !matches_path {
-                continue;
-            }
-            let key = entry
-                .get("agentId")
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-                .map(str::to_string)
-                .or_else(|| identity.first().cloned())
-                .unwrap_or_else(|| format!("{parent_key}:{}", seen.len()));
-            if !seen.insert(key) {
-                continue;
-            }
-            if entry.get("status").and_then(Value::as_str) == Some("running") {
-                running += 1;
-            }
-            let file = summary
-                .get("sessionFile")
-                .and_then(Value::as_str)
-                .filter(|path| !path.is_empty())
-                .map(normalize_session_path);
-            for child_key in identity {
-                parents.push((child_key, depth, file.clone()));
-            }
-        }
-    }
-    running
+    subagent_counts(roster, active_session_id, session_id).running
 }
 
 /// How many heartbeats belong to one Session.
@@ -423,7 +330,7 @@ pub fn subagent_counts(
             };
             let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
             let subagent = summary
-                .get("sessionKind")
+                .get("runtimeKind")
                 .and_then(Value::as_str)
                 .map_or(depth > 0, |kind| kind == "subagent");
             if !subagent {
@@ -936,7 +843,7 @@ pub fn parse_session_subagents(
             };
             let depth = summary.get("rlmDepth").and_then(Value::as_u64).unwrap_or(0);
             let is_sub = summary
-                .get("sessionKind")
+                .get("runtimeKind")
                 .and_then(Value::as_str)
                 .map_or(depth > 0, |kind| kind == "subagent");
             if !is_sub {
@@ -1004,7 +911,11 @@ pub fn parse_session_subagents(
             };
 
             let child_id = enriched
-                .and_then(|c| c.get("rlmChildId").and_then(Value::as_str))
+                .and_then(|c| {
+                    c.get("id")
+                        .or_else(|| c.get("rlmChildId"))
+                        .and_then(Value::as_str)
+                })
                 .or_else(|| summary.get("rlmChildId").and_then(Value::as_str))
                 .unwrap_or_default()
                 .to_string();
@@ -1115,9 +1026,11 @@ pub fn parse_session_subagents(
 
     // Append any direct `get_rlm_children` entries not present in the live roster
     // (e.g., recently completed or cancelled direct children).
+    let mut extra_direct: Vec<SubagentItem> = Vec::new();
     for ch in children {
         let child_id = ch
-            .get("rlmChildId")
+            .get("id")
+            .or_else(|| ch.get("rlmChildId"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
@@ -1159,6 +1072,17 @@ pub fn parse_session_subagents(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        let model = ch
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let error_msg = ch
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         let activity = ch
             .get("progressNote")
             .and_then(Value::as_str)
@@ -1166,6 +1090,7 @@ pub fn parse_session_subagents(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .or_else(|| answer_preview.clone())
+            .or(error_msg)
             .unwrap_or_else(|| status.clone());
         let duration_ms = ch.get("durationMs").and_then(Value::as_u64);
         let stable_id = if !child_id.is_empty() {
@@ -1173,7 +1098,7 @@ pub fn parse_session_subagents(
         } else {
             active_id.clone()
         };
-        out.push(SubagentItem {
+        extra_direct.push(SubagentItem {
             id: stable_id,
             child_id,
             active_session_id: active_id,
@@ -1181,12 +1106,14 @@ pub fn parse_session_subagents(
             name,
             status,
             depth: 0,
-            model: String::new(),
+            model,
             activity,
             duration_ms,
             answer_preview,
         });
     }
+    extra_direct.sort_by_key(|s| !s.is_running());
+    out.extend(extra_direct);
 
     out
 }
@@ -1438,9 +1365,8 @@ mod tests {
                 "status": "running",
                 "summary": {
                     "activeSessionId": "c1",
-                    "sessionId": "u-c1",
-                    "sessionKind": "subagent",
-                    "rlmDepth": 1,
+                    "sessionId": "u1",
+                    "runtimeKind": "subagent",
                     "parentActiveSessionId": "root",
                     "parentSessionId": "u-root"
                 }
@@ -1450,11 +1376,22 @@ mod tests {
                 "status": "completed",
                 "summary": {
                     "activeSessionId": "c2",
-                    "sessionId": "u-c2",
-                    "sessionKind": "subagent",
+                    "sessionId": "u2",
+                    "runtimeKind": "subagent",
                     "rlmDepth": 2,
                     "parentActiveSessionId": "c1",
-                    "parentSessionId": "u-c1"
+                    "parentSessionId": "u1"
+                }
+            }),
+            json!({
+                "agentId": "top-level-ignored",
+                "status": "running",
+                "summary": {
+                    "activeSessionId": "top-level-ignored",
+                    "sessionId": "u-top",
+                    "runtimeKind": "top-level",
+                    "rlmDepth": 1,
+                    "parentActiveSessionId": "root"
                 }
             }),
             json!({
@@ -1463,9 +1400,9 @@ mod tests {
                 "summary": {
                     "activeSessionId": "other",
                     "sessionId": "u-other",
-                    "sessionKind": "subagent",
+                    "runtimeKind": "subagent",
                     "rlmDepth": 1,
-                    "parentActiveSessionId": "someone-else"
+                    "parentActiveSessionId": "unrelated-root"
                 }
             }),
         ];
@@ -1473,6 +1410,7 @@ mod tests {
             subagent_counts(&roster, "root", "u-root"),
             ChipCount::new(1, 2)
         );
+        assert_eq!(running_subagents(&roster, "root", "u-root"), 1);
     }
 
     #[test]
@@ -1485,7 +1423,7 @@ mod tests {
                     "activeSessionId": "c-done",
                     "sessionId": "u-done",
                     "sessionName": "audit-shells",
-                    "sessionKind": "subagent",
+                    "runtimeKind": "subagent",
                     "rlmDepth": 1,
                     "parentActiveSessionId": "root",
                     "parentSessionId": "u-root",
@@ -1499,8 +1437,7 @@ mod tests {
                     "activeSessionId": "c-run",
                     "sessionId": "u-run",
                     "sessionName": "audit-heartbeats",
-                    "sessionKind": "subagent",
-                    "rlmDepth": 1,
+                    "runtimeKind": "subagent",
                     "parentActiveSessionId": "root",
                     "parentSessionId": "u-root",
                     "modelId": "claude-sonnet-4"
@@ -1513,7 +1450,7 @@ mod tests {
                     "activeSessionId": "c-nested",
                     "sessionId": "u-nested",
                     "sessionName": "check-cron-tests",
-                    "sessionKind": "subagent",
+                    "runtimeKind": "subagent",
                     "rlmDepth": 2,
                     "parentActiveSessionId": "c-run",
                     "parentSessionId": "u-run",
@@ -1527,7 +1464,7 @@ mod tests {
                     "activeSessionId": "c-other",
                     "sessionId": "u-other",
                     "sessionName": "foreign-worker",
-                    "sessionKind": "subagent",
+                    "runtimeKind": "subagent",
                     "rlmDepth": 1,
                     "parentActiveSessionId": "other-root"
                 }
@@ -1535,7 +1472,7 @@ mod tests {
         ];
         let children = vec![
             json!({
-                "rlmChildId": "child-1",
+                "id": "child-1",
                 "activeSessionId": "c-run",
                 "sessionId": "u-run",
                 "sessionName": "audit-heartbeats",
@@ -1544,10 +1481,11 @@ mod tests {
                 "durationMs": 12_000
             }),
             json!({
-                "rlmChildId": "child-old",
+                "id": "child-old",
                 "activeSessionId": "c-old",
                 "sessionName": "finished-earlier",
                 "status": "cancelled",
+                "model": "claude-sonnet-4",
                 "answerPreview": "Cancelled by user",
                 "durationMs": 3_000
             }),
@@ -1564,7 +1502,10 @@ mod tests {
         assert_eq!(items[2].name, "audit-shells");
         assert_eq!(items[2].depth, 0);
         assert_eq!(items[3].name, "finished-earlier");
+        assert_eq!(items[3].child_id, "child-old");
+        assert_eq!(items[3].model, "claude-sonnet-4");
         assert_eq!(items[3].status, "cancelled");
+        assert!(items[3].can_manage());
         assert_eq!(subagent_items_counts(&items), ChipCount::new(2, 4));
     }
 

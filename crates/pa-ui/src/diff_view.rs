@@ -320,6 +320,7 @@ impl PaApp {
         let (key, cwd) = self.active_diff_target();
         if !self.right_sidebar.is_diff_active() {
             self.sync_repo_context(cx);
+            self.refresh_visible_right_tab(cx);
             return;
         }
         let scope = self.settings.diff_scope;

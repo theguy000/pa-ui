@@ -7,7 +7,7 @@
 Subagent Sessions are intentionally hidden from the Left sidebar, and a reader
 needs a lightweight way inside the desktop window to see running and recent
 subagents, heartbeats, and shells for the selected Session, control them, and
-inspect long transcripts or shell output without crowding the main conversation.
+inspect long transcripts or shell output without crowding the main Transcript.
 
 ## Solution
 

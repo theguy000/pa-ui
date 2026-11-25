@@ -251,6 +251,20 @@ impl PaApp {
                 cx.notify();
             }
         });
+        let sub_hb_sched = cx.subscribe_in(&hb_schedule_input, window, |this, _, ev: &InputEvent, _, cx| {
+            if matches!(ev, InputEvent::PressEnter { secondary: false, shift: false })
+                && this.activity_sheet.hb_editing()
+            {
+                this.submit_hb_editor(cx);
+            }
+        });
+        let sub_hb_prompt = cx.subscribe_in(&hb_prompt_input, window, |this, _, ev: &InputEvent, _, cx| {
+            if matches!(ev, InputEvent::PressEnter { secondary: false, shift: false })
+                && this.activity_sheet.hb_editing()
+            {
+                this.submit_hb_editor(cx);
+            }
+        });
 
         let daemon_task = cx.spawn(async move |weak_self, cx| {
             while let Ok(first) = ev_rx.recv().await {
@@ -453,6 +467,8 @@ impl PaApp {
                 sub_ws_new,
                 sub_br_new,
                 sub_h_search,
+                sub_hb_sched,
+                sub_hb_prompt,
             ],
             _daemon_task: daemon_task,
             _attach_task: attach_task,
@@ -491,8 +507,8 @@ impl PaApp {
             }
         }
         self.settings.save();
-        if self.right_sidebar.is_diff_active() {
-            self.refresh_diff(cx);
+        if now_open {
+            self.refresh_visible_right_tab(cx);
         } else {
             cx.notify();
         }
@@ -1665,12 +1681,28 @@ impl PaApp {
                 owner_session,
                 tab_id,
             } => {
-                if self.roster.active_id() == Some(owner_session.as_str())
-                    && self.right_sidebar.close_by_id(&tab_id)
+                if self
+                    .right_sidebar
+                    .close_by_id_in_session(&owner_session, &tab_id)
+                    && self.roster.active_id() == Some(owner_session.as_str())
                 {
                     self.settings.right_open = self.right_sidebar.is_open();
                     self.settings.save();
                 }
+            }
+            DaemonEvent::ActivityError {
+                session,
+                message,
+                clear_tail,
+                clear_subagent,
+            } => {
+                self.dev_errors.push("activity", message.clone());
+                self.activity_sheet.apply_activity_error(
+                    &session,
+                    message,
+                    clear_tail.as_deref(),
+                    clear_subagent.as_deref(),
+                );
             }
             DaemonEvent::LiveFrame(frame) => {
                 self.handle_live_frame(&frame, cx);
@@ -1728,7 +1760,7 @@ impl PaApp {
             if !self.roster.is_draft_or_empty() {
                 self.request_session_subagents();
                 if let Some(RightTabKind::Subagent { active_session_id, .. }) =
-                    self.right_sidebar.active_tab().cloned()
+                    self.right_sidebar.visible_active_tab().cloned()
                 {
                     self.request_subagent_messages(active_session_id, cx);
                 }
@@ -1866,15 +1898,11 @@ impl PaApp {
                     self.composer_model.set_busy_label("Waiting", false);
                 }
                 self.schedule_debounced_diff_refresh(cx);
-                if self.activity_sheet.open_tab() == Some(ActivityTab::Shells)
-                    || matches!(self.right_sidebar.active_tab(), Some(RightTabKind::Shell { .. }))
+                self.request_session_shells();
+                if let Some(RightTabKind::Shell { activity_id, .. }) =
+                    self.right_sidebar.visible_active_tab().cloned()
                 {
-                    self.request_session_shells();
-                    if let Some(RightTabKind::Shell { activity_id, .. }) =
-                        self.right_sidebar.active_tab().cloned()
-                    {
-                        self.request_shell_tail(activity_id, cx);
-                    }
+                    self.request_shell_tail(activity_id, cx);
                 }
             }
             "auto_retry_start" => {
@@ -1989,6 +2017,19 @@ impl PaApp {
                 self.sync_stop_target(cx);
                 if let Some(sid) = self.roster.active_id().map(str::to_string) {
                     let _ = self.bridge.tx.send(DaemonCmd::ReloadTranscript(sid));
+                }
+                if self.activity_sheet.open_tab() == Some(ActivityTab::Shells)
+                    || matches!(
+                        self.right_sidebar.visible_active_tab(),
+                        Some(RightTabKind::Shell { .. })
+                    )
+                {
+                    self.request_session_shells();
+                    if let Some(RightTabKind::Shell { activity_id, .. }) =
+                        self.right_sidebar.visible_active_tab().cloned()
+                    {
+                        self.request_shell_tail(activity_id, cx);
+                    }
                 }
                 self.schedule_debounced_diff_refresh(cx);
             }

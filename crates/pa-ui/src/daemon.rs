@@ -287,6 +287,12 @@ pub enum DaemonEvent {
         owner_session: String,
         tab_id: String,
     },
+    ActivityError {
+        session: String,
+        message: String,
+        clear_tail: Option<String>,
+        clear_subagent: Option<String>,
+    },
     LiveFrame(Value),
     Error(String),
 }
@@ -341,6 +347,28 @@ fn drain_and_coalesce(cmd_rx: &Receiver<DaemonCmd>, queue: &mut VecDeque<DaemonC
                 if !queue.iter().any(|c| matches!(c, DaemonCmd::RefreshSessions)) {
                     queue.push_back(cmd);
                 }
+            }
+            DaemonCmd::LoadSessionHeartbeats { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionHeartbeats { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSessionShells { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionShells { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSessionSubagents { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionSubagents { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::TailKernelShell { ref activity_id, .. } => {
+                let target = activity_id.clone();
+                queue.retain(|c| !matches!(c, DaemonCmd::TailKernelShell { activity_id: id, .. } if id == &target));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSubagentMessages { ref subagent_active_session_id, .. } => {
+                let target = subagent_active_session_id.clone();
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSubagentMessages { subagent_active_session_id: id, .. } if id == &target));
+                queue.push_back(cmd);
             }
             other => queue.push_back(other),
         }
@@ -1431,7 +1459,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             });
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::SetHeartbeat {
@@ -1460,7 +1493,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             }
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::ManageHeartbeat {
@@ -1487,7 +1525,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             }
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::LoadSessionShells { active_session_id } => {
@@ -1499,7 +1542,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                 });
                             }
                             Err(err) => {
-                                let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                                let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                    session: active_session_id,
+                                    message: err.to_string(),
+                                    clear_tail: None,
+                                    clear_subagent: None,
+                                });
                             }
                         }
                     }
@@ -1521,7 +1569,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             });
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: Some(activity_id),
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::KillKernelShell {
@@ -1555,9 +1608,14 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             }
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: Some(activity_id),
+                                clear_subagent: None,
+                            });
                         }
-                    }
+                    },
                     DaemonCmd::LoadSessionSubagents {
                         active_session_id,
                         session_id,
@@ -1573,7 +1631,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             });
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::LoadSubagentMessages {
@@ -1591,7 +1654,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             });
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: Some(subagent_active_session_id),
+                            });
                         }
                     },
                     DaemonCmd::CancelSubagent {
@@ -1617,7 +1685,12 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             }
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     },
                     DaemonCmd::DeleteSubagent {
@@ -1648,12 +1721,20 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             }
                         }
                         Ok(false) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(
-                                "Subagent could not be deleted while running".into(),
-                            ));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: "Subagent could not be deleted while running".into(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                         Err(err) => {
-                            let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     }
                 }

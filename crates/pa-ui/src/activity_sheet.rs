@@ -227,6 +227,28 @@ impl ActivitySheetModel {
         self.notice = Some((ok, msg));
     }
 
+    /// Surface an activity-scoped error without touching main transcript streaming,
+    /// clearing any stranded loading flag for the failed tail/transcript request.
+    pub(crate) fn apply_activity_error(
+        &mut self,
+        session_id: &str,
+        message: String,
+        clear_tail: Option<&str>,
+        clear_subagent: Option<&str>,
+    ) -> bool {
+        if self.session_id != session_id {
+            return false;
+        }
+        if clear_tail.is_some() && self.tail_loading.as_deref() == clear_tail {
+            self.tail_loading = None;
+        }
+        if clear_subagent.is_some() && self.subagent_loading.as_deref() == clear_subagent {
+            self.subagent_loading = None;
+        }
+        self.notice = Some((false, message));
+        true
+    }
+
     /// Apply Session-scoped subagents only if `session_id` still matches.
     pub(crate) fn apply_subagents(&mut self, session_id: &str, items: Vec<SubagentItem>) -> bool {
         if self.session_id != session_id {
@@ -372,7 +394,7 @@ fn status_dot_spec(p: &PaPalette, status: &str, exit_code: Option<i64>) -> (Stri
     match status {
         "running" | "active" => (format!("● {status}"), p.tag_idle),
         "paused" => ("◐ paused".to_string(), p.working),
-        "cancelled" => ("● cancelled".to_string(), p.danger),
+        "cancelled" | "error" | "failed" => (format!("● {status}"), p.danger),
         _ if exit_code.is_some_and(|c| c != 0) => (
             format!("● exit {}", exit_code.unwrap_or(1)),
             p.danger,
@@ -632,7 +654,7 @@ impl PaApp {
                     .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
-                        this.activity_sheet.close();
+                        this.activity_sheet.handle_escape();
                         cx.notify();
                     }))
                     .child("esc"),
@@ -1126,10 +1148,9 @@ impl PaApp {
                 };
 
                 let mut box_el = v_flex()
-                    .id("act-sh-detail-scroll")
+                    .id("act-sh-detail")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scrollbar()
                     .pb(px(6.))
                     .gap(px(4.))
                     .child(
@@ -1164,10 +1185,11 @@ impl PaApp {
                     .child(
                         div()
                             .id("act-sh-tail-preview")
+                            .flex_1()
+                            .min_h(px(48.))
                             .mx(px(12.))
                             .pl(px(10.))
                             .py(px(5.))
-                            .max_h(px(92.))
                             .overflow_y_scrollbar()
                             .border_l_2()
                             .border_color(p.composer_edge)
@@ -1450,10 +1472,9 @@ impl PaApp {
                 .id();
 
                 let mut box_el = v_flex()
-                    .id("act-sub-detail-scroll")
+                    .id("act-sub-detail")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scrollbar()
                     .pb(px(6.))
                     .gap(px(4.))
                     .child(
@@ -1487,10 +1508,11 @@ impl PaApp {
                     .child(
                         div()
                             .id("act-sub-preview")
+                            .flex_1()
+                            .min_h(px(48.))
                             .mx(px(12.))
                             .pl(px(10.))
                             .py(px(5.))
-                            .max_h(px(92.))
                             .overflow_y_scrollbar()
                             .border_l_2()
                             .border_color(p.composer_edge)
@@ -1909,7 +1931,8 @@ impl PaApp {
                                 .text_size(px(11.5))
                                 .text_color(p.danger)
                                 .hover(move |s| s.bg(p.danger_surface))
-                                .on_click(cx.listener(move |this, _, _, _| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
                                     if let Some(row) = this.roster.active_session() {
                                         let _ = this.bridge.tx.send(DaemonCmd::CancelSubagent {
                                             owner_session_id: row.id.clone(),
@@ -1936,7 +1959,8 @@ impl PaApp {
                                 .text_size(px(11.5))
                                 .text_color(p.danger)
                                 .hover(move |s| s.bg(p.danger_surface))
-                                .on_click(cx.listener(move |this, _, _, _| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
                                     if let Some(row) = this.roster.active_session() {
                                         let _ = this.bridge.tx.send(DaemonCmd::DeleteSubagent {
                                             owner_session_id: row.id.clone(),
@@ -2260,5 +2284,23 @@ mod tests {
         assert!(!m.apply_subagents("s1", vec![sample_sub("c1", "running")]));
         assert!(!m.apply_subagent_messages("s1", "sess-c1".into(), Vec::new()));
         assert!(m.subagents().is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn activity_error_clears_loading_and_rejects_stale_session() {
+        let mut m = ActivitySheetModel::new();
+        m.set_session("s1");
+        m.mark_tail_loading("sh-1");
+        m.mark_subagent_loading("sess-c1");
+        assert!(!m.apply_activity_error("s2", "stale".into(), Some("sh-1"), None));
+        assert!(m.is_tail_loading("sh-1"));
+        assert!(m.apply_activity_error(
+            "s1",
+            "tail failed".into(),
+            Some("sh-1"),
+            Some("sess-c1"),
+        ));
+        assert!(!m.is_tail_loading("sh-1"));
+        assert!(!m.is_subagent_loading("sess-c1"));
     }
 }
