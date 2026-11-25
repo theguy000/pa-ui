@@ -2,12 +2,21 @@ use crate::app::PaApp;
 use crate::daemon::DaemonCmd;
 use crate::right_sidebar::RightTabKind;
 use crate::theme::PaPalette;
-use gpui_kit::component::{h_flex, input::Input, scroll::ScrollableElement as _, v_flex};
+use crate::transcript::{
+    build_items, format_expanded_body, hydrate_markdown, ItemKind, TranscriptItem,
+};
+use gpui_kit::component::{
+    h_flex, input::Input, scroll::ScrollableElement as _, text::TextViewState, v_flex, Icon,
+    IconName,
+};
 use gpui_kit::{prelude::FluentBuilder as _, *};
-use pa_client::{ChipCount, HeartbeatItem, ShellActivityItem, SubagentItem, SubagentMessagePreview};
-use std::collections::HashMap;
+use pa_client::{ChipCount, HeartbeatItem, ShellActivityItem, SubagentItem};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) const SHELL_TAIL_LINES: u32 = 120;
+const SUBAGENT_ITEM_ID_BASE: usize = 1_000_000;
+const SUBAGENT_ITEM_ID_STRIDE: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivityTab {
@@ -28,7 +37,7 @@ impl ActivityTab {
 
 /// Pure state model for the Style B TUI Composer Sheet attached to the top of
 /// the composer card, plus cached Session-scoped activity items and shell tails.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct ActivitySheetModel {
     session_id: String,
     open_tab: Option<ActivityTab>,
@@ -37,7 +46,8 @@ pub(crate) struct ActivitySheetModel {
     hb_editing: bool,
     hb_delivery_mode: String,
     subagents: Vec<SubagentItem>,
-    subagent_messages: HashMap<String, Vec<SubagentMessagePreview>>,
+    subagent_items: HashMap<String, Vec<TranscriptItem>>,
+    subagent_slots: Vec<String>,
     subagent_loading: Option<String>,
     heartbeats: Vec<HeartbeatItem>,
     shells: Vec<ShellActivityItem>,
@@ -85,8 +95,23 @@ impl ActivitySheetModel {
         })
     }
 
-    pub(crate) fn subagent_messages(&self, subagent_session_id: &str) -> Option<&[SubagentMessagePreview]> {
-        self.subagent_messages.get(subagent_session_id).map(Vec::as_slice)
+    pub(crate) fn subagent_items(&self, subagent_session_id: &str) -> Option<&[TranscriptItem]> {
+        self.subagent_items.get(subagent_session_id).map(Vec::as_slice)
+    }
+
+    fn subagent_id_base(&mut self, subagent_session_id: &str) -> usize {
+        let slot = if let Some(ix) = self
+            .subagent_slots
+            .iter()
+            .position(|id| id == subagent_session_id)
+        {
+            ix
+        } else {
+            let ix = self.subagent_slots.len();
+            self.subagent_slots.push(subagent_session_id.to_string());
+            ix
+        };
+        SUBAGENT_ITEM_ID_BASE + slot * SUBAGENT_ITEM_ID_STRIDE
     }
 
     pub(crate) fn is_subagent_loading(&self, subagent_session_id: &str) -> bool {
@@ -132,7 +157,8 @@ impl ActivitySheetModel {
         self.hb_editing = false;
         self.hb_delivery_mode = "steer".to_string();
         self.subagents.clear();
-        self.subagent_messages.clear();
+        self.subagent_items.clear();
+        self.subagent_slots.clear();
         self.subagent_loading = None;
         self.heartbeats.clear();
         self.shells.clear();
@@ -270,21 +296,80 @@ impl ActivitySheetModel {
         true
     }
 
-    /// Apply read-only subagent messages only if `owner_session_id` still matches.
-    pub(crate) fn apply_subagent_messages(
+    /// Build and store real Transcript items for a Subagent Session only if
+    /// `owner_session_id` still matches, preserving expanded tool cards.
+    pub(crate) fn apply_subagent_raw_messages(
         &mut self,
         owner_session_id: &str,
         subagent_session_id: String,
-        messages: Vec<SubagentMessagePreview>,
+        raw_messages: &[Value],
+        cx: &mut App,
     ) -> bool {
-        if self.session_id != owner_session_id {
+        let Some(mut items) = self.build_subagent_items_unhydrated(
+            owner_session_id,
+            &subagent_session_id,
+            raw_messages,
+        ) else {
             return false;
+        };
+        for item in &mut items {
+            hydrate_markdown(item, cx);
+            if item.expanded && item.body_md.is_none() && !item.raw_body.is_empty() {
+                let formatted = format_expanded_body(item);
+                item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
+            }
         }
-        if self.subagent_loading.as_deref() == Some(subagent_session_id.as_str()) {
+        self.subagent_items.insert(subagent_session_id, items);
+        true
+    }
+
+    fn build_subagent_items_unhydrated(
+        &mut self,
+        owner_session_id: &str,
+        subagent_session_id: &str,
+        raw_messages: &[Value],
+    ) -> Option<Vec<TranscriptItem>> {
+        if self.session_id != owner_session_id {
+            return None;
+        }
+        if self.subagent_loading.as_deref() == Some(subagent_session_id) {
             self.subagent_loading = None;
         }
-        self.subagent_messages.insert(subagent_session_id, messages);
-        true
+        let expanded_fps: HashSet<u64> = self
+            .subagent_items
+            .get(subagent_session_id)
+            .map(|prev| {
+                prev.iter()
+                    .filter(|i| i.expanded)
+                    .map(|i| i.fingerprint)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let id_base = self.subagent_id_base(subagent_session_id);
+        let mut items = build_items(raw_messages);
+        for (ix, item) in items.iter_mut().enumerate() {
+            item.id = id_base + ix;
+            item.fingerprint = item.compute_fingerprint();
+            if expanded_fps.contains(&item.fingerprint) {
+                item.expanded = true;
+            }
+        }
+        Some(items)
+    }
+
+    /// Expand or collapse a tool/thinking card inside a Right sidebar Subagent sheet.
+    pub(crate) fn toggle_subagent_item(&mut self, id: usize, cx: &mut App) -> bool {
+        for items in self.subagent_items.values_mut() {
+            if let Some(item) = items.iter_mut().find(|i| i.id == id) {
+                item.expanded = !item.expanded;
+                if item.expanded && item.body_md.is_none() && !item.raw_body.is_empty() {
+                    let formatted = format_expanded_body(item);
+                    item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
+                }
+                return true;
+            }
+        }
+        false
     }
 
     /// Apply Session-scoped heartbeats only if `session_id` still matches the
@@ -388,6 +473,22 @@ fn truncate_tab_title(cmd: &str, max_chars: usize) -> String {
         let prefix: String = clean.chars().take(max_chars.saturating_sub(1)).collect();
         format!("{prefix}…")
     }
+}
+
+/// Extract the last `limit` assistant/error text responses for the subagent
+/// drill-in preview in the composer sheet.
+pub(crate) fn recent_subagent_responses(items: &[TranscriptItem], limit: usize) -> Vec<String> {
+    let mut responses: Vec<String> = items
+        .iter()
+        .filter(|item| matches!(item.kind, ItemKind::Assistant | ItemKind::Error))
+        .map(|item| item.raw_body.trim())
+        .filter(|body| !body.is_empty())
+        .map(str::to_string)
+        .collect();
+    if responses.len() > limit {
+        responses = responses.split_off(responses.len() - limit);
+    }
+    responses
 }
 
 fn status_dot_spec(p: &PaPalette, status: &str, exit_code: Option<i64>) -> (String, Hsla) {
@@ -585,33 +686,45 @@ impl PaApp {
             ActivityTab::Shells => sh_c,
         };
         let (disp_num, is_live) = metric.display_value();
-        let drill = self.activity_sheet.drill_id();
+        let show_back = self.activity_sheet.drill_id().is_some()
+            || self.activity_sheet.hb_editing();
 
         let header = h_flex()
             .w_full()
-            .h(px(28.))
+            .h(px(32.))
             .px(px(12.))
             .gap(px(8.))
             .items_center()
-            .child(if drill.is_some() {
+            .child(if show_back {
                 h_flex()
                     .id("act-sheet-back")
-                    .gap(px(6.))
+                    .h(px(22.))
+                    .pl(px(5.))
+                    .pr(px(8.))
+                    .gap(px(3.))
                     .items_center()
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(p.sidebar_group_edge)
+                    .bg(p.sidebar_row_selected.opacity(0.55))
                     .cursor_pointer()
-                    .rounded(px(4.))
-                    .px(px(4.))
                     .hover(move |s| s.bg(p.sidebar_row_hover))
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
-                        this.activity_sheet.back();
+                        this.activity_sheet.handle_escape();
                         cx.notify();
                     }))
                     .child(
+                        Icon::new(IconName::ChevronLeft)
+                            .size(px(12.))
+                            .text_color(p.quiet_ink),
+                    )
+                    .child(
                         div()
                             .text_size(px(11.5))
-                            .text_color(p.quiet_ink)
-                            .child("← back"),
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.ink)
+                            .child("Back"),
                     )
                     .into_any_element()
             } else {
@@ -641,24 +754,7 @@ impl PaApp {
                         .text_color(if *ok { p.tag_idle } else { p.danger })
                         .child(msg.clone()),
                 )
-            })
-            .child(
-                div()
-                    .id("act-sheet-close")
-                    .px(px(5.))
-                    .py(px(2.))
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .text_size(px(11.))
-                    .text_color(p.quiet_ink)
-                    .hover(move |s| s.bg(p.sidebar_row_hover).text_color(p.ink))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.activity_sheet.handle_escape();
-                        cx.notify();
-                    }))
-                    .child("esc"),
-            );
+            });
 
         let body: AnyElement = match tab {
             ActivityTab::Heartbeats => self.render_heartbeats_sheet_body(cx),
@@ -684,7 +780,6 @@ impl PaApp {
         &self,
         id: &'static str,
         label: &'static str,
-        description: &'static str,
         danger: bool,
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
@@ -708,15 +803,6 @@ impl PaApp {
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(if danger { p.danger } else { p.ink })
                     .child(label),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(11.5))
-                    .text_color(p.quiet_ink)
-                    .child(description),
             )
             .into_any_element()
     }
@@ -877,18 +963,12 @@ impl PaApp {
 
                 let toggle_action = if is_active { "pause" } else { "resume" };
                 let toggle_label = if is_active { "Pause" } else { "Resume" };
-                let toggle_desc = if is_active {
-                    "Pause scheduled firing without deleting"
-                } else {
-                    "Resume scheduled firing"
-                };
 
                 box_el = box_el
                     .child(div().h(px(4.)))
                     .child(self.render_tui_action_row(
                         "act-hb-toggle",
                         toggle_label,
-                        toggle_desc,
                         false,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -908,7 +988,6 @@ impl PaApp {
                     box_el = box_el.child(self.render_tui_action_row(
                         "act-hb-edit-act",
                         "Edit",
-                        "Update schedule, delivery mode, or instruction",
                         false,
                         |this, _, window, cx| {
                             cx.stop_propagation();
@@ -921,7 +1000,6 @@ impl PaApp {
                 box_el = box_el.child(self.render_tui_action_row(
                     "act-hb-stop",
                     "Stop",
-                    "Cancel and remove this heartbeat",
                     true,
                     move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -1084,12 +1162,6 @@ impl PaApp {
                     .items_center()
                     .border_t_1()
                     .border_color(p.sidebar_group_edge)
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child("click row to inspect · esc close"),
-                    )
                     .child(div().flex_1())
                     .child(
                         div()
@@ -1200,7 +1272,6 @@ impl PaApp {
                     .child(self.render_tui_action_row(
                         "act-sh-open-rs",
                         "Open in Right sidebar",
-                        "Keep full tail output open side by side",
                         false,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1215,7 +1286,6 @@ impl PaApp {
                     .child(self.render_tui_action_row(
                         "act-sh-refresh",
                         "Refresh tail",
-                        "Fetch latest output lines",
                         false,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1228,7 +1298,6 @@ impl PaApp {
                     box_el = box_el.child(self.render_tui_action_row(
                         "act-sh-kill",
                         "Kill",
-                        "Terminate running shell (SIGTERM → SIGKILL)",
                         true,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1376,12 +1445,6 @@ impl PaApp {
                     .items_center()
                     .border_t_1()
                     .border_color(p.sidebar_group_edge)
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child("click row to inspect tail · esc close"),
-                    )
                     .child(div().flex_1())
                     .child(
                         div()
@@ -1426,35 +1489,25 @@ impl PaApp {
                     sub.model.clone()
                 };
 
-                let preview_text = if self.activity_sheet.is_subagent_loading(&sub.active_session_id)
-                    && self
-                        .activity_sheet
-                        .subagent_messages(&sub.active_session_id)
-                        .is_none()
+                let responses: Vec<String> = if let Some(items) =
+                    self.activity_sheet.subagent_items(&sub.active_session_id)
                 {
-                    "Loading transcript…".to_string()
-                } else if let Some(msgs) =
-                    self.activity_sheet.subagent_messages(&sub.active_session_id)
-                {
-                    if msgs.is_empty() {
-                        sub.answer_preview
+                    let recent = recent_subagent_responses(items, 3);
+                    if recent.is_empty() {
+                        vec![sub
+                            .answer_preview
                             .clone()
-                            .unwrap_or_else(|| sub.activity.clone())
+                            .unwrap_or_else(|| sub.activity.clone())]
                     } else {
-                        msgs.iter()
-                            .rev()
-                            .take(4)
-                            .collect::<Vec<_>>()
-                            .into_iter()
-                            .rev()
-                            .map(|m| format!("[{}] {}", m.role, m.text))
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                        recent
                     }
+                } else if self.activity_sheet.is_subagent_loading(&sub.active_session_id) {
+                    vec!["Loading responses…".to_string()]
                 } else {
-                    sub.answer_preview
+                    vec![sub
+                        .answer_preview
                         .clone()
-                        .unwrap_or_else(|| sub.activity.clone())
+                        .unwrap_or_else(|| sub.activity.clone())]
                 };
 
                 let open_active = sub_active.clone();
@@ -1506,24 +1559,29 @@ impl PaApp {
                             ),
                     )
                     .child(
-                        div()
+                        v_flex()
                             .id("act-sub-preview")
                             .flex_1()
-                            .min_h(px(48.))
+                            .min_h(px(56.))
                             .mx(px(12.))
-                            .pl(px(10.))
-                            .py(px(5.))
                             .overflow_y_scrollbar()
-                            .border_l_2()
-                            .border_color(p.composer_edge)
-                            .text_size(px(11.5))
-                            .text_color(p.ink)
-                            .child(preview_text),
+                            .gap(px(6.))
+                            .children(responses.into_iter().enumerate().map(|(ix, resp)| {
+                                div()
+                                    .id(("act-sub-resp", ix))
+                                    .pl(px(10.))
+                                    .py(px(3.))
+                                    .border_l_2()
+                                    .border_color(p.composer_edge)
+                                    .text_size(px(11.5))
+                                    .line_height(px(16.))
+                                    .text_color(p.ink)
+                                    .child(resp)
+                            })),
                     )
                     .child(self.render_tui_action_row(
                         "act-sub-open-rs",
                         "Open in Right sidebar",
-                        "Watch read-only transcript alongside this session",
                         false,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1541,7 +1599,6 @@ impl PaApp {
                     box_el = box_el.child(self.render_tui_action_row(
                         "act-sub-stop",
                         "Stop",
-                        "Abort subagent and record \"Cancelled by user\"",
                         true,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1560,7 +1617,6 @@ impl PaApp {
                     box_el = box_el.child(self.render_tui_action_row(
                         "act-sub-delete",
                         "Delete",
-                        "Remove inactive subagent from this session",
                         true,
                         move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -1717,12 +1773,6 @@ impl PaApp {
                     .items_center()
                     .border_t_1()
                     .border_color(p.sidebar_group_edge)
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(p.sidebar_group_empty_ink)
-                            .child("click row to inspect · esc close"),
-                    )
                     .child(div().flex_1())
                     .child(
                         div()
@@ -1794,9 +1844,9 @@ impl PaApp {
         }
         .id();
 
-        let msgs = self
+        let items = self
             .activity_sheet
-            .subagent_messages(subagent_active_session_id);
+            .subagent_items(subagent_active_session_id);
         let loading = self
             .activity_sheet
             .is_subagent_loading(subagent_active_session_id);
@@ -1807,40 +1857,15 @@ impl PaApp {
             .min_h_0()
             .w_full()
             .overflow_y_scrollbar()
-            .p(px(12.))
+            .px(px(14.))
+            .py(px(12.))
             .gap(px(10.))
             .bg(p.transcript_surface);
 
-        match msgs {
+        match items {
             Some(list) if !list.is_empty() => {
-                for (ix, m) in list.iter().enumerate() {
-                    transcript_col = transcript_col.child(
-                        v_flex()
-                            .id(("rs-sub-msg", ix))
-                            .w_full()
-                            .pl(px(10.))
-                            .py(px(5.))
-                            .gap(px(3.))
-                            .border_l_2()
-                            .border_color(if m.role == "task" {
-                                p.working
-                            } else {
-                                p.composer_edge
-                            })
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(p.sidebar_group_empty_ink)
-                                    .child(m.role.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .line_height(px(18.))
-                                    .text_color(p.ink)
-                                    .child(m.text.clone()),
-                            ),
-                    );
+                for item in list {
+                    transcript_col = transcript_col.child(self.render_item(item, cx));
                 }
             }
             _ => {
@@ -1976,17 +2001,6 @@ impl PaApp {
                     }),
             )
             .child(transcript_col)
-            .child(
-                div()
-                    .w_full()
-                    .px(px(12.))
-                    .py(px(6.))
-                    .border_t_1()
-                    .border_color(p.sidebar_group_edge)
-                    .text_size(px(11.))
-                    .text_color(p.sidebar_group_empty_ink)
-                    .child("read-only · subagents are controlled by the parent agent"),
-            )
             .into_any_element()
     }
 
@@ -2265,15 +2279,32 @@ mod tests {
         assert!(m.apply_subagents("s1", vec![sample_sub("c1", "running")]));
         m.drill_into(0, "c1".into());
         assert_eq!(m.drill_id(), Some("c1"));
-        assert!(m.apply_subagent_messages(
-            "s1",
-            "sess-c1".into(),
-            vec![SubagentMessagePreview {
-                role: "task".into(),
-                text: "Audit".into(),
-            }],
-        ));
-        assert_eq!(m.subagent_messages("sess-c1").map(<[_]>::len), Some(1));
+        let raw = vec![
+            serde_json::json!({"role": "user", "content": "Audit cron tests"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "First response"},
+                    {"type": "toolCall", "id": "tc1", "name": "python_repl", "arguments": {"code": "print(1)"}}
+                ]
+            }),
+            serde_json::json!({
+                "role": "toolResult",
+                "toolCallId": "tc1",
+                "toolName": "python_repl",
+                "content": [{"type": "text", "text": "1"}]
+            }),
+            serde_json::json!({"role": "assistant", "content": [{"type": "text", "text": "Final response"}]}),
+        ];
+        let built = m
+            .build_subagent_items_unhydrated("s1", "sess-c1", &raw)
+            .expect("matching session builds items");
+        assert!(built.iter().all(|i| i.id >= SUBAGENT_ITEM_ID_BASE));
+        assert!(built.iter().any(|i| i.kind == ItemKind::ToolCall));
+        assert_eq!(
+            recent_subagent_responses(&built, 3),
+            vec!["First response".to_string(), "Final response".to_string()]
+        );
 
         // Removing the drilled subagent drops drill-in cleanly.
         assert!(m.apply_subagents("s1", Vec::new()));
@@ -2282,7 +2313,7 @@ mod tests {
         // Switching to s2 rejects stale s1 subagent payloads.
         m.set_session("s2");
         assert!(!m.apply_subagents("s1", vec![sample_sub("c1", "running")]));
-        assert!(!m.apply_subagent_messages("s1", "sess-c1".into(), Vec::new()));
+        assert!(m.build_subagent_items_unhydrated("s1", "sess-c1", &raw).is_none());
         assert!(m.subagents().is_empty());
     }
 

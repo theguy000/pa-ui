@@ -1667,13 +1667,14 @@ impl PaApp {
             DaemonEvent::SubagentMessagesLoaded {
                 owner_session,
                 subagent_session,
-                messages,
+                raw_messages,
             } => {
                 if self.roster.active_id() == Some(owner_session.as_str()) {
-                    self.activity_sheet.apply_subagent_messages(
+                    self.activity_sheet.apply_subagent_raw_messages(
                         &owner_session,
                         subagent_session,
-                        messages,
+                        &raw_messages,
+                        cx,
                     );
                 }
             }
@@ -2054,6 +2055,8 @@ impl PaApp {
                 item.body_md = Some(cx.new(|cx| TextViewState::markdown(&formatted, cx)));
             }
             self.list_state.remeasure_items(ix..ix + 1);
+            cx.notify();
+        } else if self.activity_sheet.toggle_subagent_item(id, cx) {
             cx.notify();
         }
     }

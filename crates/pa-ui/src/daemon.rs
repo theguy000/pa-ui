@@ -2,8 +2,8 @@ use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use pa_client::{
     BranchInfo, ChipCount, Client, HarnessEntryWire, HarnessKindWire, HarnessScopeWire,
     HeartbeatItem, ModelEntry, RefinementHistoryItemWire, SessionExtra, SessionRow,
-    SessionState, SessionStats, ShellActivityItem, SubagentItem, SubagentMessagePreview,
-    WorkspaceBinding, WorkspaceRecord, WorktreeInfo,
+    SessionState, SessionStats, ShellActivityItem, SubagentItem, WorkspaceBinding,
+    WorkspaceRecord, WorktreeInfo,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -281,7 +281,7 @@ pub enum DaemonEvent {
     SubagentMessagesLoaded {
         owner_session: String,
         subagent_session: String,
-        messages: Vec<SubagentMessagePreview>,
+        raw_messages: Vec<Value>,
     },
     SubagentDeleted {
         owner_session: String,
@@ -1642,15 +1642,15 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                     DaemonCmd::LoadSubagentMessages {
                         owner_session_id,
                         subagent_active_session_id,
-                    } => match pa_client::fetch_subagent_messages(
+                    } => match pa_client::fetch_subagent_raw_messages(
                         &client,
                         &subagent_active_session_id,
                     ) {
-                        Ok(messages) => {
+                        Ok(raw_messages) => {
                             let _ = ev_tx.try_send(DaemonEvent::SubagentMessagesLoaded {
                                 owner_session: owner_session_id,
                                 subagent_session: subagent_active_session_id,
-                                messages,
+                                raw_messages,
                             });
                         }
                         Err(err) => {

@@ -1198,7 +1198,19 @@ pub fn list_session_subagents(
     ))
 }
 
-/// Fetch read-only transcript messages for a Subagent Session (`get_messages`).
+/// Fetch raw read-only transcript messages for a Subagent Session (`get_messages`)
+/// so the UI can render the full Transcript sheet (including tool calls and results).
+///
+/// # Errors
+/// Fails on transport or daemon error.
+pub fn fetch_subagent_raw_messages(
+    client: &Client,
+    subagent_active_session_id: &str,
+) -> std::io::Result<Vec<Value>> {
+    crate::get_messages_within(client, subagent_active_session_id, Duration::from_secs(5))
+}
+
+/// Fetch compact read-only transcript message previews for a Subagent Session.
 ///
 /// # Errors
 /// Fails on transport or daemon error.
@@ -1206,7 +1218,7 @@ pub fn fetch_subagent_messages(
     client: &Client,
     subagent_active_session_id: &str,
 ) -> std::io::Result<Vec<SubagentMessagePreview>> {
-    let raw = crate::get_messages_within(client, subagent_active_session_id, Duration::from_secs(5))?;
+    let raw = fetch_subagent_raw_messages(client, subagent_active_session_id)?;
     Ok(extract_subagent_messages(&raw))
 }
 
