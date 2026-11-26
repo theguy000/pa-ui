@@ -835,7 +835,7 @@ pub fn list_branches(worktree_path: &Path) -> Result<Vec<BranchInfo>> {
         worktree_path,
         &[
             "branch",
-            "--format=%(HEAD)\t%(refname:short)\t%(worktreepath)",
+            "--format=%(refname:short)\t%(HEAD)\t%(worktreepath)",
         ],
     )?;
     let mut out = Vec::new();
@@ -844,8 +844,8 @@ pub fn list_branches(worktree_path: &Path) -> Result<Vec<BranchInfo>> {
             continue;
         }
         let mut parts = line.split('\t');
-        let head = parts.next().unwrap_or("").trim();
         let name = parts.next().unwrap_or("").trim().to_owned();
+        let head = parts.next().unwrap_or("").trim();
         let wt = parts
             .next()
             .map(str::trim)

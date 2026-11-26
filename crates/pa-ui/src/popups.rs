@@ -849,9 +849,9 @@ impl PaApp {
                 )
             }
             OpenPopup::ContextCard => Some(
-                self.dock_popup_surface("floating-ctx-card", dock_popup_bottom, menu_right, 236.)
+                self.dock_popup_surface("floating-ctx-card", dock_popup_bottom, menu_right, 264.)
                     .p_3()
-                    .child(self.render_context_card_content())
+                    .child(self.render_context_card_content(cx))
                     .into_any_element(),
             ),
             OpenPopup::SettingsMenu => Some(self.render_settings_popup(window, cx)),

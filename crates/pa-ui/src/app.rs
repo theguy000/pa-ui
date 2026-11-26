@@ -1,5 +1,6 @@
 use crate::composer::{
     parse_action_update_lanes, Attachment, CHAT_COLUMN_MAX_WIDTH, CHAT_COLUMN_MIN_WIDTH,
+    COMPOSER_AUTO_GROW_MAX_ROWS,
 };
 use crate::composer_model::ComposerModel;
 use crate::daemon::{DaemonBridge, DaemonCmd, DaemonEvent};
@@ -114,6 +115,7 @@ pub struct PaApp {
     pub(crate) collapsed_providers: HashSet<String>,
     pub(crate) hovered_model: Option<(String, String, f32)>,
     pub(crate) model_menu_scroll: ScrollHandle,
+    pub(crate) slash_menu_scroll: ScrollHandle,
     pub(crate) attach_tx: async_channel::Sender<Vec<Attachment>>,
     pub(crate) fetch_models_tx: async_channel::Sender<Result<Vec<ModelDefinition>, String>>,
     pub(crate) list_state: ListState,
@@ -173,7 +175,7 @@ impl PaApp {
             TextareaState::new(window, cx)
                 .placeholder("Ask anything… (/ for commands · Shift+Enter for newline)")
                 .soft_wrap(true)
-                .auto_grow(1, 8)
+                .auto_grow(1, COMPOSER_AUTO_GROW_MAX_ROWS)
                 .submit_on_enter(true)
         });
 
@@ -431,6 +433,7 @@ impl PaApp {
             collapsed_providers: HashSet::new(),
             hovered_model: None,
             model_menu_scroll: ScrollHandle::new(),
+            slash_menu_scroll: ScrollHandle::new(),
             attach_tx,
             fetch_models_tx,
             list_state,
@@ -1436,6 +1439,10 @@ impl PaApp {
                 }
                 self.roster.apply_models(models, &self.settings);
             }
+            DaemonEvent::Commands(commands) => {
+                self.composer_model.set_remote_commands(commands);
+                self.sync_slash_decorations(cx);
+            }
             DaemonEvent::SessionState { session, state } => {
                 if self.roster.active_id() == Some(session.as_str()) {
                     if !state.provider.is_empty() {
@@ -2129,7 +2136,13 @@ impl Render for PaApp {
                         cx.notify();
                         return;
                     }
+                    let was_explicit = this.composer_model.explicit_height().is_some();
                     if this.composer_model.update_drag(ev.position.y.as_f32()) {
+                        if !was_explicit {
+                            this.composer.update(cx, |input, cx| {
+                                input.set_auto_grow(1, 1, cx);
+                            });
+                        }
                         cx.notify();
                     }
                 }

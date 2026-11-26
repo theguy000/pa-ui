@@ -4,14 +4,15 @@
 use crate::activity_sheet::ActivityTab;
 use crate::app::PaApp;
 use crate::assets::{
-    ICON_HEARTBEAT_PATH, ICON_SEND_PATH, ICON_SHELLS_PATH, ICON_SUBAGENTS_PATH,
+    ICON_COMPACT_PATH, ICON_HEARTBEAT_PATH, ICON_REFINE_PATH, ICON_SEND_PATH, ICON_SHELLS_PATH,
+    ICON_SUBAGENTS_PATH,
 };
 use crate::daemon::DaemonCmd;
 use crate::popups::OpenPopup;
 use crate::sidebar::{session_key, RenameTarget};
 use crate::slash::{
-    complete_slash_token, matching_slash_commands, slash_command_ranges, slash_dispatch,
-    slash_token_at, SlashAction,
+    complete_slash_token, matching_slash_items, slash_command_ranges, slash_dispatch,
+    slash_token_at, SlashAction, SlashItem,
 };
 use crate::transcript::{CardVariant, ItemKind, TranscriptItem};
 use crate::transcript_view::{ease_in_out_cubic, lerp_hsla};
@@ -19,8 +20,10 @@ use base64::Engine as _;
 use gpui_kit::component::{
     h_flex,
     input::{TextDecoration, Textarea},
+    scroll::ScrollableElement as _,
     text::TextViewState,
-    v_flex, Icon, IconName, StyledExt as _,
+    tooltip::Tooltip,
+    v_flex, Icon, IconName, Sizable as _, StyledExt as _,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use pa_client::thinking_level_label;
@@ -39,13 +42,14 @@ pub const CHAT_COLUMN_MIN_WIDTH: f32 = 512.0;
 /// and interactive drag-resize mode so dragging never jumps from the default area.
 pub const COMPOSER_MIN_HEIGHT: f32 = 44.0;
 pub const COMPOSER_MAX_HEIGHT: f32 = 320.0;
+pub const COMPOSER_AUTO_GROW_MAX_ROWS: usize = 8;
 
 pub const BUSY_STRIP_HEIGHT: f32 = 26.0;
 pub const SPINNER_FRAMES: [&str; 10] = [
     "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
     "\u{2827}", "\u{2807}", "\u{280f}",
 ];
-const SLASH_VISIBLE_LIMIT: usize = 6;
+const SLASH_POPUP_MAX_HEIGHT: f32 = 256.0;
 
 #[derive(Clone)]
 pub(crate) struct Attachment {
@@ -136,6 +140,48 @@ impl Attachment {
     }
 }
 
+pub(crate) fn format_with_commas(n: u64) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    if len <= 3 {
+        return digits;
+    }
+    let mut out = String::with_capacity(len + (len - 1) / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+pub(crate) fn format_compact_tokens(n: u64) -> String {
+    if n >= 999_500 {
+        let tenths = (n + 50_000) / 100_000;
+        let whole = tenths / 10;
+        let frac = tenths % 10;
+        if whole >= 10 || frac == 0 {
+            format!("{}M", (n + 500_000) / 1_000_000)
+        } else {
+            format!("{whole}.{frac}M")
+        }
+    } else if n >= 1_000 {
+        let tenths = (n + 50) / 100;
+        let whole = tenths / 10;
+        let frac = tenths % 10;
+        if whole >= 100 {
+            format!("{}k", (n + 500) / 1_000)
+        } else if frac == 0 {
+            format!("{whole}k")
+        } else {
+            format!("{whole}.{frac}k")
+        }
+    } else {
+        n.to_string()
+    }
+}
+
 pub(crate) fn spinner_frame_for_ms(phase_ms: u64) -> &'static str {
     SPINNER_FRAMES[((phase_ms / 80) as usize) % SPINNER_FRAMES.len()]
 }
@@ -210,12 +256,13 @@ impl PaApp {
             let input = self.composer.read(cx);
             (input.value().to_string(), input.cursor())
         };
+        let remote = self.composer_model.remote_commands();
         let style = HighlightStyle {
             color: Some(p.working),
             font_weight: Some(FontWeight::MEDIUM),
             ..Default::default()
         };
-        let decorations: Vec<TextDecoration> = slash_command_ranges(&text)
+        let decorations: Vec<TextDecoration> = slash_command_ranges(&text, remote)
             .into_iter()
             .map(|range| TextDecoration::new(range, style))
             .collect();
@@ -224,16 +271,17 @@ impl PaApp {
         });
 
         let match_count = slash_token_at(&text, caret)
-            .map(|(_, prefix)| matching_slash_commands(prefix).len().min(SLASH_VISIBLE_LIMIT))
+            .map(|(_, prefix)| matching_slash_items(prefix, remote).len())
             .unwrap_or(0);
         self.composer_model.clamp_slash_index(match_count);
+        if match_count > 0 {
+            self.slash_menu_scroll
+                .scroll_to_item(self.composer_model.slash_index());
+        }
     }
 
     /// Active slash command matches for the `/prefix` token under the composer caret.
-    pub(crate) fn active_slash_matches(
-        &self,
-        cx: &App,
-    ) -> Option<Vec<&'static pa_client::commands::Command>> {
+    pub(crate) fn active_slash_matches(&self, cx: &App) -> Option<Vec<SlashItem>> {
         if self.open_popup != OpenPopup::None {
             return None;
         }
@@ -241,10 +289,7 @@ impl PaApp {
         let text = input.value();
         let caret = input.cursor();
         let (_, prefix) = slash_token_at(&text, caret)?;
-        let matches: Vec<_> = matching_slash_commands(prefix)
-            .into_iter()
-            .take(SLASH_VISIBLE_LIMIT)
-            .collect();
+        let matches = matching_slash_items(prefix, self.composer_model.remote_commands());
         if matches.is_empty() {
             None
         } else {
@@ -258,6 +303,8 @@ impl PaApp {
             return false;
         };
         if self.composer_model.step_slash_index(delta, matches.len()) {
+            self.slash_menu_scroll
+                .scroll_to_item(self.composer_model.slash_index());
             cx.notify();
             true
         } else {
@@ -276,7 +323,7 @@ impl PaApp {
             return false;
         };
         let pick = index.min(matches.len().saturating_sub(1));
-        let cmd_name = matches[pick].name;
+        let cmd_name = matches[pick].name.as_str();
         let (text, caret) = {
             let input = self.composer.read(cx);
             (input.value().to_string(), input.cursor())
@@ -288,6 +335,7 @@ impl PaApp {
             input.set_value(completed, window, cx);
             input.set_selected_range(new_caret..new_caret, cx);
         });
+        self.composer.read(cx).focus_handle(cx).focus(window, cx);
         self.composer_model.reset_slash_index();
         self.sync_slash_decorations(cx);
         self.sync_stop_target(cx);
@@ -846,6 +894,7 @@ impl PaApp {
             .child(
                 v_flex()
                     .w_full()
+                    .min_w_0()
                     .max_w(px(CHAT_COLUMN_MAX_WIDTH))
                     .mx_auto()
                     .children(self.render_busy_strip(cx))
@@ -853,6 +902,7 @@ impl PaApp {
                         v_flex()
                             .relative()
                             .w_full()
+                            .min_w_0()
                             .rounded(px(12.))
                             .border_1()
                             .border_color(if composer_focused {
@@ -883,6 +933,9 @@ impl PaApp {
                                     cx.stop_propagation();
                                     if ev.click_count >= 2 {
                                         this.composer_model.reset_height();
+                                        this.composer.update(cx, |input, cx| {
+                                            input.set_auto_grow(1, COMPOSER_AUTO_GROW_MAX_ROWS, cx);
+                                        });
                                     } else {
                                         let measured = this
                                             .composer
@@ -962,15 +1015,31 @@ impl PaApp {
                     .child(
                         div()
                             .w_full()
+                            .min_w_0()
                             .px(px(10.))
+                            .pt(px(2.))
                             .pb(px(6.))
                             .child(
                                 div()
                                     .w_full()
+                                    .min_w_0()
+                                    .overflow_hidden()
                                     .min_h(px(COMPOSER_MIN_HEIGHT))
+                                    .when_some(self.composer_model.explicit_height(), |d, h| {
+                                        d.h(px(h.max(COMPOSER_MIN_HEIGHT)))
+                                    })
                                     .child({
                                         let view = cx.entity();
+                                        // Use `.xsmall()` so gpui-base's internal vertical editor padding is 0px
+                                        // (preventing scrolled lines from bleeding through top/bottom padding),
+                                        // while restoring `.text_sm()` typography and clipping tightly to the box.
                                         let ta = Textarea::new(&self.composer)
+                                            .xsmall()
+                                            .text_sm()
+                                            .w_full()
+                                            .min_w_0()
+                                            .min_h(px(COMPOSER_MIN_HEIGHT))
+                                            .overflow_hidden()
                                             .appearance(false)
                                             .bordered(false)
                                             .on_paste(move |item, _, cx| {
@@ -1171,9 +1240,42 @@ impl PaApp {
             )
     }
 
-    pub(crate) fn render_context_card_content(&self) -> impl IntoElement {
+    pub(crate) fn trigger_context_command(
+        &mut self,
+        cmd: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.roster.is_draft_or_empty() || self.is_streaming {
+            return;
+        }
+        let Some(sid) = self.roster.active_id().map(str::to_string) else {
+            return;
+        };
+        self.open_popup = OpenPopup::None;
+        self.composer_model.set_pending_slash(Some(cmd));
+        self.composer_model.set_busy_label("Waiting", false);
+        self.roster.mark_active_streaming();
+        self.is_streaming = true;
+        let _ = self.bridge.tx.send(DaemonCmd::SendPrompt {
+            session: sid,
+            text: format!("/{cmd}"),
+            images: Vec::new(),
+        });
+        self.sync_stop_target(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn render_context_card_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette();
-        let (used_str, pct_str, fill, msgs, tools, inp, outp, cached, cost) = match self.roster.stats() {
+        let exact = self.composer_model.context_exact_numbers();
+        let fmt_tok = |n: u64| {
+            if exact {
+                format_with_commas(n)
+            } else {
+                format_compact_tokens(n)
+            }
+        };
+        let (used_str, pct_str, pct_val, fill, msgs, tools, inp, outp, cached, cost) = match self.roster.stats() {
             Some(st) => {
                 let fill = if st.context_window > 0 {
                     (st.context_tokens as f32 / st.context_window as f32).clamp(0.0, 1.0)
@@ -1181,20 +1283,26 @@ impl PaApp {
                     0.0
                 };
                 (
-                    format!("{} / {}", st.context_tokens, st.context_window),
+                    format!(
+                        "{} / {}",
+                        fmt_tok(st.context_tokens),
+                        fmt_tok(st.context_window),
+                    ),
                     format!("{:.0}%", st.percent),
+                    st.percent,
                     fill,
-                    st.messages.to_string(),
-                    st.tool_calls.to_string(),
-                    st.input_tokens.to_string(),
-                    st.output_tokens.to_string(),
-                    st.cache_read.to_string(),
+                    format_with_commas(st.messages),
+                    format_with_commas(st.tool_calls),
+                    fmt_tok(st.input_tokens),
+                    fmt_tok(st.output_tokens),
+                    fmt_tok(st.cache_read),
                     format!("${:.4}", st.cost),
                 )
             }
             None => (
                 "0 / 0".to_string(),
                 "0%".to_string(),
+                0.0,
                 0.0,
                 "0".to_string(),
                 "0".to_string(),
@@ -1203,6 +1311,42 @@ impl PaApp {
                 "0".to_string(),
                 "$0.0000".to_string(),
             ),
+        };
+
+        let high_ctx = pct_val >= 80.0;
+        let actions_disabled = self.roster.is_draft_or_empty() || self.is_streaming;
+
+        let icon_action = |id: &'static str,
+                           icon_path: &'static str,
+                           tip: &'static str,
+                           cmd: &'static str,
+                           accent: bool,
+                           cx: &mut Context<Self>| {
+            let ink = if accent && !actions_disabled {
+                p.working
+            } else {
+                p.quiet_ink
+            };
+            div()
+                .id(id)
+                .h(px(24.))
+                .px(px(7.))
+                .rounded(px(6.))
+                .bg(p.sidebar_row_hover)
+                .flex()
+                .items_center()
+                .justify_center()
+                .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+                .when(actions_disabled, |el| el.opacity(0.38))
+                .when(!actions_disabled, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(p.sidebar_row_selected))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.trigger_context_command(cmd, cx);
+                        }))
+                })
+                .child(svg().path(icon_path).size(px(14.)).text_color(ink))
         };
 
         let ledger = |label: &'static str, val: String| {
@@ -1224,7 +1368,7 @@ impl PaApp {
                         div()
                             .text_xs()
                             .font_semibold()
-                            .text_color(p.ink)
+                            .text_color(if high_ctx { p.working } else { p.ink })
                             .child(pct_str),
                     ),
             )
@@ -1242,7 +1386,76 @@ impl PaApp {
                             .bg(p.working),
                     ),
             )
-            .child(div().text_xs().text_color(p.quiet_ink).child(used_str))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_xs()
+                            .whitespace_nowrap()
+                            .text_color(p.quiet_ink)
+                            .child(used_str),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .id("ctx-exact-btn")
+                                    .h(px(24.))
+                                    .min_w(px(24.))
+                                    .px(px(7.))
+                                    .rounded(px(6.))
+                                    .bg(if exact {
+                                        p.sidebar_row_selected
+                                    } else {
+                                        p.sidebar_row_hover
+                                    })
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(p.sidebar_row_selected))
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(if exact {
+                                            "Show compact (k) counts"
+                                        } else {
+                                            "Show exact token counts"
+                                        })
+                                        .build(window, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.composer_model.toggle_context_exact_numbers();
+                                        cx.notify();
+                                    }))
+                                    .text_xs()
+                                    .font_semibold()
+                                    .text_color(if exact { p.working } else { p.quiet_ink })
+                                    .child("?"),
+                            )
+                            .child(icon_action(
+                                "ctx-compact-btn",
+                                ICON_COMPACT_PATH,
+                                "Compact context (/compact)",
+                                "compact",
+                                high_ctx,
+                                cx,
+                            ))
+                            .child(icon_action(
+                                "ctx-refine-btn",
+                                ICON_REFINE_PATH,
+                                "Refine harness (/refine)",
+                                "refine",
+                                false,
+                                cx,
+                            )),
+                    ),
+            )
             .child(div().h(px(1.)).w_full().bg(p.panel_edge))
             .child(ledger("messages", msgs))
             .child(ledger("tools", tools))
@@ -1283,32 +1496,31 @@ impl PaApp {
             52.0
         };
         let popup_bottom =
-            12.0 + 12.0 + self.effective_composer_height(cx) + attach_h + 42.0 + strip_h + 6.0;
+            12.0 + 12.0 + 2.0 + self.effective_composer_height(cx) + attach_h + 42.0 + strip_h + 6.0;
+        let popup_w = (window.viewport_size().width.as_f32() - composer_left - 24.0).clamp(280.0, 460.0);
+        let is_scrollable = matches.len() > 8;
 
-        let mut list = v_flex()
-            .id("floating-slash-menu")
-            .absolute()
-            .bottom(px(popup_bottom))
-            .left(px(composer_left))
-            .w(px(440.))
-            .p_1p5()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(p.panel_edge)
-            .bg(p.panel_surface)
-            .shadow_lg()
+        let mut rows = v_flex()
+            .id("slash-popup-scroll")
+            .w_full()
+            .max_h(px(SLASH_POPUP_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .track_scroll(&self.slash_menu_scroll)
             .gap_0p5()
-            .on_click(|_, _, cx| cx.stop_propagation());
+            .when(is_scrollable, |el| el.pr(px(10.)));
 
         for (i, cmd) in matches.into_iter().enumerate() {
             let selected = i == active_idx;
             let cmd_name = cmd.name;
             let cmd_hint = cmd.hint;
             let cmd_desc = cmd.description;
-            list = list.child(
+            rows = rows.child(
                 h_flex()
                     .id(("slash-opt", i))
                     .h(px(28.))
+                    .w_full()
+                    .min_w_0()
+                    .flex_shrink_0()
                     .px_2p5()
                     .gap_2p5()
                     .items_center()
@@ -1318,6 +1530,8 @@ impl PaApp {
                     .hover(|d| d.bg(p.sidebar_row_hover))
                     .child(
                         div()
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
                             .text_xs()
                             .font_semibold()
                             .text_color(p.working)
@@ -1326,6 +1540,8 @@ impl PaApp {
                     .when(!cmd_hint.is_empty(), |row| {
                         row.child(
                             div()
+                                .flex_shrink_0()
+                                .whitespace_nowrap()
                                 .text_size(px(11.))
                                 .text_color(p.sidebar_group_empty_ink)
                                 .child(cmd_hint),
@@ -1346,6 +1562,7 @@ impl PaApp {
                         row.child(
                             div()
                                 .h(px(17.))
+                                .flex_shrink_0()
                                 .px(px(5.5))
                                 .pb(px(0.5))
                                 .rounded(px(4.))
@@ -1360,6 +1577,10 @@ impl PaApp {
                                 .child("Tab"),
                         )
                     })
+                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.accept_slash_completion(i, window, cx);
@@ -1367,7 +1588,30 @@ impl PaApp {
             );
         }
 
-        Some(list.into_any_element())
+        Some(
+            v_flex()
+                .id("floating-slash-menu")
+                .absolute()
+                .bottom(px(popup_bottom))
+                .left(px(composer_left))
+                .w(px(popup_w))
+                .p_1p5()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(p.panel_edge)
+                .bg(p.panel_surface)
+                .shadow_lg()
+                .occlude()
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .child(rows)
+                        .vertical_scrollbar(&self.slash_menu_scroll),
+                )
+                .into_any_element(),
+        )
     }
 }
 
@@ -1436,5 +1680,29 @@ mod tests {
         assert_eq!(found[0].mime, "image/png");
         assert_eq!((found[0].width, found[0].height), (40.0, 20.0));
         assert!(found[0].image.bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[::core::prelude::v1::test]
+    fn format_with_commas_groups_thousands_cleanly() {
+        assert_eq!(format_with_commas(0), "0");
+        assert_eq!(format_with_commas(999), "999");
+        assert_eq!(format_with_commas(1_000), "1,000");
+        assert_eq!(format_with_commas(136_420), "136,420");
+        assert_eq!(format_with_commas(1_000_000), "1,000,000");
+    }
+
+    #[::core::prelude::v1::test]
+    fn format_compact_tokens_renders_k_and_m_shorthand() {
+        assert_eq!(format_compact_tokens(0), "0");
+        assert_eq!(format_compact_tokens(512), "512");
+        assert_eq!(format_compact_tokens(1_000), "1k");
+        assert_eq!(format_compact_tokens(1_250), "1.3k");
+        assert_eq!(format_compact_tokens(14_820), "14.8k");
+        assert_eq!(format_compact_tokens(98_210), "98.2k");
+        assert_eq!(format_compact_tokens(100_000), "100k");
+        assert_eq!(format_compact_tokens(136_420), "136k");
+        assert_eq!(format_compact_tokens(200_000), "200k");
+        assert_eq!(format_compact_tokens(1_000_000), "1M");
+        assert_eq!(format_compact_tokens(1_250_000), "1.3M");
     }
 }

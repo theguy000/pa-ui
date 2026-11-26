@@ -788,6 +788,7 @@ pub enum SessionExtra {
         follow_up: Vec<String>,
     },
     Tail(Page),
+    Commands(Vec<(String, String, String)>),
 }
 
 /// Run post-attach metadata requests concurrently over the multiplexed daemon
@@ -929,7 +930,22 @@ pub fn fetch_session_extras_concurrent<F>(
             }
         };
 
-        tokio::join!(activity_fut, stats_fut, models_fut, sessions_fut);
+        let commands_fut = async {
+            if let Ok(resp) = request_inner(
+                inner_ref,
+                "get_commands",
+                json!({"activeSessionId": active_id}),
+                Duration::from_secs(6),
+            )
+            .await
+            {
+                if resp.get("success").and_then(Value::as_bool) != Some(false) {
+                    emit_ref(SessionExtra::Commands(parse_commands_response(&resp)));
+                }
+            }
+        };
+
+        tokio::join!(activity_fut, stats_fut, models_fut, sessions_fut, commands_fut);
     });
 }
 
@@ -1523,6 +1539,31 @@ pub fn mutate_queue(
 /// The builtin table is the same everywhere; these come from the session and
 /// only exist there, which is why a menu built from the table alone would look
 /// complete and still be missing commands the agent has.
+fn parse_commands_response(response: &Value) -> Vec<(String, String, String)> {
+    let entries = response
+        .pointer("/data/commands")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?.to_string();
+            let description = entry
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let hint = entry
+                .get("argumentHint")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            Some((name, description, hint))
+        })
+        .collect()
+}
+
 pub fn get_commands(
     client: &Client,
     session: &str,
@@ -1532,30 +1573,7 @@ pub fn get_commands(
         json!({ "activeSessionId": session }),
         Duration::from_secs(10),
     )?;
-    let entries = response
-        .pointer("/data/commands")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    Ok(entries
-        .iter()
-        .filter_map(|entry| {
-            let name = entry.get("name").and_then(Value::as_str)?.to_string();
-            let description = entry
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let is_skill = entry.get("source").and_then(Value::as_str) == Some("skill");
-            let hint = entry
-                .get("argumentHint")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| is_skill.then(|| "your request".to_string()))
-                .unwrap_or_default();
-            Some((name, description, hint))
-        })
-        .collect())
+    Ok(parse_commands_response(&response))
 }
 
 /// A session's live numbers, as the right panel shows them.

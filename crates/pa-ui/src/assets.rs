@@ -20,6 +20,8 @@ pub const ICON_SWATCH_BOOK_PATH: &str = "icons/pa-swatch-book.svg";
 pub const ICON_PROVIDERS_PATH: &str = "icons/pa-providers.svg";
 pub const ICON_CLOSE_PATH: &str = "icons/pa-close.svg";
 pub const ICON_GIT_BRANCH_PATH: &str = "icons/pa-git-branch.svg";
+pub const ICON_COMPACT_PATH: &str = "icons/pa-compact.svg";
+pub const ICON_REFINE_PATH: &str = "icons/pa-refine.svg";
 
 // Exact pa-ui shipped dark-theme 6-facet brand mark (pa-ui/ui/icons.slint + theme/tests.rs)
 const PRIME_AGENT_MARK_DARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="13.5 16 74 74" width="64" height="64"><path fill="#aeaead" d="M 51.59 37.56 L 43.2 43.19 L 43.2 61.5 L 73 41.5 Z"/><path fill="#828381" d="M 43.2 43.19 L 43.2 61.5 L 45.4 60.02 L 45.4 41.72 Z"/><path fill="#595a58" d="M 51.59 37.56 L 48.32 39.76 L 69.73 43.70 L 73 41.5 Z"/><path fill="#626361" d="M 28 16.5 L 28 89.5 L 43.2 79.3 L 43.2 27.14 Z"/><path fill="#323330" d="M 28 33.22 L 28 36.02 L 43.2 38.82 L 43.2 36.02 Z"/><path fill="#ffffff" d="M 28 16.5 L 28 33.22 L 73 41.5 L 50 16.5 Z"/></svg>"##;
@@ -64,6 +66,12 @@ const ICON_CLOSE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
 // Lucide git-branch
 const ICON_GIT_BRANCH_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>"##;
 
+// Lucide fold-vertical — Compact context action in the Context Card
+const ICON_COMPACT_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/></svg>"##;
+
+// Lucide flask-conical — Refine harness action in the Context Card
+const ICON_REFINE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16.5h10"/></svg>"##;
+
 pub struct AppAssets;
 
 impl AssetSource for AppAssets {
@@ -87,6 +95,8 @@ impl AssetSource for AppAssets {
             ICON_PROVIDERS_PATH => Ok(Some(Cow::Borrowed(ICON_PROVIDERS_SVG.as_bytes()))),
             ICON_CLOSE_PATH => Ok(Some(Cow::Borrowed(ICON_CLOSE_SVG.as_bytes()))),
             ICON_GIT_BRANCH_PATH => Ok(Some(Cow::Borrowed(ICON_GIT_BRANCH_SVG.as_bytes()))),
+            ICON_COMPACT_PATH => Ok(Some(Cow::Borrowed(ICON_COMPACT_SVG.as_bytes()))),
+            ICON_REFINE_PATH => Ok(Some(Cow::Borrowed(ICON_REFINE_SVG.as_bytes()))),
             _ => KitAssets.load(path),
         }
     }

@@ -16,6 +16,8 @@ pub(crate) struct ComposerModel {
     drag_start_height: f32,
     handle_hovered: bool,
     slash_index: usize,
+    remote_commands: Vec<(String, String, String)>,
+    context_exact_numbers: bool,
     queued_steer: Vec<String>,
     queued_follow_up: Vec<String>,
     editing_queue: Option<(String, usize, String)>,
@@ -38,6 +40,8 @@ impl ComposerModel {
             drag_start_height: COMPOSER_MIN_HEIGHT,
             handle_hovered: false,
             slash_index: 0,
+            remote_commands: Vec::new(),
+            context_exact_numbers: false,
             queued_steer: Vec::new(),
             queued_follow_up: Vec::new(),
             editing_queue: None,
@@ -130,6 +134,22 @@ impl ComposerModel {
         let len = match_count as isize;
         self.slash_index = ((self.slash_index as isize + delta).rem_euclid(len)) as usize;
         true
+    }
+
+    pub(crate) fn remote_commands(&self) -> &[(String, String, String)] {
+        &self.remote_commands
+    }
+
+    pub(crate) fn set_remote_commands(&mut self, commands: Vec<(String, String, String)>) {
+        self.remote_commands = commands;
+    }
+
+    pub(crate) fn context_exact_numbers(&self) -> bool {
+        self.context_exact_numbers
+    }
+
+    pub(crate) fn toggle_context_exact_numbers(&mut self) {
+        self.context_exact_numbers = !self.context_exact_numbers;
     }
 
     // --- Attachments ---

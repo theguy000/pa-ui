@@ -215,6 +215,7 @@ pub enum DaemonEvent {
         more: bool,
     },
     Models(Vec<ModelEntry>),
+    Commands(Vec<(String, String, String)>),
     SessionState { session: String, state: SessionState },
     Stats { session: String, stats: SessionStats },
     Queue { session: String, steer: Vec<String>, follow_up: Vec<String> },
@@ -485,6 +486,9 @@ impl WorkerSessionState<'_> {
                         follow_up,
                     });
                 }
+                SessionExtra::Commands(commands) => {
+                    let _ = ev_tx.try_send(DaemonEvent::Commands(commands));
+                }
                 SessionExtra::Tail(_) => {}
             },
         );
@@ -648,7 +652,7 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                 SessionExtra::Sessions(sessions) => {
                                     let _ = ev_tx.try_send(DaemonEvent::Sessions(sessions));
                                 }
-                                SessionExtra::Models(_) => {}
+                                SessionExtra::Models(_) | SessionExtra::Commands(_) => {}
                             },
                         );
                     }
@@ -775,6 +779,9 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                                         }
                                         SessionExtra::Sessions(sessions) => {
                                             let _ = ev_tx_c.try_send(DaemonEvent::Sessions(sessions));
+                                        }
+                                        SessionExtra::Commands(commands) => {
+                                            let _ = ev_tx_c.try_send(DaemonEvent::Commands(commands));
                                         }
                                         SessionExtra::Queue { .. } | SessionExtra::Tail(_) => {}
                                     },

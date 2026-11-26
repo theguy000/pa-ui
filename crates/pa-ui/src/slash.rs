@@ -72,12 +72,88 @@ pub fn slash_token_at(text: &str, caret: usize) -> Option<(Range<usize>, &str)> 
     Some((start..end, prefix))
 }
 
-/// Supported slash commands matching `prefix` (with or without leading `/`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlashItem {
+    pub name: String,
+    pub hint: String,
+    pub description: String,
+}
+
+/// Supported builtin slash commands matching `prefix` (with or without leading `/`).
 pub fn matching_slash_commands(prefix: &str) -> Vec<&'static Command> {
     pa_client::commands::filter(prefix)
         .into_iter()
         .filter(|cmd| is_supported_slash_cmd(cmd))
         .collect()
+}
+
+fn slash_match_rank(name: &str, needle: &str) -> Option<u8> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let lower = name.to_lowercase();
+    if lower.starts_with(needle) {
+        Some(0)
+    } else if lower
+        .strip_prefix("skill:")
+        .is_some_and(|bare| bare.starts_with(needle))
+    {
+        Some(1)
+    } else if lower.contains(needle) {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+/// All supported builtin commands plus session prompt templates and skills matching `prefix`.
+pub fn matching_slash_items(prefix: &str, remote: &[(String, String, String)]) -> Vec<SlashItem> {
+    let needle = prefix.trim_start_matches('/').to_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    let mut ranked: Vec<(u8, usize, SlashItem)> = Vec::new();
+    let mut order = 0usize;
+
+    for cmd in pa_client::commands::builtin()
+        .iter()
+        .filter(|cmd| is_supported_slash_cmd(cmd))
+    {
+        if !seen.insert(cmd.name.to_lowercase()) {
+            continue;
+        }
+        if let Some(rank) = slash_match_rank(cmd.name, &needle) {
+            ranked.push((
+                rank,
+                order,
+                SlashItem {
+                    name: cmd.name.to_string(),
+                    hint: cmd.hint.to_string(),
+                    description: cmd.description.to_string(),
+                },
+            ));
+            order += 1;
+        }
+    }
+
+    for (name, description, hint) in remote {
+        if name.is_empty() || !seen.insert(name.to_lowercase()) {
+            continue;
+        }
+        if let Some(rank) = slash_match_rank(name, &needle) {
+            ranked.push((
+                rank,
+                order,
+                SlashItem {
+                    name: name.clone(),
+                    hint: hint.clone(),
+                    description: description.clone(),
+                },
+            ));
+            order += 1;
+        }
+    }
+
+    ranked.sort_by_key(|(rank, idx, _)| (*rank, *idx));
+    ranked.into_iter().map(|(_, _, item)| item).collect()
 }
 
 /// Replace the `/prefix` token at `caret` with `/{cmd_name} ` and return `(new_text, new_caret)`.
@@ -105,16 +181,16 @@ pub fn complete_slash_token(text: &str, caret: usize, cmd_name: &str) -> Option<
 }
 
 /// UTF-8 byte ranges of all whitespace-delimited `/command` words in `text` that should be
-/// color-coated in the composer (known commands as well as an active `/prefix` that matches
-/// at least one supported slash command).
-pub fn slash_command_ranges(text: &str) -> Vec<Range<usize>> {
+/// color-coated in the composer (known commands, session templates/skills, as well as an
+/// active `/prefix` that matches at least one supported slash item).
+pub fn slash_command_ranges(text: &str, remote: &[(String, String, String)]) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut word_start: Option<usize> = None;
 
     for (idx, ch) in text.char_indices() {
         if ch.is_whitespace() {
             if let Some(start) = word_start.take() {
-                if is_colorable_slash_word(&text[start..idx]) {
+                if is_colorable_slash_word(&text[start..idx], remote) {
                     ranges.push(start..idx);
                 }
             }
@@ -123,14 +199,14 @@ pub fn slash_command_ranges(text: &str) -> Vec<Range<usize>> {
         }
     }
     if let Some(start) = word_start {
-        if is_colorable_slash_word(&text[start..]) {
+        if is_colorable_slash_word(&text[start..], remote) {
             ranges.push(start..text.len());
         }
     }
     ranges
 }
 
-fn is_colorable_slash_word(word: &str) -> bool {
+fn is_colorable_slash_word(word: &str, remote: &[(String, String, String)]) -> bool {
     let Some(name) = word.strip_prefix('/') else {
         return false;
     };
@@ -140,7 +216,8 @@ fn is_colorable_slash_word(word: &str) -> bool {
     pa_client::commands::find(name).is_some()
         || name.starts_with("skill:")
         || name.starts_with("template:")
-        || !matching_slash_commands(name).is_empty()
+        || remote.iter().any(|(cmd, _, _)| cmd.eq_ignore_ascii_case(name))
+        || !matching_slash_items(name, remote).is_empty()
 }
 
 #[cfg(test)]
@@ -180,9 +257,26 @@ mod tests {
 
     #[test]
     fn slash_command_ranges_identifies_command_words_for_color_coating() {
-        let text = "/compact and /model but not /unknownxyz or prose";
-        let ranges = slash_command_ranges(text);
+        let remote = vec![
+            ("review-pr".into(), "Review PR".into(), "<num>".into()),
+            ("skill:craft".into(), "Build UI".into(), String::new()),
+        ];
+        let text = "/compact and /model and /review-pr and /skill:craft not /unknownxyz";
+        let ranges = slash_command_ranges(text, &remote);
         let words: Vec<&str> = ranges.iter().map(|r| &text[r.clone()]).collect();
-        assert_eq!(words, vec!["/compact", "/model"]);
+        assert_eq!(words, vec!["/compact", "/model", "/review-pr", "/skill:craft"]);
+    }
+
+    #[test]
+    fn matching_slash_items_merges_remote_skills_without_truncating() {
+        let remote: Vec<(String, String, String)> = (1..=12)
+            .map(|i| (format!("skill:tool-{i}"), format!("Tool {i}"), String::new()))
+            .collect();
+        let all = matching_slash_items("", &remote);
+        assert!(all.len() >= 12 + matching_slash_commands("").len());
+
+        let bare = matching_slash_items("tool-1", &remote);
+        assert_eq!(bare.first().map(|it| it.name.as_str()), Some("skill:tool-1"));
+        assert!(bare.iter().any(|it| it.name == "skill:tool-10"));
     }
 }
