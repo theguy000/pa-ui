@@ -67,7 +67,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: linux-check
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: Check pa-client, pa-ui, and pa-daemon
         run: cargo check --profile fast -p pa-client -p pa-ui -p pa-daemon
+      - name: Bootstrap kernel venv for backend tests
+        run: |
+          PA_CORE_KERNEL_PYTHON="$(command -v python3)" cargo test --profile fast -p pa-core --test kernel_prewarm
       - name: Test pa-core and pa-daemon
         run: cargo test --profile fast -p pa-core -p pa-daemon
