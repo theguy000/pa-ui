@@ -567,24 +567,19 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
     let dir_path = dir.path().join("request-payloads");
     // The ring keeps every body: the count assertions need no eviction.
     let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
-    // The stall body: serialized for far longer than the whole storm
-    // window, so no slot frees mid storm.
-    let stall = json!({
-        "marker": "stall",
-        "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
-    });
-    capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
-    let fills = fill_until_saturated(&capture, "fill");
-    // The storm: many concurrent producers racing the full queue; none
-    // of their bodies exists anywhere afterwards.
+    // Spawn and park all storm threads before enqueueing the stall body so
+    // thread-creation latency on busy CI runners cannot let the stall drain.
     let producers = 4 * REQUEST_PAYLOAD_CAPTURE_KEEP;
-    let barrier = Arc::new(std::sync::Barrier::new(producers + 1));
+    let ready_barrier = Arc::new(std::sync::Barrier::new(producers + 1));
+    let go_barrier = Arc::new(std::sync::Barrier::new(producers + 1));
     let mut handles = Vec::new();
     for producer in 0..producers {
         let capture = capture.clone();
-        let barrier = Arc::clone(&barrier);
+        let ready_barrier = Arc::clone(&ready_barrier);
+        let go_barrier = Arc::clone(&go_barrier);
         handles.push(std::thread::spawn(move || {
-            barrier.wait();
+            ready_barrier.wait();
+            go_barrier.wait();
             capture.record(
                 &json!({ "marker": format!("storm-{producer}") }),
                 &agent_model(),
@@ -593,7 +588,16 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
             );
         }));
     }
-    barrier.wait();
+    ready_barrier.wait();
+    // The stall body: serialized for far longer than the whole storm
+    // window even under optimized release builds.
+    let stall = json!({
+        "marker": "stall",
+        "messages": (0..500_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
+    });
+    capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
+    let fills = fill_until_saturated(&capture, "fill");
+    go_barrier.wait();
     for handle in handles {
         handle.join().expect("the producer finishes");
     }
