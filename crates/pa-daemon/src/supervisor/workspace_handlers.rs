@@ -584,9 +584,7 @@ pub(crate) fn fallback_cwd_for_deleted_worktree(agent_dir: &Path, session_path: 
             }
         }
     }
-    pa_types::platform::home_dir()
-        .filter(|h| h.is_dir())
-        .map(|h| h.to_string_lossy().into_owned())
+    None
 }
 
 
@@ -805,6 +803,14 @@ mod tests {
         assert_eq!(
             std::fs::canonicalize(&fallback).unwrap(),
             std::fs::canonicalize(&repo).unwrap()
+        );
+
+        // Plain saved session without a workspace binding has no implicit cwd fallback.
+        let plain_sess = sessions_dir.join("plain-missing.jsonl");
+        write_session_file(&plain_sess, &dir.path().join("gone-cwd").to_string_lossy(), None);
+        assert_eq!(
+            fallback_cwd_for_deleted_worktree(&dir.path().join("agent"), &plain_sess),
+            None
         );
 
         // 7. WorkspaceDelete removes workspace from registry
