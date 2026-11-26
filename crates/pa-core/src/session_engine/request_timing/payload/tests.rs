@@ -589,11 +589,11 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
         }));
     }
     ready_barrier.wait();
-    // The stall body: serialized for far longer than the whole storm
-    // window even under optimized release builds.
+    // The stall body: stays under REQUEST_PAYLOAD_BUDGET_BYTES (64 MiB)
+    // while serializing far longer than the pre-spawned storm window.
     let stall = json!({
         "marker": "stall",
-        "messages": (0..500_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
+        "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
     });
     capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
     let fills = fill_until_saturated(&capture, "fill");
