@@ -15,7 +15,7 @@
 #endif
 
 [Setup]
-AppId={{7A9E4B1E-2C4B-4F7D-9D2B-3F4E1B8A5C12}}
+AppId={{7A9E4B1E-2C4B-4F7D-9D2B-3F4E1B8A5C12}
 AppName=Prime Agent
 AppVersion={#MyAppVersion}
 AppVerName=Prime Agent {#MyAppVersion}
@@ -23,11 +23,13 @@ AppPublisher=Prime Agent
 AppPublisherURL=https://github.com/theguy000/prime-agent-app
 AppSupportURL=https://github.com/theguy000/prime-agent-app/issues
 DefaultDirName={localappdata}\Programs\Prime Agent
-DefaultGroupName=Prime Agent
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
+RestartApplications=no
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -43,6 +45,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\prime-agent-runtime"
+Type: filesandordirs; Name: "{app}\skills"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -56,11 +62,14 @@ Filename: "{app}\prime-agent-app.exe"; Description: "{cm:LaunchProgram,Prime Age
 [Code]
 procedure StopRunningPrimeAgent();
 var
-  ResultCode: Integer;
+  UiRc, DaemonRc: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM prime-agent-app.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM pa-daemon.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(400);
+  UiRc := -1;
+  DaemonRc := -1;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM prime-agent-app.exe', '', SW_HIDE, ewWaitUntilTerminated, UiRc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM pa-daemon.exe', '', SW_HIDE, ewWaitUntilTerminated, DaemonRc);
+  if (UiRc = 0) or (DaemonRc = 0) then
+    Sleep(400);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -69,8 +78,8 @@ begin
   Result := '';
 end;
 
-function InitializeUninstall(): Boolean;
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  StopRunningPrimeAgent();
-  Result := True;
+  if CurUninstallStep = usUninstall then
+    StopRunningPrimeAgent();
 end;
