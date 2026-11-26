@@ -74,6 +74,10 @@ fn worker_in(dir: &std::path::Path, session_id: &str) -> Worker {
     worker
 }
 
+/// A nonexistent scratch path so `create` tests pure collapse without
+/// auto-binding an existing directory (like `/tmp` on Linux) as a workspace.
+const SCRATCH_CWD: &str = "/nonexistent-collapse-cwd";
+
 /// The pre-collapse fresh-path write sequence, replayed with the same
 /// primitives the old arm used: header-only rewrite, creation prefix,
 /// `active` state, second rewrite, name append.
@@ -82,11 +86,11 @@ fn legacy_sequence_file(
     session_dir: &std::path::Path,
     name: &str,
 ) -> std::path::PathBuf {
-    let mut legacy = SessionFile::create("/tmp", None, 0);
+    let mut legacy = SessionFile::create(SCRATCH_CWD, None, 0);
     let path = session_dir.join(session_file_name(legacy.session_id()));
     legacy.set_path(path.clone());
     legacy.rewrite().unwrap();
-    append_creation_prefix(&mut legacy, &OffEngine, &dir.join("agent"), "/tmp", true);
+    append_creation_prefix(&mut legacy, &OffEngine, &dir.join("agent"), SCRATCH_CWD, true);
     let _ = legacy.append_session_state("active");
     legacy.rewrite().unwrap();
     legacy
@@ -139,7 +143,7 @@ async fn fresh_create_single_write_matches_legacy_sequence_bytes() {
     let response = worker
         .dispatch(
             "create",
-            &json!({"cwd": "/tmp", "sessionDir": fresh_dir, "name": "lane-child"}),
+            &json!({"cwd": SCRATCH_CWD, "sessionDir": fresh_dir, "name": "lane-child"}),
         )
         .await;
     assert!(response.success, "{response:?}");
@@ -169,7 +173,7 @@ async fn fresh_create_folds_name_into_the_single_write() {
     let response = worker
         .dispatch(
             "create",
-            &json!({"cwd": "/tmp", "sessionDir": session_dir, "name": "named-child"}),
+            &json!({"cwd": SCRATCH_CWD, "sessionDir": session_dir, "name": "named-child"}),
         )
         .await;
     assert!(response.success, "{response:?}");
@@ -214,7 +218,7 @@ async fn fresh_create_failed_write_leaves_no_session_file() {
     let response = worker
         .dispatch(
             "create",
-            &json!({"cwd": "/tmp", "sessionDir": blocked_dir, "name": "failing"}),
+            &json!({"cwd": SCRATCH_CWD, "sessionDir": blocked_dir, "name": "failing"}),
         )
         .await;
     assert!(!response.success, "{response:?}");
@@ -236,7 +240,7 @@ async fn fresh_create_ignores_a_legacy_crash_orphan() {
     // The old build's crash-window artifact: a header-only file an interrupted
     // fresh create left behind; the orphan must neither block the create nor
     // bleed into the new file.
-    let mut orphan = SessionFile::create("/tmp", None, 0);
+    let mut orphan = SessionFile::create(SCRATCH_CWD, None, 0);
     let orphan_path = session_dir.join(session_file_name(orphan.session_id()));
     orphan.set_path(orphan_path.clone());
     orphan.rewrite().unwrap();
@@ -244,7 +248,7 @@ async fn fresh_create_ignores_a_legacy_crash_orphan() {
     let response = worker
         .dispatch(
             "create",
-            &json!({"cwd": "/tmp", "sessionDir": session_dir, "name": "orphan-sibling"}),
+            &json!({"cwd": SCRATCH_CWD, "sessionDir": session_dir, "name": "orphan-sibling"}),
         )
         .await;
     assert!(response.success, "{response:?}");
@@ -282,7 +286,7 @@ async fn a_resume_is_append_only_and_never_deletes_rows() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&session_dir).unwrap();
-    let mut store = SessionFile::create("/tmp", None, 0);
+    let mut store = SessionFile::create(SCRATCH_CWD, None, 0);
     let path = session_dir.join(session_file_name(store.session_id()));
     store.set_path(path.clone());
     store.rewrite().unwrap();
@@ -314,7 +318,7 @@ async fn a_resume_is_append_only_and_never_deletes_rows() {
     let response = worker
         .dispatch(
             "create",
-            &json!({"cwd": "/tmp", "sessionPath": path.display().to_string()}),
+            &json!({"cwd": SCRATCH_CWD, "sessionPath": path.display().to_string()}),
         )
         .await;
     assert!(response.success, "{response:?}");
