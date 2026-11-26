@@ -776,9 +776,9 @@ pub fn detach_session(client: &Client, session: &str) {
 #[derive(Debug)]
 pub enum SessionExtra {
     Activity {
-        subagents: usize,
-        shells: usize,
-        heartbeats: usize,
+        subagents: ChipCount,
+        shells: ChipCount,
+        heartbeats: ChipCount,
     },
     Stats(SessionStats),
     Models(Vec<ModelEntry>),
@@ -826,8 +826,14 @@ pub fn fetch_session_extras_concurrent<F>(
         let emit_ref = &emit;
         let inner_ref = inner.as_ref();
         let activity_fut = async {
-            let (roster_res, shells_res, hb_res) = tokio::join!(
+            let (roster_res, children_res, shells_res, hb_res) = tokio::join!(
                 request_inner(inner_ref, "roster_subscribe", json!({}), Duration::from_secs(3)),
+                request_inner(
+                    inner_ref,
+                    "get_rlm_children",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(3),
+                ),
                 request_inner(
                     inner_ref,
                     "list_kernel_bash",
@@ -836,24 +842,34 @@ pub fn fetch_session_extras_concurrent<F>(
                 ),
                 request_inner(inner_ref, "heartbeats_list", json!({}), Duration::from_secs(3)),
             );
-            let subagents = roster_res
+            let roster = roster_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
-                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
-                .unwrap_or(0);
+                .unwrap_or_default();
+            let children = children_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.pointer("/data/children").and_then(Value::as_array).cloned())
+                .unwrap_or_default();
+            let subagents = subagent_items_counts(&parse_session_subagents(
+                &roster,
+                &children,
+                &active_id,
+                &durable_id,
+            ));
             let shells = shells_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| running_shell_count(&data))
-                .unwrap_or(0);
+                .map(|data| shell_counts(&parse_shell_activities(&data)))
+                .unwrap_or_default();
             let heartbeats = hb_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|data| heartbeat_counts(&parse_scoped_heartbeats(&data, &active_id, &durable_id)))
+                .unwrap_or_default();
             emit_ref(SessionExtra::Activity {
                 subagents,
                 shells,
@@ -1024,8 +1040,13 @@ pub fn reload_session_parallel<F>(
         };
 
         let activity_fut = async {
-            let (roster_res, shells_res, hb_res) = tokio::join!(
+            let (roster_res, children_res, shells_res, hb_res) = tokio::join!(
                 client.request_async("roster_subscribe", json!({}), Duration::from_secs(3)),
+                client.request_async(
+                    "get_rlm_children",
+                    json!({"activeSessionId": active_id}),
+                    Duration::from_secs(3),
+                ),
                 client.request_async(
                     "list_kernel_bash",
                     json!({"activeSessionId": active_id}),
@@ -1033,24 +1054,34 @@ pub fn reload_session_parallel<F>(
                 ),
                 client.request_async("heartbeats_list", json!({}), Duration::from_secs(3)),
             );
-            let subagents = roster_res
+            let roster = roster_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.pointer("/data/roster").and_then(Value::as_array).cloned())
-                .map(|roster| running_subagents(&roster, &active_id, &durable_id))
-                .unwrap_or(0);
+                .unwrap_or_default();
+            let children = children_res
+                .ok()
+                .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
+                .and_then(|r| r.pointer("/data/children").and_then(Value::as_array).cloned())
+                .unwrap_or_default();
+            let subagents = subagent_items_counts(&parse_session_subagents(
+                &roster,
+                &children,
+                &active_id,
+                &durable_id,
+            ));
             let shells = shells_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| running_shell_count(&data))
-                .unwrap_or(0);
+                .map(|data| shell_counts(&parse_shell_activities(&data)))
+                .unwrap_or_default();
             let heartbeats = hb_res
                 .ok()
                 .filter(|r| r.get("success").and_then(Value::as_bool) == Some(true))
                 .and_then(|r| r.get("data").cloned())
-                .map(|data| heartbeat_count(&data, &active_id, &durable_id))
-                .unwrap_or(0);
+                .map(|data| heartbeat_counts(&parse_scoped_heartbeats(&data, &active_id, &durable_id)))
+                .unwrap_or_default();
             emit_ref(SessionExtra::Activity {
                 subagents,
                 shells,

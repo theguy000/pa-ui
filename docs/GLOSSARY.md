@@ -46,9 +46,13 @@ _Avoid_: memory tier, harness level
 
 ### What the reader sees
 
-**Sidebar**:
-The column of sessions down the window's left: where the reader picks a session or starts one. It folds to a strip of controls and unfolds again.
+**Left sidebar**:
+The column of sessions and workspaces down the window's left: where the reader picks a session or starts one. It folds to a strip of controls and unfolds again.
 _Avoid_: rail, side panel, nav
+
+**Right sidebar**:
+The tabbed, drag-resizable column on the window's right: hosts dynamic per-session tabs such as Diff, read-only Subagent transcripts, and Shell tail logs. Closing its last tab collapses it.
+_Avoid_: inspector, diff drawer, right pane
 
 **Composer**:
 The strip along the window's foot where the reader writes: the draft, whatever the draft is carrying, and the control that sends it — or stops the turn instead. It is never a message; a message is what the composer produces.
@@ -111,7 +115,7 @@ _Avoid_: token, variable, colour constant
 ### The title bar
 
 **Title bar**:
-The strip along the top of the window: the right column's collapse button and the three caption buttons. The window draws it because the native caption cannot follow the theme, and it paints no field of its own — the window's background and the sidebar's header band run under it.
+The strip along the top of the window: the workspace breadcrumb, settings control, Right sidebar collapse button, and the three caption buttons. The window draws it because the native caption cannot follow the theme, and it paints no field of its own — the window's background and the Left sidebar's header band run under it.
 _Avoid_: chrome, header, titlebar, caption (a caption is the text a bar carries)
 
 **Caption button**:
@@ -119,7 +123,7 @@ One of the minimise, maximise and close controls at the title bar's right edge. 
 _Avoid_: window control, chrome button
 
 **Collapse button**:
-The control that collapses a column to its strip of controls and back: the sidebar's, at the right of its header, and the right column's, in the title bar. A column has one; the standalone control beside it is the way back open.
+The control that collapses a column and opens it back: the Left sidebar's, at the right of its header, and the Right sidebar's, in the title bar. A column has one; the standalone control beside it is the way back open.
 _Avoid_: fold, toggle, panel button, expand button
 
 ### Paging

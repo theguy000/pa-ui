@@ -1,8 +1,9 @@
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use pa_client::{
-    BranchInfo, Client, HarnessEntryWire, HarnessKindWire, HarnessScopeWire, ModelEntry,
-    RefinementHistoryItemWire, SessionExtra, SessionRow, SessionState, SessionStats,
-    WorkspaceBinding, WorkspaceRecord, WorktreeInfo,
+    BranchInfo, ChipCount, Client, HarnessEntryWire, HarnessKindWire, HarnessScopeWire,
+    HeartbeatItem, ModelEntry, RefinementHistoryItemWire, SessionExtra, SessionRow,
+    SessionState, SessionStats, ShellActivityItem, SubagentItem, WorkspaceBinding,
+    WorkspaceRecord, WorktreeInfo,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -122,6 +123,56 @@ pub enum DaemonCmd {
         workspace_id: Option<String>,
         active_session_id: Option<String>,
     },
+    LoadSessionHeartbeats {
+        active_session_id: String,
+        session_id: String,
+    },
+    SetHeartbeat {
+        active_session_id: String,
+        session_id: String,
+        schedule: String,
+        prompt: String,
+        delivery_mode: String,
+    },
+    ManageHeartbeat {
+        active_session_id: String,
+        session_id: String,
+        job_id: String,
+        action: String,
+    },
+    LoadSessionShells {
+        active_session_id: String,
+    },
+    TailKernelShell {
+        active_session_id: String,
+        activity_id: String,
+        lines: u32,
+    },
+    KillKernelShell {
+        active_session_id: String,
+        activity_id: String,
+    },
+    LoadSessionSubagents {
+        active_session_id: String,
+        session_id: String,
+    },
+    LoadSubagentMessages {
+        owner_session_id: String,
+        subagent_active_session_id: String,
+    },
+    CancelSubagent {
+        owner_session_id: String,
+        owner_durable_id: String,
+        parent_active_session_id: String,
+        child_id: String,
+    },
+    DeleteSubagent {
+        owner_session_id: String,
+        owner_durable_id: String,
+        parent_active_session_id: String,
+        child_id: String,
+        tab_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +218,7 @@ pub enum DaemonEvent {
     SessionState { session: String, state: SessionState },
     Stats { session: String, stats: SessionStats },
     Queue { session: String, steer: Vec<String>, follow_up: Vec<String> },
-    Activity { session: String, subagents: usize, shells: usize, heartbeats: usize },
+    Activity { session: String, subagents: ChipCount, shells: ChipCount, heartbeats: ChipCount },
     ExportResult {
         kind: ExportKind,
         primary: String,
@@ -210,6 +261,38 @@ pub enum DaemonEvent {
     HarnessEntryDeleted { entry_id: String },
     HarnessHistoryLoaded(Vec<RefinementHistoryItemWire>),
     HarnessRolledBack,
+    SessionHeartbeatsLoaded {
+        session: String,
+        items: Vec<HeartbeatItem>,
+    },
+    SessionShellsLoaded {
+        session: String,
+        items: Vec<ShellActivityItem>,
+    },
+    ShellTailLoaded {
+        session: String,
+        activity_id: String,
+        tail: String,
+    },
+    SessionSubagentsLoaded {
+        session: String,
+        items: Vec<SubagentItem>,
+    },
+    SubagentMessagesLoaded {
+        owner_session: String,
+        subagent_session: String,
+        raw_messages: Vec<Value>,
+    },
+    SubagentDeleted {
+        owner_session: String,
+        tab_id: String,
+    },
+    ActivityError {
+        session: String,
+        message: String,
+        clear_tail: Option<String>,
+        clear_subagent: Option<String>,
+    },
     LiveFrame(Value),
     Error(String),
 }
@@ -264,6 +347,28 @@ fn drain_and_coalesce(cmd_rx: &Receiver<DaemonCmd>, queue: &mut VecDeque<DaemonC
                 if !queue.iter().any(|c| matches!(c, DaemonCmd::RefreshSessions)) {
                     queue.push_back(cmd);
                 }
+            }
+            DaemonCmd::LoadSessionHeartbeats { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionHeartbeats { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSessionShells { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionShells { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSessionSubagents { .. } => {
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSessionSubagents { .. }));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::TailKernelShell { ref activity_id, .. } => {
+                let target = activity_id.clone();
+                queue.retain(|c| !matches!(c, DaemonCmd::TailKernelShell { activity_id: id, .. } if id == &target));
+                queue.push_back(cmd);
+            }
+            DaemonCmd::LoadSubagentMessages { ref subagent_active_session_id, .. } => {
+                let target = subagent_active_session_id.clone();
+                queue.retain(|c| !matches!(c, DaemonCmd::LoadSubagentMessages { subagent_active_session_id: id, .. } if id == &target));
+                queue.push_back(cmd);
             }
             other => queue.push_back(other),
         }
@@ -1337,6 +1442,299 @@ fn run_worker_loop(cmd_rx: Receiver<DaemonCmd>, ev_tx: AsyncSender<DaemonEvent>)
                             Err(err) => {
                                 let _ = ev_tx.try_send(DaemonEvent::Error(err.to_string()));
                             }
+                        }
+                    }
+                    DaemonCmd::LoadSessionHeartbeats {
+                        active_session_id,
+                        session_id,
+                    } => match pa_client::list_scoped_heartbeats(
+                        &client,
+                        &active_session_id,
+                        &session_id,
+                    ) {
+                        Ok(items) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SessionHeartbeatsLoaded {
+                                session: active_session_id,
+                                items,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::SetHeartbeat {
+                        active_session_id,
+                        session_id,
+                        schedule,
+                        prompt,
+                        delivery_mode,
+                    } => match pa_client::set_heartbeat(
+                        &client,
+                        &active_session_id,
+                        &schedule,
+                        &prompt,
+                        &delivery_mode,
+                    ) {
+                        Ok(()) => {
+                            if let Ok(items) = pa_client::list_scoped_heartbeats(
+                                &client,
+                                &active_session_id,
+                                &session_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionHeartbeatsLoaded {
+                                    session: active_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::ManageHeartbeat {
+                        active_session_id,
+                        session_id,
+                        job_id,
+                        action,
+                    } => match pa_client::manage_heartbeat(
+                        &client,
+                        &active_session_id,
+                        &job_id,
+                        &action,
+                    ) {
+                        Ok(()) => {
+                            if let Ok(items) = pa_client::list_scoped_heartbeats(
+                                &client,
+                                &active_session_id,
+                                &session_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionHeartbeatsLoaded {
+                                    session: active_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::LoadSessionShells { active_session_id } => {
+                        match pa_client::list_kernel_shells(&client, &active_session_id) {
+                            Ok(items) => {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionShellsLoaded {
+                                    session: active_session_id,
+                                    items,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                    session: active_session_id,
+                                    message: err.to_string(),
+                                    clear_tail: None,
+                                    clear_subagent: None,
+                                });
+                            }
+                        }
+                    }
+                    DaemonCmd::TailKernelShell {
+                        active_session_id,
+                        activity_id,
+                        lines,
+                    } => match pa_client::tail_kernel_shell(
+                        &client,
+                        &active_session_id,
+                        &activity_id,
+                        lines,
+                    ) {
+                        Ok(tail) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ShellTailLoaded {
+                                session: active_session_id,
+                                activity_id,
+                                tail,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: Some(activity_id),
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::KillKernelShell {
+                        active_session_id,
+                        activity_id,
+                    } => match pa_client::kill_kernel_shell(
+                        &client,
+                        &active_session_id,
+                        &activity_id,
+                    ) {
+                        Ok(()) => {
+                            if let Ok(items) =
+                                pa_client::list_kernel_shells(&client, &active_session_id)
+                            {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionShellsLoaded {
+                                    session: active_session_id.clone(),
+                                    items,
+                                });
+                            }
+                            if let Ok(tail) = pa_client::tail_kernel_shell(
+                                &client,
+                                &active_session_id,
+                                &activity_id,
+                                crate::activity_sheet::SHELL_TAIL_LINES,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::ShellTailLoaded {
+                                    session: active_session_id,
+                                    activity_id,
+                                    tail,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: Some(activity_id),
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::LoadSessionSubagents {
+                        active_session_id,
+                        session_id,
+                    } => match pa_client::list_session_subagents(
+                        &client,
+                        &active_session_id,
+                        &session_id,
+                    ) {
+                        Ok(items) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                session: active_session_id,
+                                items,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: active_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::LoadSubagentMessages {
+                        owner_session_id,
+                        subagent_active_session_id,
+                    } => match pa_client::fetch_subagent_raw_messages(
+                        &client,
+                        &subagent_active_session_id,
+                    ) {
+                        Ok(raw_messages) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SubagentMessagesLoaded {
+                                owner_session: owner_session_id,
+                                subagent_session: subagent_active_session_id,
+                                raw_messages,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: Some(subagent_active_session_id),
+                            });
+                        }
+                    },
+                    DaemonCmd::CancelSubagent {
+                        owner_session_id,
+                        owner_durable_id,
+                        parent_active_session_id,
+                        child_id,
+                    } => match pa_client::cancel_subagent(
+                        &client,
+                        &parent_active_session_id,
+                        &child_id,
+                    ) {
+                        Ok(_) => {
+                            if let Ok(items) = pa_client::list_session_subagents(
+                                &client,
+                                &owner_session_id,
+                                &owner_durable_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                    session: owner_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                    },
+                    DaemonCmd::DeleteSubagent {
+                        owner_session_id,
+                        owner_durable_id,
+                        parent_active_session_id,
+                        child_id,
+                        tab_id,
+                    } => match pa_client::delete_subagent(
+                        &client,
+                        &parent_active_session_id,
+                        &child_id,
+                    ) {
+                        Ok(true) => {
+                            let _ = ev_tx.try_send(DaemonEvent::SubagentDeleted {
+                                owner_session: owner_session_id.clone(),
+                                tab_id,
+                            });
+                            if let Ok(items) = pa_client::list_session_subagents(
+                                &client,
+                                &owner_session_id,
+                                &owner_durable_id,
+                            ) {
+                                let _ = ev_tx.try_send(DaemonEvent::SessionSubagentsLoaded {
+                                    session: owner_session_id,
+                                    items,
+                                });
+                            }
+                        }
+                        Ok(false) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: "Subagent could not be deleted while running".into(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = ev_tx.try_send(DaemonEvent::ActivityError {
+                                session: owner_session_id,
+                                message: err.to_string(),
+                                clear_tail: None,
+                                clear_subagent: None,
+                            });
                         }
                     }
                 }

@@ -261,12 +261,7 @@ impl PaApp {
     ) {
         self.workspace_ui.diff_peek = Some((worktree_path, label));
         self.open_popup = OpenPopup::None;
-        if !self.settings.right_open {
-            self.settings.right_open = true;
-            self.settings.save();
-        }
-        self.sync_diff_for_active_session(cx);
-        cx.notify();
+        self.open_right_tab(crate::right_sidebar::RightTabKind::Diff, cx);
     }
 
     /// Stop peeking and return the Diff column to the session's bound worktree.

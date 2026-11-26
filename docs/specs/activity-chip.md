@@ -4,57 +4,77 @@
 
 ## Problem Statement
 
-The composer's activity chip showed three permanent zeros and still carried a
-click affordance. The sidebar listed spawned subagent Sessions as ordinary Idle
-rows, so the idle count included work that belongs under its parent Session. A
-reader could not tell how many subagents were running, how many heartbeats
-belonged to the selected Session, or how many shell commands were running.
+Subagent Sessions are intentionally hidden from the Left sidebar, and a reader
+needs a lightweight way inside the desktop window to see running and recent
+subagents, heartbeats, and shells for the selected Session, control them, and
+inspect long transcripts or shell output without crowding the main Transcript.
 
 ## Solution
 
-A display-only activity chip at the left of the composer's bottom tool row. It
-shows three centred icon/count pairs, with no separators and no click target:
+An interactive three-segment Activity chip at the left of the composer's bottom
+tool row paired with a borderless, `pa-tui`-inspired **TUI Composer Sheet**
+(`Style B`) inside the top of the composer card and dynamic per-Session tabs in
+the **Right sidebar**:
 
-- running subagent descendants of the selected Session
-- the Session-scoped heartbeat total (active and paused)
-- running shell commands in the selected Session
+- **Subagents:** direct and nested descendants of the selected Session
+- **Heartbeats:** Session-scoped heartbeats (active and paused)
+- **Shells:** kernel bash commands in the selected Session
 
-Subagent Sessions no longer appear as sidebar rows or search results. Counts refresh while a
-Session is selected and reset when the reader selects another Session. Opening
-the subagent, heartbeat, or shell views is not part of this surface.
+Clicking any segment toggles the TUI Composer Sheet directly to that view (the
+three chip segments serve as the tabs; clicking the active segment closes the
+sheet). All three views are strictly scoped to the selected Session and reset
+when switching Sessions.
 
 ## Counts
 
-The TUI's activity dock is the parity source.
+Each segment tracks `(running, total)` for the selected Session:
 
-- **Subagents** are direct and nested roster descendants whose roster status is
-  `running`. The parent linkage is the durable session id, with the active
-  session id as the fallback. A Session never counts itself.
-- **Heartbeats** are the `heartbeats_list` rows whose durable session id or live
-  active session id matches the selected Session. Paused jobs count.
-- **Shells** are the `list_kernel_bash` rows whose status is `running`. A Session
-  without a running kernel has zero live shells.
+- When `running > 0`, the segment displays the **running/active** count in gold.
+- When `running == 0`, the segment displays the **total** count for this
+  Session in muted ink (`0` only when none exist).
 
-The worker reads all three on the activity cadence. A failed read keeps the last
-good number instead of clearing it. The window's outbox tags every reply with the Session id it was read for, so a
-Session the reader has left cannot write into the new Session's chip.
+Scoping rules:
 
-## Layout
+- **Subagents** are direct and nested roster descendants (plus direct
+  `get_rlm_children` entries). Running children sort first; nested children
+  indent with `↳`. A Session never counts itself.
+- **Heartbeats** are the `heartbeats_list` rows whose durable session id or
+  live active session id matches the selected Session. Active jobs count as
+  running; paused jobs count toward the Session total.
+- **Shells** are the `list_kernel_bash` rows for the selected Session, sorted
+  running-first. A Session without a running kernel reports `(0, 0)`.
 
-The chip is a non-interactive Rectangle in the composer's existing tool row,
-before the flexible spacer. It reuses the composer chip fill/edge and the
-composer card's muted/live inks. The three icons are the selected monoline marks:
-branching tree, pulse wave, and framed prompt.
+Updates are event-driven (attach, sheet open, drill-in, manual refresh, and
+daemon push events such as `roster_update`, `heartbeats_changed`, and
+`tool_execution_end`) with no periodic polling timers. Stale replies from a
+previously selected Session are discarded.
+
+## Layout & Interactions
+
+- **TUI Composer Sheet (`Style B`):** Mounts seamlessly inside the top of the
+  composer card above the input area, separated by a hairline rule. Uses dim
+  column headers, a `›` selection marker with soft full-row wash, `●` / `◐` /
+  `○` status dots, and in-place drill-in (`← back` / `Esc`) with `› Action`
+  rows.
+- **Heartbeats:** Table (`Interval | Instruction | Next run | Status`),
+  drill-in metadata pairs (`created`, `delivery`, `schedule`, `next run`,
+  `runs`, `prompt`), `Pause`/`Resume`/`Edit`/`Stop`, and an inline
+  `+ set heartbeat` / `edit heartbeat` editor.
+- **Shells:** Table (`Command | Duration | PID | Status`), drill-in tail
+  preview, `Refresh tail`, `Kill`, and `Open in Right sidebar`.
+- **Subagents:** Indented descendant table (`Subagent | Activity | Duration |
+  Status`), read-only drill-in preview, `Stop` (records `"Cancelled by user"`),
+  `Delete`, and `Open in Right sidebar` (read-only transcript tab alongside the
+  active Session, with no steer input).
+- **Right sidebar:** All-dynamic per-Session tabs (`Diff`, `Subagent`, `Shell`).
+  Closing the last tab auto-collapses the Right sidebar; `+ Diff` reopens `Diff`
+  when closed.
 
 ## Testing
 
-- Pure roster counting covers direct, nested, idle, inactive, missing, and
-  self-referential cases.
-- Pure heartbeat and shell parsing covers durable/live scoping, empty
-  identities, paused jobs, finished shells, and nameless rows.
-- The window harness covers selected-Session ownership, failed-part retention,
-  and selection reset.
-- A layout-contract probe covers left placement, vertical centring, and the
-  absence of a click surface; a visual check covers the rendered result.
-- The ignored live-daemon smoke test reads the real roster, heartbeat catalog,
-  and kernel registry, and fails when their wire shapes are missing.
+- Pure `pa-client` tests cover `(running, total)` display rules, direct and
+  nested subagent tree construction, Session-scoped heartbeat parsing/sorting,
+  running-first shell parsing, and subagent message extraction.
+- Pure `pa-ui` tests cover the `RightSidebarModel` tab lifecycle and the
+  `ActivitySheetModel` state machine (3-segment toggle, drill-in/`Esc`,
+  inline heartbeat editor, and stale-Session reply rejection).

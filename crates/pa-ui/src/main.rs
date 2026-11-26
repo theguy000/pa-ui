@@ -1,3 +1,4 @@
+mod activity_sheet;
 mod app;
 mod assets;
 mod composer;
@@ -9,6 +10,7 @@ mod diff_model;
 mod diff_view;
 mod popups;
 mod providers;
+mod right_sidebar;
 mod roster;
 mod settings;
 mod settings_harness;

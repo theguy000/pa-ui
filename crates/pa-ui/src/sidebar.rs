@@ -275,10 +275,10 @@ impl PaApp {
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .when(self.settings.right_open, |d| d.bg(p.sidebar_row_selected))
+                            .when(self.right_sidebar.is_open(), |d| d.bg(p.sidebar_row_selected))
                             .hover(|d| d.bg(p.sidebar_row_hover))
                             .child(
-                                Icon::new(if self.settings.right_open {
+                                Icon::new(if self.right_sidebar.is_open() {
                                     IconName::PanelRightClose
                                 } else {
                                     IconName::PanelRightOpen
