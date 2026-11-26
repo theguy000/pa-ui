@@ -1,0 +1,102 @@
+name: Release Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.1.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark GitHub Release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  release-windows:
+    name: Build & Publish Windows x64 Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag and version
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}".Trim()
+          } else {
+            $tag = "${{ github.ref_name }}".Trim()
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.]+)?$') {
+            throw "Release tag '$tag' must match vX.Y.Z (e.g. v0.1.0)."
+          }
+          $version = $tag.Substring(1)
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release
+
+      - name: Build release binaries
+        run: cargo build --release -p pa-ui -p pa-daemon
+
+      - name: Ensure Inno Setup is installed
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+          if (-not $iscc -and -not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Package Windows installer and portable archive
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/package-windows.ps1 `
+            -Version "${{ steps.meta.outputs.version }}" `
+            -BinDir "target\release" `
+            -OutDir "dist"
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          $setup = "dist\PrimeAgent-Setup-$version-windows-x64.exe"
+          $zip = "dist\prime-agent-app-$version-windows-x64.zip"
+          $sums = "dist\SHA256SUMS.txt"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $setup $zip $sums --clobber
+          } else {
+            $args = @(
+              "release", "create", $tag,
+              $setup, $zip, $sums,
+              "--title", "Prime Agent $tag",
+              "--generate-notes"
+            )
+            if ("${{ inputs.prerelease }}" -eq "true" -or $tag -match '-') {
+              $args += "--prerelease"
+            }
+            & gh @args
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to publish GitHub Release for $tag"
+          }
