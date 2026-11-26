@@ -149,6 +149,8 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         follow_up_mode: None,
         cwd: cwd.clone(),
         agent_dir,
+        workspace_harness_dir: None,
+        workspace_id: None,
         model: Some(model),
         thinking_level: None,
         stream_fn: Some(provider.stream_fn()),
