@@ -568,8 +568,8 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
     // The ring keeps every body: the count assertions need no eviction.
     let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
     // Spawn and park all storm threads before enqueueing the stall body so
-    // thread-creation latency on busy CI runners cannot let the stall drain.
-    let producers = 4 * REQUEST_PAYLOAD_CAPTURE_KEEP;
+    // thread-creation/scheduling latency on busy CI runners cannot let the stall drain.
+    let producers = 16;
     let ready_barrier = Arc::new(std::sync::Barrier::new(producers + 1));
     let go_barrier = Arc::new(std::sync::Barrier::new(producers + 1));
     let mut handles = Vec::new();
@@ -589,11 +589,12 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
         }));
     }
     ready_barrier.wait();
-    // The stall body: stays under REQUEST_PAYLOAD_BUDGET_BYTES (64 MiB)
-    // while serializing far longer than the pre-spawned storm window.
+    // The stall body: ~34 MiB estimated (well under REQUEST_PAYLOAD_BUDGET_BYTES = 64 MiB),
+    // with control-char escaping + 50k objects so pretty-printing outlasts the 16-thread storm.
     let stall = json!({
         "marker": "stall",
-        "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
+        "pad": "\u{0001}".repeat(2_000_000),
+        "messages": (0..50_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
     });
     capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
     let fills = fill_until_saturated(&capture, "fill");
