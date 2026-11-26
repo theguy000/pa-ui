@@ -185,6 +185,8 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         follow_up_mode: None,
         cwd: cwd.clone(),
         agent_dir,
+        workspace_harness_dir: None,
+        workspace_id: None,
         model: Some(model),
         thinking_level: None,
         stream_fn: Some(provider.stream_fn()),
@@ -281,6 +283,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         Some(PendingRefine {
             instructions: Some("persist the kernel round-trip contract observation".to_string()),
             global: true,
+            scope: None,
         })
     );
     assert!(

@@ -75,6 +75,8 @@ pub const WORKER_SUPERVISOR_LOST_EXIT_MS_ENV: &str =
 /// new handshake var joins `worker_launch_env` and this list together.
 /// Private — [`strip_inherited_worker_env`] is its only reader, so the
 /// binary entry stays the one owner of the strip.
+// `WORKER_SCRIPT_ENV` is excluded: `pa-daemon` only runs `supervisor`/`worker`,
+// and e2e test harnesses pass `WORKER_SCRIPT_ENV` through `supervisor` to its workers.
 const INHERITED_WORKER_ENV: &[&str] = &[
     WORKER_ROLE_ENV,
     WORKER_TOKEN_ENV,
@@ -84,7 +86,6 @@ const INHERITED_WORKER_ENV: &[&str] = &[
     WORKER_SUPERVISOR_SOCKET_ENV,
     WORKER_SOCKET_ENV,
     WORKER_RECOVERY_JOURNAL_ENV,
-    WORKER_SCRIPT_ENV,
     WORKER_TELEMETRY_DISABLED_ENV,
     crate::lease::SESSION_LEASE_OWNER_ID_ENV,
     pa_core::kernel::orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV,

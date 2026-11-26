@@ -1,0 +1,143 @@
+name: Release Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.1.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark GitHub Release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  release-windows:
+    name: Build & Publish Windows x64 Installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag and version
+        id: meta
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $tag = if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $env:INPUT_TAG.Trim()
+          } else {
+            $env:REF_NAME.Trim()
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') {
+            throw "Release tag '$tag' must match vX.Y.Z (e.g. v0.1.0)."
+          }
+          if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $existingRef = git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to query remote tag '$tag'."
+            }
+            if (-not [string]::IsNullOrWhiteSpace(($existingRef -join ""))) {
+              $peeled = ($existingRef | Where-Object { $_ -like "*^{}" } | Select-Object -First 1)
+              $line = if ($peeled) { $peeled } else { ($existingRef | Select-Object -First 1) }
+              $tagSha = ($line -split '\s+')[0]
+              if ($tagSha -ne $env:GITHUB_SHA) {
+                throw "Tag '$tag' already exists on commit $tagSha, which does not match checked-out commit $env:GITHUB_SHA. Dispatch from tag '$tag' instead."
+              }
+            }
+          }
+          $version = $tag.Substring(1)
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release
+
+      - name: Build release binaries
+        run: cargo build --release -p pa-ui -p pa-daemon
+
+      - name: Ensure Inno Setup is installed
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+          $hasIscc = $null -ne $iscc `
+            -or (Test-Path -LiteralPath "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" -PathType Leaf) `
+            -or (Test-Path -LiteralPath "C:\Program Files\Inno Setup 6\ISCC.exe" -PathType Leaf)
+          if (-not $hasIscc) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to install Inno Setup (exit code $LASTEXITCODE)."
+            }
+          }
+
+      - name: Package Windows installer and portable archive
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          & ".\scripts\package-windows.ps1" -Version $env:RELEASE_VERSION -BinDir "target\release" -OutDir "dist"
+          if ($LASTEXITCODE -ne 0) {
+            throw "package-windows.ps1 failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $env:RELEASE_VERSION
+          $setup = "dist\PrimeAgent-Setup-$version-windows-x64.exe"
+          $zip = "dist\prime-agent-app-$version-windows-x64.zip"
+          $sums = "dist\SHA256SUMS.txt"
+
+          $prevEap = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          gh release view $tag *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $prevEap
+
+          if ($exists) {
+            gh release upload $tag $setup $zip $sums --clobber
+          } else {
+            $ghArgs = @(
+              "release", "create", $tag,
+              $setup, $zip, $sums,
+              "--target", $env:GITHUB_SHA,
+              "--title", "Prime Agent $tag",
+              "--generate-notes"
+            )
+            if ($env:INPUT_PRERELEASE -eq "true" -or $tag -match '-') {
+              $ghArgs += "--prerelease"
+            }
+            & gh @ghArgs
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to publish GitHub Release for $tag"
+          }

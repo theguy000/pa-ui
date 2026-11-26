@@ -532,6 +532,74 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "kill_persistent_shell",
         r#"{"type": "kill_persistent_shell", "shellId": "s"}"#,
     ),
+    (
+        "workspace_list",
+        r#"{"type": "workspace_list"}"#,
+    ),
+    (
+        "workspace_register",
+        r#"{"type": "workspace_register", "path": "/tmp/ws"}"#,
+    ),
+    (
+        "workspace_relink",
+        r#"{"type": "workspace_relink", "workspaceId": "ws-1", "newPath": "/tmp/ws2"}"#,
+    ),
+    (
+        "workspace_delete",
+        r#"{"type": "workspace_delete", "workspaceId": "ws-1"}"#,
+    ),
+    (
+        "worktree_list",
+        r#"{"type": "worktree_list", "workspaceId": "ws-1"}"#,
+    ),
+    (
+        "worktree_create",
+        r#"{"type": "worktree_create", "workspaceId": "ws-1", "name": "feat"}"#,
+    ),
+    (
+        "branch_list",
+        r#"{"type": "branch_list", "worktreePath": "/tmp/ws"}"#,
+    ),
+    (
+        "branch_switch",
+        r#"{"type": "branch_switch", "worktreePath": "/tmp/ws", "branch": "main"}"#,
+    ),
+    (
+        "branch_create",
+        r#"{"type": "branch_create", "worktreePath": "/tmp/ws", "branch": "feat"}"#,
+    ),
+    (
+        "session_bind_workspace",
+        r#"{"type": "session_bind_workspace", "activeSessionId": "sess", "workspaceId": "ws-1"}"#,
+    ),
+    (
+        "session_switch_worktree",
+        r#"{"type": "session_switch_worktree", "activeSessionId": "sess", "worktreePath": "/tmp/wt"}"#,
+    ),
+    (
+        "session_refresh_workspace",
+        r#"{"type": "session_refresh_workspace", "activeSessionId": "sess"}"#,
+    ),
+    (
+        "harness_list",
+        r#"{"type": "harness_list"}"#,
+    ),
+    (
+        "harness_upsert",
+        r#"{"type": "harness_upsert", "scope": "global", "kind": "memory", "title": "t", "content": "c"}"#,
+    ),
+    (
+        "harness_delete",
+        r#"{"type": "harness_delete", "scope": "global", "kind": "memory", "entryId": "e1"}"#,
+    ),
+    (
+        "harness_history",
+        r#"{"type": "harness_history"}"#,
+    ),
+    (
+        "harness_rollback",
+        r#"{"type": "harness_rollback", "refinementId": "ref-1"}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -563,6 +631,23 @@ fn known_command_types_match_the_ts_list() {
                     | "list_persistent_shells"
                     | "tail_persistent_shell"
                     | "kill_persistent_shell"
+                    | "workspace_list"
+                    | "workspace_register"
+                    | "workspace_relink"
+                    | "workspace_delete"
+                    | "worktree_list"
+                    | "worktree_create"
+                    | "branch_list"
+                    | "branch_switch"
+                    | "branch_create"
+                    | "session_bind_workspace"
+                    | "session_switch_worktree"
+                    | "session_refresh_workspace"
+                    | "harness_list"
+                    | "harness_upsert"
+                    | "harness_delete"
+                    | "harness_history"
+                    | "harness_rollback"
             ),
             "unexpected non-TS command type: {extra}"
         );

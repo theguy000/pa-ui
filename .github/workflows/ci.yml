@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-test:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-dev
+      - name: Test pa-client and pa-ui
+        run: cargo test -p pa-client -p pa-ui
+      - name: Test Windows kernel bootstrap in pa-core
+        run: cargo test -p pa-core kernel::bootstrap
+      - name: Check pa-daemon
+        run: cargo check -p pa-daemon
+
+  macos-check:
+    name: macOS compile check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-dev
+      - name: Check pa-client, pa-ui, and pa-daemon
+        run: cargo check -p pa-client -p pa-ui -p pa-daemon
+
+  linux-check:
+    name: Linux checks & backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux GUI system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libxcb1-dev \
+            libvulkan-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-dev
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Check pa-client, pa-ui, and pa-daemon
+        run: cargo check -p pa-client -p pa-ui -p pa-daemon
+      - name: Bootstrap kernel venv for backend tests
+        run: |
+          PA_CORE_KERNEL_PYTHON="$(command -v python3)" cargo test -p pa-core --test kernel_prewarm
+      - name: Test pa-core and pa-daemon
+        run: cargo test -p pa-core -p pa-daemon

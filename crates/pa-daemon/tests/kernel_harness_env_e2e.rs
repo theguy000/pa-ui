@@ -160,7 +160,7 @@ impl Client {
 /// one, recording success or the failure traceback in a receipt.
 fn harness_cell(receipt: &Path) -> String {
     format!(
-        "import json, traceback\nreceipt = {{\"ok\": False, \"error\": \"\"}}\ntry:\n    rlm.harness.create_memory(title=\"kernel session-local memory\", content=\"persisted from the session kernel\", id=\"kernel-local-memory\")\n    rlm.get_harness_state().entries[\"memory\"][\"kernel-local-memory\"]\n    rlm.harness.create_memory(title=\"kernel global memory\", content=\"persisted from the session kernel\", id=\"kernel-global-memory\", global_=True)\n    receipt = {{\"ok\": True, \"error\": \"\"}}\nexcept Exception:\n    receipt = {{\"ok\": False, \"error\": traceback.format_exc()}}\nopen({receipt_path:?}, \"w\").write(json.dumps(receipt))\n",
+        "import json, traceback\nreceipt = {{\"ok\": False, \"error\": \"\"}}\ntry:\n    rlm.harness.create_memory(title=\"kernel session-local memory\", content=\"persisted from the session kernel\", id=\"kernel-local-memory\")\n    rlm.get_harness_state().entries[\"memory\"][\"kernel-local-memory\"]\n    rlm.harness.create_memory(title=\"kernel global memory\", content=\"persisted from the session kernel\", id=\"kernel-global-memory\", scope=\"global\")\n    receipt = {{\"ok\": True, \"error\": \"\"}}\nexcept Exception:\n    receipt = {{\"ok\": False, \"error\": traceback.format_exc()}}\nopen({receipt_path:?}, \"w\").write(json.dumps(receipt))\n",
         receipt_path = receipt.to_string_lossy(),
     )
 }
@@ -289,7 +289,7 @@ fn persistent_session_kernel_writes_the_session_local_harness_store() {
         "kernel-local-memory",
         "kernel session-local memory",
         "persisted from the session kernel",
-        "local",
+        "session",
     );
 
     // The global store stays the agent dir's harness file.

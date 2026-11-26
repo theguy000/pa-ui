@@ -1417,6 +1417,8 @@ async fn first_signal_drains_a_settling_turn_and_rejects_new_work() {
         no_session: None,
         name: None,
         config: None,
+        workspace_id: None,
+        worktree_path: None,
         telemetry_disabled: None,
         runtime_metadata: None,
         lifecycle: None,
