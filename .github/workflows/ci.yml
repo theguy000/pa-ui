@@ -29,8 +29,10 @@ jobs:
           key: windows-fast
       - name: Test pa-client and pa-ui
         run: cargo test --profile fast -p pa-client -p pa-ui
-      - name: Test pa-core and pa-daemon
-        run: cargo test --profile fast -p pa-core -p pa-daemon
+      - name: Test Windows kernel bootstrap in pa-core
+        run: cargo test --profile fast -p pa-core kernel::bootstrap
+      - name: Check pa-daemon
+        run: cargo check --profile fast -p pa-daemon
 
   macos-check:
     name: macOS compile check
@@ -45,7 +47,7 @@ jobs:
         run: cargo check --profile fast -p pa-client -p pa-ui -p pa-daemon
 
   linux-check:
-    name: Linux compile check
+    name: Linux checks & backend tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,3 +69,5 @@ jobs:
           key: linux-check
       - name: Check pa-client, pa-ui, and pa-daemon
         run: cargo check --profile fast -p pa-client -p pa-ui -p pa-daemon
+      - name: Test pa-core and pa-daemon
+        run: cargo test --profile fast -p pa-core -p pa-daemon
