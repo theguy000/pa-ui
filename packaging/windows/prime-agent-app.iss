@@ -25,6 +25,13 @@ AppSupportURL=https://github.com/theguy000/prime-agent-app/issues
 DefaultDirName={localappdata}\Programs\Prime Agent
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+#if VER >= EncodeVer(6, 7)
+  ; Per-user install (PrivilegesRequired=lowest): disable RedirectionGuard so the
+  ; post-install prime-agent-app.exe and its long-lived pa-daemon.exe do not inherit
+  ; Windows ProcessRedirectionTrustPolicy, which blocks user-created NTFS junctions
+  ; (such as uv-managed Python interpreters).
+  RedirectionGuard=no
+#endif
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes

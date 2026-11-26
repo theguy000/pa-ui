@@ -578,6 +578,22 @@ pub fn termination_signal(_status: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
+/// Windows: `true` when `ProcessRedirectionTrustPolicy` (`EnforceRedirectionTrust`)
+/// is active on the current process (e.g. inherited from an Inno Setup 6.7+
+/// per-user installer), which blocks traversing user-created NTFS junctions.
+#[cfg(windows)]
+#[must_use]
+pub fn redirection_trust_enforced() -> bool {
+    win32::redirection_trust_enforced()
+}
+
+/// Unix/non-Windows: Windows `RedirectionGuard` never applies.
+#[cfg(not(windows))]
+#[must_use]
+pub fn redirection_trust_enforced() -> bool {
+    false
+}
+
 /// The kernel32 termination surface for [`kill_pid`], hand-declared (repo
 /// policy: pinned constants and externs, no windows-sys dependency).
 #[cfg(windows)]
@@ -588,13 +604,37 @@ mod win32 {
 
     /// `winnt.h`: the right to terminate the process.
     const PROCESS_TERMINATE: u32 = 0x0001;
+    /// `winnt.h`: `PROCESS_MITIGATION_POLICY::ProcessRedirectionTrustPolicy`.
+    const PROCESS_REDIRECTION_TRUST_POLICY: i32 = 16;
+    /// `PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY::EnforceRedirectionTrust` bit.
+    const ENFORCE_REDIRECTION_TRUST_BIT: u32 = 1;
 
     type Handle = *mut c_void;
 
     extern "system" {
+        fn GetCurrentProcess() -> Handle;
+        fn GetProcessMitigationPolicy(
+            process: Handle,
+            mitigation_policy: i32,
+            buffer: *mut c_void,
+            length: usize,
+        ) -> i32;
         fn OpenProcess(access: u32, inherit_handle: i32, process_id: usize) -> Handle;
         fn CloseHandle(handle: Handle) -> i32;
         fn TerminateProcess(handle: Handle, exit_code: u32) -> i32;
+    }
+
+    pub(crate) fn redirection_trust_enforced() -> bool {
+        let mut flags: u32 = 0;
+        let ok = unsafe {
+            GetProcessMitigationPolicy(
+                GetCurrentProcess(),
+                PROCESS_REDIRECTION_TRUST_POLICY,
+                (&raw mut flags).cast::<c_void>(),
+                std::mem::size_of::<u32>(),
+            )
+        };
+        ok != 0 && (flags & ENFORCE_REDIRECTION_TRUST_BIT) != 0
     }
 
     /// Terminate exactly the pid; false when it could not be proven
@@ -626,6 +666,11 @@ mod windows_tests {
         assert!(!kill_pid(-1, Signal::Kill));
         assert!(!kill_pid(0, Signal::Term));
         assert!(!kill_process_group_or_pid(-1));
+    }
+
+    #[test]
+    fn redirection_trust_is_not_enforced_in_normal_test_process() {
+        assert!(!redirection_trust_enforced());
     }
 }
 

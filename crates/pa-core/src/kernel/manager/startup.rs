@@ -355,6 +355,7 @@ impl Inner {
         }
 
         if let Some(stderr) = stderr {
+            self.stderr_closed_flag.store(false, Ordering::SeqCst);
             // Weak like the stdout reader (same drop semantics), upgraded
             // per chunk; the log file drains to EOF regardless.
             let inner = Arc::downgrade(self);
@@ -439,11 +440,14 @@ impl Inner {
             }
             // append_diagnostic re-locks `guarded`, so it must run OUTSIDE
             // this lock scope (a std Mutex is not reentrant).
-            let was_live = {
+            let (was_live, was_starting) = {
                 let mut g = lock(&inner.guarded);
+                let was_starting = g.state == KernelState::Starting;
                 let was_live = g.state != KernelState::Shutdown;
-                g.state = KernelState::Shutdown;
-                was_live
+                if !was_starting {
+                    g.state = KernelState::Shutdown;
+                }
+                (was_live, was_starting)
             };
             if was_live {
                 inner.append_diagnostic(&format!(
@@ -451,6 +455,14 @@ impl Inner {
                     exit.code.map_or("null".to_string(), |c| c.to_string()),
                     exit.signal.map_or("null".to_string(), |s| s.to_string()),
                 ));
+            }
+            if was_starting {
+                // `do_start()` owns teardown for a child that dies before
+                // ready: running `cleanup_resources()` here would drop
+                // `ready_tx` and bump `start_generation` in a race with
+                // `wait_for_ready()`, masking the exit stderr and skipping
+                // probe-cache invalidation.
+                return;
             }
             live_kernels::remove(&inner);
             // This exit is part of an in-flight graceful shutdown(): that call owns
@@ -468,6 +480,36 @@ impl Inner {
         });
     }
 
+    async fn format_early_exit_error(&self, deadline: tokio::time::Instant) -> anyhow::Error {
+        // Final stderr chunks can still be in flight; wait for
+        // the drained pipe (the ready deadline still bounds it).
+        let stderr_drain = async {
+            loop {
+                if self.stderr_closed_flag.load(Ordering::SeqCst) {
+                    return;
+                }
+                self.stderr_closed.notified().await;
+            }
+        };
+        tokio::select! {
+            () = stderr_drain => {}
+            () = tokio::time::sleep_until(deadline) => {}
+        }
+        let tail = self.stderr_tail(1024);
+        let body = if tail.is_empty() {
+            "(empty)".to_string()
+        } else {
+            tail
+        };
+        if crate::platform::process::redirection_trust_enforced() {
+            anyhow!(
+                "Kernel exited before ready. stderr:\n{body}\nHint: Windows RedirectionGuard (ProcessRedirectionTrustPolicy) is enforced on this process, blocking user-created NTFS junctions (such as uv-managed Python). Stop any running pa-daemon.exe and relaunch Prime Agent from the Start Menu or Desktop shortcut."
+            )
+        } else {
+            anyhow!("Kernel exited before ready. stderr:\n{body}")
+        }
+    }
+
     /// The protocol handshake: the runtime's `ready` frame, the child dying
     /// first, or the 30-second ceiling — whichever comes first.
     async fn wait_for_ready(
@@ -483,34 +525,28 @@ impl Inner {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(READY_TIMEOUT_MS);
         let mut protocol = None;
         while protocol.is_none() {
+            if exit_rx.borrow().is_some() {
+                return Err(self.format_early_exit_error(deadline).await);
+            }
             let timeout = tokio::time::sleep_until(deadline);
             tokio::select! {
                 ready = &mut ready_rx => {
                     match ready {
                         Ok(Ok(value)) => protocol = Some(value),
                         Ok(Err(error)) => return Err(error),
-                        // Dropped only by teardown, which resolves the wait itself.
-                        Err(_) => return Err(anyhow!("Kernel ready state is missing")),
+                        // Dropped only by teardown (or if the child died right as
+                        // teardown raced): report the drained exit when present.
+                        Err(_) => {
+                            if exit_rx.borrow().is_some() {
+                                return Err(self.format_early_exit_error(deadline).await);
+                            }
+                            return Err(anyhow!("Kernel ready state is missing"));
+                        }
                     }
                 }
                 _ = exit_rx.changed() => {
                     if exit_rx.borrow().is_some() {
-                        // Final stderr chunks can still be in flight; wait for
-                        // the drained pipe (the ready deadline still bounds it).
-                        let stderr_drain = async {
-                            loop {
-                                if self.stderr_closed_flag.load(Ordering::SeqCst) {
-                                    return;
-                                }
-                                self.stderr_closed.notified().await;
-                            }
-                        };
-                        tokio::select! {
-                            () = stderr_drain => {}
-                            () = tokio::time::sleep_until(deadline) => {}
-                        }
-                        let tail = self.stderr_tail(1024);
-                        return Err(anyhow!("Kernel exited before ready. stderr:\n{}", if tail.is_empty() { "(empty)".to_string() } else { tail }));
+                        return Err(self.format_early_exit_error(deadline).await);
                     }
                 }
                 () = timeout => {
@@ -648,5 +684,62 @@ mod tests {
         #[cfg(not(unix))]
         assert!(path.with_extension("log.old").is_file());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn early_exit_during_startup_reports_stderr_and_resets_to_idle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(windows)]
+        let script = {
+            let path = dir.path().join("fail-kernel.cmd");
+            std::fs::write(
+                &path,
+                "@echo off\r\necho simulated trampoline failure 1>&2\r\nexit /B 1\r\n",
+            )
+            .expect("write cmd");
+            path
+        };
+        #[cfg(not(windows))]
+        let script = {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.path().join("fail-kernel.sh");
+            std::fs::write(
+                &path,
+                "#!/bin/sh\necho 'simulated trampoline failure' >&2\nexit 1\n",
+            )
+            .expect("write sh");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod");
+            path
+        };
+
+        let manager = ReplKernelManager::new(KernelManagerOptions {
+            python: Some(script),
+            ..KernelManagerOptions::default()
+        });
+
+        for attempt in 0..5 {
+            let err = manager
+                .start(KernelStartOptions::default())
+                .await
+                .expect_err("failing child must fail start");
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("Kernel exited before ready"),
+                "attempt {attempt} expected early exit message, got: {msg}"
+            );
+            assert!(
+                msg.contains("simulated trampoline failure"),
+                "attempt {attempt} expected stderr tail, got: {msg}"
+            );
+            assert!(
+                !msg.contains("Kernel ready state is missing"),
+                "attempt {attempt} must not race to ready-state-missing: {msg}"
+            );
+            assert!(
+                !manager.is_running() && !manager.is_defunct(),
+                "attempt {attempt} must settle back to Idle"
+            );
+        }
     }
 }
