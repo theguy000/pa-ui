@@ -83,7 +83,7 @@ fn switch_from(env: impl Fn(&str) -> Option<String>, setting: Option<bool>) -> T
 /// development never reach production analytics.
 #[must_use]
 pub fn telemetry_endpoint() -> Option<&'static str> {
-    (!cfg!(debug_assertions)).then_some(pa_telemetry::ANALYTICS_ENDPOINT)
+    (!cfg!(debug_assertions) && !cfg!(test)).then_some(pa_telemetry::ANALYTICS_ENDPOINT)
 }
 
 /// The `status` report: state and why, the endpoint, the installation id.
