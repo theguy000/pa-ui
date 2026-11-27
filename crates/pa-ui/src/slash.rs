@@ -80,6 +80,7 @@ pub struct SlashItem {
 }
 
 /// Supported builtin slash commands matching `prefix` (with or without leading `/`).
+#[cfg(test)]
 pub fn matching_slash_commands(prefix: &str) -> Vec<&'static Command> {
     pa_client::commands::filter(prefix)
         .into_iter()

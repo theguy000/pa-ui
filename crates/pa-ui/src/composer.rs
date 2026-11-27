@@ -1245,17 +1245,21 @@ impl PaApp {
         cmd: &'static str,
         cx: &mut Context<Self>,
     ) {
-        if self.roster.is_draft_or_empty() || self.is_streaming {
+        if self.roster.is_draft_or_empty() {
             return;
         }
         let Some(sid) = self.roster.active_id().map(str::to_string) else {
             return;
         };
         self.open_popup = OpenPopup::None;
-        self.composer_model.set_pending_slash(Some(cmd));
-        self.composer_model.set_busy_label("Waiting", false);
-        self.roster.mark_active_streaming();
-        self.is_streaming = true;
+        if !self.is_streaming {
+            self.composer_model.set_pending_slash(Some(cmd));
+            self.composer_model.set_busy_label("Waiting", false);
+            self.roster.mark_active_streaming();
+            self.is_streaming = true;
+        }
+        // `SendPrompt` sets `queueIfBusy: true` + `streamingBehavior: "followUp"`,
+        // so clicking Compact or Refine mid-turn queues it cleanly behind the active turn.
         let _ = self.bridge.tx.send(DaemonCmd::SendPrompt {
             session: sid,
             text: format!("/{cmd}"),
@@ -1314,7 +1318,17 @@ impl PaApp {
         };
 
         let high_ctx = pct_val >= 80.0;
-        let actions_disabled = self.roster.is_draft_or_empty() || self.is_streaming;
+        let actions_disabled = self.roster.is_draft_or_empty();
+        let compact_tip = if self.is_streaming {
+            "Queue compact (/compact)"
+        } else {
+            "Compact context (/compact)"
+        };
+        let refine_tip = if self.is_streaming {
+            "Queue refine (/refine)"
+        } else {
+            "Refine harness (/refine)"
+        };
 
         let icon_action = |id: &'static str,
                            icon_path: &'static str,
@@ -1441,7 +1455,7 @@ impl PaApp {
                             .child(icon_action(
                                 "ctx-compact-btn",
                                 ICON_COMPACT_PATH,
-                                "Compact context (/compact)",
+                                compact_tip,
                                 "compact",
                                 high_ctx,
                                 cx,
@@ -1449,7 +1463,7 @@ impl PaApp {
                             .child(icon_action(
                                 "ctx-refine-btn",
                                 ICON_REFINE_PATH,
-                                "Refine harness (/refine)",
+                                refine_tip,
                                 "refine",
                                 false,
                                 cx,
